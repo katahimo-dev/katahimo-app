@@ -39,23 +39,31 @@ export function formatJstDateOnly(date: Date): string {
 }
 
 /**
- * 'yyyy/MM/dd HH:mm[:ss]' 形式(JST壁時計時刻)の文字列をDateに変換する。
- * 領収書日時(OCR抽出値・保存時刻フォールバック)のパース専用。形式が想定外の場合は
- * 現在時刻にフォールバックする(領収書登録そのものを失敗させないため)。
+ * 領収書日時の表記(JST の壁時計時刻)。GAS版はOCRの結果の文字列をそのままシートの日時の列に書き、スプレッドシートが
+ * 日時として解釈していたため、1桁の月・日・時('2026/9/5 9:05')や日付だけ('2026/09/05'、0:00 とみなす)、
+ * 区切りの '-'・'.'・'年月日' も受け付ける。
  */
-export function parseJstTimestampString(value: string): Date {
-  const match = /^(\d{4})\/(\d{2})\/(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
-  if (!match) return new Date();
-  const [, year, month, day, hour, minute, second] = match;
-  const utcMs =
-    Date.UTC(
-      Number(year),
-      Number(month) - 1,
-      Number(day),
-      Number(hour),
-      Number(minute),
-      Number(second || '0'),
-    ) -
-    JST_OFFSET_MINUTES * 60_000;
-  return new Date(utcMs);
+const RECEIPT_TIMESTAMP_PATTERN =
+  /^(\d{4})\s*[/.\-年]\s*(\d{1,2})\s*[/.\-月]\s*(\d{1,2})\s*日?(?:(?:[ T]+|(?<=日))(\d{1,2})[:時](\d{1,2})分?(?::(\d{1,2}))?)?$/;
+
+/**
+ * 領収書日時の文字列を Date にする(JST の壁時計時刻として解釈する)。読めない表記・存在しない日時は null
+ * (呼び出し側が GAS版と同じく報告の日付+開始時刻・登録時刻にフォールバックする)。
+ */
+export function parseJstTimestamp(value: string | null | undefined): Date | null {
+  const match = RECEIPT_TIMESTAMP_PATTERN.exec((value ?? '').trim());
+  if (!match) return null;
+  const [year, month, day, hour, minute, second] = match.slice(1).map((v) => Number(v ?? '0')) as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  const wall = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  if (wall.getUTCFullYear() !== year || wall.getUTCMonth() !== month - 1 || wall.getUTCDate() !== day)
+    return null;
+  return new Date(wall.getTime() - JST_OFFSET_MINUTES * 60_000);
 }

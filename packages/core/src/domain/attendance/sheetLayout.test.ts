@@ -36,6 +36,20 @@ describe('出勤簿の行 ↔ 実体(projectDay / applyRowEdit)', () => {
     expect(compactRowData(projectDay(cleared.next).rowData)).toEqual({ X: '事務', AN: '1' });
   });
 
+  it('手で変えた印は、枠の値が全て空になって実体が消えても枠に残り、次にその枠に作る実体へ引き継ぐ(GAS版のセルの背景色)', () => {
+    const { next: manual } = edit(emptySheetDay('day'), { U: '手入力様', V: '16:00', W: '17:00' });
+    expect(projectDay(manual).changedFields).toEqual(['U', 'V', 'W']);
+    // カレンダーの反映で枠が空になる(実体は消える)。空のセルも強調表示のまま
+    const { next: cleared } = edit(manual, { U: '', V: '', W: '' }, 'calendar_sync');
+    expect(cleared.visits).toEqual([]);
+    expect(projectDay(cleared).changedFields).toEqual(['U', 'V', 'W']);
+    // 次の反映でその枠に予定が入っても強調表示は残る
+    const { next: refilled } = edit(cleared, { U: '田中様', V: '15:00', W: '16:00' }, 'calendar_sync');
+    expect(refilled.visits[0]?.overriddenFields.sort()).toEqual(['actual_end', 'actual_start', 'label']);
+    expect(refilled.day.overriddenFields).toEqual([]);
+    expect(projectDay(refilled).changedFields).toEqual(['U', 'V', 'W']);
+  });
+
   it('カレンダー反映は強調表示の列を増やさず、予定の時刻を planned にも入れる', () => {
     const { next } = edit(
       emptySheetDay('day'),
@@ -62,7 +76,29 @@ describe('出勤簿の行 ↔ 実体(projectDay / applyRowEdit)', () => {
     expect(projectDay(next).rowData.E).toBe('01:00');
   });
 
-  it('形式の違う値・選択肢に無い天候・重なる訪問は validation_failed', () => {
+  it('24:00 は翌日の 0:00 として持ち、出勤簿には 00:00 と出す(GAS版もシートの時刻を HH:mm で読むため 00:00)', () => {
+    const { next } = edit(emptySheetDay('day'), { C: '夜間', D: '21:00', E: '24:00' });
+    expect(next.visits[0]).toMatchObject({ start: 1260, end: 1440 });
+    expect(projectDay(next).rowData.E).toBe('00:00');
+    expect(edit(next, { E: '00:00' }).changes).toEqual([]);
+  });
+
+  it('訪問の時間帯が重なっても拒否しない(GAS版の手入力・カレンダー反映と同じ)', () => {
+    const { next, changes } = edit(emptySheetDay('day'), { D: '09:00', E: '12:00', M: '11:30', N: '13:00' });
+    expect(changes).toHaveLength(4);
+    expect(next.visits.map((v) => [v.seq, v.start, v.end])).toEqual([
+      [1, 540, 720],
+      [2, 690, 780],
+    ]);
+    const synced = edit(
+      emptySheetDay('day'),
+      { D: '09:00', E: '12:00', M: '11:30', N: '13:00' },
+      'calendar_sync',
+    );
+    expect(synced.next.visits).toHaveLength(2);
+  });
+
+  it('形式の違う値・選択肢に無い天候は validation_failed', () => {
     const errorOf = (patch: Record<string, string>) => {
       try {
         edit(emptySheetDay('day'), patch);
@@ -74,10 +110,6 @@ describe('出勤簿の行 ↔ 実体(projectDay / applyRowEdit)', () => {
     expect(errorOf({ D: '10時' })).toEqual(['validation_failed', ['rowData.D']]);
     expect(errorOf({ I: '台風' })).toEqual(['validation_failed', ['rowData.I']]);
     expect(errorOf({ AG: 'abc', AN: '1.5' })).toEqual(['validation_failed', ['rowData.AG', 'rowData.AN']]);
-    expect(errorOf({ D: '10:00', E: '12:00', M: '11:00', N: '13:00' })).toEqual([
-      'validation_failed',
-      ['rowData'],
-    ]);
   });
 
   it('表記の揺れ(9:00・6)は正規の表記で比べ、同じ値なら変更なし', () => {

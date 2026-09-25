@@ -102,6 +102,8 @@ export const careRecords = pgTable(
 /**
  * 記録の本文の変更履歴(追記のみ。アプリロールは SELECT / INSERT だけ)。トリガーが変更前の暗号文を
  * そのまま写すため、復号の AAD は元の記録(care_records.body・記録のID)のもの。
+ * 記録への参照は no action(履歴のある記録は消せない。記録と一緒に履歴が消えないようにする)。テナントの
+ * 消去(platform.purge_tenant)は tenant_id の cascade で記録と履歴を同じ文で消すため妨げない。
  */
 export const careRecordRevisions = pgTable(
   'care_record_revisions',
@@ -118,7 +120,7 @@ export const careRecordRevisions = pgTable(
   },
   (t) => [
     ...tenantScoped('care_record_revisions', t),
-    tenantRef('care_record_revisions', 'care_record_id', t, t.careRecordId, careRecords, 'cascade'),
+    tenantRef('care_record_revisions', 'care_record_id', t, t.careRecordId, careRecords),
     unique(constraintName('care_record_revisions', ['tenant_id', 'care_record_id', 'revision_no'], 'key')).on(
       t.tenantId,
       t.careRecordId,

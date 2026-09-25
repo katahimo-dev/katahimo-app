@@ -44,6 +44,10 @@ export class DrizzleTenantDirectory implements TenantDirectoryPort {
       .where(eq(tenants.status, 'active'))
       .orderBy(asc(tenants.slug));
   }
+
+  listAll(): Promise<TenantRecord[]> {
+    return this.db.select(tenantColumns).from(tenants).orderBy(asc(tenants.slug));
+  }
 }
 
 /**

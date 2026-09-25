@@ -3,7 +3,7 @@ import type { OutboxTopic } from '../model';
 /**
  * outbox の重複排除キー `<topic>:<aggregate_id>:<版>`。同じ書き込み(同じ版)をやり直しても同じキーになり、
  * 二重に積まれない(outbox_messages の (tenant_id, dedupe_key) の UNIQUE)。版は row_version、
- * 変わらない行は 0、中身から決まる送信(勤怠集計)は内容の指紋を使う。
+ * 変わらない行は 0、中身から決まる送信(勤怠集計)はその日の送信の通し番号を使う。
  */
 export function outboxDedupeKey(topic: OutboxTopic, aggregateId: string, version: number | string): string {
   return `${topic}:${aggregateId}:${version}`;

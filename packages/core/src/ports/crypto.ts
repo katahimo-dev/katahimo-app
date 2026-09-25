@@ -24,6 +24,11 @@ export interface CipherContext {
 export interface CryptoPort {
   encrypt(context: CipherContext, plaintext: string): Promise<Uint8Array>;
   decrypt(context: CipherContext, ciphertext: Uint8Array): Promise<string>;
+  /**
+   * テナントの鍵を使える状態にしておく(鍵の読み込み・KMS でのアンラップ)。Unit of Work はトランザクションを
+   * 開く前に呼ぶ: トランザクションの中で鍵の読み込み(別の接続)や KMS の呼び出し(ネットワーク)を待たないため。
+   */
+  prepare(tenantId: string): Promise<void>;
 }
 
 /** ブラインドインデックスの用途(鍵を用途ごとに分ける)。 */

@@ -24,6 +24,7 @@ export type NewCareRecordInput = Omit<CareRecordRow, 'rowVersion'>;
 export type CareRecordPatch = Partial<
   Pick<
     CareRecordRow,
+    | 'recordType'
     | 'occurredAt'
     | 'servicePeriod'
     | 'riskRating'

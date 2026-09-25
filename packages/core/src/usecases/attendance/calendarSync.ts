@@ -8,6 +8,7 @@ import {
   type CalendarAppointment,
   type CellChange,
   canonicalizeRowData,
+  changedSheetColumns,
   compactRowData,
   DomainError,
   forbidden,
@@ -164,8 +165,8 @@ export interface CalendarSyncResult {
 /**
  * 1スタッフ・1日分をカレンダーから反映する(権限を確かめた後の共通処理。API と夜間バッチから使う)。
  * 冪等: 同じカレンダーの内容なら2回目以降は changes が空で、出勤簿もミラーも書かない。勤怠集計のミラーは
- * 予定の内容が変わったときに積む(GAS側が行を計算し直す)。予定の取得はトランザクションの外、出勤簿の
- * 読み→書きはその日の行を押さえた1トランザクション(手入力と重ならない)。
+ * 予定の内容が変わったときに積む(GAS側が行を計算し直す)。予定が無く出勤簿の行も無い日は何も書かない。
+ * 予定の取得はトランザクションの外、出勤簿の読み→書きはその日の行を押さえた1トランザクション(手入力と重ならない)。
  */
 export async function syncStaffDayFromCalendar(
   deps: CalendarSyncDeps,
@@ -177,6 +178,11 @@ export async function syncStaffDayFromCalendar(
   const changes = await deps.uow.run(
     actor.tenantId,
     async (r) => {
+      // 予定が無く、その日の出勤簿の行もまだ無ければ何も作らない(空の行・勤怠集計のミラーを積まない)。
+      // 行があれば(予定が消えた等)いつも通り反映し、勤怠集計の行も書き直す(GAS版は行を消す)
+      if (calendar.appointments.length === 0 && !(await r.attendance.loadDay(target.staffId, date)).day) {
+        return [];
+      }
       const timeZone = (await r.tenant()).timezone;
       const rows = await r.attendance.lockDay(target.staffId, date, newId());
       const current = await toSheetDay(deps.crypto, r.tenantId, timeZone, rows);
@@ -188,7 +194,7 @@ export async function syncStaffDayFromCalendar(
         current,
         computed.next,
       );
-      if (saved) await enqueueAttendanceDayMirror(r, saved);
+      if (saved) await enqueueAttendanceDayMirror(r, saved, changedSheetColumns(current, computed.next));
       await enqueueAttendanceAggregateMirror(r, rows.day.id, calendar.fingerprint);
       return computed.changes;
     },
@@ -325,7 +331,7 @@ export async function refreshAttendanceAggregate(
     const calendar = await fetchCalendar(deps, actor, target, date);
     await deps.uow.run(actor.tenantId, async (r) => {
       const rows = await r.attendance.lockDay(target.staffId, date, newId());
-      await enqueueAttendanceAggregateMirror(r, rows.day.id, `refresh-${newId()}`);
+      await enqueueAttendanceAggregateMirror(r, rows.day.id, calendar.fingerprint, { force: true });
     });
     await writeActorLog(deps.appLog, actor, target, {
       level: 'INFO',

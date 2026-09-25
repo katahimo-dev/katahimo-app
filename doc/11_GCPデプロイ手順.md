@@ -98,14 +98,29 @@ postgres.js のプールは1プロセスあたり `DB_POOL_MAX` 本(既定10)。
 
 | 利用元 | 設定(infra/gcp/run.tf) | 最大接続数 |
 | --- | --- | --- |
-| api | `api_max_instances`(3)× `api_db_pool_max`(5) | 15 |
-| worker(常駐) | 1 × 3 | 3 |
-| 夜間ジョブ(nightly-calendar-sync / csv-import / maintenance) | 1 × 3(時刻をずらしており、同時に動くのは通常1つ) | 3 |
+| api | `api_max_instances`(3)×(`api_db_pool_max`(5)+ 鍵の読み込み専用のプール 1) | 18 |
+| worker(常駐) | 1 ×(3 + 1) | 4 |
+| 夜間ジョブ(nightly-calendar-sync / csv-import / maintenance) | 1 ×(3 + 1)(時刻をずらしており、同時に動くのは通常1つ) | 4 |
 | migrate | 1 × 1 | 1 |
 | 運用者(psql 等) | | 数本 |
 
 合計を Cloud SQL の `max_connections` 未満に保つ。`db-g1-small` の既定は 50 程度(要確認。
-`SHOW max_connections;` で確認できる)。API を増やすときは `api_max_instances × api_db_pool_max` を見直す。
+`SHOW max_connections;` で確認できる)。API を増やすときは `api_max_instances × (api_db_pool_max + 1)` を見直す。
+
+鍵の読み込み専用のプール(1本): Unit of Work はトランザクションを開く前にテナントの鍵(`tenant_data_keys`)を読み・
+KMS でアンラップしておくが、鍵の一覧の読み直し(10分ごと)がトランザクションの途中に来た場合に、UoW と同じプールの
+空きを待ち合って全員が止まらないよう、鍵の読み込みだけは別のプールで行う(`packages/api/src/server.ts`・
+`packages/worker/src/main.ts`)。KMS の呼び出しもトランザクションの外で済ませる。
+
+接続ごとの上限(`infra/cloudsql/01_bootstrap.sql` がロールに設定する。このデータベースに接続したときだけ効く):
+
+| ロール | `statement_timeout` | `lock_timeout` | `idle_in_transaction_session_timeout` |
+| --- | --- | --- | --- |
+| `katahimo_app` | 15s | 5s | 30s |
+| `katahimo_worker` | 60s | 10s | 60s |
+
+マイグレーション(`katahimo_migrator`)には掛けない。値を変えるときは `infra/initdb/01_bootstrap.sql` も同じにする
+(ロールの設定はスーパーユーザー・`cloudsqlsuperuser` にしか変えられないため、マイグレーションでは設定できない)。
 
 RLS との関係: Unit of Work(`packages/db/src/uow.ts` → `withTenant()`)はトランザクション内で
 `set_config('app.tenant_id', …, true)`(= `SET LOCAL`)を使うため、設定はトランザクション終了で消え、
@@ -190,7 +205,8 @@ psql "host=127.0.0.1 port=5432 user=postgres dbname=katahimo" -f infra/cloudsql/
   `postgres` を `katahimo_owner` のメンバーにする(DB の所有者の指定に必要)。再実行するとパスワードを設定し直す
   (ローテーションにも使う)。
 - `01`: `btree_gist` 拡張(Cloud SQL の対応拡張)、ログインロールへの CONNECT、`katahimo_owner` への CREATE、
-  public スキーマの所有者を `katahimo_owner` にして PUBLIC の CREATE を外す。テーブルごとの権限は既定権限に頼らず
+  public スキーマの所有者を `katahimo_owner` にして PUBLIC の CREATE を外す。`katahimo_app` / `katahimo_worker` の
+  接続ごとの上限(文・ロック待ち・放置されたトランザクション。1章「接続数の見積もり」)を設定する。テーブルごとの権限は既定権限に頼らず
   マイグレーション(`0001_baseline_custom.sql`)が明示的に付ける。ローカルの `infra/initdb/01_bootstrap.sql` と同じ。
 - どのロールも `rolsuper = f`・`rolbypassrls = f` であることをスクリプト末尾の SELECT で確認する。
   テーブルは FORCE ROW LEVEL SECURITY のため、所有者でもテナントを設定しなければ何も読めない。
@@ -418,6 +434,18 @@ git add .terraform.lock.hcl
   できる)。旧バージョンを無効化・破棄するには、先に全テナントの DEK を新バージョンで再ラップする作業が必要
   (未実装)。
 
+### テナントの消去・月の締めの解除(運用者)
+
+どちらも所有者のメンバー(`katahimo_migrator`、`MIGRATION_DATABASE_URL`)だけが実行できる SECURITY DEFINER の関数。
+アプリ・ワーカーからは実行できない。
+
+- テナントの消去: 解約済み(`platform.tenants.status = 'terminated'`)のテナントだけを消せる
+  (`select platform.purge_tenant('<テナントID>');`)。全てのテナントのテーブルが1つの文の中で消える(締めた月の勤怠・
+  確定済みの記録・記録の履歴を含む)。操作ログ(`app_logs`)は残り、保存期間の経過でパーティションごと消える。
+  事前にデータの書き出し(`data_export_requests`)・ファイル置き場の削除・DEK の破棄を済ませる(手順は未整備)。
+- 月の締めの解除: `select platform.unlock_attendance_period('<テナントID>', '<スタッフID>', 'YYYY-MM');`
+  (アプリは締めるだけで解除できない。DB のトリガーも解除・締めた月の行の削除を拒否する)。
+
 ### スケール
 
 - API: `api_max_instances` と `api_db_pool_max`(1章「接続数の見積もり」)。
@@ -455,9 +483,23 @@ GAS 側の変更は `katahimo-dev/gas-childcare-visit-app` リポジトリで行
       ログインできることを確認した
 - [ ] カレンダーと顧客CSVフォルダを api / worker のサービスアカウントに共有した(3.5)
 - [ ] ミラーを続けるか決めた。続ける場合は `gas_bridge_url` / `gas-bridge-secret` / `mirror_to_google_sheets = true`
-      を設定し、GAS 側 Bridge.js の書き込み action をデプロイした(`doc/api/attendance-batch.md`
-      「GAS側(Bridge.js)に必要な変更」)。**GAS の Web App(Bridge)は、ミラーか `SCHEDULE_PROVIDER=gas_bridge`
-      を使う間は公開したままにする**
+      を設定し、GAS 側 Bridge.js の書き込み action(**Bridge.js Ver. 1.1.38 以降**。それより前は事故報告の列が
+      ずれ、領収書の再送が二重になる)をデプロイした(`doc/api/attendance-batch.md`「GAS側(Bridge.js)」)。
+      **GAS の Web App(Bridge)は、ミラーか `SCHEDULE_PROVIDER=gas_bridge` を使う間は公開したままにする**
+- [ ] **当月分の出勤簿を DB に揃えた**(ミラーを続ける場合の前提): 出勤簿のミラーは、本アプリの書き込みで表示の
+      変わった列だけをシートに書く(本アプリに無い値を空で上書きしないため)。ただし本アプリの DB に当月の手入力が
+      無いまま動かし始めると、画面・月の集計・次のカレンダー反映は DB の内容だけを見るため、GAS 版で手入力した
+      当月の値(天候・備考・手で直した時刻等)が本アプリに出てこない。切替の直前に、各スタッフの個別出勤簿の当月の
+      シートを CSV に書き出して取り込む:
+
+      ```bash
+      pnpm --filter @katahimo/api import:attendance -- <テナントslug> <スタッフのログインメール> <CSVの絶対パス> [--year YYYY]
+      ```
+
+      (1日ずつ差分で書き、同じ内容の再実行は何も書かない。ミラーは積まない。手で変えた強調表示は CSV に無いため
+      取り込まれない。読めないセルは表示されるので、画面で直す。`doc/api/attendance-batch.md`「既存の出勤簿の取込」)。
+      取込から切替までの間に GAS 版で手入力があった日は、切替後に取込をやり直すか画面で直す。GAS 版と並行して
+      動かす期間を置く場合は、両方で同じ日を手入力しない(後から書いた側の列だけがシートに残る)。
 - [ ] `katahimo-nightly-calendar-sync` / `katahimo-csv-import` / `katahimo-maintenance` を手動実行して結果を確認した(Scheduler は停止中)
 
 ### 切替日(同じ日に行う。二重反映・二重取込を防ぐため)

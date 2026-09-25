@@ -5,4 +5,5 @@ export * from './deps';
 export * from './month';
 export * from './nightlySync';
 export * from './records';
+export * from './sheetImport';
 export * from './week';

@@ -38,17 +38,17 @@ export function mapDatabaseError(error: unknown): unknown {
     case 'KH002':
       return new DomainError('locked', '確定済みの記録は変更できません。', undefined, 'record_locked');
     case EXCLUSION_VIOLATION:
-      if (pg.constraint?.startsWith('visits_')) {
-        return conflict(
-          '訪問の時間が他の訪問と重なっています。時刻を確かめてください。',
-          undefined,
-          pg.constraint,
-        );
-      }
       return conflict('期間が他の登録と重なっています。', undefined, pg.constraint);
     case UNIQUE_VIOLATION:
       if (pg.constraint === 'staff_login_emails_pkey') {
         return conflict('このメールアドレスは他のスタッフが使用しています', undefined, pg.constraint);
+      }
+      if (pg.constraint?.startsWith('ai_prompts_') || pg.constraint?.startsWith('ai_prompt_revisions_')) {
+        return conflict(
+          '他の管理者が同時にプロンプトを保存しました。画面を開きなおしてから保存してください。',
+          undefined,
+          pg.constraint,
+        );
       }
       return error;
     default:

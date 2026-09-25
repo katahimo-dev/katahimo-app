@@ -85,9 +85,13 @@ export interface AttendanceRepository {
   findDayById(dayId: string): Promise<AttendanceDayRows | null>;
   /**
    * 1日分の差分を書き、入れ物の row_version を1上げた行を返す。expectedVersion を渡すと、その版のときだけ
-   * 書く(違えば conflict)。締め済みの月はトリガーが拒否する(locked)。訪問の時間帯の重なりは conflict。
+   * 書く(違えば conflict)。締め済みの月はトリガーが拒否する(locked)。訪問の時間帯の重なりは拒否しない。
    */
   writeDay(dayId: string, write: AttendanceDayWrite, expectedVersion?: number): Promise<AttendanceDayRow>;
-  /** 月の締め(status = 'locked')。 */
+  /**
+   * 月の締め(status = 'locked')。締め済みなら何もしない(締めた日時・締めた人を変えない)。同じ月の勤怠を書いている
+   * トランザクションがあれば、その終わりを待ってから締める(DB のトリガー)。締めの解除はアプリからはできない
+   * (運用の platform.unlock_attendance_period)。
+   */
   lockPeriod(staffId: string, yearMonth: string, lockedBy: string, at: Date): Promise<void>;
 }

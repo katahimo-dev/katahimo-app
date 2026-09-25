@@ -78,10 +78,11 @@ function createMailer(env: WorkerEnv): MailerPort {
   });
 }
 
-export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerContainer {
-  const uow = new DrizzleUnitOfWork(db, { skipOutboxTopics: skippedOutboxTopics(env) });
+/** keyDb はテナントの鍵の読み込み専用の小さなプール(省略時は db。api の createContainer と同じ考え方)。 */
+export function createWorkerContainer(env: WorkerEnv, db: Database, keyDb: Database = db): WorkerContainer {
+  const crypto = new LocalCryptoPort(new DrizzleTenantDataKeyReader(keyDb), createKeyManagementPort(env));
+  const uow = new DrizzleUnitOfWork(db, { skipOutboxTopics: skippedOutboxTopics(env), crypto });
   const audit = new ConsoleAuditLogPort();
-  const crypto = new LocalCryptoPort(new DrizzleTenantDataKeyReader(db), createKeyManagementPort(env));
   const appLog = new DrizzleAppLogRepository(db);
   const bridge =
     env.GAS_BRIDGE_URL && env.GAS_BRIDGE_SECRET

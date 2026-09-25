@@ -225,11 +225,56 @@ export interface CustomerSnapshot {
   recipients: CustomerSnapshotRecipient[];
 }
 
-export type SnapshotOutcome = 'created' | 'updated' | 'unchanged';
+export type SnapshotOutcome = 'created' | 'updated' | 'unchanged' | 'skipped';
+
+/**
+ * 取込元の値の誤り(行の取込は止めずに直す・その行だけ飛ばす)。import_runs.counts.issues に数を残す。
+ * - secondary_period_inverted: 住所2の適用終了日が開始日より前(期間なしとして持つ。GAS版はこの住所を使わなかった)
+ * - invalid_timestamp: 取込元の登録日時・更新日時が読めない(null にする)
+ * - missing_external_id / missing_name: 取込元のID・氏名が無い(その行を取り込まない)
+ */
+export type CustomerSnapshotIssue =
+  | 'secondary_period_inverted'
+  | 'invalid_timestamp'
+  | 'missing_external_id'
+  | 'missing_name';
 
 interface ApplyContext {
   crypto: CryptoPort;
   runId: string | null;
+  /** 取込元の値の誤りを見つけたとき(取込の集計に使う)。 */
+  onIssue?: (issue: CustomerSnapshotIssue) => void;
+}
+
+const validDate = (value: Date | null | undefined): Date | null =>
+  value && !Number.isNaN(value.getTime()) ? value : null;
+
+/**
+ * 取込元の1顧客分を、DB に書ける形に直す(書く前に確かめ、DB の制約でトランザクション全体を失敗させない)。
+ * 取り込めない行は null(理由は issues)。
+ */
+export function normalizeCustomerSnapshot(snapshot: CustomerSnapshot): {
+  snapshot: CustomerSnapshot | null;
+  issues: CustomerSnapshotIssue[];
+} {
+  const issues: CustomerSnapshotIssue[] = [];
+  if (!snapshot.externalId.trim()) return { snapshot: null, issues: ['missing_external_id'] };
+  if (!snapshot.displayName.trim() && !snapshot.familyName.trim())
+    return { snapshot: null, issues: ['missing_name'] };
+  let secondary = snapshot.secondary;
+  if (secondary?.validFrom && secondary.validTo && secondary.validTo < secondary.validFrom) {
+    issues.push('secondary_period_inverted');
+    secondary = { ...secondary, validFrom: null, validTo: null };
+  }
+  const externalRegisteredAt = validDate(snapshot.externalRegisteredAt);
+  const externalUpdatedAt = validDate(snapshot.externalUpdatedAt);
+  if (
+    (snapshot.externalRegisteredAt && !externalRegisteredAt) ||
+    (snapshot.externalUpdatedAt && !externalUpdatedAt)
+  ) {
+    issues.push('invalid_timestamp');
+  }
+  return { snapshot: { ...snapshot, secondary, externalRegisteredAt, externalUpdatedAt }, issues };
 }
 
 function same(a: unknown, b: unknown): boolean {
@@ -434,13 +479,19 @@ async function syncRecipients(
 /**
  * 取込元の1顧客分を DB に揃える(UoW のトランザクションの中で呼ぶ)。取込元の ID(source, external_id)で
  * 突き合わせ、無ければ作り、あれば変わった項目だけを書く。アーカイブ済みの顧客が取込元に戻ったら戻す。
+ * 取込元の値の誤りは書く前に直し(normalizeCustomerSnapshot)、直せない行は書かずに skipped を返す
+ * (1行の誤りで取込全体を失敗させない)。
  */
 export async function applyCustomerSnapshot(
   ctx: ApplyContext,
   r: TenantRepositories,
-  snapshot: CustomerSnapshot,
+  input: CustomerSnapshot,
   now: Date,
 ): Promise<SnapshotOutcome> {
+  const normalized = normalizeCustomerSnapshot(input);
+  for (const issue of normalized.issues) ctx.onIssue?.(issue);
+  const snapshot = normalized.snapshot;
+  if (!snapshot) return 'skipped';
   const linked = await r.customerSourceRecords.findByExternalId(snapshot.source, snapshot.externalId);
   const current = linked ? await r.customers.findById(linked.customerId) : null;
   const customerId = current?.id ?? newId();

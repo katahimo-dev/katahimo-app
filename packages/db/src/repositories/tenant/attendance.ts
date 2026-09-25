@@ -241,6 +241,7 @@ export class DrizzleAttendanceRepository extends TenantBound implements Attendan
       .onConflictDoUpdate({
         target: [attendancePeriods.tenantId, attendancePeriods.staffId, attendancePeriods.yearMonth],
         set: { status: 'locked', lockedAt: at, lockedBy },
+        setWhere: eq(attendancePeriods.status, 'open'),
       });
   }
 }

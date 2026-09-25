@@ -36,8 +36,13 @@ interface TenantKeys {
  * ラップした値だけが tenant_data_keys にある。アンラップした DEK はプロセス内に版ごとにキャッシュする。
  *
  * キャッシュは Promise を持つ(single-flight): 同じテナント・版を同時に要求しても KMS・DB への問い合わせは
- * 1回で、失敗した Promise はキャッシュから外す(次の要求でやり直す)。active の版は keysTtlMs ごとに
- * 読み直す(ローテーションを再起動なしで反映するため)。
+ * 1回で、失敗した Promise はキャッシュから外す(次の要求でやり直す)。鍵の一覧は keysTtlMs ごとに読み直す
+ * (ローテーション・破棄を再起動なしで反映する)。読み直した一覧に無い版(destroyed にした版・消した版)の
+ * アンラップ済みの DEK は捨てる(暗号学的削除の後もプロセス内で復号できてしまわないように)。
+ *
+ * prepare は Unit of Work がトランザクションを開く前に呼ぶ(鍵の一覧の読み込みと全ての版のアンラップを
+ * 済ませる)。鍵の一覧の読み込み(dataKeys)には、UoW と同じ接続プールではなく専用の小さなプールを渡すこと
+ * (トランザクションの途中で鍵の読み直しが要っても、プールの空きを待ち合って詰まらないように)。
  */
 export class LocalCryptoPort implements CryptoPort {
   private readonly tenants = new Map<string, { expiresAt: number; keys: Promise<TenantKeys> }>();
@@ -59,12 +64,12 @@ export class LocalCryptoPort implements CryptoPort {
         );
       }
       const previous = cached ? cached.keys.catch(() => null) : Promise.resolve(null);
-      return previous.then((old) => ({
-        activeVersion: active.version,
-        // 読み直しの前にアンラップ済みの DEK は引き継ぐ(KMS を呼び直さない)
-        deks: old?.deks ?? new Map<number, Promise<Uint8Array>>(),
-        records: new Map(records.map((r) => [r.version, r])),
-      }));
+      return previous.then((old) => {
+        const usable = new Map(records.map((r) => [r.version, r]));
+        // アンラップ済みの DEK は、読み直した一覧にまだある版だけ引き継ぐ(KMS を呼び直さない)
+        const deks = new Map([...(old?.deks ?? [])].filter(([version]) => usable.has(version)));
+        return { activeVersion: active.version, deks, records: usable };
+      });
     });
     this.tenants.set(tenantId, { expiresAt: Date.now() + this.keysTtlMs, keys });
     keys.catch(() => {
@@ -95,6 +100,11 @@ export class LocalCryptoPort implements CryptoPort {
       });
     }
     return { version: resolved, dek: await dek };
+  }
+
+  async prepare(tenantId: string): Promise<void> {
+    const keys = await this.loadKeys(tenantId);
+    await Promise.all([...keys.records.keys()].map((version) => this.dek(tenantId, version)));
   }
 
   async encrypt(context: CipherContext, plaintext: string): Promise<Uint8Array> {

@@ -18,3 +18,19 @@ SELECT format('GRANT CREATE ON DATABASE %I TO katahimo_owner', current_database(
 -- public スキーマは所有者だけがオブジェクトを作れる(アプリ・ワーカーに DDL をさせない)
 ALTER SCHEMA public OWNER TO katahimo_owner;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+-- アプリ・ワーカーの接続ごとの上限(このデータベースに接続したときだけ効く)。ロールの設定はスーパーユーザー
+-- (Cloud SQL では cloudsqlsuperuser)にしか変えられないため、マイグレーションではなくここで設定する。
+--   statement_timeout                    … 1つの文の上限(暴走した問い合わせで接続を占有しない)
+--   lock_timeout                         … 行ロック・アドバイザリロックを待つ上限(待ちの連鎖で詰まらない)
+--   idle_in_transaction_session_timeout  … トランザクションを開けたまま何もしない接続を切る(プールの枯渇を防ぐ)
+-- 値を変えるときは infra/cloudsql/01_bootstrap.sql・doc/09 「ロールと権限」も直す。
+SELECT format('ALTER ROLE %I IN DATABASE %I SET %s = %L', role, current_database(), setting, value)
+FROM (VALUES
+  ('katahimo_app', 'statement_timeout', '15s'),
+  ('katahimo_app', 'lock_timeout', '5s'),
+  ('katahimo_app', 'idle_in_transaction_session_timeout', '30s'),
+  ('katahimo_worker', 'statement_timeout', '60s'),
+  ('katahimo_worker', 'lock_timeout', '10s'),
+  ('katahimo_worker', 'idle_in_transaction_session_timeout', '60s')
+) AS t(role, setting, value)\gexec

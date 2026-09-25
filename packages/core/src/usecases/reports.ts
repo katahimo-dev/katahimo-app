@@ -163,6 +163,7 @@ async function persist(
     ? await r.careRecords.update(
         id,
         {
+          recordType: fields.recordType,
           occurredAt: fields.occurredAt,
           servicePeriod: fields.servicePeriod,
           riskRating: fields.riskRating,
@@ -341,7 +342,8 @@ export interface AccidentReportView {
 
 /**
  * 事故報告/ヒヤリハットを保存する(GAS版 Main.js saveAccidentReport)。記録日時は常に保存した時刻(GAS版と同じく
- * 上書きでも保存時刻になる)。事故報告とヒヤリハットの切り替えは上書きではできない(別の記録にする)。
+ * 上書きでも保存時刻になる)。上書きで事故報告とヒヤリハットを切り替えられる(GAS版も同じ行の種別の列を書き換えた)。
+ * 日報との切り替えはできない(上書きの対象が見つからない扱い)。
  */
 export async function saveAccidentReport(
   deps: ReportDeps,
@@ -369,13 +371,6 @@ export async function saveAccidentReport(
       actor.tenantId,
       async (r) => {
         const write = await resolveWrite(r, actor, 'accident', input);
-        if (write.existing && write.existing.recordType !== recordType) {
-          throw invalid(
-            '事故報告とヒヤリハットは切り替えて上書きできません。新しい報告として保存してください',
-            undefined,
-            'record_type_mismatch',
-          );
-        }
         const saved = await persist(
           deps,
           r,

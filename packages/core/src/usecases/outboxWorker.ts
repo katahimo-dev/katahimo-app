@@ -1,4 +1,6 @@
 import {
+  ATTENDANCE_COLUMN_KEYS,
+  type AttendanceColumnKey,
   DEFAULT_RETRY_POLICY,
   decideOnFailure,
   ENCRYPTION_PURPOSES as P,
@@ -154,6 +156,12 @@ const mirrorReceipt: Handler = async (deps, message) => {
   });
 };
 
+/** ペイロードの書く列(出勤簿の列として正しいものだけ)。 */
+function attendanceColumnsOf(payload: Record<string, unknown>): AttendanceColumnKey[] {
+  const columns = Array.isArray(payload.columns) ? payload.columns : [];
+  return ATTENDANCE_COLUMN_KEYS.filter((key) => columns.includes(key));
+}
+
 const mirrorAttendanceDay: Handler = async (deps, message) => {
   const loaded = await deps.uow.run(message.tenantId, async (r) => {
     const rows = await r.attendance.findDayById(message.aggregateId);
@@ -166,13 +174,15 @@ const mirrorAttendanceDay: Handler = async (deps, message) => {
     };
   });
   if (!loaded) return;
-  // DB が正のため、入力列は全て送る(空になった列はシートでも空にする)
+  // 書き込みで表示の変わった列だけを、今の値で送る(本アプリで空にした列はシートでも空にする。シートにだけある
+  // 値の列は触らない)。版の違う複数のメッセージは、それぞれの列を今の値で送る
   const projection = projectDay(loaded.sheet);
+  const columns = attendanceColumnsOf(message.payload);
   await deps.sender.sendAttendanceDay({
     staffName: loaded.staffName,
     businessDate: loaded.rows.businessDate,
-    values: projection.rowData,
-    highlightColumns: projection.changedFields,
+    values: Object.fromEntries(columns.map((c) => [c, projection.rowData[c]])),
+    highlightColumns: projection.changedFields.filter((c) => columns.includes(c)),
   });
 };
 
@@ -194,25 +204,63 @@ const HANDLERS: Record<OutboxTopic, Handler> = {
     sendPasswordResetMail(deps, message.tenantId, message.aggregateId),
 };
 
-export type ProcessOutcome = 'idle' | 'done' | 'skipped' | 'retried' | 'failed';
+export type ProcessOutcome = 'idle' | 'done' | 'skipped' | 'retried' | 'failed' | 'lease_lost';
+
+/** リースが切れたまま試行回数の上限に達したメッセージを dead にする(取り直さない)。 */
+const LEASE_EXHAUSTED_ERROR = '処理中のままリースが切れ、試行回数の上限に達しました';
+
+async function logDead(
+  deps: OutboxWorkerDeps,
+  message: { id: string; tenantId: string; topic: OutboxTopic; aggregateId: string; attempts: number },
+  status: 'failed' | 'dead',
+  error: string,
+): Promise<void> {
+  await deps.appLog.write({
+    tenantId: message.tenantId,
+    level: 'ERROR',
+    action: 'outbox.message_failed',
+    actorType: 'system',
+    details: {
+      messageId: message.id,
+      topic: message.topic,
+      aggregateId: message.aggregateId,
+      attempts: message.attempts,
+      status,
+      error: error.slice(0, 300),
+    },
+  });
+}
 
 /**
  * outbox から1件取り出して処理する(テナントを横断して FOR UPDATE SKIP LOCKED で1件ずつ。複数のワーカーが
  * 同時に動いても同じメッセージを二重に処理しない)。対象の行は処理のたびに DB から読み直す(ペイロードは ID だけ)。
  * 失敗は指数バックオフで再試行し、max_attempts 回で dead(ERROR ログ)、再試行しても直らない失敗は failed。
+ * 処理中にリースが切れて別のワーカーが取り直していたら、結果は書かない(lease_lost、WARN ログ)。
+ * 処理中のままリースが切れて試行回数の上限に達したもの(処理の途中でワーカーが落ち続けた等)は取り直さず dead にする。
  */
 export async function processNextOutboxMessage(deps: OutboxWorkerDeps): Promise<ProcessOutcome> {
   const now = currentTime(deps);
+  for (const expired of await deps.queue.expireExhaustedLeases(now, LEASE_EXHAUSTED_ERROR)) {
+    await logDead(deps, expired, 'dead', LEASE_EXHAUSTED_ERROR);
+  }
   const message = await deps.queue.claimNext(deps.workerId, deps.leaseMs, now);
   if (!message) return 'idle';
+  const leaseLost = async (): Promise<ProcessOutcome> => {
+    await deps.appLog.write({
+      tenantId: message.tenantId,
+      level: 'WARN',
+      action: 'outbox.lease_lost',
+      actorType: 'system',
+      details: { messageId: message.id, topic: message.topic, attempts: message.attempts },
+    });
+    return 'lease_lost';
+  };
   if (!deps.mirrorEnabled && MIRROR_TOPICS.includes(message.topic)) {
-    await deps.queue.complete(message.id, message.tenantId, currentTime(deps));
-    return 'skipped';
+    return (await deps.queue.complete(message, currentTime(deps))) ? 'skipped' : leaseLost();
   }
   try {
     await HANDLERS[message.topic](deps, message);
-    await deps.queue.complete(message.id, message.tenantId, currentTime(deps));
-    return 'done';
+    return (await deps.queue.complete(message, currentTime(deps))) ? 'done' : leaseLost();
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     const at = currentTime(deps);
@@ -222,25 +270,11 @@ export async function processNextOutboxMessage(deps: OutboxWorkerDeps): Promise<
         ? { kind: 'give_up' as const }
         : decideOnFailure(message.attempts, at, policy);
     if (decision.kind === 'retry') {
-      await deps.queue.retry(message.id, message.tenantId, error, decision.nextAttemptAt);
-      return 'retried';
+      return (await deps.queue.retry(message, error, decision.nextAttemptAt)) ? 'retried' : leaseLost();
     }
     const status = e instanceof PermanentOutboxError ? 'failed' : 'dead';
-    await deps.queue.giveUp(message.id, message.tenantId, error, status, at);
-    await deps.appLog.write({
-      tenantId: message.tenantId,
-      level: 'ERROR',
-      action: 'outbox.message_failed',
-      actorType: 'system',
-      details: {
-        messageId: message.id,
-        topic: message.topic,
-        aggregateId: message.aggregateId,
-        attempts: message.attempts,
-        status,
-        error: error.slice(0, 300),
-      },
-    });
+    if (!(await deps.queue.giveUp(message, error, status, at))) return leaseLost();
+    await logDead(deps, message, status, error);
     return 'failed';
   }
 }
@@ -250,6 +284,8 @@ export interface DrainOutboxResult {
   skipped: number;
   retried: number;
   failed: number;
+  /** 処理中にリースが切れ、別のワーカーが取り直していた(結果を書かなかった)数。 */
+  lease_lost: number;
 }
 
 /** 取れるメッセージが無くなるか、maxMessages 件処理するか、shouldStop が true になるまで1件ずつ処理する。 */
@@ -257,7 +293,7 @@ export async function drainOutbox(
   deps: OutboxWorkerDeps,
   options: { maxMessages: number; shouldStop?: () => boolean },
 ): Promise<DrainOutboxResult> {
-  const result: DrainOutboxResult = { done: 0, skipped: 0, retried: 0, failed: 0 };
+  const result: DrainOutboxResult = { done: 0, skipped: 0, retried: 0, failed: 0, lease_lost: 0 };
   for (let i = 0; i < options.maxMessages; i++) {
     if (options.shouldStop?.()) break;
     const outcome = await processNextOutboxMessage(deps);

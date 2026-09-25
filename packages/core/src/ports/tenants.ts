@@ -15,8 +15,10 @@ export interface TenantRecord {
 export interface TenantDirectoryPort {
   findBySlug(slug: string): Promise<TenantRecord | null>;
   findById(id: string): Promise<TenantRecord | null>;
-  /** status = 'active' のテナント(夜間ジョブ・CSV取込・outbox の対象)。 */
+  /** status = 'active' のテナント(夜間ジョブ・CSV取込の対象)。 */
   listActive(): Promise<TenantRecord[]>;
+  /** 消去(platform.purge_tenant)されていない全てのテナント(停止中・解約済みを含む。保守ジョブの対象)。 */
+  listAll(): Promise<TenantRecord[]>;
 }
 
 export interface ProvisionTenantInput {

@@ -52,6 +52,34 @@ describe('login', () => {
     });
   });
 
+  it('同時に送られた多数の誤ったパスワードでも、照合まで進むのは上限の回数まで(枠を先に取る)', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.loginFailureAccount.limit;
+    const results = await Promise.all(
+      Array.from({ length: limit * 3 }, () => loginAs('hanako@example.com', 'wrong-password')),
+    );
+    expect(ctx.deps.passwordHasher.verifications).toBeLessThanOrEqual(limit);
+    expect(results.filter((r) => !r.ok && r.reason === 'locked')).toHaveLength(limit * 2);
+    // ロック中は正しいパスワードでも照合しない
+    expect(await loginAs('hanako@example.com')).toMatchObject({ ok: false, reason: 'locked' });
+  });
+
+  it('成功した回は数えない(アカウントは数え直し、送信元IPの枠は1回分を返す)', async () => {
+    const meta = { ip: '203.0.113.7' };
+    const ipRule = DEFAULT_RATE_LIMIT_POLICY.loginFailureIp;
+    const ipBucket = () => ctx.deps.rateLimiter.buckets.get(`${ipRule.name}|${meta.ip}`);
+    await login(ctx.deps, { tenantSlug: 'test-tenant', email: 'hanako@example.com', password: 'x', meta });
+    expect(ipBucket()?.count).toBe(1);
+    await login(ctx.deps, {
+      tenantSlug: 'test-tenant',
+      email: 'hanako@example.com',
+      password: 'correct-horse',
+      meta,
+    });
+    expect(ipBucket()?.count).toBe(1);
+    const accountRule = DEFAULT_RATE_LIMIT_POLICY.loginFailureAccount;
+    expect([...ctx.deps.rateLimiter.buckets.keys()].some((k) => k.startsWith(accountRule.name))).toBe(false);
+  });
+
   it('サブメール(alt_email)でもログインできる(GAS版M列)', async () => {
     const result = await loginAs(' Hanako@Cutest.biz ');
     expect(result.ok).toBe(true);

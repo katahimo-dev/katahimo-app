@@ -48,7 +48,10 @@ export interface AccidentReportMirrorPayload {
 }
 
 export interface ReceiptMirrorPayload {
-  /** 本アプリの領収書ID(GAS側で行を追跡したい場合用。Bridge.jsは現状参照しない)。 */
+  /**
+   * 本アプリの領収書ID。Bridge.js(Ver. 1.1.38 以降)は「領収書一覧」の KatahimoReceiptId 列(9列目)で追跡し、
+   * 同じIDの再送では何もしない(Drive へのアップロード・行を二重にしない)。
+   */
   receiptId: string;
   /** 1回のアップロード操作の束(単票・移行データは空文字)。 */
   uploadBatchId: string;
@@ -69,11 +72,14 @@ export interface AttendanceDayMirrorPayload {
   staffName: string;
   /** 'YYYY-MM-DD' */
   businessDate: string;
-  /** 出勤簿の列記号(C/D/E等)をキーにした入力値。記録のある列だけを含む。 */
+  /**
+   * 出勤簿の列記号(C/D/E等)をキーにした入力値。その書き込みで表示の変わった列だけを含む(空にした列は '')。
+   * 含まない列はシートの値をそのまま残す(Bridge.js も values にある列だけを書く)。
+   */
   values: Record<string, string>;
   /**
-   * 自動転記後に手で変更された列(attendance_days.changed_fields)。GAS側はこの列のセル背景を
-   * #fce4e4 にする(GAS版 updatePastSchedule と同じ強調表示。doc/api/attendance-batch.md 参照)。
+   * values の列のうち、手で変更された列(実体の overridden_fields)。GAS側が対応すればこの列のセル背景を
+   * #fce4e4 にできる(GAS版 updatePastSchedule と同じ強調表示。doc/api/attendance-batch.md 参照)。
    */
   highlightColumns: string[];
 }

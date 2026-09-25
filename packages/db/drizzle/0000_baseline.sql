@@ -1105,7 +1105,7 @@ ALTER TABLE "ai_prompt_revisions" ADD CONSTRAINT "ai_prompt_revisions_tenant_id_
 ALTER TABLE "ai_prompts" ADD CONSTRAINT "ai_prompts_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ai_prompts" ADD CONSTRAINT "ai_prompts_tenant_id_updated_by_fkey" FOREIGN KEY ("tenant_id","updated_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "care_record_revisions" ADD CONSTRAINT "care_record_revisions_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "care_record_revisions" ADD CONSTRAINT "care_record_revisions_tenant_id_care_record_id_fkey" FOREIGN KEY ("tenant_id","care_record_id") REFERENCES "public"."care_records"("tenant_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "care_record_revisions" ADD CONSTRAINT "care_record_revisions_tenant_id_care_record_id_fkey" FOREIGN KEY ("tenant_id","care_record_id") REFERENCES "public"."care_records"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "care_records" ADD CONSTRAINT "care_records_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "care_records" ADD CONSTRAINT "care_records_tenant_id_visit_id_fkey" FOREIGN KEY ("tenant_id","visit_id") REFERENCES "public"."visits"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "care_records" ADD CONSTRAINT "care_records_tenant_id_customer_id_fkey" FOREIGN KEY ("tenant_id","customer_id") REFERENCES "public"."customers"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -1175,6 +1175,7 @@ CREATE UNIQUE INDEX "staff_calendars_tenant_id_staff_id_schedule_key" ON "staff_
 CREATE INDEX "entity_changes_tenant_id_entity_type_entity_id_created_at_idx" ON "entity_changes" USING btree ("tenant_id","entity_type","entity_id","created_at");--> statement-breakpoint
 CREATE INDEX "outbox_messages_available_at_idx" ON "outbox_messages" USING btree ("available_at") WHERE status = 'pending';--> statement-breakpoint
 CREATE INDEX "outbox_messages_locked_until_idx" ON "outbox_messages" USING btree ("locked_until") WHERE status = 'processing';--> statement-breakpoint
+CREATE INDEX "outbox_messages_tenant_id_aggregate_id_id_idx" ON "outbox_messages" USING btree ("tenant_id","aggregate_id","id");--> statement-breakpoint
 CREATE INDEX "outbox_messages_completed_at_idx" ON "outbox_messages" USING btree ("completed_at") WHERE status in ('done', 'failed', 'dead');--> statement-breakpoint
 CREATE INDEX "rate_limit_buckets_updated_at_idx" ON "platform"."rate_limit_buckets" USING btree ("updated_at");--> statement-breakpoint
 CREATE INDEX "tenant_lifecycle_events_tenant_id_created_at_idx" ON "platform"."tenant_lifecycle_events" USING btree ("tenant_id","created_at");--> statement-breakpoint

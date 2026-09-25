@@ -3,6 +3,7 @@ import type { ScheduleAppointmentWithRoute } from '../../ports/schedule';
 import type { Actor } from '../requestMeta';
 import type { TestContext } from '../testContext';
 import { createTestContext } from '../testContext';
+import { fakePlaintext } from '../testDoubles';
 import { applyCalendarSync, previewCalendarSync, refreshAttendanceAggregate } from './calendarSync';
 import { getAttendanceDay, updateAttendanceDay } from './day';
 import { runNightlyCalendarSync } from './nightlySync';
@@ -77,6 +78,28 @@ describe('出勤簿の閲覧・手入力', () => {
     expect(ctx.data().entityChanges.length).toBeGreaterThan(0);
     expect(ctx.data().outbox.map((m) => m.topic)).toEqual(['mirror.attendance_day']);
     expect(result.attendance.changedFields).toEqual(expect.arrayContaining(['C', 'D', 'E']));
+  });
+
+  it('消した実体の変更履歴には、実体の全ての項目を変更前の値として残す(ID は entity_id)', async () => {
+    await updateAttendanceDay(ctx.deps, staff, staff.staffId, DATE, { C: '佐藤様', D: '09:00', E: '12:00' });
+    const visitId = ctx.data().visits[0]?.id;
+    await updateAttendanceDay(ctx.deps, staff, staff.staffId, DATE, { C: '', D: '', E: '' });
+    const deleted = ctx
+      .data()
+      .entityChanges.find((c) => c.entityType === 'visit' && c.changedFields.includes('deleted'));
+    expect(deleted?.entityId).toBe(visitId);
+    const before = JSON.parse(fakePlaintext(deleted?.beforeEnc ?? null) ?? 'null');
+    expect(before).toMatchObject({ seq: 1, label: '佐藤様', start: 540, end: 720, source: 'manual' });
+    expect(before).not.toHaveProperty('id');
+    // 更新は変わった項目だけ
+    await updateAttendanceDay(ctx.deps, staff, staff.staffId, DATE, { C: '田中様' });
+    await updateAttendanceDay(ctx.deps, staff, staff.staffId, DATE, { C: '鈴木様' });
+    const updated = ctx
+      .data()
+      .entityChanges.filter((c) => c.entityType === 'visit')
+      .at(-1);
+    expect(updated?.changedFields).toEqual(['label']);
+    expect(JSON.parse(fakePlaintext(updated?.beforeEnc ?? null) ?? 'null')).toEqual({ label: '田中様' });
   });
 
   it('変更が無ければ何も書かない(日の行も作らない)', async () => {
@@ -212,6 +235,85 @@ describe('カレンダーからの反映', () => {
       succeeded: 1,
       changedStaffCount: 1,
     });
+  });
+
+  it('時間の重なる予定(A 09:00–12:00・B 11:30–13:00)も反映でき、夜間バッチも失敗しない(GAS版と同じ)', async () => {
+    ctx.schedule.setAppointments('山田 太郎', DATE, [
+      appointment('佐藤様', '09:00', '12:00'),
+      appointment('田中様', '11:30', '13:00'),
+    ]);
+    const result = await applyCalendarSync(ctx.deps, staff, staff.staffId, DATE);
+    expect(result.changes.length).toBeGreaterThan(0);
+    expect((await getAttendanceDay(ctx.deps, staff, staff.staffId, DATE)).rowData).toMatchObject({
+      D: '09:00',
+      E: '12:00',
+      M: '11:30',
+      N: '13:00',
+    });
+    ctx.clock.now = new Date('2026-09-24T13:00:00Z');
+    const summary = await runNightlyCalendarSync(ctx.deps);
+    expect(summary).toMatchObject({ failed: 0, interrupted: false });
+    // 手入力でも重なる時刻を保存できる
+    await updateAttendanceDay(ctx.deps, staff, staff.staffId, DATE, {
+      V: '12:30',
+      W: '14:00',
+      U: '手入力様',
+    });
+  });
+
+  it('勤怠集計のミラーは予定が変わるたびに積み、A → B → A と戻っても3回目を積む', async () => {
+    const aggregates = () => ctx.data().outbox.filter((m) => m.topic === 'mirror.attendance_aggregate');
+    await applyCalendarSync(ctx.deps, staff, staff.staffId, DATE);
+    await applyCalendarSync(ctx.deps, staff, staff.staffId, DATE);
+    expect(aggregates()).toHaveLength(1);
+    ctx.schedule.setAppointments('山田 太郎', DATE, [appointment('佐藤様', '10:00', '11:00')]);
+    await applyCalendarSync(ctx.deps, staff, staff.staffId, DATE);
+    ctx.schedule.setAppointments('山田 太郎', DATE, [
+      appointment('佐藤様', '09:00', '11:00', { attendanceKm: '3.20' }),
+      appointment('田中様', '13:00', '15:00', { moveMin: 20, moveKm: '5.50' }),
+    ]);
+    await applyCalendarSync(ctx.deps, staff, staff.staffId, DATE);
+    expect(aggregates().map((m) => m.payload?.seq)).toEqual([1, 2, 3]);
+    expect(new Set(aggregates().map((m) => m.dedupeKey)).size).toBe(3);
+  });
+
+  it('予定の無いスタッフの、出勤簿の行の無い日には何も作らない。行のある日は予定が消えても勤怠集計を書き直す', async () => {
+    const other = (await ctx.addStaff('鈴木 次郎', 'jiro@example.com')).actor;
+    ctx.clock.now = new Date('2026-09-24T13:00:00Z');
+    await runNightlyCalendarSync(ctx.deps);
+    const daysOf = (staffId: string) => ctx.data().days.filter((d) => d.staffId === staffId);
+    expect(daysOf(other.staffId)).toHaveLength(0);
+    expect(daysOf(staff.staffId)).toHaveLength(1);
+    const aggregatesBefore = ctx
+      .data()
+      .outbox.filter((m) => m.topic === 'mirror.attendance_aggregate').length;
+    // 予定が全て消えた日: 出勤簿の行はあるため反映し、勤怠集計のミラーを積む
+    ctx.schedule.setAppointments('山田 太郎', DATE, []);
+    await runNightlyCalendarSync(ctx.deps);
+    const aggregates = ctx.data().outbox.filter((m) => m.topic === 'mirror.attendance_aggregate');
+    expect(aggregates).toHaveLength(aggregatesBefore + 1);
+    expect(daysOf(other.staffId)).toHaveLength(0);
+  });
+
+  it('出勤簿のミラーは、その書き込みで変わった列だけを今の値で送る(シートにだけある値を空で上書きしない)', async () => {
+    await applyCalendarSync(ctx.deps, staff, staff.staffId, DATE);
+    await ctx.drain();
+    const first = ctx.sender.attendanceDays[0];
+    expect(Object.keys(first?.values ?? {}).sort()).toEqual(
+      ['AI', 'C', 'D', 'E', 'H', 'L', 'M', 'N', 'AG'].sort(),
+    );
+    expect(first?.highlightColumns).toEqual([]);
+
+    await updateAttendanceDay(ctx.deps, staff, staff.staffId, DATE, { AO: '雨のため遅延', D: '09:15' });
+    await ctx.drain();
+    const second = ctx.sender.attendanceDays[1];
+    expect(second?.values).toEqual({ D: '09:15', AO: '雨のため遅延' });
+    expect(second?.highlightColumns.sort()).toEqual(['AO', 'D']);
+
+    // 空にした列は空として送る
+    await updateAttendanceDay(ctx.deps, staff, staff.staffId, DATE, { AO: '' });
+    await ctx.drain();
+    expect(ctx.sender.attendanceDays[2]?.values).toEqual({ AO: '' });
   });
 
   it('ミラーは worker が送り、MIRROR が無効なら送らずに完了にする', async () => {

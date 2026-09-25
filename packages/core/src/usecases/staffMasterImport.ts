@@ -116,8 +116,9 @@ export async function importStaffMasterRows(
 
       const password = parsePassword(row.password);
       const split = splitJapaneseFullName(name);
-      // 台帳には管理者かどうかしか無い。本アプリで付けたコーディネーターは管理者でない行でも保つ
-      const role = row.isAdmin ? 'admin' : existing?.role === 'coordinator' ? 'coordinator' : 'staff';
+      // 台帳には管理者かどうかしか無い。取込では権限を上げるだけで下げない(K列=1 なら管理者。空なら本アプリで
+      // 付けた管理者・コーディネーターを保つ。権限を外すのは本アプリの管理画面で行う)
+      const role = row.isAdmin ? 'admin' : (existing?.role ?? 'staff');
       if (existing) {
         const patch: StaffPatch = {
           displayName: name,

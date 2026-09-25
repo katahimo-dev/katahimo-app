@@ -100,10 +100,14 @@ function rateLimitPolicyOf(env: Env): RateLimitPolicy {
   });
 }
 
-export function createContainer(env: Env, db: Database): Container {
-  const uow = new DrizzleUnitOfWork(db, { skipOutboxTopics: skippedOutboxTopics(env) });
+/**
+ * keyDb はテナントの鍵(tenant_data_keys)の読み込み専用の小さなプール(省略時は db)。サーバーは専用のプールを
+ * 渡す(トランザクションの途中で鍵の読み直しが要っても、db のプールの空きを待ち合って詰まらないように)。
+ */
+export function createContainer(env: Env, db: Database, keyDb: Database = db): Container {
+  const crypto = new LocalCryptoPort(new DrizzleTenantDataKeyReader(keyDb), createKeyManagementPort(env));
+  const uow = new DrizzleUnitOfWork(db, { skipOutboxTopics: skippedOutboxTopics(env), crypto });
   const audit = new ConsoleAuditLogPort();
-  const crypto = new LocalCryptoPort(new DrizzleTenantDataKeyReader(db), createKeyManagementPort(env));
   const appLog = new DrizzleAppLogRepository(db);
   const scheduleServices = createScheduleServices(env, {
     directory: createScheduleDirectory({

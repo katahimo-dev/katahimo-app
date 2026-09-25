@@ -17,9 +17,11 @@ export interface OutboxMessageInput {
  */
 export interface OutboxWriter {
   enqueue(message: OutboxMessageInput): Promise<void>;
+  /** 同じトピック・同じ対象の、最後に積んだメッセージのペイロード(無ければ null)。 */
+  latestPayload(topic: OutboxTopic, aggregateId: string): Promise<Record<string, unknown> | null>;
 }
 
-/** ワーカーが1件ずつ取り出したメッセージ。 */
+/** ワーカーが1件ずつ取り出したメッセージ(リース)。 */
 export interface ClaimedOutboxMessage {
   id: string;
   tenantId: string;
@@ -27,22 +29,38 @@ export interface ClaimedOutboxMessage {
   aggregateType: string;
   aggregateId: string;
   payload: Record<string, unknown>;
-  /** 今回を含めた試行回数。 */
+  /** 今回を含めた試行回数(リースの識別にも使う)。 */
   attempts: number;
   maxAttempts: number;
+  /** 取り出したワーカー(locked_by)。 */
+  lockedBy: string;
+}
+
+/** リースが切れたまま試行回数の上限に達したため dead にしたメッセージ。 */
+export interface ExpiredOutboxMessage {
+  id: string;
+  tenantId: string;
+  topic: OutboxTopic;
+  aggregateId: string;
+  attempts: number;
 }
 
 /**
  * ワーカー側の outbox(テナントを横断して取る。katahimo_worker 用のポリシーがある)。取り出しは
  * FOR UPDATE SKIP LOCKED で1件ずつ、locked_until(リース)を付けて processing にする。リースが切れた
- * processing は別のワーカーが取り直す。
+ * processing は別のワーカーが取り直す(試行回数の上限に達していれば取り直さず dead)。
+ *
+ * complete / retry / giveUp は、取り出したときのリース(locked_by と attempts)がまだ自分のものである場合だけ書き、
+ * 書いたかどうかを返す。リースが切れて別のワーカーが取り直した後に、遅れて終わった古い処理が結果を上書きしない。
  */
 export interface OutboxQueuePort {
   claimNext(workerId: string, leaseMs: number, now: Date): Promise<ClaimedOutboxMessage | null>;
-  complete(id: string, tenantId: string, now: Date): Promise<void>;
-  retry(id: string, tenantId: string, error: string, availableAt: Date): Promise<void>;
+  /** リースが切れたまま試行回数の上限に達した processing を dead にする。 */
+  expireExhaustedLeases(now: Date, error: string): Promise<ExpiredOutboxMessage[]>;
+  complete(lease: ClaimedOutboxMessage, now: Date): Promise<boolean>;
+  retry(lease: ClaimedOutboxMessage, error: string, availableAt: Date): Promise<boolean>;
   /** これ以上試さない(dead: 試行回数の上限 / failed: 再試行しても直らない失敗)。 */
-  giveUp(id: string, tenantId: string, error: string, status: 'failed' | 'dead', now: Date): Promise<void>;
+  giveUp(lease: ClaimedOutboxMessage, error: string, status: 'failed' | 'dead', now: Date): Promise<boolean>;
 }
 
 export interface EntityChangeInput {

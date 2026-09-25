@@ -1,6 +1,6 @@
 import { newId } from '@katahimo/core/domain';
 import type { CryptoPort, UnitOfWorkPort } from '@katahimo/core/ports';
-import { applyCustomerSnapshot } from '@katahimo/core/usecases';
+import { applyCustomerSnapshot, type CustomerSnapshotIssue } from '@katahimo/core/usecases';
 import { toCustomerSnapshot } from './toCustomerSnapshot';
 import type { ReservaCsvRow } from './types';
 
@@ -82,6 +82,10 @@ export type ReservaImportOutcome =
       updated: number;
       unchanged: number;
       archived: number;
+      /** 取込元の値の誤りで取り込まなかった行。 */
+      skipped: number;
+      /** 取込元の値の誤りの数(直して取り込んだ行・飛ばした行の理由ごと)。 */
+      issues: Partial<Record<CustomerSnapshotIssue, number>>;
       customerDataVersion: number;
     }
   | { status: 'review_required'; runId: string; plan: ReservaImportPlan };
@@ -89,7 +93,8 @@ export type ReservaImportOutcome =
 /**
  * 顧客CSVの行を1トランザクションで適用する: 差分の計算 → 作成・変わった項目だけの更新(ID を保つ)→
  * 消えた顧客のアーカイブ(reason = import_missing)→ 変わっていれば顧客データの版数を上げる(予定計算のキャッシュを作り直す)。
- * 実行は import_runs に残す(安全装置で止めた場合も review_required として残す)。
+ * 行の値の誤り(住所2の期間の逆転等)は書く前に直すか、その行だけ飛ばして数を import_runs.counts に残す
+ * (1行の誤りで取込全体を止めない)。実行は import_runs に残す(安全装置で止めた場合も review_required として残す)。
  */
 export async function applyReservaImport(
   deps: ReservaImportDeps,
@@ -122,10 +127,14 @@ export async function applyReservaImport(
         });
         return { status: 'review_required' as const, runId, plan };
       }
-      const counts = { created: 0, updated: 0, unchanged: 0, archived: 0 };
+      const counts = { created: 0, updated: 0, unchanged: 0, archived: 0, skipped: 0 };
+      const issues: Partial<Record<CustomerSnapshotIssue, number>> = {};
+      const onIssue = (issue: CustomerSnapshotIssue) => {
+        issues[issue] = (issues[issue] ?? 0) + 1;
+      };
       for (const row of rows) {
         const outcome = await applyCustomerSnapshot(
-          { crypto: deps.crypto, runId },
+          { crypto: deps.crypto, runId, onIssue },
           r,
           toCustomerSnapshot(row),
           now,
@@ -141,8 +150,15 @@ export async function applyReservaImport(
       const customerDataVersion = changed
         ? await r.settings.bumpCustomerDataVersion()
         : (await r.settings.get()).customerDataVersion;
-      await r.importRuns.finish(runId, { status: 'applied', counts, message: null });
-      return { status: 'applied' as const, runId, plan, ...counts, customerDataVersion };
+      const issueCounts = Object.fromEntries(
+        Object.entries(issues).map(([issue, n]) => [`issue_${issue}`, n]),
+      );
+      await r.importRuns.finish(runId, {
+        status: 'applied',
+        counts: { ...counts, ...issueCounts },
+        message: null,
+      });
+      return { status: 'applied' as const, runId, plan, ...counts, issues, customerDataVersion };
     },
     { actorId: options.triggeredBy ?? null },
   );

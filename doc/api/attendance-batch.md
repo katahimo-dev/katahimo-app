@@ -12,7 +12,7 @@ GAS版(`legacy/gas-childcare-visit-app/gas-childcare-visit-app/`)の `PastSchedu
   本人になる(GAS版 `resolvePastScheduleTargetStaffName_`、API側 `targetStaffIdOf`)。存在しない/他テナントの
   スタッフは `404 {code:'not_found'}`。
 - エラーは `{code, message, fields?}`。`code` は `validation_failed`(400)/ `locked`(400、月ロック・締めた月)/
-  `forbidden`(403)/ `not_found`(404)/ `conflict`(409、古い `rowVersion`・訪問の時間帯の重なり)/
+  `forbidden`(403)/ `not_found`(404)/ `conflict`(409、古い `rowVersion`)/
   `upstream_unavailable`(502、カレンダー予定を取得できない)。
 - DB の正は実体(`attendance_days`・`visits`・`work_segments`・`travel_legs`)で、`rowData` はその投影(doc/09 第3章)。
 - 日付は JST の暦日 `YYYY-MM-DD`、年月は `YYYY-MM`。
@@ -45,11 +45,14 @@ GAS版 `updatePastSchedule`。ボディ `{ date, staffId?, rowData, rowVersion? 
   (来月以降は `'修正できません。来月以降(09/30より後)の記録はまだ修正できません。'`)。何も保存しない。
 - **送られた列だけ**を現在値と比較し、値が変わった列だけを書く(送られていない列はそのまま。空文字で消せる)。
 - 値の形式を確かめる(時刻は `HH:mm`、距離は小数2桁に揃える。誤りは `400 validation_failed`、`fields` は
-  `rowData.<列>`)。訪問の時間帯が重なる修正も 400。
+  `rowData.<列>`)。訪問の時間帯の重なりは拒否しない(GAS版の `updatePastSchedule` も重なりを確かめずに書いていた。
+  予定の正はカレンダーで、二重予約の防止は将来の予約の割当 `reservation_assignments` の EXCLUDE が受け持つ)。
+  24:00 は翌日の 0:00 として持ち、出勤簿には `00:00` と出す(GAS版もシートの時刻を `HH:mm` で読むため `00:00`)。
 - 変わった項目だけを実体(`visits`・`work_segments`・`travel_legs`・`attendance_days`)に差分で書き、変えた項目を
   `overridden_fields` に加え、`entity_changes` に変更前の値(暗号化)・変更した項目・操作者を追記する。その日の行は
   `SELECT … FOR UPDATE` で押さえ(カレンダーの反映と重ならない)、`attendance_day` のミラーを同じトランザクションで
-  outbox に積む(`dedupe_key` は `mirror.attendance_day:<日のID>:<版>`)。
+  outbox に積む(`dedupe_key` は `mirror.attendance_day:<日のID>:<版>`。ペイロードの `columns` にその書き込みで表示の
+  変わった列を持ち、ワーカーはその列だけを今の値で送る)。
 - `rowVersion` が今の版と違えば `409 conflict`(WARN `attendance.day.update_conflict`)。締めた月
   (`attendance_periods`)は DB のトリガーも拒否する(`400 locked`)。
 - レスポンス `{ attendance, changedCount, changedColumns, message }`。`message` は `'修正しました。'` か
@@ -80,8 +83,14 @@ GAS版 `getWeeklyScheduleForStaff`。出勤簿の記録を週間表示用のイ�
 - カレンダーにある枠(訪問#1〜#3・事務作業#1〜#2)はカレンダーの内容で上書き。
 - 出勤簿にだけある枠は、カレンダー由来の枠と時間が重なる場合だけクリアし、重ならなければ残す。
 - 退勤距離は最後に埋まった訪問の枠と一緒に反映する。天候・買物代行・備考には触れない。
-- `overridden_fields`(手で直した列の強調表示)は増やしも消しもしない。反映した訪問は `source = 'google_calendar'`、
-  予定の顧客IDから顧客を結び付ける。4件目以降の訪問は枠外の訪問として保存する(出勤簿には出ない)。
+- `overridden_fields`(手で直した列の強調表示)は増やしも消しもしない。枠の値が全て空になって実体が消えても、印は枠に
+  残し(`attendance_days.overridden_fields` に `visit:<枠>:<項目>` の形)、次にその枠に作る実体へ引き継ぐ(GAS版の強調表示は
+  セルの背景色のため、値を書き直しても残っていた)。反映した訪問は `source = 'google_calendar'`、予定の顧客IDから
+  顧客を結び付ける。4件目以降の訪問は枠外の訪問として保存する(出勤簿には出ない)。
+- 時間の重なる予定(例: A 09:00–12:00 と B 11:30–13:00)もそのまま反映する(GAS版と同じ。以前は重なりを 400 にしており、
+  その日の反映・夜間バッチが失敗していた)。
+- 予定が無く、その日の出勤簿の行もまだ無いスタッフには何も作らない(空の行・勤怠集計のミラーを積まない)。行がある日は
+  予定が全て消えても反映し、勤怠集計の行を書き直す。
 
 ### `GET /api/attendance/day/calendar-sync/preview?date=[&staffId=]`
 
@@ -94,8 +103,9 @@ GAS版 `applyCalendarSyncForStaffOnDate` / `syncPastScheduleFromCalendar`。ボ�
 クライアントが見たプレビューは信用せず、同じ計算をやり直してから書く。
 
 - **冪等**: 同じカレンダー内容なら2回目以降は `changedCount: 0` で、出勤簿の保存・履歴・`attendance_day` ミラーは
-  行わない。「勤怠集計」(`attendance_aggregate`)のミラーは予定の内容が変わったときに積む(`dedupe_key` に予定の
-  指紋を含める。同じ内容の再反映では積み直さない)。
+  行わない。「勤怠集計」(`attendance_aggregate`)のミラーは予定の内容(指紋)がその日の最後に積んだものと違うときに積む
+  (ペイロード `{ fingerprint, seq }`、`dedupe_key` は `mirror.attendance_aggregate:<日のID>:<seq>`。予定が A → B → A と
+  戻った場合も3回目を積む。同じ内容の再反映では積み直さない)。
 - 変更があれば出勤簿を保存し、`entity_changes` に履歴(操作者つき、`change_source = 'calendar_sync'`)を追記する。
 - レスポンス `{ staffId, staffName, date, appointmentCount, changedCount, changes }`。
 - **管理者の期間一括反映**(GAS版の「一括反映」モーダル)は、クライアントがスタッフ×日ごとにこのAPIを順に呼び、
@@ -104,7 +114,7 @@ GAS版 `applyCalendarSyncForStaffOnDate` / `syncPastScheduleFromCalendar`。ボ�
 ### `POST /api/attendance/day/aggregate/refresh`(管理者のみ)
 
 GAS版 `refreshAttendanceForStaffOnDate`。ボディ `{ date, staffId }`。「勤怠集計」シートの該当スタッフ・該当日の
-行の書き直しを outbox に積む(個別出勤簿は書き換えない)。一般スタッフは `403`(WARNログ)。レスポンス
+行の書き直しを outbox に積む(個別出勤簿は書き換えない。予定の内容が同じでも毎回積む)。一般スタッフは `403`(WARNログ)。レスポンス
 `{ staffId, staffName, date, appointmentCount, rowData }`(`rowData` はカレンダーから組み立てた参考値)。
 
 ## 顧客CSV・データ版数
@@ -117,7 +127,10 @@ GAS版 `forceImportCsv`。ボディ `{ force?: boolean }`(既定 `true`=取込�
 `imported` / `up_to_date` / `no_files` / `not_configured`(200)、`review_required`(409)、`failed`(502)。
 
 GAS版は顧客シートを丸ごと書き換えていたが、こちらは RESERVA 顧客IDでの差分適用で、CSVから消えた顧客が既存の
-20%を超える場合は適用しない(`review_required`、版も進めない)。内容を確認して取り込む場合は
+20%を超える場合は適用しない(`review_required`、版も進めない)。行の値の誤りで取込全体を止めない: 住所2の適用終了日が
+開始日より前(前日を含む)なら期間なしで持ち(GAS版と同じく予定計算ではその住所を使わない)、登録日時等が読めなければ
+空にし、顧客ID・氏名の無い行は飛ばす。数は `import_runs.counts`(`skipped`・`issue_<理由>`)とログ
+(`customer_csv.imported` を WARN)に残す。内容を確認して取り込む場合は
 `pnpm --filter @katahimo/api import:reserva -- <tenantSlug> <CSVパス> --force`。
 
 > GAS版は画面を開くたびにクライアントから `checkAndImportLatestCsv` を呼んでいたが、新版では取込は定期ジョブと
@@ -143,9 +156,12 @@ GAS版 `checkDataVersion`。レスポンス `{ dataVersion: '12' }`(`tenant_sett
 - ジョブは Cloud Run Jobs として同じ worker イメージの別コマンドで動かす(ビルド済みの
   `node dist/<job>.js`。`<job>` は `nightly-calendar-sync` / `csv-import` / `maintenance` / `sync-busy-blocks` / `outbox-once`。
   構成は `Dockerfile` / `infra/gcp/run.tf`、手順は `doc/11_GCPデプロイ手順.md`)。
-  失敗(反映に失敗したスタッフがいる・取込が `failed`/`review_required`)があると終了コード1になり、
+  失敗(反映に失敗したスタッフがいる・取込が `failed`/`review_required`・保守の処理の失敗)があると終了コード1になり、
   Cloud Run Jobs の再試行・アラートに乗る。`JOB_TIMEOUT_MS`(既定30分)を超えても終了コード1。SIGTERM を受けたら区切り
-  (スタッフ・テナントの間)で止め、`WORKER_SHUTDOWN_TIMEOUT_MS` で強制終了する。ワーカーは専用の DB ユーザー
+  (スタッフ・テナントの間)で止め、`WORKER_SHUTDOWN_TIMEOUT_MS` で強制終了する。区切りで止めた夜間反映・保守は
+  最後まで終わっていないため終了コード1(`interrupted`。冪等なので再試行で残りを処理する)。
+- 保守は消去されていない全てのテナント(停止中・解約済みを含む)が対象。操作ログの月のパーティションは12か月先まで作り、
+  パーティションの無い月の行を受ける既定のパーティション(`app_logs_default`)の行を月のパーティションへ移す。ワーカーは専用の DB ユーザー
   `katahimo_worker`(`WORKER_DATABASE_URL`)で接続する。ログは1行JSON(Cloud Logging の構造化ログ)。
 - 取りこぼした日の流し直し: `pnpm job:nightly-calendar-sync -- 2026-09-24`。
 - ローカル開発では `WORKER_IN_PROCESS_CRON=true` で常駐ワーカーの中でも 22:00 / 03:00 / 04:00 JST に同じジョブを動かせる。
@@ -157,7 +173,10 @@ GAS版 `checkDataVersion`。レスポンス `{ dataVersion: '12' }`(`tenant_sett
 メッセージは `outbox_messages`(書き込みと同じトランザクションで積む。`dedupe_key` が同じなら積み直さない)。
 ワーカーはテナントを横断して `FOR UPDATE SKIP LOCKED` で1件ずつ取り出し、`processing`・`locked_until`
 (`OUTBOX_LEASE_MS`、既定5分)にしてすぐコミットし、処理はトランザクションの外で行う。リースが切れた `processing`
-(ワーカーの異常終了)は別のワーカーが取り直す。失敗は `attempts` に応じて `available_at` を
+(ワーカーの異常終了)は別のワーカーが取り直す(試行回数が `max_attempts` に達していれば取り直さず `dead`、ERROR ログ)。
+結果(完了・再試行・諦め)は取り出したときのリース(`locked_by` と `attempts`)がまだ自分のものである場合だけ書く。
+処理中にリースが切れて取り直されていたら何も書かず WARN(`outbox.lease_lost`)を残す(遅れて終わった古い処理が、
+取り直した処理の結果を上書きしない)。失敗は `attempts` に応じて `available_at` を
 `OUTBOX_RETRY_BASE_DELAY_MS × 2^(attempts-1)`(上限 `OUTBOX_RETRY_MAX_DELAY_MS`)だけ先送りして `pending` に戻し、
 `last_error` を残す。メッセージごとの `max_attempts`(既定8)回失敗したら `dead` にして自動再試行をやめ、`app_logs` に
 ERROR(`outbox.message_failed`)を残す。再試行しても直らない失敗(`PermanentOutboxError`)はすぐ `failed`。
@@ -182,37 +201,57 @@ WARN(`mirror.receipt.image_missing`)を残して完了にする。GAS Bridge 呼
 | `WORKER_IN_PROCESS_CRON` | ワーカー | `true` で常駐ワーカー内の定期実行を有効にする(ローカル用) |
 | `WORKER_HEALTH_PORT` | ワーカー | 常駐ワーカーをヘルスチェック用に待ち受けさせるポート(Cloud Run サービス用。未設定なら待ち受けない) |
 
-## GAS側(Bridge.js)に必要な変更
+## GAS側(Bridge.js)
 
-`legacy/` サブモジュールは読み取り専用のため、以下は GAS版リポジトリ(`katahimo-dev/gas-childcare-visit-app`)で行う。
+`legacy/` サブモジュールは読み取り専用のため、Bridge.js の変更は GAS版リポジトリ(`katahimo-dev/gas-childcare-visit-app`)で
+行う。**書き込み action の本番への配置は Bridge.js Ver. 1.1.38 以降にすること**(それより前の版は下の2点が誤っている)。
 
-1. **`writeAttendanceDay` の強調表示**(必須): ペイロードに `highlightColumns: string[]`(列記号)が加わった。
-   現行の `bridgeWriteAttendanceDay_` は値を書くだけなので、書き込み後に次を追加する
-   (GAS版 `updatePastSchedule` の `cell.setBackground('#fce4e4')` と同じ表示にするため)。未対応のままでも値の
-   書き込みは従来どおり動く(強調表示だけが付かない)。
+- `writeAccidentReport`(Ver. 1.1.38 で修正): 「事故報告」シートの列は GAS版 `saveAccidentReport` と同じ16列
+  (5・6列目が対象児の氏名 `targetName`・生年月日 `targetDob`)+ 17列目 `KatahimoReportId`。Ver. 1.1.37 までは
+  対象児の2列が抜けて7列目以降がずれ、`getCustomerReports`(`row[6]`〜`row[15]`)が別の項目を表示していた。
+  上書き(同じ `reportId`)で事故報告とヒヤリハットを切り替えると、同じ行の種別の列が変わる(GAS版と同じ)。
+- `writeReceipt`(Ver. 1.1.38 で修正): ペイロードの `receiptId` を「領収書一覧」の9列目 `KatahimoReceiptId` で追跡し、
+  同じIDが既にあれば何もしない(`{ success: true, alreadyMirrored: true }`。outbox の再送で Drive へのアップロード・行を
+  二重にしない)。重複の判定(日時+スタッフ+顧客+金額+店名)は本アプリで済んでいるため Bridge.js ではしない
+  (Ver. 1.1.37 までは GAS版 `processReceiptImages` を1枚ずつ呼んでおり、同じ登録の中の同じ内容の2枚目(往復の運賃等)が
+  落ちていた)。
+- `writeAttendanceDay`: `values` にはその書き込みで表示の変わった列だけが入る(空にした列は `''`)。Bridge.js は
+  `values` にある列だけを書くため、シートにだけある値(本アプリに取り込んでいない列)は残る。ペイロードの
+  `highlightColumns: string[]`(`values` の列のうち手で変えた列)の強調表示は未対応(対応する場合は書き込み後に次を足す。
+  GAS版 `updatePastSchedule` の `cell.setBackground('#fce4e4')` と同じ表示)。
 
-   ```js
-   (payload.highlightColumns || []).forEach(function (colChar) {
-     if (!(colChar in PAST_SCHEDULE_INPUT_COLUMNS)) return;
-     target.sheet.getRange(target.rowNumber, pastScheduleColumnToNumber_(colChar)).setBackground('#fce4e4');
-   });
-   ```
+  ```js
+  (payload.highlightColumns || []).forEach(function (colChar) {
+    if (!(colChar in PAST_SCHEDULE_INPUT_COLUMNS)) return;
+    target.sheet.getRange(target.rowNumber, pastScheduleColumnToNumber_(colChar)).setBackground('#fce4e4');
+  });
+  ```
+- `writeAttendanceAggregate`: 変更不要(ペイロード `{ staffName, businessDate }`。行の中身はGAS側がカレンダーと
+  Maps から計算し直し、該当スタッフ・該当日の既存行を消してから書くため再送しても重複しない)。
+  予定の取得を新版の SchedulePort(Google Calendar + Maps の直接呼び出し)に切り替えた後も、勤怠集計シートの
+  行はGAS側の計算のままになる点に注意(両者の計算結果を揃えたい場合は、将来 `rows` をペイロードで渡す action を
+  追加する)。
+- **共有シークレットの受け取り方**(推奨、セキュリティレビュー 2026-09): 新版は Bridge.js への要求に
+  シークレットを `X-Katahimo-Bridge-Secret` ヘッダーとURLクエリ `secret` の両方で付けている。Apps Script の Web App
+  (`doGet(e)` / `doPost(e)`)はリクエストヘッダーを読めないため、現行の Bridge.js はクエリの `secret` で認証しており、
+  クエリは外せない(URLはGoogle側のアクセスログ等に残りやすい)。Bridge.js を次のように変えたら、新版
+  (`packages/integrations/src/gas-bridge/gasBridgeClient.ts`)の POST からクエリの `secret` を外す:
+  - `doPost`: `verifyBridgeSecret_(params.secret)` を、本体の JSON(`JSON.parse(e.postData.contents).secret`)の
+    値でも認証できるようにする(移行期間は両方を受け付ける)。書き込み処理は本体の `secret` を無視するようにする。
+  - 読み取り系(`doGet` の `?api=1`、ジオコーディング・ルート計算・予定)も POST(本体に `secret`)で受け付ける
+    action を足す(GET には本体が無いため、クエリ以外にシークレットを載せる場所が無い)。
+- GAS版の時限トリガー `autoSyncTodayScheduleForAllStaff` / `checkAndImportLatestCsv`(`Triggers.js`)は、新版の
+  ジョブを本番で動かし始めたら `setupAllTriggers()` の定義で `enabled: false` にして止める(二重反映・二重取込を
+  避けるため)。
 
-   `values` には25列全てが入る(DB が正のため、空になった列はシートでも空にする)。
-2. **`writeAttendanceAggregate`**: 変更不要(ペイロード `{ staffName, businessDate }`。行の中身はGAS側がカレンダーと
-   Maps から計算し直し、該当スタッフ・該当日の既存行を消してから書くため再送しても重複しない)。
-   予定の取得を新版の SchedulePort(Google Calendar + Maps の直接呼び出し)に切り替えた後も、勤怠集計シートの
-   行はGAS側の計算のままになる点に注意(両者の計算結果を揃えたい場合は、将来 `rows` をペイロードで渡す action を
-   追加する)。
-3. **共有シークレットの受け取り方**(推奨、セキュリティレビュー 2026-09): 新版は Bridge.js への要求に
-   シークレットを `X-Katahimo-Bridge-Secret` ヘッダーとURLクエリ `secret` の両方で付けている。Apps Script の Web App
-   (`doGet(e)` / `doPost(e)`)はリクエストヘッダーを読めないため、現行の Bridge.js はクエリの `secret` で認証しており、
-   クエリは外せない(URLはGoogle側のアクセスログ等に残りやすい)。Bridge.js を次のように変えたら、新版
-   (`packages/integrations/src/gas-bridge/gasBridgeClient.ts`)の POST からクエリの `secret` を外す:
-   - `doPost`: `verifyBridgeSecret_(params.secret)` を、本体の JSON(`JSON.parse(e.postData.contents).secret`)の
-     値でも認証できるようにする(移行期間は両方を受け付ける)。書き込み処理は本体の `secret` を無視するようにする。
-   - 読み取り系(`doGet` の `?api=1`、ジオコーディング・ルート計算・予定)も POST(本体に `secret`)で受け付ける
-     action を足す(GET には本体が無いため、クエリ以外にシークレットを載せる場所が無い)。
-4. GAS版の時限トリガー `autoSyncTodayScheduleForAllStaff` / `checkAndImportLatestCsv`(`Triggers.js`)は、新版の
-   ジョブを本番で動かし始めたら `setupAllTriggers()` の定義で `enabled: false` にして止める(二重反映・二重取込を
-   避けるため)。
+## 既存の出勤簿の取込(切り替えの準備)
+
+`pnpm --filter @katahimo/api import:attendance -- <tenantSlug> <スタッフのログインメール> <CSVの絶対パス> [--year YYYY]`
+
+個別出勤簿(`<スタッフ名>_出勤簿_<年度>年度` の月のシート)を CSV に書き出したもの(「ファイル → ダウンロード → CSV」)を、
+そのスタッフの出勤簿の実体に取り込む(`packages/ingestion/src/attendanceSheetCsv/` で読み、
+`importAttendanceSheetRows` が1日ずつ `applyRowEdit` で当てる)。A列が日付の行だけを読み(年の無い表記は `--year`)、
+入力列(C〜AO)の位置は `sheetLayout.ts` の列の定義から決める。1日ずつ別のトランザクションで差分を書き
+(`entity_changes.change_source = 'import'`)、同じ内容の再実行は何も書かない。当月の編集期限は掛けない(締めた月は
+DB が拒否)。スプレッドシートへのミラーは積まない。CSV には背景色が無いため、手で変えた強調表示は取り込まない。
+形式の読めないセルはそのセルだけ飛ばして表示する。使い方は doc/11 §7。

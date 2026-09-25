@@ -21,3 +21,15 @@ GRANT CREATE ON DATABASE katahimo TO katahimo_owner;
 -- public スキーマは所有者だけがオブジェクトを作れる(アプリ・ワーカーに DDL をさせない)
 ALTER SCHEMA public OWNER TO katahimo_owner;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+-- アプリ・ワーカーの接続ごとの上限(このデータベースに接続したときだけ効く)。ロールの設定は管理ユーザー
+-- (cloudsqlsuperuser)にしか変えられないため、マイグレーションではなくここで設定する(infra/initdb/01_bootstrap.sql と同じ値)。
+--   statement_timeout                    … 1つの文の上限(暴走した問い合わせで接続を占有しない)
+--   lock_timeout                         … 行ロック・アドバイザリロックを待つ上限(待ちの連鎖で詰まらない)
+--   idle_in_transaction_session_timeout  … トランザクションを開けたまま何もしない接続を切る(プールの枯渇を防ぐ)
+ALTER ROLE katahimo_app IN DATABASE katahimo SET statement_timeout = '15s';
+ALTER ROLE katahimo_app IN DATABASE katahimo SET lock_timeout = '5s';
+ALTER ROLE katahimo_app IN DATABASE katahimo SET idle_in_transaction_session_timeout = '30s';
+ALTER ROLE katahimo_worker IN DATABASE katahimo SET statement_timeout = '60s';
+ALTER ROLE katahimo_worker IN DATABASE katahimo SET lock_timeout = '10s';
+ALTER ROLE katahimo_worker IN DATABASE katahimo SET idle_in_transaction_session_timeout = '60s';
