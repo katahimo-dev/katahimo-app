@@ -1,95 +1,135 @@
-import { changePassword, login } from '@katahimo/core';
+import { changePassword, confirmPasswordReset, login, logout, requestPasswordReset } from '@katahimo/core';
+import type { ResolvedSession } from '@katahimo/core/usecases';
+import type { SessionUser } from '@katahimo/shared';
+import {
+  changePasswordRequestSchema,
+  loginRequestSchema,
+  PASSWORD_POLICY_MESSAGES,
+  passwordResetConfirmSchema,
+  passwordResetRequestSchema,
+} from '@katahimo/shared';
 import { Hono } from 'hono';
-import { deleteCookie, setCookie } from 'hono/cookie';
 import type { Container } from '../container';
-import { getAuthenticatedSession, SESSION_COOKIE_NAME } from '../session';
+import { requestMeta } from '../http/requestMeta';
+import { apiError, parseJsonBody } from '../http/responses';
+import type { SessionEnv } from '../session';
+import {
+  clearSessionCookie,
+  getAuthenticatedSession,
+  readSessionCookie,
+  requireSession,
+  setSessionCookie,
+} from '../session';
 
-interface LoginBody {
-  tenantSlug?: unknown;
-  email?: unknown;
-  password?: unknown;
+function toSessionUser(session: ResolvedSession): SessionUser {
+  return {
+    staffId: session.staffId,
+    tenantId: session.tenantId,
+    name: session.name,
+    email: session.email,
+    isAdmin: session.isAdmin,
+  };
 }
 
-export function createAuthRoutes(container: Container, isProduction: boolean) {
-  const app = new Hono();
+/** 再設定コードの発行要求への応答(アカウントの有無を伝えないため常に同じ文面)。 */
+const RESET_REQUEST_ACCEPTED_MESSAGE =
+  '登録されているメールアドレスであれば、認証コードを送信しました。メールをご確認ください(有効期限30分)。';
 
+export function createAuthRoutes(container: Container) {
+  const app = new Hono<SessionEnv>();
+
+  /** GAS版Auth.js verifyLogin。email/サブメールのどちらでもログインできる。 */
   app.post('/login', async (c) => {
-    const body = (await c.req.json().catch(() => null)) as LoginBody | null;
-    if (
-      !body ||
-      typeof body.tenantSlug !== 'string' ||
-      typeof body.email !== 'string' ||
-      typeof body.password !== 'string'
-    ) {
-      return c.json({ code: 'validation_failed', message: 'tenantSlug, email, password が必要です' }, 400);
-    }
+    const body = await parseJsonBody(c, loginRequestSchema);
+    if (!body.ok) return body.response;
 
-    const result = await login(container, {
-      tenantSlug: body.tenantSlug,
-      email: body.email,
-      password: body.password,
-    });
-
+    const result = await login(container, { ...body.data, meta: requestMeta(c) });
     if (!result.ok) {
-      const status = result.reason === 'tenant_not_found' ? 404 : 401;
-      return c.json({ code: 'unauthenticated', message: 'メールアドレスまたはパスワードが違います' }, status);
+      const message =
+        result.reason === 'retired'
+          ? 'ログイン権限のないユーザーです'
+          : 'メールアドレスまたはパスワードが違います';
+      return apiError(c, 401, 'unauthenticated', message);
     }
 
-    setCookie(c, SESSION_COOKIE_NAME, result.sessionCookieValue, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: 'Lax',
-      path: '/',
-      expires: result.expiresAt,
-    });
-
-    return c.json({ staff: result.staff });
+    setSessionCookie(c, container, result.sessionCookieValue, result.expiresAt);
+    const staff: SessionUser = {
+      staffId: result.staff.id,
+      tenantId: result.staff.tenantId,
+      name: result.staff.name,
+      email: result.staff.email,
+      isAdmin: result.staff.isAdmin,
+    };
+    return c.json({ staff });
   });
 
+  /** ページ読み込み時のセッション確認(GAS版checkSession(token, isInitialLoad=true))。 */
   app.get('/me', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-    return c.json({ staff: session });
+    const session = await getAuthenticatedSession(c, container, { isInitialLoad: true });
+    if (!session) return apiError(c, 401, 'unauthenticated', '未ログインです');
+    return c.json({ staff: toSessionUser(session) });
   });
 
-  app.post('/logout', (c) => {
-    deleteCookie(c, SESSION_COOKIE_NAME, { path: '/' });
+  /** ログアウト。Cookieを消すだけでなく、サーバー側のセッション行も削除する。 */
+  app.post('/logout', async (c) => {
+    const cookieValue = readSessionCookie(c);
+    if (cookieValue) await logout(container, cookieValue, requestMeta(c));
+    clearSessionCookie(c);
     return c.json({ ok: true });
   });
 
-  /** ログイン中スタッフ自身のパスワード変更。GAS版Auth.js changePassword相当。 */
-  app.post('/change-password', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
+  /** ログイン中スタッフ自身のパスワード変更。GAS版Auth.js changePassword。 */
+  app.post('/change-password', requireSession(container, 'auth.password_change'), async (c) => {
+    const session = c.get('session');
+    const body = await parseJsonBody(c, changePasswordRequestSchema);
+    if (!body.ok) return body.response;
 
-    const body = (await c.req.json().catch(() => null)) as {
-      currentPassword?: unknown;
-      newPassword?: unknown;
-    } | null;
-    if (
-      !body ||
-      typeof body.currentPassword !== 'string' ||
-      typeof body.newPassword !== 'string' ||
-      !body.newPassword
-    ) {
-      return c.json({ success: false, message: 'currentPassword, newPassword が必要です' }, 400);
+    const result = await changePassword(container, {
+      tenantId: session.tenantId,
+      staffId: session.staffId,
+      sessionId: session.sessionId,
+      currentPassword: body.data.currentPassword,
+      newPassword: body.data.newPassword,
+      meta: requestMeta(c),
+    });
+    if (!result.ok) {
+      if (result.reason === 'weak_password') {
+        return apiError(c, 400, 'validation_failed', PASSWORD_POLICY_MESSAGES[result.violation]);
+      }
+      if (result.reason === 'incorrect_current_password') {
+        return apiError(c, 400, 'validation_failed', '現在のパスワードが正しくありません');
+      }
+      return apiError(c, 401, 'unauthenticated', 'セッションが無効です');
     }
+    return c.json({ success: true as const, message: 'パスワードを変更しました' });
+  });
 
-    const result = await changePassword(
-      container,
-      session.tenantId,
-      session.staffId,
-      body.currentPassword,
-      body.newPassword,
-    );
+  /** GAS版Auth.js requestPasswordReset。成否・アカウントの有無にかかわらず同じ応答を返す。 */
+  app.post('/password-reset/request', async (c) => {
+    const body = await parseJsonBody(c, passwordResetRequestSchema);
+    if (!body.ok) return body.response;
+    await requestPasswordReset(container, { ...body.data, meta: requestMeta(c) });
+    return c.json({ ok: true as const, message: RESET_REQUEST_ACCEPTED_MESSAGE });
+  });
+
+  /** GAS版Auth.js resetPasswordWithCode。 */
+  app.post('/password-reset/confirm', async (c) => {
+    const body = await parseJsonBody(c, passwordResetConfirmSchema);
+    if (!body.ok) return body.response;
+
+    const result = await confirmPasswordReset(container, { ...body.data, meta: requestMeta(c) });
     if (!result.ok) {
       const message =
-        result.reason === 'incorrect_current_password'
-          ? '現在のパスワードが正しくありません'
-          : 'セッションが無効です';
-      return c.json({ success: false, message }, 400);
+        result.reason === 'weak_password'
+          ? PASSWORD_POLICY_MESSAGES[result.violation]
+          : result.reason === 'expired'
+            ? '認証コードの有効期限が切れています'
+            : result.reason === 'too_many_attempts'
+              ? '認証コードの入力回数が上限を超えました。もう一度認証コードを発行してください'
+              : '無効な認証コードです';
+      return apiError(c, 400, 'validation_failed', message);
     }
-    return c.json({ success: true });
+    return c.json({ ok: true as const, message: 'パスワードを再設定しました' });
   });
 
   return app;
