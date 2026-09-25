@@ -5,8 +5,9 @@ import { sql } from 'drizzle-orm';
  *
  * `current_setting('app.tenant_id', true)` の第2引数 true は「未設定ならエラーにせずNULLを返す」
  * 指定。NULL = tenant_id は常にfalseになるため、テナントコンテキストを張り忘れた接続からは
- * 何も見えない(安全側に倒れる)。マイグレーション等はテーブル所有者(katahimo)で実行し、
- * 所有者はPostgreSQLの仕様上RLSを常にバイパスするため、この条件の影響を受けない。
+ * 何も見えない(安全側に倒れる)。全テーブルに FORCE ROW LEVEL SECURITY を掛けているため
+ * (drizzle/0001_custom_constraints.sql)、テーブル所有者(katahimo)で接続しても同じ条件が効く。
+ * マイグレーションはDDLだけでデータを読まないため影響を受けない。
  *
  * withTenant()(../client.ts)が `SET LOCAL app.tenant_id` でこの設定を張る。
  *

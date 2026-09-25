@@ -24,7 +24,10 @@ import { installWebMock } from './webMock';
  * --web-mode live: 実際のAPI(Vite経由)にログインして撮る(KATAHIMO_LIVE_EMAIL / KATAHIMO_LIVE_PASSWORD、
  *                  既定は開発用seedの admin@example.com / admin1234)。データはDBの内容になる。
  */
+// pnpm 11 は `pnpm … shoot -- --only x` の `--` もそのまま渡す。parseArgs は `--` 以降をオプションとして
+// 読まないため取り除く
 const { values } = parseArgs({
+  args: process.argv.slice(2).filter((a) => a !== '--'),
   options: {
     only: { type: 'string' },
     target: { type: 'string', default: 'both' },

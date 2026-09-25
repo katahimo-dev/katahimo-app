@@ -32,16 +32,13 @@ pnpm --filter @katahimo/web dev
 # 全場面を撮る → tools/gas-preview/out/<場面>.png(GAS版 | 新アプリ | 差分 の3列)
 pnpm --filter @katahimo/gas-preview shoot
 
-# オプションを付けるときは直接動かす(pnpm 11 は `pnpm … shoot -- --only …` の `--` をそのまま渡すため、
-# うしろのオプションが効かない)。プロキシ経由でフォントを取る環境では NODE_USE_ENV_PROXY=1 を付ける
-cd tools/gas-preview
 # 名前(正規表現)で絞る・一覧を見る・片方だけ撮る
-npx tsx src/shoot.ts --only '^settings'
-npx tsx src/shoot.ts --list
-npx tsx src/shoot.ts --target gas      # out/<場面>.gas.png だけ
+pnpm --filter @katahimo/gas-preview shoot -- --only '^settings'
+pnpm --filter @katahimo/gas-preview shoot -- --list
+pnpm --filter @katahimo/gas-preview shoot -- --target gas      # out/<場面>.gas.png だけ
 
 # 実際のAPIで撮る(API :8080 と web :5173 を起動しておく。既定は開発用seedの demo / admin@example.com / admin1234)
-npx tsx src/shoot.ts --web-mode live --only shell
+pnpm --filter @katahimo/gas-preview shoot -- --web-mode live --only shell
 
 # GAS版を手で触る(モックのパスワードは password、再設定の番号は 123456)
 pnpm --filter @katahimo/gas-preview serve     # http://127.0.0.1:5180/?as=admin | ?as=staff | ?as=none
@@ -104,8 +101,9 @@ export const scheduleShots: Shot[] = [
 あとに入れる init script を足して読み込み直して撮る。
 
 ポートを変えて撮る(並行して別の開発サーバーを動かしているとき)は環境変数で:
-`KATAHIMO_WEB_URL=http://127.0.0.1:5321 GAS_PREVIEW_PORT=5192`(pnpm 11 では `pnpm … shoot -- --only …` の
-`--` がそのまま渡り、うしろのオプションが効かないため、`cd tools/gas-preview && npx tsx src/shoot.ts --only '^report-'` のように直接動かす)。
+`KATAHIMO_WEB_URL=http://127.0.0.1:5321 GAS_PREVIEW_PORT=5192`。pnpm 11 は `pnpm … shoot -- --only …` の `--` も
+そのまま渡すが、`shoot.ts` / `e2e.ts` は `--` を取り除いてからオプションを読むので、そのまま効く
+(`cd tools/gas-preview && npx tsx src/shoot.ts --only '^report-'` のように直接動かしてもよい)。
 新アプリの開発サーバーのポート・中継先は `WEB_DEV_PORT=5321 WEB_API_PROXY_TARGET=http://localhost:8521 pnpm --filter @katahimo/web dev`。
 
 ## 通し確認(`src/e2e.ts`、実際のAPI・DB)
@@ -116,7 +114,7 @@ export const scheduleShots: Shot[] = [
 
 ```bash
 # 前提: pnpm db:migrate && pnpm db:seed 済み、API(:8080)と web 開発サーバー(:5173)を起動しておく
-cd tools/gas-preview && npx tsx src/e2e.ts
+pnpm --filter @katahimo/gas-preview e2e      # または cd tools/gas-preview && npx tsx src/e2e.ts
 # 本番ビルド(API が WEB_DIST_DIR のWeb画面を配信)で確かめる
 npx tsx src/e2e.ts --web-url http://127.0.0.1:8484
 # 手順を名前(正規表現)で絞る(ログインは前提になるため一緒に指定する)

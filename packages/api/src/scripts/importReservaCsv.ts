@@ -16,7 +16,8 @@ import { loadEnv } from '../env';
  * --force を付けない限り適用を拒否する(安全装置。packages/ingestion/src/reservaCsv/plan.ts参照)。
  */
 async function main() {
-  const [tenantSlug, csvPath, ...rest] = process.argv.slice(2);
+  // pnpm 11 は `pnpm … import:reserva -- <引数>` の `--` もそのまま渡すため取り除く
+  const [tenantSlug, csvPath, ...rest] = process.argv.slice(2).filter((a) => a !== '--');
   const force = rest.includes('--force');
 
   if (!tenantSlug || !csvPath) {

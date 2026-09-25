@@ -18,7 +18,10 @@ import { OUT_DIR } from './paths';
  * 一般スタッフの確認用に、管理者API(POST /api/admin/staff)で「e2e 一般スタッフ」を作る(既にあれば使い回す)。
  * 日報・領収書・出勤簿はDBに書き込まれる(開発用DB向け。本番に向けて動かさないこと)。
  */
+// pnpm 11 は `pnpm … shoot -- --only x` の `--` もそのまま渡す。parseArgs は `--` 以降をオプションとして
+// 読まないため取り除く
 const { values } = parseArgs({
+  args: process.argv.slice(2).filter((a) => a !== '--'),
   options: {
     'web-url': { type: 'string', default: process.env.KATAHIMO_WEB_URL ?? 'http://127.0.0.1:5173' },
     only: { type: 'string' },

@@ -158,7 +158,7 @@ GAS版の `index.html` をモックの `google.script.run` 付きでローカル
 ```bash
 pnpm --filter @katahimo/web dev                       # 別のターミナルで
 pnpm --filter @katahimo/gas-preview shoot             # tools/gas-preview/out/<場面>.png
-cd tools/gas-preview && npx tsx src/shoot.ts --only settings   # 絞るとき(pnpm 11 は -- の後ろを渡せない)
+pnpm --filter @katahimo/gas-preview shoot -- --only settings
 ```
 
 新しい画面を作ったら、`tools/gas-preview/src/shots/<機能>.ts` に場面を足し、差分(3列目)が黒くなるまで直す。
