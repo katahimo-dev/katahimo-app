@@ -1,0 +1,23 @@
+{
+  "name": "@katahimo/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@katahimo/core": "workspace:*",
+    "@katahimo/db": "workspace:*",
+    "@katahimo/integrations": "workspace:*",
+    "@katahimo/shared": "workspace:*",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.38.2",
+    "zod": "^3.24.1"
+  }
+}

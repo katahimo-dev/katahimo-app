@@ -1,0 +1,12 @@
+packages:
+  - 'packages/*'
+
+# pnpm v10以降は依存パッケージのpostinstallを既定でブロックする(サプライチェーン対策)。
+# 実行を許可/明示的に拒否するパッケージを allowBuilds で宣言する。
+allowBuilds:
+  # ネイティブバイナリの取得/検証が必要
+  '@biomejs/biome': true
+  '@node-rs/argon2': true
+  # esbuild は @esbuild/win32-x64 等のプラットフォーム別パッケージが optionalDependencies として
+  # 入るため、postinstall を実行しなくても動作する。実行不要であることを明示する。
+  esbuild: false

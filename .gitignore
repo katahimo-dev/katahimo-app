@@ -3,4 +3,10 @@ dist/
 .env
 .env.*
 !.env.example
+*.tsbuildinfo
+.turbo/
 coverage/
+
+# ローカル開発用の領収書画像保存先(LocalFileStoragePort)。本番はGCSに置き換わる想定で、
+# 実データを含みうるためコミットしない。
+packages/api/data/

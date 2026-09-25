@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#2563eb" />
+    <title>katahimo 訪問管理</title>
+    <!-- GAS版(gas-childcare-visit-app/index.html)と同じ見た目・操作感にするため、
+         同じCSSフレームワーク(Tailwind CDN)とフォントを使う(移行時の混乱を減らすため)。 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+    <style>
+      body {
+        font-family: 'Outfit', sans-serif;
+        background-color: #f3f4f6;
+      }
+      .loading-spinner {
+        border-top-color: #3b82f6;
+        border-left-color: #3b82f6;
+        animation: spin 1s infinite linear;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+
+      /* 文字サイズ設定(GAS版index.htmlの同名ルールと同じ)。 */
+      html[data-text-size='medium'] .text-xs {
+        font-size: 0.875rem !important;
+        line-height: 1.4 !important;
+      }
+      html[data-text-size='medium'] .text-sm {
+        font-size: 1rem !important;
+        line-height: 1.5 !important;
+      }
+      html[data-text-size='medium'] .text-base {
+        font-size: 1.05rem !important;
+      }
+      html[data-text-size='large'] .text-xs {
+        font-size: 1rem !important;
+        line-height: 1.5 !important;
+      }
+      html[data-text-size='large'] .text-sm {
+        font-size: 1.125rem !important;
+        line-height: 1.6 !important;
+      }
+      html[data-text-size='large'] .text-base {
+        font-size: 1.2rem !important;
+      }
+      html[data-text-size='large'] input,
+      html[data-text-size='large'] textarea,
+      html[data-text-size='large'] button {
+        font-size: 1.1rem !important;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100 min-h-screen text-gray-800 flex justify-center">
+    <div id="root" style="width: 100%; max-width: 480px"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

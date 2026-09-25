@@ -1,0 +1,34 @@
+{
+  "name": "@katahimo/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "build": "tsup src/server.ts --format esm --clean",
+    "seed": "tsx src/scripts/seed.ts",
+    "import:reserva": "tsx src/scripts/importReservaCsv.ts",
+    "import:legacy-staff": "tsx src/scripts/importLegacyStaff.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@katahimo/core": "workspace:*",
+    "@katahimo/db": "workspace:*",
+    "@katahimo/ingestion": "workspace:*",
+    "@katahimo/integrations": "workspace:*",
+    "@katahimo/shared": "workspace:*",
+    "@node-rs/argon2": "^2.0.2",
+    "dotenv": "^16.4.7",
+    "hono": "^4.6.14",
+    "zod": "^3.24.1",
+    "drizzle-orm": "^0.38.2"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5"
+  }
+}
