@@ -1,0 +1,36 @@
+-- データベース側の初期化(00_create_database.sql の後、マイグレーションより前)。スーパーユーザーで実行する:
+--   psql -U postgres -h localhost -d katahimo_dev -f infra/initdb/01_bootstrap.sql
+-- Docker 利用時は docker-entrypoint-initdb.d から自動実行される。何度実行してもよい。
+-- テーブルごとの権限はマイグレーション(0001_baseline_custom.sql)が明示的に付ける(既定権限は使わない)。
+
+\set ON_ERROR_STOP on
+
+-- EXCLUDE 制約(二重予約・期間の重なりの禁止)に使う。trusted extension のため所有者でも作れるが先に作っておく。
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+-- 接続できるロールを限る
+SELECT format('REVOKE ALL ON DATABASE %I FROM PUBLIC', current_database())\gexec
+SELECT format('GRANT CONNECT ON DATABASE %I TO katahimo_migrator, katahimo_app, katahimo_worker, katahimo_readonly',
+              current_database())\gexec
+-- 所有者はスキーマ(platform・drizzle)を作れる
+SELECT format('GRANT CREATE ON DATABASE %I TO katahimo_owner', current_database())\gexec
+
+-- public スキーマは所有者だけがオブジェクトを作れる(アプリ・ワーカーに DDL をさせない)
+ALTER SCHEMA public OWNER TO katahimo_owner;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+-- アプリ・ワーカーの接続ごとの上限(このデータベースに接続したときだけ効く)。ロールの設定はスーパーユーザー
+-- (Cloud SQL では cloudsqlsuperuser)にしか変えられないため、マイグレーションではなくここで設定する。
+--   statement_timeout                    … 1つの文の上限(暴走した問い合わせで接続を占有しない)
+--   lock_timeout                         … 行ロック・アドバイザリロックを待つ上限(待ちの連鎖で詰まらない)
+--   idle_in_transaction_session_timeout  … トランザクションを開けたまま何もしない接続を切る(プールの枯渇を防ぐ)
+-- 値を変えるときは infra/cloudsql/01_bootstrap.sql・doc/09 「ロールと権限」も直す。
+SELECT format('ALTER ROLE %I IN DATABASE %I SET %s = %L', role, current_database(), setting, value)
+FROM (VALUES
+  ('katahimo_app', 'statement_timeout', '15s'),
+  ('katahimo_app', 'lock_timeout', '5s'),
+  ('katahimo_app', 'idle_in_transaction_session_timeout', '30s'),
+  ('katahimo_worker', 'statement_timeout', '60s'),
+  ('katahimo_worker', 'lock_timeout', '10s'),
+  ('katahimo_worker', 'idle_in_transaction_session_timeout', '60s')
+) AS t(role, setting, value)\gexec

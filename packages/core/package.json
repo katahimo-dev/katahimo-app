@@ -1,0 +1,19 @@
+{
+  "name": "@katahimo/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ports": "./src/ports/index.ts",
+    "./domain": "./src/domain/index.ts",
+    "./usecases": "./src/usecases/index.ts",
+    "./test-utils": "./src/usecases/testUtils.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@katahimo/shared": "workspace:*"
+  }
+}

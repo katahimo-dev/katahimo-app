@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // 画面・見比べの道具は既存のコードが多く、段階的に有効にする(サーバー側は tsconfig.base.json で有効)
+    "exactOptionalPropertyTypes": false,
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

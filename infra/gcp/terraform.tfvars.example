@@ -1,0 +1,30 @@
+# cp terraform.tfvars.example terraform.tfvars(terraform.tfvars はコミットしない)
+project_id = "katahimo-prod"
+region     = "asia-northeast1"
+
+# 初回は false。ロール作成・シークレット登録・イメージの push の後に true にして再度 apply(doc/11)
+deploy_workloads = false
+
+sql_tier              = "db-g1-small"
+sql_high_availability = false
+
+schedule_provider          = "google"
+google_calendar_ids        = ""
+gas_bridge_url             = ""
+mirror_to_google_sheets    = false
+customer_csv_drive_folders = "{\"cutest\":\"<DriveフォルダID>\"}"
+
+smtp = {
+  host = "smtp.gmail.com"
+  port = 587
+  user = "noreply@example.com"
+  from = "保育日報 <noreply@example.com>"
+}
+
+# 値を登録した任意シークレット(secrets.tf)
+optional_secrets = ["smtp-pass", "google-maps-api-key", "gemini-api-key", "legacy-auth-salt"]
+
+# 監視・予算(monitoring.tf)。通知先のメールと、予算を作る請求先アカウント(空なら予算は作らない)
+alert_emails       = ["ops@example.com"]
+billing_account_id = ""
+budget_amount      = 30000

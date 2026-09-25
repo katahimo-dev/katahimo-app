@@ -1,0 +1,75 @@
+# 依存の更新 PR(週1回、JST 月曜朝)。npm はまとめて1本にし、PR が溢れないようにする。
+# pnpm のワークスペース(pnpm-lock.yaml)は package-ecosystem: npm で扱われる。
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 5
+    # 公開直後の版は取り込まない(乗っ取られたパッケージの公開 → 取り下げまでの時間を避ける)
+    cooldown:
+      default-days: 7
+    groups:
+      # セキュリティ更新以外の minor / patch は1本にまとめる。major は個別の PR にして中身を確認する
+      npm-minor-patch:
+        applies-to: version-updates
+        patterns: ['*']
+        update-types: [minor, patch]
+      npm-security:
+        applies-to: security-updates
+        patterns: ['*']
+    ignore:
+      # playwright-core は見比べハーネスの Chromium(revision)に合わせて固定している(tools/gas-preview/README.md)
+      - dependency-name: playwright-core
+      # Web は Tailwind v3 を前提にしている(packages/web/README.md)
+      - dependency-name: tailwindcss
+        update-types: [version-update:semver-major]
+      # Node の型は実行環境(Node 22)に合わせる
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
+    commit-message:
+      prefix: deps
+
+  # Dockerfile のベースイメージ(ダイジェスト固定)。Node のメジャー更新は手で行う
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Tokyo
+    ignore:
+      - dependency-name: node
+        update-types: [version-update:semver-major]
+    commit-message:
+      prefix: deps
+
+  # .github/workflows と .github/actions(複合アクション)で使うアクション
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Tokyo
+    groups:
+      github-actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
+
+  # infra/gcp の Terraform プロバイダー(.terraform.lock.hcl)
+  - package-ecosystem: terraform
+    directory: /infra/gcp
+    schedule:
+      interval: monthly
+      timezone: Asia/Tokyo
+    commit-message:
+      prefix: infra

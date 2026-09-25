@@ -1,0 +1,52 @@
+# Terraform(infra/gcp)の書式・構文チェック。GCP には接続しない(backend なしで init し、plan / apply はしない)。
+# プロバイダーの版とハッシュは infra/gcp/.terraform.lock.hcl に固定しており、-lockfile=readonly でそれと
+# 違うものを入れようとしたら失敗させる(版を上げるときは doc/11 「Terraform のロックファイル」の手順で更新する)。
+name: infra
+
+on:
+  pull_request:
+    paths:
+      - infra/gcp/**
+      - .github/workflows/infra.yml
+  push:
+    branches: [main]
+    paths:
+      - infra/gcp/**
+      - .github/workflows/infra.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: terraform fmt・validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra/gcp
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.16
+          # 出力をそのまま表示する(ラッパーは stdout を outputs に入れるためのもので、ここでは不要)
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform init(backend なし)
+        run: terraform init -backend=false -input=false -lockfile=readonly
+
+      - name: terraform validate
+        run: terraform validate

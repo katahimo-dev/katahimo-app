@@ -1,0 +1,31 @@
+{
+  "name": "@katahimo/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsup",
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "outbox:once": "tsx src/entrypoints/outboxOnce.ts",
+    "job:nightly-calendar-sync": "tsx src/entrypoints/nightlyCalendarSync.ts",
+    "job:csv-import": "tsx src/entrypoints/csvImport.ts",
+    "job:sync-busy-blocks": "tsx src/entrypoints/syncBusyBlocks.ts",
+    "job:maintenance": "tsx src/entrypoints/maintenance.ts"
+  },
+  "dependencies": {
+    "@katahimo/core": "workspace:*",
+    "@katahimo/db": "workspace:*",
+    "@katahimo/ingestion": "workspace:*",
+    "@katahimo/integrations": "workspace:*",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5"
+  }
+}
