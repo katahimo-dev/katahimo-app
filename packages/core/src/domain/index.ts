@@ -3,5 +3,6 @@ export * from './legacyAuth';
 export * from './legacyImport';
 export * from './pii';
 export * from './reports';
+export * from './schedule';
 export * from './staff';
 export * from './staffName';

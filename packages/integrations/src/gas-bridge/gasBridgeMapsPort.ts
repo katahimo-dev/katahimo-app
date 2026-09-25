@@ -2,14 +2,15 @@ import type { LatLng, MapsPort, RouteLeg } from '@katahimo/core/ports';
 import type { GasBridgeOptions } from './gasBridgeClient';
 import { GasBridgeClient } from './gasBridgeClient';
 
+interface BridgeRoute {
+  durationMin: number;
+  distanceKm: number;
+}
+
 /**
- * katahimo-appはApps Script実行環境の外からMapsサービス(Maps.newGeocoder/newDirectionFinder)を
- * 直接呼べないため、既に稼働しているgas-childcare-visit-appのWeb Appデプロイ(Bridge.js)を
- * 軽量なJSON APIプロキシとして使う実装。Google Maps Platformの新規契約(APIキー・課金設定)を
- * 避けられる(GAS版のMapsサービスが無料で使えている前提を、そのまま新システムでも使う)。
- *
- * ロジックはGAS版RouteSearch.jsのgetLatLngFromAddress/getRouteDetails(自動車移動・
- * 出発時刻指定無し)と同じで、実際の計算はBridge.js側(GAS実行環境内)で行う。
+ * GAS版Web App(Bridge.js)のMapsサービス(Maps.newGeocoder/newDirectionFinder)をプロキシとして
+ * 使う MapsPort 実装。Google Maps PlatformのAPIキーが無い移行期用。
+ * Bridge.jsは常に自動車(DRIVING)で計算するため、travelMode の指定は無視される。
  */
 export class GasBridgeMapsPort implements MapsPort {
   private readonly client: GasBridgeClient;
@@ -27,28 +28,21 @@ export class GasBridgeMapsPort implements MapsPort {
     return body.location;
   }
 
-  /** GAS版と同じく出発時刻の指定はできない(常に現在の交通状況無しのDRIVINGルート)。 */
   async route(origin: LatLng, destination: LatLng): Promise<RouteLeg | null> {
-    const body = await this.client.fetchJson<{ success: boolean; route: RouteLeg | null; message?: string }>(
-      'route',
-      {
-        originLat: String(origin.lat),
-        originLng: String(origin.lng),
-        destLat: String(destination.lat),
-        destLng: String(destination.lng),
-      },
-    );
+    const body = await this.client.fetchJson<{
+      success: boolean;
+      route: BridgeRoute | null;
+      message?: string;
+    }>('route', {
+      originLat: String(origin.lat),
+      originLng: String(origin.lng),
+      destLat: String(destination.lat),
+      destLng: String(destination.lng),
+    });
     if (!body.success) throw new Error(body.message || 'ルート計算に失敗しました(GASブリッジ)');
-    return body.route;
-  }
-}
-
-/** GAS_BRIDGE_URL/GAS_BRIDGE_SECRET未設定時のフォールバック。常に「算出不可」を返す。 */
-export class NoopMapsPort implements MapsPort {
-  async geocode(): Promise<LatLng | null> {
-    return null;
-  }
-  async route(): Promise<RouteLeg | null> {
-    return null;
+    // Bridge.jsは分・km(小数2桁)に丸めて返すため、秒・メートルに戻す。
+    return body.route
+      ? { durationSeconds: body.route.durationMin * 60, distanceMeters: body.route.distanceKm * 1000 }
+      : null;
   }
 }
