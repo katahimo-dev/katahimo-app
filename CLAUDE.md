@@ -47,6 +47,8 @@ pnpm --filter @katahimo/api import:reserva -- <slug> <csv> [--force]
 pnpm --filter @katahimo/api import:staff-master -- <slug> <csv> [--dry-run]
 ```
 
+CI (`.github/workflows/ci.yml`, README "CI とブランチ保護") runs lint → typecheck → migrate on PostgreSQL 17 (same major as Cloud SQL) → `pnpm db:generate` drift check (fails if schema changes lack a committed migration) → test → build, then the gas-preview `shoot`/`e2e` job (non-blocking for now; CI installs its own Chromium). `infra.yml` runs `terraform fmt -check`/`validate` with the committed `infra/gcp/.terraform.lock.hcl`. The legacy submodule is fetched with `secrets.SUBMODULE_TOKEN`; without it the parity tests skip with a warning — so parity tests must tolerate a missing submodule at collection time (load GAS sources lazily, not at `describe` level).
+
 Local DB: PostgreSQL 16+ on :5432 (`infra/initdb/00_create_database.sql` then `01_bootstrap.sql` as superuser) or `docker compose -f infra/docker-compose.yml up -d` (:5433). `.env` from `.env.example`; minimum is `DATABASE_URL` (app role `katahimo_app`), `MIGRATION_DATABASE_URL` (owner `katahimo`), `SESSION_SECRET`, `LOCAL_DEV_MASTER_KEY`, `LOCAL_DEV_KEK` (two different 64-hex keys). Without Google/Gemini/SMTP settings everything falls back to noop/console implementations.
 
 **pnpm 11 gotcha**: `pnpm <script> -- --opt` passes the literal `--` through to the script. Any CLI you write must drop `--` from `process.argv` before parsing (`importStaffMasterCsv.ts`, `importReservaCsv.ts`, `tools/gas-preview/src/shoot.ts` do `argv.slice(2).filter((a) => a !== '--')`). When in doubt run the tool directly: `cd tools/gas-preview && npx tsx src/shoot.ts --only '^att-'`.

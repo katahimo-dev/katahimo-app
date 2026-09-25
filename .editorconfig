@@ -1,0 +1,32 @@
+# エディタの基本設定。TypeScript / JSON / CSS 等の整形は biome(biome.json)が行い、ここは
+# biome が扱わないファイル(Markdown・YAML・SQL・Terraform・Dockerfile)も含めた共通の土台。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown の行末スペース2つは改行の意味を持つ
+[*.md]
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab
+
+# GAS版(読み取り専用のサブモジュール)は触らない
+[legacy/**]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset
+
+# drizzle-kit が生成したマイグレーション・スナップショット(適用済みのものは書き換えない)
+[packages/db/drizzle/**]
+insert_final_newline = unset
+trim_trailing_whitespace = unset

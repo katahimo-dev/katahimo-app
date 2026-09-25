@@ -5,15 +5,18 @@ katahimo-app を Google Cloud の本番環境に載せるための構成・初�
 
 | ファイル | 内容 |
 | --- | --- |
-| `Dockerfile` / `.dockerignore` | イメージ2種(`--target api` / `--target worker`)。Node 22・pnpm・マルチステージ・非rootユーザー(`node`)で実行 |
+| `Dockerfile` / `.dockerignore` | イメージ2種(`--target api` / `--target worker`)。Node 22(ベースイメージはダイジェスト固定)・pnpm・マルチステージ・非rootユーザー(`node`)で実行 |
 | `cloudbuild.yaml` | ビルド → push → マイグレーション(Cloud Run Job)→ デプロイ |
-| `infra/gcp/*.tf` | Terraform(Cloud Run・Cloud SQL・Secret Manager・Artifact Registry・GCS・KMS・Scheduler・IAM) |
+| `infra/gcp/*.tf` | Terraform(Cloud Run・Cloud SQL・Secret Manager・Artifact Registry・GCS・KMS・Scheduler・IAM・監視と予算 `monitoring.tf`)。プロバイダーの版とハッシュは `.terraform.lock.hcl` で固定 |
+| `.github/workflows/ci.yml` / `infra.yml` | PR・main の CI(テスト・マイグレーションの差分チェック・ビルド)と Terraform の fmt / validate(README「CI とブランチ保護」) |
 | `infra/cloudsql/*.sql` | Cloud SQL のロール・DB・権限の初期化(`infra/initdb/*.sql` の本番版) |
 | `packages/db/src/connection.ts` | `DATABASE_URL`(Cloud SQL の Unix ソケット形式を含む)と接続プールの設定 |
 
 > **確度について**: GCP の仕様・料金は執筆時点(2026-09)の記憶に基づく部分がある。「(要確認)」を付けた箇所は
 > 公式ドキュメント・料金計算ツールで確かめてから進めること。Terraform は google provider 8.4 で
 > `terraform validate` と(認証なしの)`terraform plan -refresh=false` まで通しているが、実環境への apply は未実施。
+> 監視(`monitoring.tf`)のアラート条件の指標名・ラベルも、実際の指標が流れてから Monitoring のコンソールで
+> 当たっていることを確かめること(要確認)。
 
 ## 1. 構成
 
@@ -140,6 +143,12 @@ terraform init -backend-config="bucket=${PROJECT_ID}-tfstate"
 terraform apply        # API 有効化・Cloud SQL・Secret Manager(入れ物)・Artifact Registry・GCS・KMS・SA
 terraform output       # sql_connection_name・service_accounts などを控える
 ```
+
+`terraform.tfvars` の `alert_emails`(アラートの通知先)と `billing_account_id`(予算アラート。空なら作らない)も
+ここで設定する(5章「監視・アラート」)。予算は請求先アカウントに作るため、作業者に請求先アカウントの
+「請求先アカウント管理者」(または予算を作れる権限)が必要。ユーザーの ADC(`gcloud auth application-default login`)で
+apply する場合、Billing Budgets API は割り当てプロジェクトの指定を要求するため、先に
+`gcloud auth application-default set-quota-project "$PROJECT_ID"` を実行しておく(要確認)。
 
 Cloud SQL の作成には10分前後かかる。`deploy_workloads = false` の間は Cloud Run・Scheduler は作らない
 (Cloud Run はシークレットのバージョンとイメージが存在しないと作成に失敗するため)。
@@ -308,6 +317,10 @@ Cloud Run の既定URL(`https://katahimo-api-xxxx.a.run.app`)は最初から HTT
 
 ## 4. 継続的デプロイ
 
+- PR と main には GitHub Actions の CI(`.github/workflows/ci.yml`)が走る。main はブランチ保護で CI の成功と
+  レビューを必須にし、それを通ったコミットだけが下の Cloud Build トリガーでデプロイされるようにする
+  (設定内容は README「CI とブランチ保護」)。
+
 - Cloud Build の GitHub トリガー(main への push)を作り、構成ファイルに `cloudbuild.yaml`、サービスアカウントに
   `katahimo-deployer` を指定する(GitHub 連携はコンソールで設定する)。`_TAG` はトリガー実行ではコミットの短い
   SHA になる。
@@ -343,8 +356,46 @@ resource.type="cloud_run_job" AND resource.labels.job_name="katahimo-nightly-cal
 resource.labels.service_name="katahimo-worker" AND jsonPayload.failed>0
 ```
 
-推奨アラート(Cloud Monitoring、未設定): ジョブ実行の失敗(`run.googleapis.com/job/completed_execution_count`
-の `result=failed`)、API の 5xx 率、Cloud SQL の CPU・ディスク・接続数。
+### 監視・アラート(`infra/gcp/monitoring.tf`)
+
+通知先は `alert_emails`(メールの通知チャネル)。空でもアラートは作られ、Monitoring のインシデント一覧で見える。
+各アラートの本文(documentation)に、最初に見るべきログと対処を書いてある。
+
+| アラート | 条件(既定) | 重大度 |
+| --- | --- | --- |
+| `katahimo-api: 5xx 応答の増加` | `run.googleapis.com/request_count` の 5xx が 5 分間に `alert_api_5xx_threshold`(5)件を超えた。利用者が少なく割合だと1件で跳ねるため件数で見る | ERROR |
+| `katahimo ジョブ: 実行の失敗` | `run.googleapis.com/job/completed_execution_count` の `result=failed`(再試行を使い切った失敗)。対象は migrate / nightly-calendar-sync / csv-import / sync-busy-blocks | ERROR |
+| `katahimo-db: 資源の逼迫` | CPU 80% が 15 分・ディスク 80%・接続数(`num_backends` の合計)が `alert_sql_connections_threshold`(40)超 | WARNING |
+| `katahimo-api: 外形監視の失敗` | `https://<API のホスト>/api/health` を 3 地域から 5 分ごとに確認し、2 地域以上で 10 分間失敗。ホストは Cloud Run の URL(独自ドメインにしたら `uptime_check_host`)。`deploy_workloads = true` のときに作る | CRITICAL |
+| 予算(`google_billing_budget`) | 月額 `budget_amount`(既定 30,000 円)の 50% / 90% / 100%(実績)と 100%(月末の予測)。請求先アカウントの管理者と `alert_emails` に届く。`billing_account_id` を指定したときだけ作る | — |
+
+未対応: 夜間ジョブが**そもそも起動しなかった**こと(Scheduler の一時停止・失敗)は上のアラートでは検知できない。
+切替後は翌朝の確認(7章)で見るか、Scheduler の失敗ログ(`resource.type="cloud_scheduler_job" AND severity>=ERROR`)の
+ログベースアラートを足す(8章)。
+
+### Terraform のロックファイル
+
+`infra/gcp/.terraform.lock.hcl` にプロバイダー(`hashicorp/google`)の版とハッシュ(linux / darwin の amd64・arm64、
+windows_amd64 の `h1:` と、全プラットフォームの `zh:`)を固定している。`terraform init` はこの版を使い、CI
+(`infra.yml`)は `-lockfile=readonly` で違う版を入れようとしたら失敗する。版を上げるとき(Dependabot の PR か手で):
+
+```bash
+cd infra/gcp
+terraform init -backend=false -upgrade
+terraform providers lock -platform=linux_amd64 -platform=linux_arm64 \
+  -platform=darwin_amd64 -platform=darwin_arm64 -platform=windows_amd64
+git add .terraform.lock.hcl
+```
+
+`registry.terraform.io` に届かない環境では、`releases.hashicorp.com` から各プラットフォームのプロバイダーの zip と
+署名付きの `SHA256SUMS` を取って `terraform providers lock -fs-mirror=<dir> -platform=…` で作れる(初版はこの方法で作り、
+`zh:` は署名を確かめた `SHA256SUMS` の値を入れた)。
+
+### Docker のベースイメージ
+
+`Dockerfile` の `FROM node:22-bookworm-slim@sha256:…` はダイジェストで固定している。Node のパッチ・OS の
+セキュリティ更新は Dependabot(docker)が週1回ダイジェストを差し替える PR を出すので、CI が通ればマージして
+デプロイする。手で更新するときは `docker buildx imagetools inspect node:22-bookworm-slim` の `Digest` に書き換える。
 
 ### シークレット・パスワードのローテーション
 
@@ -374,10 +425,11 @@ resource.labels.service_name="katahimo-worker" AND jsonPayload.failed>0
 | Artifact Registry | イメージ 約0.3GB × 保持数 | $1〜2 |
 | Cloud Build | 1日数回 | 無料枠内 |
 | Cloud Logging | 50GiB/月まで無料 | $0 |
+| Cloud Monitoring | アラートの条件6つ・外形監視1つ(`monitoring.tf`) | 無料枠内〜$1 程度(アラート条件の課金の有無は要確認) |
 | Maps(Geocoding / Routes)・Gemini | 利用量次第 | 無料枠を超えた分 |
 
-**worker の固定費を下げる選択肢**(8章の未決事項): ミラーを使わない間は `outbox_poller_enabled = false`
-で止める / `worker_cpu` を下げる(1 vCPU 未満にできるかは CPU 常時割り当ての制約次第、要確認)/ 常駐をやめ、
+**worker の固定費を下げる選択肢**(8章の未決事項): パスワード再設定メールも outbox 経由で送るため、
+`outbox_poller_enabled = false` で止める場合は下の「毎分 `outbox-once`」等の代わりが必要 / `worker_cpu` を下げる(1 vCPU 未満にできるかは CPU 常時割り当ての制約次第、要確認)/ 常駐をやめ、
 Cloud Scheduler で毎分 `dist/outbox-once.js` のジョブを起動する(反映が最大1分ほど遅れるが、使った分だけの課金)/
 Cloud Run の worker pools(常駐のプル型ワーカー向け、提供状況要確認)。
 
@@ -424,6 +476,7 @@ GAS 側の変更は `katahimo-dev/gas-childcare-visit-app` リポジトリで行
 
 ## 8. 未決事項・今後の対応
 
+- 夜間ジョブが起動しなかったことの検知(Scheduler の失敗のログベースアラート、または実行の有無の監視。5章「監視・アラート」)。
 - worker の常駐方式(6章の選択肢)。パスワード再設定メールを outbox 経由で送るため、ミラーを使わない間も
   outbox の処理は要る(常駐をやめる場合は Cloud Scheduler から `outbox-once` を数分おきに動かす等の代わりが必要)。
 - **ネットワークの防御(セキュリティレビュー 2026-09、未対応)**:

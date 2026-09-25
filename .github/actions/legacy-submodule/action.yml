@@ -1,0 +1,44 @@
+name: GAS版サブモジュールの取得
+description: >-
+  legacy/gas-childcare-visit-app(非公開リポジトリ katahimo-dev/gas-childcare-visit-app)を取得する。
+  取得できない場合も失敗にはせず警告を出し、available=false を返す(GAS版との一致テストはスキップされる)。
+
+inputs:
+  token:
+    description: サブモジュールのリポジトリを読めるトークン(secrets.SUBMODULE_TOKEN)。空なら取得しない
+    required: false
+    default: ''
+
+outputs:
+  available:
+    description: GAS版のソースを取得できたら 'true'
+    value: ${{ steps.fetch.outputs.available }}
+
+runs:
+  using: composite
+  steps:
+    - id: fetch
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+      run: |
+        # GITHUB_TOKEN はこのリポジトリしか読めないため、別の非公開リポジトリのサブモジュールには使えない。
+        # actions/checkout の submodules: recursive だと取得できないときにジョブごと失敗するので、ここで取得する。
+        available=false
+        if [ -z "$TOKEN" ]; then
+          echo "::warning title=GAS版サブモジュール未取得::SUBMODULE_TOKEN が未設定のため legacy/gas-childcare-visit-app を取得しません。GAS版との一致テスト(gasParity)と見比べ撮影はスキップされます。"
+        else
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          echo "::add-mask::${auth#AUTHORIZATION: basic }"
+          if git -c "http.https://github.com/.extraheader=${auth}" submodule update --init --recursive --depth 1; then
+            available=true
+          else
+            echo "::warning title=GAS版サブモジュール未取得::legacy/gas-childcare-visit-app を取得できませんでした(SUBMODULE_TOKEN の権限を確認)。GAS版との一致テスト(gasParity)と見比べ撮影はスキップされます。"
+          fi
+        fi
+        # テスト(packages/core/src/testSupport/gasLegacy.ts 等)と同じく、ファイルの有無で判定する
+        if [ "$available" = true ] && [ ! -f legacy/gas-childcare-visit-app/gas-childcare-visit-app/index.html ]; then
+          echo "::warning title=GAS版サブモジュール::サブモジュールは取得できましたが GAS版のソースが見つかりません。"
+          available=false
+        fi
+        echo "available=${available}" >> "$GITHUB_OUTPUT"
