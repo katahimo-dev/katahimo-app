@@ -115,9 +115,11 @@ export async function processOutboxJob(
       ]);
       if (!imageBytes) return;
       await deps.sender.sendReceipt({
+        receiptId: record.id,
+        uploadBatchId: record.uploadBatchId ?? '',
         staffName: staffRecord?.name ?? '',
         customerId: record.customerId ?? '',
-        customerName: customerRecord?.name ?? '',
+        customerName: customerRecord?.name ?? record.customerNameText ?? '',
         receiptTimestampJst: formatJstDateTime(record.receiptTimestamp),
         amount,
         storeName,

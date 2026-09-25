@@ -65,7 +65,7 @@ describe('createCustomer / searchCustomersByFamilyName', () => {
       email: 'hanako@example.com',
       memo: '第一子アレルギー注意',
       familyMembers: [
-        { name: '佐藤 太郎', dob: '2019/1/19', info: '保育園児 卵アレルギー' },
+        { name: '佐藤 太郎', dob: '2019/1/19', info: '保育園児 卵アレルギー', allergy: '卵' },
         { name: '佐藤 次子', dob: '2021/6/20', info: '' },
       ],
     });
@@ -76,8 +76,14 @@ describe('createCustomer / searchCustomersByFamilyName', () => {
     expect(detail?.externalSource).toBe('reserva');
     expect(detail?.externalId).toBe('cust-001');
     expect(detail?.familyMembers).toEqual([
-      { id: expect.any(String), name: '佐藤 太郎', dob: '2019/1/19', info: '保育園児 卵アレルギー' },
-      { id: expect.any(String), name: '佐藤 次子', dob: '2021/6/20', info: null },
+      {
+        id: expect.any(String),
+        name: '佐藤 太郎',
+        dob: '2019/1/19',
+        info: '保育園児 卵アレルギー',
+        allergy: '卵',
+      },
+      { id: expect.any(String), name: '佐藤 次子', dob: '2021/6/20', info: null, allergy: null },
     ]);
   });
 
