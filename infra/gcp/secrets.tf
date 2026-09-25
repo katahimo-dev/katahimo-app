@@ -10,8 +10,8 @@ locals {
     "database-url"           = ["api", "worker"] # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
     "migration-database-url" = ["migrate"]       # postgres://katahimo:...@/katahimo?host=/cloudsql/<接続名>
     "session-secret"         = ["api"]
-    "blind-index-key"        = ["api"] # LOCAL_DEV_MASTER_KEY
-    "legacy-auth-salt"       = ["api"] # GAS版の AUTH_SALT(移行期のみ)
+    "blind-index-key"        = ["api"]    # LOCAL_DEV_MASTER_KEY
+    "legacy-auth-salt"       = ["api"]    # GAS版の AUTH_SALT(移行期のみ)
     "smtp-pass"              = ["worker"] # パスワード再設定メールはワーカーが送る
     "gemini-api-key"         = ["api"]
     "google-maps-api-key"    = ["api", "worker"]
