@@ -32,13 +32,16 @@ pnpm --filter @katahimo/web dev
 # 全場面を撮る → tools/gas-preview/out/<場面>.png(GAS版 | 新アプリ | 差分 の3列)
 pnpm --filter @katahimo/gas-preview shoot
 
+# オプションを付けるときは直接動かす(pnpm 11 は `pnpm … shoot -- --only …` の `--` をそのまま渡すため、
+# うしろのオプションが効かない)。プロキシ経由でフォントを取る環境では NODE_USE_ENV_PROXY=1 を付ける
+cd tools/gas-preview
 # 名前(正規表現)で絞る・一覧を見る・片方だけ撮る
-pnpm --filter @katahimo/gas-preview shoot -- --only '^settings'
-pnpm --filter @katahimo/gas-preview shoot -- --list
-pnpm --filter @katahimo/gas-preview shoot -- --target gas      # out/<場面>.gas.png だけ
+npx tsx src/shoot.ts --only '^settings'
+npx tsx src/shoot.ts --list
+npx tsx src/shoot.ts --target gas      # out/<場面>.gas.png だけ
 
 # 実際のAPIで撮る(API :8080 と web :5173 を起動しておく。既定は開発用seedの demo / admin@example.com / admin1234)
-pnpm --filter @katahimo/gas-preview shoot -- --web-mode live --only shell
+npx tsx src/shoot.ts --web-mode live --only shell
 
 # GAS版を手で触る(モックのパスワードは password、再設定の番号は 123456)
 pnpm --filter @katahimo/gas-preview serve     # http://127.0.0.1:5180/?as=admin | ?as=staff | ?as=none
@@ -90,7 +93,7 @@ export const scheduleShots: Shot[] = [
   いまは index.html が呼ぶ全関数(ログイン・顧客・予定・出勤簿・日報・領収書・設定)が入っている。
 - **新アプリ**: `src/webMock.ts` の `webHandlers` に `'GET /api/…'` のキーで足す(`:id` などはパスの一部に使える)。
   応答には契約のスキーマ(`schema`)を付けて検証する。モックの無いAPIは 404 を返してログに出る。
-  いまは土台のAPI(認証・スタッフ一覧・データ版数・UI設定・管理者設定)だけが入っている。
+  いまは新アプリが呼ぶ全API(認証・予定・お客様・出勤簿・日報・領収書・設定)が入っている。
 - **データ**: `src/fixtures.ts`。GAS版の形で持っているので、新アプリの形への変換は `webMock.ts` 側で書く。
 
 ## 日報ダイアログの場面(`src/shots/report.ts`)
@@ -104,6 +107,33 @@ export const scheduleShots: Shot[] = [
 `KATAHIMO_WEB_URL=http://127.0.0.1:5321 GAS_PREVIEW_PORT=5192`(pnpm 11 では `pnpm … shoot -- --only …` の
 `--` がそのまま渡り、うしろのオプションが効かないため、`cd tools/gas-preview && npx tsx src/shoot.ts --only '^report-'` のように直接動かす)。
 新アプリの開発サーバーのポート・中継先は `WEB_DEV_PORT=5321 WEB_API_PROXY_TARGET=http://localhost:8521 pnpm --filter @katahimo/web dev`。
+
+## 通し確認(`src/e2e.ts`、実際のAPI・DB)
+
+見比べ(モック)とは別に、実際のAPI・DBにつないだ新アプリを 390×844 で最初から最後まで操作し、機能どうしを
+つないだときに壊れていないかを確かめる。手順ごとの画面を `out/e2e/<番号>-<手順>.png` に保存し、成否の表を出す
+(1つでも失敗すると終了コード1)。手順の中で出たブラウザのエラー・5xx 応答も失敗として数える。
+
+```bash
+# 前提: pnpm db:migrate && pnpm db:seed 済み、API(:8080)と web 開発サーバー(:5173)を起動しておく
+cd tools/gas-preview && npx tsx src/e2e.ts
+# 本番ビルド(API が WEB_DIST_DIR のWeb画面を配信)で確かめる
+npx tsx src/e2e.ts --web-url http://127.0.0.1:8484
+# 手順を名前(正規表現)で絞る(ログインは前提になるため一緒に指定する)
+npx tsx src/e2e.ts --only '^(login|customers-search|logout)$'
+```
+
+手順: ログイン(demo 管理者)→ 今日の予定(noop なら 📭)→ お客様を探す → お客様の情報 → これまでの記録 →
+日報を書く(メモ → AIに書いてもらう → キー未設定の知らせ。AIが使えないと画面からは保存できない(GAS版と同じ)ため、
+保存は同じ内容を `POST /api/reports/daily` で行う)→ 領収書を送る(canvas で作った JPEG)→ お客様に関係ない領収書 →
+出勤簿(週の一覧/表・今日を開く・1件目の訪問を保存・天候を切り替えて保存・今月のまとめ)→ 設定(文字の大きさ・
+詳細設定)→ ログアウト → 一般スタッフ(`POST /api/admin/staff` で「e2e 一般スタッフ」を作る。既にあれば使い回す)で
+管理者向けの表示が無いこと・管理者APIが403になること・他人の `staffId` を指定しても本人のデータになることを確かめる。
+
+- 保存できたかはお知らせの文言ではなくAPIの応答で確かめる(直前の手順のお知らせが4秒残るため)。
+- 日報・領収書・出勤簿(今日の1件目の訪問・天候)に書き込む。開発用DBでだけ動かすこと。何度流しても同じ結果になる
+  ように書いてある(天候は選ばれていないほうを押す)。
+- ログイン情報は `--tenant` / `--email` / `--password`(環境変数 `KATAHIMO_LIVE_TENANT` 等でもよい)。
 
 ## 分かっている違い(GAS版の不具合などで、新アプリでは再現していないもの)
 

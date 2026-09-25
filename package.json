@@ -17,7 +17,7 @@
     "dev": "pnpm -r --parallel dev",
     "db:generate": "pnpm --filter @katahimo/db generate",
     "db:migrate": "pnpm --filter @katahimo/db migrate",
-    "db:seed": "pnpm --filter @katahimo/db seed",
+    "db:seed": "pnpm --filter @katahimo/api seed",
     "db:studio": "pnpm --filter @katahimo/db studio",
     "worker": "pnpm --filter @katahimo/worker start",
     "job:nightly-calendar-sync": "pnpm --filter @katahimo/worker job:nightly-calendar-sync",

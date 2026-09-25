@@ -7,7 +7,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "serve": "tsx src/serve.ts",
-    "shoot": "NODE_USE_ENV_PROXY=1 NODE_NO_WARNINGS=1 tsx src/shoot.ts"
+    "shoot": "NODE_USE_ENV_PROXY=1 NODE_NO_WARNINGS=1 tsx src/shoot.ts",
+    "e2e": "NODE_USE_ENV_PROXY=1 NODE_NO_WARNINGS=1 tsx src/e2e.ts"
   },
   "dependencies": {
     "@katahimo/shared": "workspace:*",

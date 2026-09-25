@@ -129,7 +129,10 @@ src/
 | `katahimo_last_tenant_slug` | 最後にログインできた法人ID | (新規) |
 | `katahimo_session_hint` | ログインしていた印(期限切れの案内を出し分ける。Cookieはスクリプトから読めないため) | (GAS版はトークンの有無で判断) |
 | `katahimo_schedule_route_v1_<スタッフID>_<日付>` | 予定タブのルートつき予定の2時間キャッシュ(`{res, ts}`) | (GAS版 `GAS_SCHEDULE_ROUTE_V2_<スタッフ名>_<日付>` と同じ役割。スタッフをIDで区別するため別名) |
-| `cal_week_view_mode` / `recent_customers` / `pending_report_draft` / `last_start_hour` / `last_start_minute` / `last_acc_time` / `GAS_RECEIPT_KEYS_V1_*` | 各機能の担当が使う(GAS版と同じ意味・形で) | ○ |
+| `pastSchedWeek_<スタッフID>_<週の日曜>` | 出勤簿タブの週間予定の2時間キャッシュ(`{events, ts}`)。保存・取り込みの後に消す | ○(GAS版はスタッフ名。ここではID) |
+| `attendanceMonthly_<スタッフID>_<YYYY-MM>` | 今月のまとめの2時間キャッシュ(`{res, ts}`)。保存・取り込みの後に消す | ○(同上) |
+| `GAS_RECEIPT_KEYS_V1_<スタッフ名>` | この端末から送った領収書の重複チェック用 | ○ |
+| `cal_week_view_mode` / `recent_customers` / `pending_report_draft` / `last_start_hour` / `last_start_minute` / `last_acc_time` | 週の表示(一覧/表)・最近開いたお客様・書きかけの日報・日報の開始時刻・事故の発生時刻の前回値 | ○ |
 
 GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使わない(ログインは httpOnly Cookie、管理者かどうかは `/api/auth/me`)。
 
@@ -155,7 +158,7 @@ GAS版の `index.html` をモックの `google.script.run` 付きでローカル
 ```bash
 pnpm --filter @katahimo/web dev                       # 別のターミナルで
 pnpm --filter @katahimo/gas-preview shoot             # tools/gas-preview/out/<場面>.png
-pnpm --filter @katahimo/gas-preview shoot -- --only settings
+cd tools/gas-preview && npx tsx src/shoot.ts --only settings   # 絞るとき(pnpm 11 は -- の後ろを渡せない)
 ```
 
 新しい画面を作ったら、`tools/gas-preview/src/shots/<機能>.ts` に場面を足し、差分(3列目)が黒くなるまで直す。
