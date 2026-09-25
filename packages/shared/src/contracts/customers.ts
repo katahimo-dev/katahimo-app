@@ -49,3 +49,19 @@ export const customerDetailViewSchema = z.object({
 });
 export type CustomerDetailView = z.infer<typeof customerDetailViewSchema>;
 export const customerDetailResponseSchema = z.object({ customer: customerDetailViewSchema });
+
+/** GET /api/customers の1件(一覧。検索・地区の絞り込み・並び替えは画面側で行う)。 */
+export const customerListItemSchema = z.object({
+  id: idSchema,
+  name: z.string(),
+  phone: nullableString,
+  city: nullableString,
+});
+export type CustomerListItem = z.infer<typeof customerListItemSchema>;
+
+/** GET /api/customers(familyName 省略時)。cities は地区の重複無し・昇順の一覧。 */
+export const customerListResponseSchema = z.object({
+  customers: z.array(customerListItemSchema),
+  cities: z.array(z.string()),
+});
+export type CustomerListResponse = z.infer<typeof customerListResponseSchema>;
