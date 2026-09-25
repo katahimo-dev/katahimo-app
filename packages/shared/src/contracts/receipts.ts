@@ -55,3 +55,20 @@ export const uploadReceiptsResponseSchema = z.object({
   uploadBatchId: idSchema.nullable(),
 });
 export type UploadReceiptsResponse = z.infer<typeof uploadReceiptsResponseSchema>;
+
+/** POST /api/receipts/ocr(領収書1枚から金額・店名・日時を読む。GAS版 extractAmountFromImage) */
+export const receiptOcrRequestSchema = z.object({ image: z.string().min(1, 'image が必要です') });
+export type ReceiptOcrRequest = z.infer<typeof receiptOcrRequestSchema>;
+
+/**
+ * 読み取れなかった項目は空文字。receiptDate は 'yyyy/MM/dd HH:mm'。OCRの呼び出し自体が失敗したときは
+ * error に理由が入る(値は空のまま。手入力で続けられるようにするため)。
+ */
+export const receiptOcrResultSchema = z.object({
+  amount: z.union([z.string(), z.number()]),
+  storeName: z.string(),
+  receiptDate: z.string(),
+  error: z.string().optional(),
+});
+export type ReceiptOcrResult = z.infer<typeof receiptOcrResultSchema>;
+export const receiptOcrResponseSchema = z.object({ result: receiptOcrResultSchema });

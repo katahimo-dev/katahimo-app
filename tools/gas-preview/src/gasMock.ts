@@ -260,19 +260,14 @@ export const gasHandlers: Record<string, GasHandler> = {
     requireSession(token);
     return { success: true, rowIndex: 30 };
   },
-  sendVisitCompleteNotification: ([token]) => {
-    requireSession(token);
-    return { success: true };
-  },
+  // GAS版の sendVisitCompleteNotification(message) / uploadReceiptsOnly(uploadData) はトークンを受け取らない
+  sendVisitCompleteNotification: () => ({ success: true }),
   extractAmountFromImage: () => ({
     amount: 1280,
     storeName: 'スーパーみどり',
     receiptDate: '2026/09/25 11:02',
   }),
-  uploadReceiptsOnly: ([token]) => {
-    requireSession(token);
-    return { success: true, message: '領収書を送りました', duplicates: [] };
-  },
+  uploadReceiptsOnly: () => ({ success: true, message: '領収書を送りました', duplicates: [] }),
 
   // ── 管理者設定(GeminiReport.js / GoogleChat.js) ──
   getGeminiApiKeyForAdmin: ([token]) =>

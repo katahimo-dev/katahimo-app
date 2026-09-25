@@ -93,6 +93,18 @@ export const scheduleShots: Shot[] = [
   いまは土台のAPI(認証・スタッフ一覧・データ版数・UI設定・管理者設定)だけが入っている。
 - **データ**: `src/fixtures.ts`。GAS版の形で持っているので、新アプリの形への変換は `webMock.ts` 側で書く。
 
+## 日報ダイアログの場面(`src/shots/report.ts`)
+
+お客様タブ・予定タブを通らずに開く: GAS版は `openModal(allCustomers[0])` / `openStandaloneReceiptModal()`、新アプリは
+開発サーバーだけにある `window.__katahimoReport.openReport(...)` / `.openStandaloneReceipt()`。領収書の写真は
+場面の中で作ったPNGを `#galleryInput` に入れる。書きかけの日報の復元は、ハーネスの初期化(localStorage のクリア)の
+あとに入れる init script を足して読み込み直して撮る。
+
+ポートを変えて撮る(並行して別の開発サーバーを動かしているとき)は環境変数で:
+`KATAHIMO_WEB_URL=http://127.0.0.1:5321 GAS_PREVIEW_PORT=5192`(pnpm 11 では `pnpm … shoot -- --only …` の
+`--` がそのまま渡り、うしろのオプションが効かないため、`cd tools/gas-preview && npx tsx src/shoot.ts --only '^report-'` のように直接動かす)。
+新アプリの開発サーバーのポート・中継先は `WEB_DEV_PORT=5321 WEB_API_PROXY_TARGET=http://localhost:8521 pnpm --filter @katahimo/web dev`。
+
 ## 分かっている違い(GAS版の不具合などで、新アプリでは再現していないもの)
 
 - GAS版は未ログインでも顧客データの版数を確かめ、版数が変わっていると顧客一覧をセッション無しで読み直して

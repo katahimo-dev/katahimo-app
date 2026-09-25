@@ -14,16 +14,23 @@ import {
   customerListResponseSchema,
   dataVersionResponseSchema,
   findAiPromptDefinition,
+  generateAccidentReportResponseSchema,
+  generateDailyReportResponseSchema,
   listGeminiModelsResponseSchema,
   okResponseSchema,
   passwordResetConfirmResponseSchema,
   passwordResetRequestResponseSchema,
+  receiptOcrResponseSchema,
+  saveAccidentReportResponseSchema,
+  saveDailyReportResponseSchema,
   saveSettingsResponseSchema,
   scheduleLightResponseSchema,
   scheduleWithRouteResponseSchema,
   sessionUserResponseSchema,
   uiConfigResponseSchema,
   updateAttendanceDayResponseSchema,
+  uploadReceiptsResponseSchema,
+  visitCompleteResponseSchema,
 } from '@katahimo/shared';
 import type { BrowserContext, Route } from 'playwright-core';
 import type { ZodTypeAny } from 'zod';
@@ -47,6 +54,7 @@ import {
   TENANT,
   WEATHER_OPTIONS,
 } from './fixtures';
+import { gasHandlers } from './gasMock';
 import { loadGasPureFunctions, type RowData } from './gasRuntime';
 
 /**
@@ -113,6 +121,9 @@ const saved = (message: string): WebMockResponse => ({
   body: { ok: true, changed: true, message },
   schema: saveSettingsResponseSchema,
 });
+
+/** 日報・領収書を保存したときに返すID(モックでは固定) */
+const MOCK_REPORT_ID = '00000000-0000-4000-8000-0000000000d1';
 
 export const webHandlers: Record<string, WebHandler> = {
   // ── 認証 ──
@@ -275,6 +286,75 @@ export const webHandlers: Record<string, WebHandler> = {
       .filter((item) => !before || item.occurredAtIso < new Date(before).toISOString())
       .slice(0, 5);
     return { body: { items }, schema: customerHistoryResponseSchema };
+  }),
+
+  // ── 日報・事故報告・領収書(日報の担当) ──
+  // AIの下書き・OCRの結果はGAS版のモック(gasMock.ts)と同じ値を返す(両方の画面に同じ文が出るように)。
+  'POST /api/reports/daily/generate': withUser(() => ({
+    body: { draft: gasHandlers.generateReportWithWarnings?.([], { today: '' }) },
+    schema: generateDailyReportResponseSchema,
+  })),
+  'POST /api/reports/accident/generate': withUser(() => ({
+    body: { draft: gasHandlers.generateAccidentReport?.([], { today: '' }) },
+    schema: generateAccidentReportResponseSchema,
+  })),
+  'POST /api/reports/daily': withUser((req, user) => ({
+    body: {
+      success: true,
+      message: '保存しました',
+      report: {
+        id: String(req.body.reportId ?? MOCK_REPORT_ID),
+        occurredAt: `${req.state.today}T01:00:00.000Z`,
+        staffId: user.id,
+        customerId: String(req.body.customerId),
+        riskRating: (req.body.riskRating as number | null) ?? null,
+        esRating: (req.body.esRating as number | null) ?? null,
+        content: {
+          startTime: String(req.body.startTime ?? ''),
+          endTime: String(req.body.endTime ?? ''),
+          inputText: String(req.body.inputText ?? ''),
+          internalText: String(req.body.internalText ?? ''),
+          customerText: String(req.body.customerText ?? ''),
+        },
+      },
+    },
+    schema: saveDailyReportResponseSchema,
+  })),
+  'POST /api/reports/accident': withUser((req, user) => ({
+    body: {
+      success: true,
+      report: {
+        id: String(req.body.reportId ?? MOCK_REPORT_ID),
+        occurredAt: `${req.state.today}T01:00:00.000Z`,
+        staffId: user.id,
+        customerId: String(req.body.customerId),
+        reportType: String(req.body.reportType ?? '事故報告'),
+        content: {},
+      },
+    },
+    schema: saveAccidentReportResponseSchema,
+  })),
+  'POST /api/reports/visit-complete': withUser(() => ({
+    body: { success: true },
+    schema: visitCompleteResponseSchema,
+  })),
+  'POST /api/receipts/ocr': withUser(() => ({
+    body: { result: gasHandlers.extractAmountFromImage?.([], { today: '' }) },
+    schema: receiptOcrResponseSchema,
+  })),
+  'POST /api/receipts': withUser((req) => {
+    const count = Array.isArray(req.body.images) ? req.body.images.length : 0;
+    return {
+      body: {
+        success: true,
+        message: '領収書を送りました',
+        uploadedCount: count,
+        duplicateCount: 0,
+        duplicates: [],
+        uploadBatchId: MOCK_REPORT_ID,
+      },
+      schema: uploadReceiptsResponseSchema,
+    };
   }),
 
   // ── 出勤簿(下の attendanceWebHandlers) ──
