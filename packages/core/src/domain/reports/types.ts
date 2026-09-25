@@ -15,7 +15,7 @@ export interface DailyReportContent {
   customerText: string;
 }
 
-export interface AccidentReportContent {
+export type AccidentReportContent = {
   /** 対象児(世帯構成員)の氏名。GAS版のTargetName列。 */
   targetName: string;
   /** 'yyyy/MM/dd'。GAS版のTargetDob列。 */
@@ -30,4 +30,4 @@ export interface AccidentReportContent {
   prevention: string;
   /** 元のメモ(口語入力)。GAS版のOriginalInput列。 */
   inputText: string;
-}
+};

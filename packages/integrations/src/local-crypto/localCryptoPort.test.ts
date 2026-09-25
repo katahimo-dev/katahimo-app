@@ -1,63 +1,85 @@
-import type { TenantKeyRecord, TenantKeyRepositoryPort } from '@katahimo/core/ports';
+import { randomBytes } from 'node:crypto';
+import type { TenantDataKeyReaderPort, TenantDataKeyRecord } from '@katahimo/core/ports';
 import { describe, expect, it } from 'vitest';
 import { LocalKmsPort } from '../local-kms';
 import { LocalBlindIndexPort } from './localBlindIndexPort';
 import { LocalCryptoPort } from './localCryptoPort';
 
-class MemoryTenantKeys implements TenantKeyRepositoryPort {
-  readonly rows = new Map<string, TenantKeyRecord>();
-  async find(tenantId: string) {
-    return this.rows.get(tenantId) ?? null;
-  }
-  async create(tenantId: string, wrappedDek: string, kekVersion: number) {
-    const record = { tenantId, dekVersion: 1, wrappedDek, kekVersion, revokedAt: null };
-    this.rows.set(tenantId, record);
-    return record;
-  }
-  async updateWrappedDek() {}
-  async revoke() {}
-}
-
 const KEK = 'cd'.repeat(32);
 
-function setup() {
-  const tenantKeys = new MemoryTenantKeys();
-  const kms = new LocalKmsPort(KEK);
-  return { tenantKeys, kms, crypto: new LocalCryptoPort(tenantKeys, kms) };
+class MemoryDataKeys implements TenantDataKeyReaderPort {
+  readonly rows = new Map<string, TenantDataKeyRecord[]>();
+  calls = 0;
+  async listUsable(tenantId: string) {
+    this.calls++;
+    return this.rows.get(tenantId) ?? [];
+  }
+  async add(kms: LocalKmsPort, tenantId: string, version: number, state: TenantDataKeyRecord['state']) {
+    const wrapped = await kms.wrap(randomBytes(32), tenantId);
+    const list = (this.rows.get(tenantId) ?? []).map((r) =>
+      state === 'active' && r.state === 'active' ? { ...r, state: 'decrypt_only' as const } : r,
+    );
+    list.push({ version, wrappedDek: wrapped.wrapped, kekKeyName: wrapped.kekKeyName, state });
+    this.rows.set(tenantId, list);
+  }
 }
 
-describe('LocalCryptoPort(AES-256-GCM + AAD)', () => {
-  it('同じテナント・同じ用途なら復号でき、形式の版(v2:)が付く', async () => {
-    const { crypto } = setup();
-    const enc = await crypto.encrypt('t1', 'アレルギー: 卵', 'family_members.allergy');
-    expect(enc.ciphertext.startsWith('v2:')).toBe(true);
-    expect(await crypto.decrypt('t1', enc, 'family_members.allergy')).toBe('アレルギー: 卵');
+async function setup() {
+  const kms = new LocalKmsPort(KEK);
+  const keys = new MemoryDataKeys();
+  await keys.add(kms, 't1', 1, 'active');
+  return { kms, keys, crypto: new LocalCryptoPort(keys, kms, 0) };
+}
+
+const memo = (rowId = 'row-1') => ({ tenantId: 't1', purpose: 'customers.memo' as const, rowId });
+
+describe('LocalCryptoPort(AES-256-GCM・AAD・DEKの版)', () => {
+  it('暗号文の先頭に形式と DEK の版を持ち、同じ文脈なら復号できる', async () => {
+    const { crypto } = await setup();
+    const enc = await crypto.encrypt(memo(), 'アレルギー: 卵');
+    expect([...enc.subarray(0, 3)]).toEqual([3, 0, 1]);
+    expect(await crypto.decrypt(memo(), enc)).toBe('アレルギー: 卵');
   });
 
-  it('別の列(用途)にコピーした暗号文は復号できない', async () => {
-    const { crypto } = setup();
-    const enc = await crypto.encrypt('t1', 'secret', 'app_settings.gemini_api_key');
-    await expect(crypto.decrypt('t1', enc, 'customers.memo')).rejects.toThrow();
-  });
-
-  it('別テナントの行にコピーした暗号文は(同じDEKを持っていても)復号できない', async () => {
-    const { crypto, tenantKeys } = setup();
-    const enc = await crypto.encrypt('t1', 'secret', 'customers.memo');
-    // t2 に t1 と同じDEKを持たせても、AADのテナントIDが違うため認証に失敗する
-    const t1 = await tenantKeys.find('t1');
-    const kms = new LocalKmsPort(KEK);
-    const dek = await kms.unwrap({ ciphertext: t1?.wrappedDek ?? '', kekVersion: 1 }, 't1');
-    const rewrapped = await kms.wrap(dek, 't2');
-    await tenantKeys.create('t2', rewrapped.ciphertext, 1);
-    await expect(crypto.decrypt('t2', enc, 'customers.memo')).rejects.toThrow();
-  });
-
-  it('旧形式(接頭辞なし)の暗号文は明示的なエラーにする', async () => {
-    const { crypto } = setup();
-    await crypto.encrypt('t1', 'x', 'customers.memo'); // DEKを作る
+  it('別の列・別の行・別のテナントに写した暗号文は復号できない', async () => {
+    const { crypto, keys, kms } = await setup();
+    const enc = await crypto.encrypt(memo(), 'secret');
     await expect(
-      crypto.decrypt('t1', { ciphertext: 'AAAA', keyVersion: 1 }, 'customers.memo'),
-    ).rejects.toThrow(/未対応の暗号文の形式/);
+      crypto.decrypt({ ...memo(), purpose: 'customers.benefit_member_id' }, enc),
+    ).rejects.toThrow();
+    await expect(crypto.decrypt(memo('row-2'), enc)).rejects.toThrow();
+    await keys.add(kms, 't2', 1, 'active');
+    await expect(crypto.decrypt({ ...memo(), tenantId: 't2' }, enc)).rejects.toThrow();
+  });
+
+  it('DEK をローテーションしても古い版の暗号文を読め、新しい暗号文は新しい版で書く', async () => {
+    const { crypto, keys, kms } = await setup();
+    const old = await crypto.encrypt(memo(), 'before');
+    await keys.add(kms, 't1', 2, 'active');
+    const fresh = await crypto.encrypt(memo(), 'after');
+    expect(fresh[2]).toBe(2);
+    expect(await crypto.decrypt(memo(), old)).toBe('before');
+    expect(await crypto.decrypt(memo(), fresh)).toBe('after');
+  });
+
+  it('鍵の読み込みは同時の要求でも1回だけ、失敗した読み込みはキャッシュしない', async () => {
+    const kms = new LocalKmsPort(KEK);
+    const keys = new MemoryDataKeys();
+    const crypto = new LocalCryptoPort(keys, kms, 60_000);
+    await expect(crypto.encrypt(memo(), 'x')).rejects.toThrow(/有効なデータ暗号化鍵がありません/);
+    await keys.add(kms, 't1', 1, 'active');
+    keys.calls = 0;
+    await Promise.all([
+      crypto.encrypt(memo(), 'a'),
+      crypto.encrypt(memo(), 'b'),
+      crypto.encrypt(memo(), 'c'),
+    ]);
+    expect(keys.calls).toBe(1);
+  });
+
+  it('形式の違う値は明示的なエラーにする', async () => {
+    const { crypto } = await setup();
+    await expect(crypto.decrypt(memo(), new Uint8Array([2, 0, 1]))).rejects.toThrow(/未対応の暗号文の形式/);
   });
 });
 
@@ -65,17 +87,18 @@ describe('LocalKmsPort(DEKのラップにテナントIDを結び付ける)', () 
   it('別テナントとしてはアンラップできない', async () => {
     const kms = new LocalKmsPort(KEK);
     const wrapped = await kms.wrap(Buffer.alloc(32, 7), 't1');
-    expect(await kms.unwrap(wrapped, 't1')).toEqual(Buffer.alloc(32, 7));
+    expect(Buffer.from(await kms.unwrap(wrapped, 't1'))).toEqual(Buffer.alloc(32, 7));
     await expect(kms.unwrap(wrapped, 't2')).rejects.toThrow();
   });
 });
 
-describe('LocalBlindIndexPort(HKDFでテナントごとの鍵を導出)', () => {
-  it('同じテナント・同じ値なら同じ、テナントが違えば別の値になる', async () => {
+describe('LocalBlindIndexPort(HKDFでテナント・用途ごとの鍵を導出)', () => {
+  it('同じテナント・同じ値なら同じ、テナントが違えば別の値になり、先頭1バイトが鍵の版', async () => {
     const port = new LocalBlindIndexPort('ef'.repeat(32));
-    const a = await port.compute('t1', '佐藤');
-    expect(await port.compute('t1', '佐藤')).toBe(a);
-    expect(await port.compute('t2', '佐藤')).not.toBe(a);
-    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    const a = await port.compute('t1', 'receipts.dedupe', '佐藤');
+    expect(await port.compute('t1', 'receipts.dedupe', '佐藤')).toEqual(a);
+    expect(await port.compute('t2', 'receipts.dedupe', '佐藤')).not.toEqual(a);
+    expect(a).toHaveLength(33);
+    expect(a[0]).toBe(1);
   });
 });

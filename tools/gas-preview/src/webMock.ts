@@ -103,7 +103,13 @@ const unauthenticated: WebMockResponse = {
 const forbidden: WebMockResponse = { status: 403, body: { code: 'forbidden', message: '権限がありません' } };
 
 const sessionBody = (s: FixtureStaff) => ({
-  staff: { staffId: s.id, tenantId: TENANT.id, name: s.name, email: s.email, isAdmin: s.isAdmin },
+  staff: {
+    staffId: s.id,
+    tenantId: TENANT.id,
+    name: s.name,
+    email: s.email,
+    role: s.isAdmin ? 'admin' : 'staff',
+  },
 });
 
 const prompt = (key: (typeof AI_PROMPT_KEYS)[keyof typeof AI_PROMPT_KEYS]) =>
@@ -270,9 +276,9 @@ export const webHandlers: Record<string, WebHandler> = {
   'GET /api/reports/history': withUser((req) => {
     const index = CUSTOMERS.findIndex((c) => c.uuid === req.query.get('customerId'));
     const customer = CUSTOMERS[index];
-    if (!customer) return { body: { items: [] }, schema: customerHistoryResponseSchema };
+    if (!customer) return { body: { items: [], nextCursor: null }, schema: customerHistoryResponseSchema };
     const before = req.query.get('before');
-    const items = customerReports(customer.id, req.state.today)
+    const all = customerReports(customer.id, req.state.today)
       .map((r, i) => ({
         type: r.type,
         id: reportUuid(index, i),
@@ -286,9 +292,11 @@ export const webHandlers: Record<string, WebHandler> = {
           ? { risk: r.risk ?? null, es: r.es ?? null }
           : { isAccident: true, subtype: r.subtype ?? '事故報告' }),
       }))
-      .filter((item) => !before || item.occurredAtIso < new Date(before).toISOString())
-      .slice(0, 5);
-    return { body: { items }, schema: customerHistoryResponseSchema };
+      .filter((item) => !before || item.occurredAtIso < new Date(before).toISOString());
+    const items = all.slice(0, 5);
+    // モックの続きの位置は最後の記録日時(本物のサーバーは不透明な文字列を返す)
+    const nextCursor = all.length > 5 ? (items.at(-1)?.occurredAtIso ?? null) : null;
+    return { body: { items, nextCursor }, schema: customerHistoryResponseSchema };
   }),
 
   // ── 日報・事故報告・領収書(日報の担当) ──
@@ -312,6 +320,7 @@ export const webHandlers: Record<string, WebHandler> = {
         customerId: String(req.body.customerId),
         riskRating: (req.body.riskRating as number | null) ?? null,
         esRating: (req.body.esRating as number | null) ?? null,
+        rowVersion: 1,
         content: {
           startTime: String(req.body.startTime ?? ''),
           endTime: String(req.body.endTime ?? ''),
@@ -332,6 +341,7 @@ export const webHandlers: Record<string, WebHandler> = {
         staffId: user.id,
         customerId: String(req.body.customerId),
         reportType: String(req.body.reportType ?? '事故報告'),
+        rowVersion: 1,
         content: {},
       },
     },
@@ -414,7 +424,7 @@ function customerDetailView(c: FixtureCustomer) {
     ageBracket: v('年代'),
     registeredAt: registered ? jstTimestampToIso(registered) : null,
     externalLastUpdatedAt: null,
-    deactivatedAt: null,
+    archivedAt: null,
     familyMembers: c.family.map((f, i) => ({
       id: reportUuid(90, i + CUSTOMERS.indexOf(c) * 10),
       name: f.name,
@@ -529,6 +539,7 @@ function attendanceDayBody(date: string, staff: FixtureStaff, today: string) {
     rowData: toContractRow(row),
     derived: derivedOf(row),
     changedFields: [],
+    rowVersion: 1,
     editable: date >= range.from && date <= range.to,
     editableFrom: range.from,
     editableTo: range.to,

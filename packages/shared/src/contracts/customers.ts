@@ -44,7 +44,8 @@ export const customerDetailViewSchema = z.object({
   ageBracket: nullableString,
   registeredAt: nullableString,
   externalLastUpdatedAt: nullableString,
-  deactivatedAt: nullableString,
+  /** 取込元から消えた等でアーカイブされた日時(ISO8601)。 */
+  archivedAt: nullableString,
   familyMembers: z.array(familyMemberViewSchema),
 });
 export type CustomerDetailView = z.infer<typeof customerDetailViewSchema>;
@@ -59,7 +60,10 @@ export const customerListItemSchema = z.object({
 });
 export type CustomerListItem = z.infer<typeof customerListItemSchema>;
 
-/** GET /api/customers(familyName 省略時)。cities は地区の重複無し・昇順の一覧。 */
+/** GET /api/customers のクエリ。familyName を渡すと苗字の完全一致(省略時は全件)。 */
+export const customerListQuerySchema = z.object({ familyName: z.string().trim().max(100).optional() });
+
+/** GET /api/customers。cities は地区の重複無し・昇順の一覧。 */
 export const customerListResponseSchema = z.object({
   customers: z.array(customerListItemSchema),
   cities: z.array(z.string()),

@@ -1,4 +1,5 @@
 import type { CalendarEvent } from '@katahimo/core/domain';
+import { isSameStaffName } from '@katahimo/core/domain';
 import type {
   AppLogEntry,
   CalendarEventList,
@@ -50,7 +51,7 @@ class FakeCalendar implements GoogleCalendarPort {
 
 class FakeMaps implements MapsPort {
   geocodeCalls: string[] = [];
-  routeCalls: Array<{ origin: LatLng; destination: LatLng; options?: RouteOptions }> = [];
+  routeCalls: Array<{ origin: LatLng; destination: LatLng; options?: RouteOptions | undefined }> = [];
   failRoutes = false;
   async geocode(address: string) {
     this.geocodeCalls.push(address);
@@ -88,6 +89,12 @@ const directory: ScheduleDirectory = {
     },
   ],
 };
+
+/** 呼び出し側(usecase)と同じく、氏名からスタッフIDを解決した対象。 */
+const targetOf = (staffName: string) => ({
+  staffId: directory.staff.find((s) => isSameStaffName(s.name, staffName))?.id ?? 'staff-unknown',
+  staffName,
+});
 
 describe('GoogleSchedulePort', () => {
   let calendar: FakeCalendar;
@@ -128,7 +135,7 @@ describe('GoogleSchedulePort', () => {
   });
 
   it('staff.calendar_id と GOOGLE_CALENDAR_IDS のカレンダーをJSTの1日の範囲で読み、スタッフの予定を返す', async () => {
-    const result = await port.getSchedule('佐藤美咲', date, { tenantId });
+    const result = await port.getSchedule(targetOf('佐藤美咲'), date, { tenantId });
     expect(result).toEqual({
       success: true,
       date,
@@ -163,7 +170,7 @@ describe('GoogleSchedulePort', () => {
   });
 
   it('ルートはスタッフの移動手段で計算し、同じ住所のジオコーディングは1回にまとめる', async () => {
-    const result = await port.getScheduleWithRoute('佐藤 美咲', date, false, { tenantId });
+    const result = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
     const [visit, office] = result.appointments ?? [];
     expect(visit).toMatchObject({ attendanceMin: 10, attendanceKm: '3.21', moveMin: '', leavingMin: '' });
     expect(visit?.attendanceUrl).toContain('travelmode=bicycling');
@@ -174,37 +181,42 @@ describe('GoogleSchedulePort', () => {
   });
 
   it('閲覧は2時間キャッシュし、期限内は再計算しない。期限切れで再計算する', async () => {
-    const first = await port.getScheduleWithRoute('佐藤 美咲', date, false, { tenantId });
+    const first = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
     const callsAfterFirst = calendar.calls.length;
     now = 2 * 60 * 60 * 1000 - 1;
-    expect(await port.getScheduleWithRoute('佐藤　美咲', date, false, { tenantId })).toEqual(first);
+    expect(await port.getScheduleWithRoute(targetOf('佐藤　美咲'), date, false, { tenantId })).toEqual(first);
     expect(calendar.calls.length).toBe(callsAfterFirst);
     now = 2 * 60 * 60 * 1000;
-    await port.getScheduleWithRoute('佐藤 美咲', date, false, { tenantId });
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
     expect(calendar.calls.length).toBe(callsAfterFirst * 2);
   });
 
   it('forceRefresh はキャッシュを読まずに再計算し、結果をキャッシュに書き直す', async () => {
-    await port.getScheduleWithRoute('佐藤 美咲', date, false, { tenantId });
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
     maps.failRoutes = true;
-    const refreshed = await port.getScheduleWithRoute('佐藤 美咲', date, true, { tenantId });
+    const refreshed = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, true, { tenantId });
     expect(refreshed.appointments?.[0]?.attendanceMin).toBe('');
     const calls = calendar.calls.length;
-    expect(await port.getScheduleWithRoute('佐藤 美咲', date, false, { tenantId })).toEqual(refreshed);
+    expect(await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId })).toEqual(
+      refreshed,
+    );
     expect(calendar.calls.length).toBe(calls);
   });
 
   it('fresh(勤怠記録の書き込み用)はキャッシュを読みも書きもしない', async () => {
-    const cached = await port.getScheduleWithRoute('佐藤 美咲', date, false, { tenantId });
+    const cached = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
     maps.failRoutes = true;
-    const fresh = await port.getScheduleWithRoute('佐藤 美咲', date, false, { tenantId, fresh: true });
+    const fresh = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, {
+      tenantId,
+      fresh: true,
+    });
     expect(fresh.appointments?.[0]?.attendanceMin).toBe('');
-    expect(await port.getScheduleWithRoute('佐藤 美咲', date, false, { tenantId })).toEqual(cached);
+    expect(await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId })).toEqual(cached);
   });
 
   it('経路計算の失敗は空欄にして続け、WARNで記録する(住所は記録しない)', async () => {
     maps.failRoutes = true;
-    const result = await port.getScheduleWithRoute('佐藤 美咲', date, false, { tenantId });
+    const result = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
     expect(result.success).toBe(true);
     expect(
       result.appointments?.every((a) => a.attendanceMin === '' && a.moveMin === '' && a.leavingMin === ''),
@@ -225,7 +237,7 @@ describe('GoogleSchedulePort', () => {
 
   it('読めないカレンダーは閲覧ではWARNを残して飛ばし、freshでは失敗させる(予定が欠けたまま記録しないため)', async () => {
     calendar.failing.add('reserva@group.calendar.google.com');
-    const view = await port.getScheduleWithRoute('佐藤 美咲', date, false, { tenantId });
+    const view = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
     expect(view.appointments?.map((a) => a.customerName)).toEqual(['請求書']);
     expect(logs[0]).toMatchObject({
       level: 'WARN',
@@ -233,12 +245,12 @@ describe('GoogleSchedulePort', () => {
       details: { calendarId: 'reserva@group.calendar.google.com', message: 'Not Found' },
     });
     await expect(
-      port.getScheduleWithRoute('佐藤 美咲', date, false, { tenantId, fresh: true }),
+      port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId, fresh: true }),
     ).rejects.toThrow('カレンダーを読み込めませんでした');
   });
 
   it('スタッフ台帳に居ない名前は予定なし(カレンダーも読まない)', async () => {
-    expect(await port.getScheduleWithRoute('不明 太郎', date, false, { tenantId })).toEqual({
+    expect(await port.getScheduleWithRoute(targetOf('不明 太郎'), date, false, { tenantId })).toEqual({
       success: true,
       date,
       staffName: '不明 太郎',
@@ -248,12 +260,12 @@ describe('GoogleSchedulePort', () => {
   });
 
   it('入力の検証はGAS版と同じメッセージの例外。tenantId が無ければ例外', async () => {
-    await expect(port.getSchedule(' ', date, { tenantId })).rejects.toThrow(
-      'staffName が指定されていません。',
+    await expect(port.getSchedule({ staffId: '', staffName: ' ' }, date, { tenantId })).rejects.toThrow(
+      '対象のスタッフが指定されていません。',
     );
-    await expect(port.getSchedule('佐藤 美咲', '2026/09/25', { tenantId })).rejects.toThrow(
+    await expect(port.getSchedule(targetOf('佐藤 美咲'), '2026/09/25', { tenantId })).rejects.toThrow(
       'dateString が不正です。YYYY-MM-DD 形式で指定してください。',
     );
-    await expect(port.getSchedule('佐藤 美咲', date)).rejects.toThrow('tenantId');
+    await expect(port.getSchedule(targetOf('佐藤 美咲'), date)).rejects.toThrow('tenantId');
   });
 });

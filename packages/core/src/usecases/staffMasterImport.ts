@@ -1,11 +1,12 @@
-import { normalizeEmailForIndex } from '../domain';
+import { newId, normalizeEmailForIndex, splitJapaneseFullName } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
-import type { StaffPatch, StaffRepositoryPort } from '../ports/repositories';
+import type { StaffPatch } from '../ports/staff';
+import type { UnitOfWorkPort } from '../ports/unitOfWork';
 import type { PasswordHasherPort } from './auth';
 
 /**
- * GAS版スタッフ台帳(Staffシート)の1行を列の意味で表したもの。シートの列位置との対応付けは
- * 取込元(@katahimo/ingestion の staffMasterCsv)に閉じ込め、ここでは列記号を扱わない。
+ * GAS版スタッフ台帳(Staffシート)の1行を列の意味で表したもの。シートの列位置との対応は取込元
+ * (@katahimo/ingestion の staffMasterCsv)に閉じ込め、ここでは列記号を扱わない。
  */
 export interface StaffMasterRow {
   /** 元CSVの行番号(1始まり、ヘッダー含む)。エラー表示用。 */
@@ -18,11 +19,11 @@ export interface StaffMasterRow {
   password: string;
   isAdmin: boolean;
   /** 'YYYY-MM-DD' に正規化済み。 */
-  retirementDate: string | null;
+  retiredOn: string | null;
 }
 
 export interface StaffMasterImportDeps {
-  staff: StaffRepositoryPort;
+  uow: UnitOfWorkPort;
   passwordHasher: PasswordHasherPort;
   appLog: AppLogPort;
 }
@@ -38,9 +39,8 @@ const LEGACY_HASH_PATTERN = /^[0-9a-f]{64}$/i;
 type PasswordValue = { kind: 'legacy'; hash: string } | { kind: 'plain'; value: string } | { kind: 'none' };
 
 /**
- * パスワード列の値の解釈。GAS版verifyLoginは「ハッシュ一致」に加え「平文一致(未移行)」も
- * 受け付けていたため、64桁hexはレガシーハッシュ、それ以外の値は平文パスワードとして扱う
- * (平文は取込時にargon2idへハッシュし、平文のままは保存しない)。
+ * パスワード列の解釈。GAS版 verifyLogin は「ハッシュ一致」に加え「平文一致(未移行)」も受け付けていたため、
+ * 64桁hex はレガシーハッシュ、それ以外の値は平文パスワードとして扱う(平文は argon2id にして保存する)。
  */
 function parsePassword(raw: string): PasswordValue {
   const value = raw.trim();
@@ -50,94 +50,123 @@ function parsePassword(raw: string): PasswordValue {
 }
 
 /**
- * スタッフ台帳を一括取込する(メールアドレスで照合し、既存なら更新・無ければ作成)。
- * 既に本アプリでパスワード(argon2id)を設定済みのスタッフは、パスワードを上書きしない
- * (台帳の古いパスワードで戻ってしまうのを防ぐため)。
+ * スタッフ台帳を一括取込する(メールで照合し、既存なら更新・無ければ作成)。全行を1トランザクションで適用し、
+ * 取込の実行を import_runs に残す。既に本アプリでパスワード(argon2id)を設定済みのスタッフのパスワードは
+ * 上書きしない(台帳の古いパスワードに戻らないように)。
  */
 export async function importStaffMasterRows(
   deps: StaffMasterImportDeps,
   tenantId: string,
   rows: StaffMasterRow[],
-  options: { dryRun?: boolean } = {},
+  options: { dryRun?: boolean; fileName?: string | null } = {},
 ): Promise<StaffMasterImportResult> {
-  const result: StaffMasterImportResult = { created: 0, updated: 0, skipped: [] };
-  const seenEmails = new Set<string>();
-
+  const hashedPlain = new Map<number, string>();
   for (const row of rows) {
-    const skip = (reason: string) => result.skipped.push({ rowNumber: row.rowNumber, reason });
-    const name = row.name.trim();
-    const email = normalizeEmailForIndex(row.email);
-    if (!name || !email.includes('@')) {
-      skip('氏名またはメールアドレスが空です');
-      continue;
-    }
-    const altEmailCandidate = row.altEmail ? normalizeEmailForIndex(row.altEmail) : null;
-    const altEmail = altEmailCandidate && altEmailCandidate !== email ? altEmailCandidate : null;
-    if (seenEmails.has(email) || (altEmail && seenEmails.has(altEmail))) {
-      skip('同じメールアドレスの行がCSV内で重複しています');
-      continue;
-    }
+    const password = parsePassword(row.password);
+    if (password.kind === 'plain')
+      hashedPlain.set(row.rowNumber, await deps.passwordHasher.hash(password.value));
+  }
+  const runId = newId();
 
-    const existing = await deps.staff.findByLoginEmail(tenantId, email);
-    if (altEmail) {
-      const altOwner = await deps.staff.findByLoginEmail(tenantId, altEmail);
-      if (altOwner && altOwner.id !== existing?.id) {
-        skip('サブメールが別のスタッフのメールアドレスと重複しています');
+  const result = await deps.uow.run(tenantId, async (r) => {
+    const outcome: StaffMasterImportResult = { created: 0, updated: 0, skipped: [] };
+    const seen = new Set<string>();
+    if (!options.dryRun) {
+      await r.importRuns.start({
+        id: runId,
+        source: 'staff_master_csv',
+        fileName: options.fileName ?? null,
+        fileVersion: null,
+        triggeredBy: null,
+      });
+    }
+    for (const row of rows) {
+      const skip = (reason: string) => outcome.skipped.push({ rowNumber: row.rowNumber, reason });
+      const name = row.name.trim();
+      const email = normalizeEmailForIndex(row.email);
+      if (!name || !email.includes('@')) {
+        skip('氏名またはメールアドレスが空です');
         continue;
       }
-    }
-    if (existing && existing.email !== email) {
-      skip('メールアドレスが別のスタッフのサブメールとして登録済みです');
-      continue;
-    }
-    seenEmails.add(email);
-    if (altEmail) seenEmails.add(altEmail);
-
-    const password = parsePassword(row.password);
-    if (options.dryRun) {
-      if (existing) result.updated++;
-      else result.created++;
-      continue;
-    }
-
-    if (existing) {
-      const patch: StaffPatch = {
-        name,
-        altEmail,
-        isAdmin: row.isAdmin,
-        retirementDate: row.retirementDate,
-      };
-      const canReplacePassword = !existing.passwordHash;
-      if (canReplacePassword && password.kind === 'legacy') patch.legacyPasswordHash = password.hash;
-      await deps.staff.update(tenantId, existing.id, patch);
-      if (canReplacePassword && password.kind === 'plain') {
-        await deps.staff.updatePasswordHash(
-          tenantId,
-          existing.id,
-          await deps.passwordHasher.hash(password.value),
-        );
+      const altCandidate = row.altEmail ? normalizeEmailForIndex(row.altEmail) : null;
+      const altEmail = altCandidate && altCandidate !== email ? altCandidate : null;
+      if (seen.has(email) || (altEmail && seen.has(altEmail))) {
+        skip('同じメールアドレスの行がCSV内で重複しています');
+        continue;
       }
-      result.updated++;
-    } else {
-      await deps.staff.create({
-        tenantId,
-        name,
-        email,
-        altEmail,
-        isAdmin: row.isAdmin,
-        retirementDate: row.retirementDate,
-        legacyPasswordHash: password.kind === 'legacy' ? password.hash : null,
-        passwordHash: password.kind === 'plain' ? await deps.passwordHasher.hash(password.value) : null,
-      });
-      result.created++;
+      const existing = await r.staff.findByLoginEmail(email);
+      if (altEmail) {
+        const altOwner = await r.staff.findByLoginEmail(altEmail);
+        if (altOwner && altOwner.id !== existing?.id) {
+          skip('サブメールが別のスタッフのメールアドレスと重複しています');
+          continue;
+        }
+      }
+      if (existing && existing.email !== email) {
+        skip('メールアドレスが別のスタッフのサブメールとして登録済みです');
+        continue;
+      }
+      seen.add(email);
+      if (altEmail) seen.add(altEmail);
+      if (options.dryRun) {
+        if (existing) outcome.updated++;
+        else outcome.created++;
+        continue;
+      }
+
+      const password = parsePassword(row.password);
+      const split = splitJapaneseFullName(name);
+      // 台帳には管理者かどうかしか無い。本アプリで付けたコーディネーターは管理者でない行でも保つ
+      const role = row.isAdmin ? 'admin' : existing?.role === 'coordinator' ? 'coordinator' : 'staff';
+      if (existing) {
+        const patch: StaffPatch = {
+          displayName: name,
+          familyName: split.familyName,
+          givenName: split.givenName,
+          altEmail,
+          role,
+          retiredOn: row.retiredOn,
+        };
+        await r.staff.update(existing.id, patch);
+        const credentials = await r.staff.getCredentials(existing.id);
+        if (!credentials?.passwordHash) {
+          if (password.kind === 'legacy') await r.staff.setLegacyPasswordHash(existing.id, password.hash);
+          const plain = hashedPlain.get(row.rowNumber);
+          if (plain) await r.staff.setPasswordHash(existing.id, plain);
+        }
+        outcome.updated++;
+      } else {
+        await r.staff.create({
+          id: newId(),
+          displayName: name,
+          familyName: split.familyName,
+          givenName: split.givenName,
+          email,
+          altEmail,
+          role,
+          retiredOn: row.retiredOn,
+          legacyPasswordHash: password.kind === 'legacy' ? password.hash : null,
+          passwordHash: hashedPlain.get(row.rowNumber) ?? null,
+        });
+        outcome.created++;
+      }
     }
-  }
+    if (!options.dryRun) {
+      await r.importRuns.finish(runId, {
+        status: 'applied',
+        counts: { created: outcome.created, updated: outcome.updated, skipped: outcome.skipped.length },
+        message: null,
+      });
+    }
+    return outcome;
+  });
 
   if (!options.dryRun) {
     await deps.appLog.write({
       tenantId,
       level: 'SECURITY',
       action: 'staff.import.completed',
+      actorType: 'system',
       details: { created: result.created, updated: result.updated, skipped: result.skipped.length },
     });
   }

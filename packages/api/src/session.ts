@@ -1,5 +1,6 @@
-import { authenticateSession } from '@katahimo/core';
-import type { ResolvedSession } from '@katahimo/core/usecases';
+import { isAdminRole, resolveTargetStaffId } from '@katahimo/core/domain';
+import type { Actor, ResolvedSession } from '@katahimo/core/usecases';
+import { authenticateSession } from '@katahimo/core/usecases';
 import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { Container } from './container';
@@ -14,8 +15,9 @@ import { apiError } from './http/responses';
  */
 export const SESSION_COOKIE_NAME = 'katahimo_session';
 
-function cookiePrefix(container: Container): 'host' | undefined {
-  return container.config.isProduction ? 'host' : undefined;
+/** Cookie の接頭辞の指定(本番だけ `__Host-`)。 */
+function cookiePrefix(container: Container): { prefix: 'host' } | Record<string, never> {
+  return container.config.isProduction ? { prefix: 'host' } : {};
 }
 
 export function setSessionCookie(c: Context, container: Container, value: string, expires: Date): void {
@@ -25,7 +27,7 @@ export function setSessionCookie(c: Context, container: Container, value: string
     sameSite: 'Lax',
     path: '/',
     expires,
-    prefix: cookiePrefix(container),
+    ...cookiePrefix(container),
   });
 }
 
@@ -35,12 +37,12 @@ export function clearSessionCookie(c: Context, container: Container): void {
     httpOnly: true,
     secure: container.config.isProduction,
     sameSite: 'Lax',
-    prefix: cookiePrefix(container),
+    ...cookiePrefix(container),
   });
 }
 
 export function readSessionCookie(c: Context, container: Container): string | undefined {
-  return getCookie(c, SESSION_COOKIE_NAME, cookiePrefix(container));
+  return getCookie(c, SESSION_COOKIE_NAME, container.config.isProduction ? 'host' : undefined);
 }
 
 /**
@@ -59,7 +61,7 @@ export async function getAuthenticatedSession(
   const cookieValue = readSessionCookie(c, container);
   if (!cookieValue) return null;
   const result = await authenticateSession(container, cookieValue, {
-    isInitialLoad: options.isInitialLoad,
+    ...(options.isInitialLoad ? { isInitialLoad: true } : {}),
     meta: requestMeta(c),
   });
   if (!result.ok) {
@@ -95,7 +97,7 @@ export function requireSession(container: Container, deniedAction?: string): Mid
       return apiError(c, 401, 'unauthenticated', 'ログインセッションが無効です。再度ログインしてください。');
     }
     c.set('session', session);
-    await next();
+    return next();
   };
 }
 
@@ -106,7 +108,7 @@ export function requireSession(container: Container, deniedAction?: string): Mid
 export function requireAdmin(container: Container, action: string): MiddlewareHandler<SessionEnv> {
   return async (c, next) => {
     const session = await getAuthenticatedSession(c, container);
-    if (!session?.isAdmin) {
+    if (!session || !isAdminRole(session.role)) {
       await container.appLog.write({
         tenantId: session?.tenantId ?? null,
         level: 'WARN',
@@ -120,48 +122,21 @@ export function requireAdmin(container: Container, action: string): MiddlewareHa
         : apiError(c, 401, 'unauthenticated', 'ログインセッションが無効です。再度ログインしてください。');
     }
     c.set('session', session);
-    await next();
+    return next();
   };
 }
 
-/**
- * 管理者以外は自分自身のstaffIdに強制し、管理者だけが明示的なstaffIdクエリで
- * 他スタッフを指定できるようにする。
- *
- * 移植元: gas-childcare-visit-app/PastSchedule.js の resolvePastScheduleTargetStaffName_
- * (getPastScheduleAccessContext_とセットで使われるパターン)と同じ考え方。
- */
-export function resolveAttendanceTargetStaffId(
-  session: ResolvedSession,
-  requestedStaffId: string | undefined,
-): string {
-  if (!session.isAdmin) return session.staffId;
-  const requested = (requestedStaffId ?? '').trim();
-  return requested || session.staffId;
+/** セッションの操作者(usecase に渡す。送信元の情報とリクエストIDを添える)。 */
+export function actorOf(c: Context<SessionEnv>): Actor {
+  const session = c.get('session');
+  return { tenantId: session.tenantId, staffId: session.staffId, role: session.role, meta: requestMeta(c) };
 }
 
 /**
- * 「訪問完了」通知用。管理者以外は自分自身のstaffIdに強制する(日報・領収書の保存は
- * usecase側でactorから同じ規則を適用する)。
+ * 操作の対象スタッフ(予定・出勤簿・報告・領収書で共通)。他のスタッフを扱えない役割(一般スタッフ)は
+ * 要求にかかわらず本人、管理者・コーディネーターは指定があればそのスタッフ(CLAUDE.md の admin-vs-self。
+ * GAS版 PastSchedule.js resolvePastScheduleTargetStaffName_ と同じ考え方)。
  */
-export function resolveReportTargetStaffId(
-  session: ResolvedSession,
-  requestedStaffId: string | undefined,
-): string {
-  if (!session.isAdmin) return session.staffId;
-  const requested = (requestedStaffId ?? '').trim();
-  return requested || session.staffId;
-}
-
-/**
- * 「予定」タブ用。管理者以外は自分自身のstaffIdに強制し、管理者だけが明示的なstaffId指定で
- * 他スタッフの予定を閲覧できるようにする(GAS版Schedule.js resolveScheduleTargetStaffName_)。
- */
-export function resolveScheduleTargetStaffId(
-  session: ResolvedSession,
-  requestedStaffId: string | undefined,
-): string {
-  if (!session.isAdmin) return session.staffId;
-  const requested = (requestedStaffId ?? '').trim();
-  return requested || session.staffId;
+export function targetStaffIdOf(c: Context<SessionEnv>, requestedStaffId: string | undefined): string {
+  return resolveTargetStaffId(c.get('session'), requestedStaffId);
 }

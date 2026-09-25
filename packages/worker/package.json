@@ -14,16 +14,15 @@
     "outbox:once": "tsx src/entrypoints/outboxOnce.ts",
     "job:nightly-calendar-sync": "tsx src/entrypoints/nightlyCalendarSync.ts",
     "job:csv-import": "tsx src/entrypoints/csvImport.ts",
-    "job:sync-busy-blocks": "tsx src/entrypoints/syncBusyBlocks.ts"
+    "job:sync-busy-blocks": "tsx src/entrypoints/syncBusyBlocks.ts",
+    "job:maintenance": "tsx src/entrypoints/maintenance.ts"
   },
   "dependencies": {
     "@katahimo/core": "workspace:*",
     "@katahimo/db": "workspace:*",
     "@katahimo/ingestion": "workspace:*",
     "@katahimo/integrations": "workspace:*",
-    "@katahimo/shared": "workspace:*",
     "dotenv": "^16.4.7",
-    "drizzle-orm": "^0.45.3",
     "zod": "^3.24.1"
   },
   "devDependencies": {

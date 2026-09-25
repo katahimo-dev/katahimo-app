@@ -79,9 +79,18 @@ export interface ScheduleWithRouteOptions extends ScheduleRequestOptions {
   fresh?: boolean;
 }
 
+/**
+ * 予定を見るスタッフ。識別は staffId で行い、氏名はカレンダーの予定の文字列(タイトル・説明欄の担当者名)との
+ * 突き合わせにだけ使う(GAS版は氏名で全てを突き合わせていた)。
+ */
+export interface ScheduleTarget {
+  staffId: string;
+  staffName: string;
+}
+
 export interface SchedulePort {
   getSchedule(
-    staffName: string,
+    target: ScheduleTarget,
     dateString: string,
     options?: ScheduleRequestOptions,
   ): Promise<ScheduleLightResult>;
@@ -90,7 +99,7 @@ export interface SchedulePort {
    * 書き直す(以後の閲覧に反映させるため)。キャッシュに一切触れない場合は options.fresh を使う。
    */
   getScheduleWithRoute(
-    staffName: string,
+    target: ScheduleTarget,
     dateString: string,
     forceRefresh: boolean,
     options?: ScheduleWithRouteOptions,

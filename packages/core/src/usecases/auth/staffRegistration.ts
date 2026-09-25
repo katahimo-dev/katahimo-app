@@ -1,5 +1,6 @@
-import { normalizeEmailForIndex } from '../../domain';
-import type { StaffRecord } from '../../ports/repositories';
+import { newId, normalizeEmailForIndex, splitJapaneseFullName } from '../../domain';
+import type { StaffRole } from '../../domain/model';
+import type { StaffRecord } from '../../ports/staff';
 import type { StaffRegistrationDeps } from './deps';
 
 export interface RegisterStaffInput {
@@ -8,50 +9,38 @@ export interface RegisterStaffInput {
   email: string;
   /** 省略時はパスワード未設定で登録する(本人がパスワード再設定の手順で初回設定する)。 */
   password?: string;
-  isAdmin: boolean;
+  /** GAS版のパスワードハッシュ(スタッフ台帳の移行)。 */
+  legacyPasswordHash?: string | null;
+  role: StaffRole;
   altEmail?: string | null;
   phone?: string | null;
+  retiredOn?: string | null;
 }
 
 /**
- * スタッフを新規登録する(シード・管理者のスタッフ管理から使う)。メールは正規化して保存する
- * (ログイン時の検索キーになるため)。メールの重複確認は呼び出し側(usecases/staffAdmin.ts)が行う。
+ * スタッフを新規登録する(シード・管理者のスタッフ管理・台帳の取込)。メールは正規化して保存する
+ * (ログインの検索キー)。メールの重複(他スタッフのサブメールとの重複を含む)は DB が拒否し conflict になる。
  */
 export async function registerStaff(
   deps: StaffRegistrationDeps,
   input: RegisterStaffInput,
 ): Promise<StaffRecord> {
-  return deps.staff.create({
-    tenantId: input.tenantId,
-    name: input.name.trim(),
-    email: normalizeEmailForIndex(input.email),
-    altEmail: input.altEmail ? normalizeEmailForIndex(input.altEmail) : null,
-    phone: input.phone?.trim() || null,
-    passwordHash: input.password ? await deps.passwordHasher.hash(input.password) : null,
-    isAdmin: input.isAdmin,
-  });
-}
-
-export interface ImportLegacyStaffInput {
-  tenantId: string;
-  name: string;
-  email: string;
-  /** GAS版 Auth.js の computeHash(password) で計算済みのハッシュ値(スタッフ台帳J列の値そのもの)。 */
-  legacyPasswordHash: string;
-  isAdmin: boolean;
-}
-
-/**
- * GAS版のスタッフ台帳から、既存のパスワードハッシュ(SHA-256+salt)ごとスタッフを1件移行する。
- * 初回ログイン成功時に login() がargon2idへサイレント再ハッシュする。
- * 台帳全体の一括取込は usecases/staffMasterImport.ts を使う。
- */
-export async function importLegacyStaff(deps: StaffRegistrationDeps, input: ImportLegacyStaffInput) {
-  return deps.staff.create({
-    tenantId: input.tenantId,
-    name: input.name.trim(),
-    email: normalizeEmailForIndex(input.email),
-    legacyPasswordHash: input.legacyPasswordHash,
-    isAdmin: input.isAdmin,
-  });
+  const displayName = input.name.trim();
+  const { familyName, givenName } = splitJapaneseFullName(displayName);
+  const passwordHash = input.password ? await deps.passwordHasher.hash(input.password) : null;
+  return deps.uow.run(input.tenantId, (r) =>
+    r.staff.create({
+      id: newId(),
+      displayName,
+      familyName,
+      givenName,
+      email: normalizeEmailForIndex(input.email),
+      altEmail: input.altEmail ? normalizeEmailForIndex(input.altEmail) : null,
+      phone: input.phone?.trim() || null,
+      role: input.role,
+      retiredOn: input.retiredOn ?? null,
+      passwordHash,
+      legacyPasswordHash: input.legacyPasswordHash ?? null,
+    }),
+  );
 }

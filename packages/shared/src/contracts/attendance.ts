@@ -86,7 +86,7 @@ export const attendanceMonthlyTotalsSchema = z.object({
   shoppingErrandTotal: z.number(),
 });
 
-/** 管理者だけが有効な「対象スタッフ」指定(一般スタッフが送っても無視され本人に固定される)。 */
+/** 管理者・コーディネーターだけが有効な「対象スタッフ」指定(一般スタッフが送っても無視され本人に固定される)。 */
 const targetStaffIdSchema = idSchema.optional();
 
 // ── GET /api/attendance/day ──────────────────────────────────
@@ -106,6 +106,8 @@ export const attendanceDaySchema = z.object({
   derived: attendanceDayDerivedSchema,
   /** 自動転記後に手で変更された列(GAS版で背景色 #fce4e4 が付くセル)。 */
   changedFields: z.array(z.string()),
+  /** 楽観的排他の版(記録の無い日は0)。更新のときに送り返すと、他の人の保存と重なった場合に 409 になる。 */
+  rowVersion: z.number().int().nonnegative(),
   /** 当月(JST)の日付だけ編集できる(GAS版 updatePastSchedule の月ロック)。 */
   editable: z.boolean(),
   editableFrom: businessDateSchema,
@@ -125,6 +127,8 @@ export const updateAttendanceDayRequestSchema = z.object({
   date: businessDateSchema,
   staffId: targetStaffIdSchema,
   rowData: attendanceRowDataSchema,
+  /** 画面が読んだ版(GET の rowVersion)。送れば、他の人が先に保存していた場合に 409 conflict。 */
+  rowVersion: z.number().int().nonnegative().optional(),
 });
 export type UpdateAttendanceDayRequest = z.infer<typeof updateAttendanceDayRequestSchema>;
 

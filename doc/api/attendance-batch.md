@@ -8,13 +8,15 @@ GAS版(`legacy/gas-childcare-visit-app/gas-childcare-visit-app/`)の `PastSchedu
 ## 共通事項
 
 - 認証はセッションCookie(`/api/auth/login`)。未ログインは `401 {code:'unauthenticated'}`。
-- **対象スタッフ**: `staffId` を指定できるのは管理者だけ。一般スタッフが指定しても無視され、常に本人になる
-  (GAS版 `resolvePastScheduleTargetStaffName_`、API側 `resolveAttendanceTargetStaffId`)。存在しない/他テナントの
+- **対象スタッフ**: `staffId` を指定できるのは管理者・コーディネーターだけ。一般スタッフが指定しても無視され、常に
+  本人になる(GAS版 `resolvePastScheduleTargetStaffName_`、API側 `targetStaffIdOf`)。存在しない/他テナントの
   スタッフは `404 {code:'not_found'}`。
-- エラーは `{code, message, fields?}`。`code` は `validation_failed`(400)/ `locked`(400、月ロック)/
-  `forbidden`(403)/ `not_found`(404)/ `upstream_unavailable`(502、カレンダー予定を取得できない)。
+- エラーは `{code, message, fields?}`。`code` は `validation_failed`(400)/ `locked`(400、月ロック・締めた月)/
+  `forbidden`(403)/ `not_found`(404)/ `conflict`(409、古い `rowVersion`・訪問の時間帯の重なり)/
+  `upstream_unavailable`(502、カレンダー予定を取得できない)。
+- DB の正は実体(`attendance_days`・`visits`・`work_segments`・`travel_legs`)で、`rowData` はその投影(doc/09 第3章)。
 - 日付は JST の暦日 `YYYY-MM-DD`、年月は `YYYY-MM`。
-- `rowData` のキーは出勤簿の列記号(`C` `D` `E` … `AO`、doc/09 4.1節)。列の意味は
+- `rowData` のキーは出勤簿の列記号(`C` `D` `E` … `AO`)。列の意味は
   `packages/core/src/domain/attendance/sheetLayout.ts` が唯一の定義。値は文字列(数値で送っても文字列として保存)。
 - 操作ログ(`app_logs`): 失敗・拒否(WARN/ERROR)は常に、書き込み(修正・反映)は常に INFO、閲覧は
   **管理者が他スタッフのデータを見た場合だけ** INFO(`actor_staff_id`=操作した管理者、`target_staff_id`=対象)。
@@ -30,20 +32,26 @@ GAS版 `getPastScheduleForDate`。レスポンス `{ attendance }`:
 | `businessDate` `staffId` `staffName` | 対象 |
 | `found` | 記録があるか。`false` なら `rowData` は空(GAS版「記録が出勤簿に見つかりません」に相当。画面は空の行として編集できる) |
 | `rowData` / `derived` | 入力列 / 数式列相当の派生値(`workedMinutes`=所定内+所定外 を含む) |
-| `changedFields` | 自動転記後に手で変更された列(スプレッドシートで背景 `#fce4e4` になるセル) |
+| `changedFields` | 自動転記後に手で変更された列(スプレッドシートで背景 `#fce4e4` になるセル。実体の `overridden_fields` から作る) |
+| `rowVersion` | 楽観的排他の版(記録の無い日は0)。`PUT` に送り返すと、他の人が先に保存していた場合に 409 |
 | `editable` `editableFrom` `editableTo` | 月ロック。今日(JST)が属する月の1日〜末日だけ編集できる(管理者も同じ) |
 | `optionsI` `optionsR` | 天候の選択肢(`['晴れ','曇り','雨','雪']`。GAS版はシートの入力規則から読んでいた値を固定で持つ) |
 
 ### `PUT /api/attendance/day`
 
-GAS版 `updatePastSchedule`。ボディ `{ date, staffId?, rowData }`。
+GAS版 `updatePastSchedule`。ボディ `{ date, staffId?, rowData, rowVersion? }`。
 
 - 当月以外の日付は `400 {code:'locked', message:'修正期限切れです。当月(09/01)より前の記録は変更できません。'}`
   (来月以降は `'修正できません。来月以降(09/30より後)の記録はまだ修正できません。'`)。何も保存しない。
 - **送られた列だけ**を現在値と比較し、値が変わった列だけを書く(送られていない列はそのまま。空文字で消せる)。
-- 変わった列は `changed_fields` に追加し、`last_changed_by_staff_id` を操作者にし、`attendance_day_changes` に
-  変更前の行(暗号化)・変更した列・操作者を追記する(同一トランザクション)。そのうえで `attendance_day` の
-  ミラーを outbox に積む。
+- 値の形式を確かめる(時刻は `HH:mm`、距離は小数2桁に揃える。誤りは `400 validation_failed`、`fields` は
+  `rowData.<列>`)。訪問の時間帯が重なる修正も 400。
+- 変わった項目だけを実体(`visits`・`work_segments`・`travel_legs`・`attendance_days`)に差分で書き、変えた項目を
+  `overridden_fields` に加え、`entity_changes` に変更前の値(暗号化)・変更した項目・操作者を追記する。その日の行は
+  `SELECT … FOR UPDATE` で押さえ(カレンダーの反映と重ならない)、`attendance_day` のミラーを同じトランザクションで
+  outbox に積む(`dedupe_key` は `mirror.attendance_day:<日のID>:<版>`)。
+- `rowVersion` が今の版と違えば `409 conflict`(WARN `attendance.day.update_conflict`)。締めた月
+  (`attendance_periods`)は DB のトリガーも拒否する(`400 locked`)。
 - レスポンス `{ attendance, changedCount, changedColumns, message }`。`message` は `'修正しました。'` か
   `'変更はありませんでした。'`(変更なしの場合は保存・履歴・ミラーとも行わない)。
 
@@ -61,7 +69,7 @@ GAS版 `getWeeklyScheduleForStaff`。出勤簿の記録を週間表示用のイ�
 
 ## カレンダー → 出勤簿
 
-予定は `SchedulePort.getScheduleWithRoute(staffName, date, false, { tenantId, fresh: true })` から毎回最新を取る
+予定は `SchedulePort.getScheduleWithRoute({ staffId, staffName }, date, false, { tenantId, fresh: true })` から毎回最新を取る
 (出勤簿は正式な記録のため共有キャッシュを読み書きせず、読めないカレンダーがあれば部分的な結果ではなく
 `502 upstream_unavailable` にする。GAS版 `refreshAttendanceForStaffOnDate` と同じ規則)。予定の実装
 (`SCHEDULE_PROVIDER` = google / gas_bridge / noop)は `doc/api/schedule-route.md` を参照。
@@ -72,7 +80,8 @@ GAS版 `getWeeklyScheduleForStaff`。出勤簿の記録を週間表示用のイ�
 - カレンダーにある枠(訪問#1〜#3・事務作業#1〜#2)はカレンダーの内容で上書き。
 - 出勤簿にだけある枠は、カレンダー由来の枠と時間が重なる場合だけクリアし、重ならなければ残す。
 - 退勤距離は最後に埋まった訪問の枠と一緒に反映する。天候・買物代行・備考には触れない。
-- `changed_fields`(手で直した列の強調表示)は増やしも消しもしない。
+- `overridden_fields`(手で直した列の強調表示)は増やしも消しもしない。反映した訪問は `source = 'google_calendar'`、
+  予定の顧客IDから顧客を結び付ける。4件目以降の訪問は枠外の訪問として保存する(出勤簿には出ない)。
 
 ### `GET /api/attendance/day/calendar-sync/preview?date=[&staffId=]`
 
@@ -85,8 +94,9 @@ GAS版 `applyCalendarSyncForStaffOnDate` / `syncPastScheduleFromCalendar`。ボ�
 クライアントが見たプレビューは信用せず、同じ計算をやり直してから書く。
 
 - **冪等**: 同じカレンダー内容なら2回目以降は `changedCount: 0` で、出勤簿の保存・履歴・`attendance_day` ミラーは
-  行わない。「勤怠集計」(`attendance_aggregate`)のミラーは毎回積む(GAS版も毎回書き直していた)。
-- 変更があれば出勤簿を保存し、`attendance_day_changes` に履歴(操作者つき)を追記する。
+  行わない。「勤怠集計」(`attendance_aggregate`)のミラーは予定の内容が変わったときに積む(`dedupe_key` に予定の
+  指紋を含める。同じ内容の再反映では積み直さない)。
+- 変更があれば出勤簿を保存し、`entity_changes` に履歴(操作者つき、`change_source = 'calendar_sync'`)を追記する。
 - レスポンス `{ staffId, staffName, date, appointmentCount, changedCount, changes }`。
 - **管理者の期間一括反映**(GAS版の「一括反映」モーダル)は、クライアントがスタッフ×日ごとにこのAPIを順に呼び、
   成功/失敗数を数える(GAS版 `runCalendarSyncQueue` と同じ)。失敗分だけの再実行もそのまま行える。
@@ -115,35 +125,45 @@ GAS版は顧客シートを丸ごと書き換えていたが、こちらは RESE
 
 ### `GET /api/data-version`
 
-GAS版 `checkDataVersion`。レスポンス `{ dataVersion: '12' }`(顧客CSVを取り込むたびに+1)。クライアントは60秒ごとに
+GAS版 `checkDataVersion`。レスポンス `{ dataVersion: '12' }`(`tenant_settings.customer_data_version`。顧客CSVの取込で
+何か変わるたびに+1。何も変わらない取込では上げない)。クライアントは60秒ごとに
 ポーリングし、前回値と違えば顧客一覧を読み直す。
 
 ## バッチ(packages/worker)
 
 | 実行単位 | コマンド | 内容 | Cloud Scheduler(JST) |
 | --- | --- | --- | --- |
-| 常駐 | `pnpm --filter @katahimo/worker start` | outbox ミラーのポーリング(Cloud Run サービス、最小インスタンス1) | — |
+| 常駐 | `pnpm --filter @katahimo/worker start` | outbox(ミラー・再設定メール)の処理(Cloud Run サービス、最小インスタンス1) | — |
 | ジョブ | `pnpm job:nightly-calendar-sync` | GAS版 `autoSyncTodayScheduleForAllStaff`: 利用中の全テナントの在籍スタッフの当日分をカレンダーから出勤簿へ反映。スタッフごとに失敗を記録して続行し、テナントごとのまとめを INFO ログ。冪等 | `0 22 * * *`(`CRON_TZ=Asia/Tokyo`) |
 | ジョブ | `pnpm job:csv-import` | GAS版 `checkAndImportLatestCsv`: 各テナントの取込元の最新CSVが未取込なら取り込む | `0 3 * * *`(`CRON_TZ=Asia/Tokyo`) |
+| ジョブ | `pnpm --filter @katahimo/worker job:maintenance` | 保守: 操作ログの月のパーティションの作成・削除、保存期間を過ぎた行(セッション・outbox・再設定コード・マッチングの候補・レート制限)と参照されないファイルの削除(doc/09 第6章) | `0 4 * * *`(`CRON_TZ=Asia/Tokyo`) |
 | ジョブ | `pnpm --filter @katahimo/worker job:sync-busy-blocks` | スタッフのGoogleカレンダーの free/busy を `staff_busy_blocks` に同期(将来のマッチング用、doc/10。GAS版に相当機能なし)。期間は今日から `BUSY_BLOCK_SYNC_DAYS` 日 | 既定では登録しない(使う場合は例: `0 * * * *`) |
-| 確認用 | `pnpm --filter @katahimo/worker outbox:once` | outbox を1回だけ処理して終了 | — |
+| 確認用 | `pnpm --filter @katahimo/worker outbox:once` | outbox を空になるまで(`OUTBOX_DRAIN_MAX` 件まで)処理して終了 | — |
 
 - ジョブは Cloud Run Jobs として同じ worker イメージの別コマンドで動かす(ビルド済みの
-  `node dist/<job>.js`。`<job>` は `nightly-calendar-sync` / `csv-import` / `sync-busy-blocks` / `outbox-once`。
+  `node dist/<job>.js`。`<job>` は `nightly-calendar-sync` / `csv-import` / `maintenance` / `sync-busy-blocks` / `outbox-once`。
   構成は `Dockerfile` / `infra/gcp/run.tf`、手順は `doc/11_GCPデプロイ手順.md`)。
   失敗(反映に失敗したスタッフがいる・取込が `failed`/`review_required`)があると終了コード1になり、
-  Cloud Run Jobs の再試行・アラートに乗る。ログは1行JSON(Cloud Logging の構造化ログ)。
+  Cloud Run Jobs の再試行・アラートに乗る。`JOB_TIMEOUT_MS`(既定30分)を超えても終了コード1。SIGTERM を受けたら区切り
+  (スタッフ・テナントの間)で止め、`WORKER_SHUTDOWN_TIMEOUT_MS` で強制終了する。ワーカーは専用の DB ユーザー
+  `katahimo_worker`(`WORKER_DATABASE_URL`)で接続する。ログは1行JSON(Cloud Logging の構造化ログ)。
 - 取りこぼした日の流し直し: `pnpm job:nightly-calendar-sync -- 2026-09-24`。
-- ローカル開発では `WORKER_IN_PROCESS_CRON=true` で常駐ワーカーの中でも 22:00 / 03:00 JST に同じジョブを動かせる。
+- ローカル開発では `WORKER_IN_PROCESS_CRON=true` で常駐ワーカーの中でも 22:00 / 03:00 / 04:00 JST に同じジョブを動かせる。
+- 夜間反映の「当日」はテナントのタイムゾーンの今日、対象はその日に在籍しているスタッフ。
 - 夜間反映は顧客CSV取込(03:00)で最新化された住所を前提にしている(GAS版 `Triggers.js` と同じ順序)。
 
-### outbox の再試行
+### outbox の取り出しと再試行
 
-失敗したジョブは `attempts`(取得のたびに+1)に応じて `next_attempt_at` を
+メッセージは `outbox_messages`(書き込みと同じトランザクションで積む。`dedupe_key` が同じなら積み直さない)。
+ワーカーはテナントを横断して `FOR UPDATE SKIP LOCKED` で1件ずつ取り出し、`processing`・`locked_until`
+(`OUTBOX_LEASE_MS`、既定5分)にしてすぐコミットし、処理はトランザクションの外で行う。リースが切れた `processing`
+(ワーカーの異常終了)は別のワーカーが取り直す。失敗は `attempts` に応じて `available_at` を
 `OUTBOX_RETRY_BASE_DELAY_MS × 2^(attempts-1)`(上限 `OUTBOX_RETRY_MAX_DELAY_MS`)だけ先送りして `pending` に戻し、
-`last_error` を残す。`OUTBOX_MAX_ATTEMPTS` 回失敗したら `failed` にして自動再試行をやめ、`app_logs` に
-ERROR(`mirror.job_failed`)を残す。`processing` のまま10分以上更新されないジョブ(ワーカーの異常終了)は
-次のポーリングで取り直す。GAS Bridge 呼び出しは HTTP エラー・JSON以外の応答・タイムアウト(120秒)も失敗扱い。
+`last_error` を残す。メッセージごとの `max_attempts`(既定8)回失敗したら `dead` にして自動再試行をやめ、`app_logs` に
+ERROR(`outbox.message_failed`)を残す。再試行しても直らない失敗(`PermanentOutboxError`)はすぐ `failed`。
+`MIRROR_TO_GOOGLE_SHEETS` が無効ならミラーのトピックは送らずに完了にする。領収書の画像が見つからないミラーは送らずに
+WARN(`mirror.receipt.image_missing`)を残して完了にする。GAS Bridge 呼び出しは HTTP エラー・JSON以外の応答・
+タイムアウト(120秒)も失敗扱い。
 
 ## 環境変数
 
@@ -152,11 +172,13 @@ ERROR(`mirror.job_failed`)を残す。`processing` のまま10分以上更新さ
 | `SCHEDULE_PROVIDER` ほか `GOOGLE_MAPS_API_KEY` / `GOOGLE_APPLICATION_CREDENTIALS` / `GOOGLE_CALENDAR_IDS` / `GOOGLE_CALENDAR_IMPERSONATE` | API・ワーカー | 予定・ルート計算の実装(doc/api/schedule-route.md)。夜間反映のワーカーもAPIと同じ設定にする |
 | `GAS_BRIDGE_URL` / `GAS_BRIDGE_SECRET` | API・ワーカー | GAS版 Web App(Bridge.js)。ミラー書き込み先(未設定ならミラー送信は何もしない)、`SCHEDULE_PROVIDER=gas_bridge` の予定取得元 |
 | `BUSY_BLOCK_SYNC_DAYS` | ワーカー | `job:sync-busy-blocks` の同期期間(日、既定28) |
-| `MIRROR_TO_GOOGLE_SHEETS` | API | `true`/`1` のときだけ outbox に積む(以前は `'false'` も真になっていた不具合を修正) |
+| `MIRROR_TO_GOOGLE_SHEETS` | API・ワーカー | `true`/`1` のときだけミラーを outbox に積む(API)・送る(ワーカー。無効なら完了にする) |
 | `CUSTOMER_CSV_DRIVE_FOLDERS` | API・ワーカー | `{"テナントslug":"DriveフォルダID"}`。サービスアカウント(ADC / `GOOGLE_APPLICATION_CREDENTIALS`)に閲覧共有する。`Kokyaku_YYYYMMDDHHmm_N.csv` のうちファイル名の日時が最新のものを取り込む |
 | `CUSTOMER_CSV_LOCAL_DIR` | API・ワーカー | ローカル開発用。`<dir>/<テナントslug>/` を取込元にする(Drive設定が無い場合のみ) |
-| `OUTBOX_POLL_INTERVAL_MS` / `OUTBOX_BATCH_SIZE` | ワーカー | 既定 5000 / 10 |
-| `OUTBOX_MAX_ATTEMPTS` / `OUTBOX_RETRY_BASE_DELAY_MS` / `OUTBOX_RETRY_MAX_DELAY_MS` | ワーカー | 既定 8 / 30000 / 3600000 |
+| `WORKER_DATABASE_URL` | ワーカー | `katahimo_worker` の接続(API の `DATABASE_URL` とは別のユーザー) |
+| `OUTBOX_POLL_INTERVAL_MS` / `OUTBOX_DRAIN_MAX` / `OUTBOX_LEASE_MS` | ワーカー | 既定 5000 / 100 / 300000 |
+| `OUTBOX_RETRY_BASE_DELAY_MS` / `OUTBOX_RETRY_MAX_DELAY_MS` | ワーカー | 既定 30000 / 3600000(試行回数の上限はメッセージの `max_attempts`) |
+| `WORKER_SHUTDOWN_TIMEOUT_MS` / `JOB_TIMEOUT_MS` / `APP_LOG_RETENTION_MONTHS` | ワーカー | 既定 8000 / 1800000 / 13 |
 | `WORKER_IN_PROCESS_CRON` | ワーカー | `true` で常駐ワーカー内の定期実行を有効にする(ローカル用) |
 | `WORKER_HEALTH_PORT` | ワーカー | 常駐ワーカーをヘルスチェック用に待ち受けさせるポート(Cloud Run サービス用。未設定なら待ち受けない) |
 
@@ -176,7 +198,7 @@ ERROR(`mirror.job_failed`)を残す。`processing` のまま10分以上更新さ
    });
    ```
 
-   `values` には記録のある列だけが入る(記録の無い列はシートの値をそのまま残す)。
+   `values` には25列全てが入る(DB が正のため、空になった列はシートでも空にする)。
 2. **`writeAttendanceAggregate`**: 変更不要(ペイロード `{ staffName, businessDate }`。行の中身はGAS側がカレンダーと
    Maps から計算し直し、該当スタッフ・該当日の既存行を消してから書くため再送しても重複しない)。
    予定の取得を新版の SchedulePort(Google Calendar + Maps の直接呼び出し)に切り替えた後も、勤怠集計シートの

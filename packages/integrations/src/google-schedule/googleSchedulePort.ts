@@ -2,10 +2,8 @@ import type { Appointment, CalendarEventSource } from '@katahimo/core/domain';
 import {
   appointmentsForStaff,
   classifyCalendarEvents,
-  isSameStaffName,
   isValidBusinessDate,
   jstDayRange,
-  normalizeStaffName,
   planRouteLegs,
   toAppointmentWithRoute,
   toLightAppointment,
@@ -20,6 +18,7 @@ import type {
   SchedulePort,
   ScheduleRequestOptions,
   ScheduleStaff,
+  ScheduleTarget,
   ScheduleWithRouteOptions,
   ScheduleWithRouteResult,
 } from '@katahimo/core/ports';
@@ -42,6 +41,7 @@ export interface GoogleSchedulePortDeps {
 
 interface ScheduleQuery {
   tenantId: string;
+  staffId: string;
   staffName: string;
   date: string;
 }
@@ -61,11 +61,11 @@ export class GoogleSchedulePort implements SchedulePort {
   constructor(private readonly deps: GoogleSchedulePortDeps) {}
 
   async getSchedule(
-    staffName: string,
+    target: ScheduleTarget,
     dateString: string,
     options?: ScheduleRequestOptions,
   ): Promise<ScheduleLightResult> {
-    const query = parseQuery(staffName, dateString, options);
+    const query = parseQuery(target, dateString, options);
     const { staff, appointments } = await this.loadStaffAppointments(query, { strict: false });
     return {
       success: true,
@@ -76,12 +76,12 @@ export class GoogleSchedulePort implements SchedulePort {
   }
 
   async getScheduleWithRoute(
-    staffName: string,
+    target: ScheduleTarget,
     dateString: string,
     forceRefresh: boolean,
     options?: ScheduleWithRouteOptions,
   ): Promise<ScheduleWithRouteResult> {
-    const query = parseQuery(staffName, dateString, options);
+    const query = parseQuery(target, dateString, options);
     const fresh = options?.fresh === true;
     const cacheKey = routeCacheKey(query);
 
@@ -108,7 +108,8 @@ export class GoogleSchedulePort implements SchedulePort {
     { strict }: { strict: boolean },
   ): Promise<StaffAppointments> {
     const directory = await this.deps.directory.load(query.tenantId);
-    const staff = directory.staff.find((s) => isSameStaffName(s.name, query.staffName)) ?? null;
+    // 対象はスタッフIDで決める(同姓同名でも取り違えない)。予定との突き合わせはカレンダーの文字列のため氏名で行う
+    const staff = directory.staff.find((s) => s.id === query.staffId) ?? null;
     if (!staff) return { staff: null, appointments: [] };
 
     const sources = resolveCalendarSources(this.deps.calendarSources, directory.staff);
@@ -175,17 +176,21 @@ export class GoogleSchedulePort implements SchedulePort {
   }
 }
 
-function parseQuery(staffName: string, dateString: string, options?: ScheduleRequestOptions): ScheduleQuery {
-  const trimmedName = staffName.trim();
-  if (!trimmedName) throw new Error('staffName が指定されていません。');
+function parseQuery(
+  target: ScheduleTarget,
+  dateString: string,
+  options?: ScheduleRequestOptions,
+): ScheduleQuery {
+  const trimmedName = target.staffName.trim();
+  if (!target.staffId || !trimmedName) throw new Error('対象のスタッフが指定されていません。');
   if (!isValidBusinessDate(dateString)) {
     throw new Error('dateString が不正です。YYYY-MM-DD 形式で指定してください。');
   }
   if (!options?.tenantId) throw new Error('GoogleSchedulePort には tenantId の指定が必要です。');
-  return { tenantId: options.tenantId, staffName: trimmedName, date: dateString };
+  return { tenantId: options.tenantId, staffId: target.staffId, staffName: trimmedName, date: dateString };
 }
 
 /** 結果の形を変えたら v を上げる(古い形のキャッシュを読ませないため。GAS版 RS_ROUTE_V2_ と同じ考え方)。 */
-function routeCacheKey({ tenantId, staffName, date }: ScheduleQuery): string {
-  return `schedule-route:v1:${tenantId}:${normalizeStaffName(staffName)}:${date}`;
+function routeCacheKey({ tenantId, staffId, date }: ScheduleQuery): string {
+  return `schedule-route:v2:${tenantId}:${staffId}:${date}`;
 }

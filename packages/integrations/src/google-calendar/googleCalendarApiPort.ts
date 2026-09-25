@@ -40,7 +40,7 @@ export class GoogleCalendarApiPort implements GoogleCalendarPort {
         singleEvents: true,
         orderBy: 'startTime',
         maxResults: 250,
-        pageToken,
+        ...(pageToken ? { pageToken } : {}),
       });
       calendarName ||= page.summary ?? '';
       for (const item of page.items ?? []) {

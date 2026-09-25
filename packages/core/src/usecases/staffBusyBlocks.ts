@@ -1,14 +1,12 @@
-import { jstToday } from '../domain/schedule/jstDate';
+import { newId, zonedBusinessDate } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
-import type { GoogleCalendarPort, InstantRange } from '../ports/googleCalendar';
-import type { TenantRepositoryPort } from '../ports/repositories';
-import type { StaffRouteProfileRepositoryPort } from '../ports/scheduleDirectory';
-import type { StaffBusyBlockStorePort } from '../ports/staffBusyBlocks';
+import type { CalendarBusyResult, GoogleCalendarPort, InstantRange } from '../ports/googleCalendar';
+import type { TenantDirectoryPort } from '../ports/tenants';
+import type { UnitOfWorkPort } from '../ports/unitOfWork';
 
 export interface StaffBusyBlockSyncDeps {
+  uow: UnitOfWorkPort;
   calendar: GoogleCalendarPort;
-  staffRouteProfiles: StaffRouteProfileRepositoryPort;
-  busyBlocks: StaffBusyBlockStorePort;
   appLog: AppLogPort;
 }
 
@@ -21,44 +19,58 @@ export interface StaffBusyBlockSyncResult {
 const FREE_BUSY_BATCH_SIZE = 50;
 
 /**
- * calendar_id を持つ在籍スタッフの free/busy を取得し、window 内の staff_busy_blocks
- * (source='google_calendar')を置き換える。将来のマッチングアプリ用(doc/10)。
- * 予定のタイトル・場所は取得も保存もしない(free/busyだけで足り、顧客名等を複製しないため)。
- * 1人の失敗(カレンダー未共有等)で他のスタッフの同期は止めない。
+ * 在籍スタッフのカレンダー(staff_calendars)の free/busy を取得し、window 内の staff_busy_blocks
+ * (source='google_calendar')を置き換える(マッチング用、doc/10)。予定のタイトル・場所は取得も保存もしない。
+ * 1人の失敗(カレンダー未共有等)で他のスタッフは止めない。同期の結果はカレンダーごとに記録する。
  */
 export async function syncStaffBusyBlocks(
   deps: StaffBusyBlockSyncDeps,
   tenantId: string,
   window: InstantRange,
-  today: string = jstToday(),
+  today?: string,
 ): Promise<StaffBusyBlockSyncResult> {
-  const staff = (await deps.staffRouteProfiles.listByTenant(tenantId)).filter(
-    (s): s is typeof s & { calendarId: string } =>
-      !!s.calendarId && (!s.retirementDate || s.retirementDate > today),
-  );
+  const calendars = await deps.uow.run(tenantId, async (r) => {
+    // 在籍の判定はテナントのタイムゾーンの今日
+    const date = today ?? zonedBusinessDate(new Date(), (await r.tenant()).timezone);
+    const active = new Set((await r.staff.listActiveOn(date)).map((s) => s.id));
+    return (await r.staffCalendars.listAll()).filter((c) => active.has(c.staffId));
+  });
+  const byStaff = new Map<string, typeof calendars>();
+  for (const c of calendars) byStaff.set(c.staffId, [...(byStaff.get(c.staffId) ?? []), c]);
+  const calendarIds = [...new Set(calendars.map((c) => c.calendarId))];
+
+  const busyByCalendar = new Map<string, CalendarBusyResult>();
+  for (let i = 0; i < calendarIds.length; i += FREE_BUSY_BATCH_SIZE) {
+    const batch = await deps.calendar.freeBusy(calendarIds.slice(i, i + FREE_BUSY_BATCH_SIZE), window);
+    for (const [id, value] of batch) busyByCalendar.set(id, value);
+  }
 
   const result: StaffBusyBlockSyncResult = { syncedStaffCount: 0, failures: [] };
-  for (let i = 0; i < staff.length; i += FREE_BUSY_BATCH_SIZE) {
-    const batch = staff.slice(i, i + FREE_BUSY_BATCH_SIZE);
-    const busyByCalendar = await deps.calendar.freeBusy(
-      batch.map((s) => s.calendarId),
-      window,
-    );
-    for (const member of batch) {
-      const busy = busyByCalendar.get(member.calendarId);
-      if (!busy || busy.error) {
-        result.failures.push({ staffId: member.id, message: busy?.error ?? 'free/busyの結果がありません' });
-        continue;
+  const now = new Date();
+  for (const [staffId, owned] of byStaff) {
+    const answers = owned.map((c) => ({ calendar: c, busy: busyByCalendar.get(c.calendarId) }));
+    const failed = answers.find((a) => !a.busy || a.busy.error);
+    await deps.uow.run(tenantId, async (r) => {
+      for (const a of answers) {
+        await r.staffCalendars.recordSync(a.calendar.id, {
+          at: now,
+          error: a.busy?.error ?? (a.busy ? null : 'free/busyの結果がありません'),
+        });
       }
-      await deps.busyBlocks.replaceInWindow(
-        tenantId,
-        member.id,
+      if (failed) return;
+      const blocks = answers.flatMap((a) => a.busy?.busy ?? []);
+      await r.busyBlocks.replaceInWindow(
+        staffId,
         'google_calendar',
         window,
-        busy.busy.map((b) => ({ period: { start: b.start, end: b.end } })),
+        blocks.map((b) => ({ id: newId(), period: { start: b.start, end: b.end } })),
       );
-      result.syncedStaffCount++;
+    });
+    if (failed) {
+      result.failures.push({ staffId, message: failed.busy?.error ?? 'free/busyの結果がありません' });
+      continue;
     }
+    result.syncedStaffCount++;
   }
 
   await deps.appLog.write({
@@ -75,16 +87,13 @@ export async function syncStaffBusyBlocks(
   return result;
 }
 
-/**
- * 全テナント分の syncStaffBusyBlocks(ワーカーから定期実行する想定の入口。スケジューラーへの
- * 登録はまだ行っていない)。1テナントの例外で他テナントを止めない。
- */
+/** 全テナント分の syncStaffBusyBlocks(ワーカーのジョブの入口)。1テナントの例外で他テナントを止めない。 */
 export async function syncStaffBusyBlocksForAllTenants(
-  deps: StaffBusyBlockSyncDeps & { tenants: TenantRepositoryPort },
+  deps: StaffBusyBlockSyncDeps & { tenants: TenantDirectoryPort },
   window: InstantRange,
 ): Promise<Map<string, StaffBusyBlockSyncResult | Error>> {
   const results = new Map<string, StaffBusyBlockSyncResult | Error>();
-  for (const tenant of await deps.tenants.listAll()) {
+  for (const tenant of await deps.tenants.listActive()) {
     try {
       results.set(tenant.id, await syncStaffBusyBlocks(deps, tenant.id, window));
     } catch (e) {

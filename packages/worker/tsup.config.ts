@@ -10,6 +10,7 @@ export default defineConfig({
     'nightly-calendar-sync': 'src/entrypoints/nightlyCalendarSync.ts',
     'csv-import': 'src/entrypoints/csvImport.ts',
     'sync-busy-blocks': 'src/entrypoints/syncBusyBlocks.ts',
+    maintenance: 'src/entrypoints/maintenance.ts',
   },
   format: ['esm'],
   platform: 'node',

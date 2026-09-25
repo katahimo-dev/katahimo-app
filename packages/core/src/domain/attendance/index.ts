@@ -1,5 +1,6 @@
 export * from './attendanceCalc';
 export * from './calendarSync';
+export * from './entities';
 export * from './monthLock';
 export * from './receiptTotals';
 export * from './rowDiff';

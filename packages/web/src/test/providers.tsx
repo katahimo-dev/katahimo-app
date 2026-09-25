@@ -10,7 +10,7 @@ export const TEST_USER: SessionUser = {
   tenantId: '00000000-0000-4000-8000-000000000001',
   name: '管理者 太郎',
   email: 'admin@example.com',
-  isAdmin: true,
+  role: 'admin',
 };
 
 export function createTestQueryClient() {

@@ -3,7 +3,7 @@ import type {
   CustomerCsvSourcePort,
   CustomerCsvSourceTenant,
 } from '@katahimo/core/ports';
-import { google } from 'googleapis';
+import type { drive_v3 } from 'googleapis';
 
 const DRIVE_READONLY_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 
@@ -23,25 +23,31 @@ function escapeDriveQueryValue(value: string): string {
  * 対象フォルダをそのサービスアカウントに閲覧者として共有しておく必要がある。
  */
 export class GoogleDriveCustomerCsvSource implements CustomerCsvSourcePort {
-  private readonly drive = google.drive({
-    version: 'v3',
-    auth: new google.auth.GoogleAuth({ scopes: [DRIVE_READONLY_SCOPE] }),
-  });
+  /** googleapis は読み込みが重いため、最初の呼び出しまで import を遅らせる(起動時間を延ばさない)。 */
+  private drivePromise: Promise<drive_v3.Drive> | null = null;
 
   constructor(private readonly options: GoogleDriveCustomerCsvSourceOptions) {}
+
+  private drive(): Promise<drive_v3.Drive> {
+    this.drivePromise ??= import('googleapis').then(({ google }) =>
+      google.drive({ version: 'v3', auth: new google.auth.GoogleAuth({ scopes: [DRIVE_READONLY_SCOPE] }) }),
+    );
+    return this.drivePromise;
+  }
 
   async listFiles(tenant: CustomerCsvSourceTenant): Promise<CustomerCsvSourceFile[] | null> {
     const folderId = this.options.folderIdsByTenantSlug[tenant.slug];
     if (!folderId) return null;
 
+    const drive = await this.drive();
     const files: CustomerCsvSourceFile[] = [];
     let pageToken: string | undefined;
     do {
-      const res = await this.drive.files.list({
+      const res = await drive.files.list({
         q: `'${escapeDriveQueryValue(folderId)}' in parents and trashed = false and name contains 'Kokyaku_'`,
         fields: 'nextPageToken, files(id, name)',
         pageSize: 1000,
-        pageToken,
+        ...(pageToken ? { pageToken } : {}),
         supportsAllDrives: true,
         includeItemsFromAllDrives: true,
       });
@@ -54,7 +60,7 @@ export class GoogleDriveCustomerCsvSource implements CustomerCsvSourcePort {
   }
 
   async readFile(_tenant: CustomerCsvSourceTenant, file: CustomerCsvSourceFile): Promise<Buffer> {
-    const res = await this.drive.files.get(
+    const res = await (await this.drive()).files.get(
       { fileId: file.id, alt: 'media', supportsAllDrives: true },
       { responseType: 'arraybuffer' },
     );

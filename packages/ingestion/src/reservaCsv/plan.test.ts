@@ -1,12 +1,7 @@
-import {
-  FakeCryptoPort,
-  FakeCustomerRepository,
-  FakeFamilyMemberRepository,
-} from '@katahimo/core/test-utils';
-import type { CustomerDeps } from '@katahimo/core/usecases';
-import { createCustomer } from '@katahimo/core/usecases';
+import type { TestContext } from '@katahimo/core/test-utils';
+import { createTestContext, fakePlaintext } from '@katahimo/core/test-utils';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyReservaImportPlan, planReservaImport } from './plan';
+import { applyReservaImport } from './plan';
 import type { ReservaCsvRow } from './types';
 
 function row(overrides: Partial<ReservaCsvRow>): ReservaCsvRow {
@@ -45,98 +40,93 @@ function row(overrides: Partial<ReservaCsvRow>): ReservaCsvRow {
   };
 }
 
-describe('planReservaImport / applyReservaImportPlan', () => {
-  let deps: CustomerDeps;
-  const tenantId = 'tenant-1';
+describe('applyReservaImport(差分の適用)', () => {
+  let ctx: TestContext;
+  const run = (rows: ReservaCsvRow[], options: Parameters<typeof applyReservaImport>[3] = {}) =>
+    applyReservaImport(ctx.deps, ctx.tenantId, rows, options);
 
   beforeEach(() => {
-    deps = {
-      customers: new FakeCustomerRepository(),
-      familyMembers: new FakeFamilyMemberRepository(),
-      crypto: new FakeCryptoPort(),
-    };
+    ctx = createTestContext();
   });
 
-  it('初回取込は既存0件なので全件createになり、レビュー不要', async () => {
-    const rows = [row({ customerId: 'c1' }), row({ customerId: 'c2', familyName: '鈴木' })];
-    const plan = await planReservaImport(deps.customers, tenantId, rows);
-
-    expect(plan.toCreate).toHaveLength(2);
-    expect(plan.toUpdate).toHaveLength(0);
-    expect(plan.toDeactivateExternalIds).toHaveLength(0);
-    expect(plan.requiresReview).toBe(false);
+  it('初回は全件作成し、import_runs と顧客データの版数を残す', async () => {
+    const outcome = await run([row({ customerId: 'c1' }), row({ customerId: 'c2', givenName: '次郎' })], {
+      fileName: 'Kokyaku_1.csv',
+      fileVersion: '1',
+    });
+    expect(outcome).toMatchObject({
+      status: 'applied',
+      created: 2,
+      updated: 0,
+      archived: 0,
+      customerDataVersion: 1,
+    });
+    expect(ctx.data().customers).toHaveLength(2);
+    expect(ctx.data().importRuns).toEqual([
+      expect.objectContaining({ source: 'reserva_csv', status: 'applied', fileName: 'Kokyaku_1.csv' }),
+    ]);
   });
 
-  it('外部IDが既存と一致する行はupdate、CSVに存在しなくなった外部IDはdeactivate対象になる', async () => {
-    // 消失率を閾値未満に保つため、十分な数の既存顧客を用意してから検証する
-    // (このテストの主眼は分類ロジックであり、閾値の安全装置は別テストで検証する)
-    const initialRows = Array.from({ length: 10 }, (_, i) => row({ customerId: `c${i}` }));
-    await applyReservaImportPlan(
-      deps,
-      tenantId,
-      await planReservaImport(deps.customers, tenantId, initialRows),
-    );
-
-    // 2回目の取込では c0 が更新対象・c9 が消失(取込データに無い)対象になる
-    const secondRows = initialRows
-      .slice(0, 9)
-      .map((r) => (r.customerId === 'c0' ? { ...r, memo: '更新後メモ' } : r));
-    const plan = await planReservaImport(deps.customers, tenantId, secondRows);
-    expect(plan.toUpdate.map((r) => r.customerId)).toEqual(expect.arrayContaining(['c0']));
-    expect(plan.toDeactivateExternalIds).toEqual(['c9']);
+  it('同じ内容の再取込は unchanged で何も書かず、変わった顧客だけを更新する(ID を保つ)', async () => {
+    await run([row({ customerId: 'c1' }), row({ customerId: 'c2', givenName: '次郎' })]);
+    const ids = ctx.data().customers.map((c) => c.id);
+    const outcome = await run([
+      row({ customerId: 'c1', phone: '090' }),
+      row({ customerId: 'c2', givenName: '次郎' }),
+    ]);
+    expect(outcome).toMatchObject({ status: 'applied', created: 0, updated: 1, unchanged: 1 });
+    expect(ctx.data().customers.map((c) => c.id)).toEqual(ids);
   });
 
-  it('既存件数に対して変更(更新+消失)が閾値を超えるとrequiresReview=trueになり、適用は拒否される', async () => {
-    // 既存10件作る
-    const initialRows = Array.from({ length: 10 }, (_, i) => row({ customerId: `c${i}` }));
-    await applyReservaImportPlan(
-      deps,
-      tenantId,
-      await planReservaImport(deps.customers, tenantId, initialRows),
-    );
-
-    // 3件しか含まれない取込 = 7件が消失扱いになり、閾値(既定20%)を超える
-    const plan = await planReservaImport(deps.customers, tenantId, initialRows.slice(0, 3));
-    expect(plan.requiresReview).toBe(true);
-    await expect(applyReservaImportPlan(deps, tenantId, plan)).rejects.toThrow(/閾値/);
+  it('消えた顧客はアーカイブし(import_missing)、戻ってきたら戻す', async () => {
+    const rows = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'].map((id) => row({ customerId: id }));
+    await run(rows);
+    expect(await run(rows.slice(1))).toMatchObject({ status: 'applied', archived: 1 });
+    const archived = ctx.data().customers.find((c) => c.archivedAt);
+    expect(archived?.archiveReason).toBe('import_missing');
+    expect(await run(rows)).toMatchObject({ status: 'applied', updated: 1, archived: 0 });
+    expect(ctx.data().customers.every((c) => !c.archivedAt)).toBe(true);
   });
 
-  it('requiresReview=trueでもforce:trueを指定すれば適用できる', async () => {
-    const initialRows = Array.from({ length: 10 }, (_, i) => row({ customerId: `c${i}` }));
-    await applyReservaImportPlan(
-      deps,
-      tenantId,
-      await planReservaImport(deps.customers, tenantId, initialRows),
-    );
-
-    const plan = await planReservaImport(deps.customers, tenantId, initialRows.slice(0, 3));
-    const result = await applyReservaImportPlan(deps, tenantId, plan, { force: true });
-    expect(result.deactivated).toBe(7);
+  it('消えた顧客が閾値(20%)を超えたら適用せず review_required を残す。force なら適用する', async () => {
+    await run(['c1', 'c2', 'c3'].map((id) => row({ customerId: id })));
+    const outcome = await run([row({ customerId: 'c1' })]);
+    expect(outcome.status).toBe('review_required');
+    expect(ctx.data().customers.every((c) => !c.archivedAt)).toBe(true);
+    expect(ctx.data().importRuns.at(-1)?.status).toBe('review_required');
+    expect(await run([row({ customerId: 'c1' })], { force: true })).toMatchObject({
+      status: 'applied',
+      archived: 2,
+    });
   });
 
-  it('世帯構成員(子ども)を含む行を適用すると、family_membersに反映される', async () => {
-    const rows = [
+  it('子ども・アレルギー・緊急連絡先・住所2・位置を取り込み、個人情報は暗号化する', async () => {
+    await run([
       row({
         customerId: 'c1',
-        familyMembers: [{ name: '佐藤 太郎', dob: '2019/1/19', info: '保育園児' }],
+        address: '東京都渋谷区道玄坂1-1',
+        latLng: '35.65,139.69',
+        emergencyContact: '090-1111-2222',
+        emergencyContactRelation: '父',
+        address2: '神奈川県横浜市青葉区1-1',
+        address2StartDate: '2026/09/20',
+        address2EndDate: '2026/09/30',
+        familyMembers: [
+          { name: '佐藤 一郎', dob: '2022/4/1', info: 'アレルギー:卵' },
+          { name: '佐藤 二郎', dob: '不明', info: '' },
+        ],
       }),
-    ];
-    await applyReservaImportPlan(deps, tenantId, await planReservaImport(deps.customers, tenantId, rows));
-
-    const created = await deps.customers.findByExternalId(tenantId, 'reserva', 'c1');
-    if (!created) throw new Error('customer not found');
-    const members = await deps.familyMembers.listByCustomerId(tenantId, created.id);
-    expect(members).toHaveLength(1);
-    const firstMember = members[0];
-    if (!firstMember) throw new Error('family member not found');
-    expect(await deps.crypto.decrypt(tenantId, firstMember.name, 'family_members.name')).toBe('佐藤 太郎');
-  });
-
-  it('手動登録済みの顧客(externalSourceが無い)は取込の既存件数にカウントされない', async () => {
-    await createCustomer(deps, { tenantId, name: '手動 太郎' });
-
-    const plan = await planReservaImport(deps.customers, tenantId, [row({ customerId: 'c1' })]);
-    expect(plan.stats.existingActiveCount).toBe(0);
-    expect(plan.requiresReview).toBe(false);
+    ]);
+    const data = ctx.data();
+    expect(data.addresses.map((a) => [a.kind, a.city, a.valid])).toEqual([
+      ['home', '渋谷区', { start: null, end: null }],
+      ['secondary', '横浜市青葉区', { start: '2026-09-20', end: '2026-10-01' }],
+    ]);
+    expect(fakePlaintext(data.contacts[0]?.phoneEnc ?? null)).toBe('090-1111-2222');
+    expect(data.recipients.map((r) => [r.name, r.birthDate, fakePlaintext(r.needsEnc)])).toEqual([
+      ['佐藤 一郎', '2022-04-01', 'アレルギー:卵'],
+      ['佐藤 二郎', null, '生年月日: 不明'],
+    ]);
+    expect(fakePlaintext(data.recipients[0]?.allergyEnc ?? null)).toBe('卵');
   });
 });

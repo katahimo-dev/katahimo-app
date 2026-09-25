@@ -11,6 +11,7 @@ export * from './contracts/customerImport';
 export * from './contracts/customers';
 export * from './contracts/receipts';
 export * from './contracts/reports';
+export * from './contracts/roles';
 export * from './contracts/schedule';
 export * from './contracts/settings';
 export * from './contracts/staffAdmin';

@@ -1,3 +1,4 @@
+import { isAdminRole } from '@katahimo/shared';
 import { useEffect, useState } from 'react';
 import { confirmNative } from '../../ui/confirm';
 import { FadeModal, ModalHeader } from '../../ui/modal';
@@ -19,7 +20,7 @@ interface SettingsModalProps {
  */
 export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsModalProps) {
   const { user, logout } = useSession();
-  const adminForm = useAdminSettingsForm(open, user.isAdmin);
+  const adminForm = useAdminSettingsForm(open, isAdminRole(user.role));
   const [saving, setSaving] = useState(false);
 
   // 開くたびに保存ボタンを初期状態に戻す(GAS版 openSettings)
@@ -28,7 +29,7 @@ export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsM
   }, [open]);
 
   const saveSettings = async () => {
-    if (!user.isAdmin) {
+    if (!isAdminRole(user.role)) {
       showToast('設定を保存しました');
       onClose();
       return;
@@ -84,7 +85,7 @@ export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsM
             </button>
           </div>
 
-          {user.isAdmin ? <AdminSettingsSection form={adminForm} /> : null}
+          {isAdminRole(user.role) ? <AdminSettingsSection form={adminForm} /> : null}
 
           <div className="border-t pt-4">
             <button

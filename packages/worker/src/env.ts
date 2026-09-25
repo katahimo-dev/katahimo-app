@@ -1,98 +1,61 @@
 import {
-  KMS_PROVIDERS,
-  kmsEnvProblems,
-  parseTenantFolderMap,
-  SCHEDULE_PROVIDERS,
-  STORAGE_PROVIDERS,
-  scheduleEnvProblems,
-  storageEnvProblems,
+  booleanFlag,
+  emptyToUndefined,
+  parseEnvOrThrow,
+  sharedEnvProblems,
+  sharedEnvShape,
 } from '@katahimo/integrations';
 import { z } from 'zod';
 
-const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
-
-/** 'true'/'1' だけを真とする機能フラグ(z.coerce.boolean() は 'false' も真にしてしまうため)。 */
-const booleanFlag = z
-  .string()
-  .optional()
-  .transform((value) => value === 'true' || value === '1');
-
 /**
- * ワーカー(outboxミラーの常駐ポーラー・夜間のカレンダー反映・顧客CSV取込)用の環境変数検証。
- * APIサーバー(packages/api/src/env.ts)と役割が異なるため、必要な変数だけを持つ。
+ * ワーカー(outbox の常駐ポーラー・夜間のカレンダー反映・顧客CSV取込・保守)の環境変数。
+ * API と同じでなければならない変数は sharedEnvShape(@katahimo/integrations)。
  */
 const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL が必要です'),
+  ...sharedEnvShape,
+  // ワーカー専用の DB ユーザー(katahimo_worker。テナントを横断して outbox を取るポリシーがある)。
+  // API の DATABASE_URL(katahimo_app)とは別のユーザー・パスワード(Secret Manager の別の secret)。
+  WORKER_DATABASE_URL: z.string().min(1, 'WORKER_DATABASE_URL が必要です(katahimo_worker の接続)'),
 
-  // Cloud Run サービスとして常駐させる場合のヘルスチェック用ポート(infra/gcp/run.tf が Cloud Run の PORT と
-  // 同じ値を渡す)。未設定なら待ち受けない(ローカル開発・Cloud Run Jobs)。PORT は API と .env を共有する
-  // ローカル開発で衝突するため使わない。
+  // Cloud Run サービスとして常駐させる場合のヘルスチェック用ポート。未設定なら待ち受けない(ローカル・Cloud Run Jobs)。
   WORKER_HEALTH_PORT: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
 
-  // CryptoPortが使うテナントDEKをラップするKEK。packages/api/src/env.ts と同じ設定にすること
-  // (テナントごとのDEKはDB(tenant_keys)に保存されているため、API/ワーカー間で共有する)。
-  KMS_PROVIDER: z.preprocess(emptyToUndefined, z.enum(KMS_PROVIDERS).default('local')),
-  LOCAL_DEV_KEK: z.preprocess(
-    emptyToUndefined,
-    z
-      .string()
-      .regex(/^[0-9a-f]{64}$/i, 'LOCAL_DEV_KEK は32バイト(64桁の16進数)にしてください')
-      .optional(),
-  ),
-  GCP_KMS_KEY_NAME: z.preprocess(emptyToUndefined, z.string().optional()),
-
-  // 領収書画像の保存先。packages/api/src/env.ts と同じ設定にすること
-  // (ワーカーはAPIサーバーが保存したファイルを読み直してGAS版Driveへミラーする)。
-  STORAGE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(STORAGE_PROVIDERS).default('local')),
-  LOCAL_RECEIPT_STORAGE_DIR: z.string().default('./data/receipts'),
-  GCS_BUCKET: z.preprocess(emptyToUndefined, z.string().optional()),
-
-  // 予定・ルート計算の実装(packages/api/src/env.ts と同じ意味。夜間のカレンダー反映に使う)。
-  SCHEDULE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(SCHEDULE_PROVIDERS).optional()),
-  GOOGLE_MAPS_API_KEY: z.string().optional(),
-  GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
-  GOOGLE_CALENDAR_IDS: z.string().optional(),
-  GOOGLE_CALENDAR_IMPERSONATE: z.string().optional(),
-
-  // GAS版 Web App(Bridge.js)。未設定ならミラー送信は何もせず成功扱いになる。
-  GAS_BRIDGE_URL: z.string().optional(),
-  GAS_BRIDGE_SECRET: z.string().optional(),
-
-  // パスワード再設定メール(outbox の kind='password_reset_mail')の送信。APIは応答時間からアカウントの有無が
-  // 分からないようメールを送らず、ワーカーが送る。SMTP_HOSTが未設定の場合、開発環境では送信せず内容を
-  // 標準出力に出す(ConsoleMailerPort)。本番では設定必須。
+  // パスワード再設定メール(outbox の mail.password_reset)の送信。未設定の開発環境では内容を標準出力に出す。
   SMTP_HOST: z.preprocess(emptyToUndefined, z.string().optional()),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASS: z.string().optional(),
+  SMTP_USER: z.preprocess(emptyToUndefined, z.string().optional()),
+  SMTP_PASS: z.preprocess(emptyToUndefined, z.string().optional()),
   SMTP_FROM: z.string().default('保育日報 <noreply@localhost>'),
 
   // job:sync-busy-blocks が同期する期間(今日から何日先まで)。
   BUSY_BLOCK_SYNC_DAYS: z.coerce.number().int().positive().default(28),
 
-  // ── outboxミラー ──
+  // ── outbox ──
+  // 空になった後、次に見に行くまでの間隔。
   OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
-  // 1テナント・1ポーリングあたりの最大処理件数。
-  OUTBOX_BATCH_SIZE: z.coerce.number().int().positive().default(10),
-  // 再試行: 最大試行回数・初回の待ち時間(以後倍々)・待ち時間の上限。
-  OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().positive().default(8),
+  // 1回の見回りで続けて処理する最大件数(1件ずつ取り出す)。
+  OUTBOX_DRAIN_MAX: z.coerce.number().int().positive().default(100),
+  // 取り出したメッセージのリース。1件の処理(GAS Bridge の呼び出し等)の最長時間より長くする。
+  OUTBOX_LEASE_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(5 * 60_000),
+  // 再試行の間隔: 初回の待ち時間(以後倍々)と上限。試行回数の上限はメッセージごと(max_attempts)。
   OUTBOX_RETRY_BASE_DELAY_MS: z.coerce.number().int().positive().default(30_000),
   OUTBOX_RETRY_MAX_DELAY_MS: z.coerce.number().int().positive().default(3_600_000),
 
-  // ── 顧客CSV取込(packages/api/src/env.ts と同じ意味) ──
-  CUSTOMER_CSV_DRIVE_FOLDERS: z
-    .string()
-    .optional()
-    .transform((value, ctx) => {
-      try {
-        return parseTenantFolderMap(value);
-      } catch (e) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: e instanceof Error ? e.message : String(e) });
-        return z.NEVER;
-      }
-    }),
-  CUSTOMER_CSV_LOCAL_DIR: z.string().optional(),
+  // 停止の合図(SIGTERM)から、処理中のものを諦めて終えるまでの時間(Cloud Run は約10秒で強制終了する)。
+  WORKER_SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(8_000),
+  // 1回だけ実行するジョブ(Cloud Run Jobs)の上限時間。超えたら失敗として終える。
+  JOB_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30 * 60_000),
+
+  // 操作ログ(app_logs)を残す月数(月のパーティションごと消す)。
+  APP_LOG_RETENTION_MONTHS: z.coerce.number().int().min(1).default(13),
 
   // ローカル開発用: 常駐ワーカーの中で夜間ジョブも時刻どおりに動かす(本番は Cloud Scheduler → Cloud Run Jobs)。
   WORKER_IN_PROCESS_CRON: booleanFlag,
@@ -100,21 +63,14 @@ const envSchema = z.object({
 
 export type WorkerEnv = z.infer<typeof envSchema>;
 
-export function loadWorkerEnv(source: NodeJS.ProcessEnv = process.env): WorkerEnv {
-  const parsed = envSchema.safeParse(source);
-  if (!parsed.success) {
-    const detail = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
-    throw new Error(`環境変数の設定に問題があります:\n${detail}`);
-  }
-  const isProduction = parsed.data.NODE_ENV === 'production';
-  const problems = [
-    ...kmsEnvProblems(parsed.data, isProduction),
-    ...storageEnvProblems(parsed.data, isProduction),
-    ...scheduleEnvProblems(parsed.data, isProduction),
-  ];
-  if (isProduction && !parsed.data.SMTP_HOST) {
+function checkCombinations(env: WorkerEnv): string[] {
+  const problems = sharedEnvProblems(env);
+  if (env.NODE_ENV === 'production' && !env.SMTP_HOST) {
     problems.push('  - SMTP_HOST: 本番ではパスワード再設定メールの送信にSMTP設定が必要です');
   }
-  if (problems.length > 0) throw new Error(`環境変数の設定に問題があります:\n${problems.join('\n')}`);
-  return parsed.data;
+  return problems;
+}
+
+export function loadWorkerEnv(source: NodeJS.ProcessEnv = process.env): WorkerEnv {
+  return parseEnvOrThrow(envSchema, source, checkCombinations);
 }

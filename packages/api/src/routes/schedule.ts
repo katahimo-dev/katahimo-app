@@ -1,34 +1,58 @@
-import { getScheduleForStaff, getScheduleWithRouteForStaff } from '@katahimo/core';
-import { businessDateSchema } from '@katahimo/shared';
+import type { ScheduleViewRequest } from '@katahimo/core/usecases';
+import { getScheduleForStaff, getScheduleWithRouteForStaff } from '@katahimo/core/usecases';
+import {
+  scheduleLightResponseSchema,
+  scheduleQuerySchema,
+  scheduleRouteQuerySchema,
+  scheduleWithRouteResponseSchema,
+} from '@katahimo/shared';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { Container } from '../container';
 import { enforceStaffQuota } from '../http/quota';
 import { requestMeta } from '../http/requestMeta';
-import { apiError } from '../http/responses';
+import { jsonOk, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
-import { requireSession, resolveScheduleTargetStaffId } from '../session';
+import { requireSession, targetStaffIdOf } from '../session';
 
 /**
- * 「予定」タブのAPI。GAS版Schedule.js(getScheduleForDate / getRouteForStaffOnDate)相当。
- * 管理者以外は常に本人の予定、管理者は staffId クエリで他スタッフの予定も見られる。
- * ログ(ルート計算のINFO・失敗のWARN/ERROR)は usecases/schedule.ts が記録する。
+ * 「予定」タブの API(GAS版 Schedule.js getScheduleForDate / getRouteForStaffOnDate)。一般スタッフは常に本人の
+ * 予定、管理者・コーディネーターは staffId で他のスタッフの予定も見られる。外部サービスの失敗は usecase が
+ * 詳細をログに残し、一般的な文言の 502 にする。
  */
 export function createScheduleRoutes(container: Container) {
   const app = new Hono<SessionEnv>();
 
+  const requestOf = (
+    c: Context<SessionEnv>,
+    query: { date: string; staffId?: string | undefined },
+  ): ScheduleViewRequest => {
+    const session = c.get('session');
+    return {
+      tenantId: session.tenantId,
+      actorStaffId: session.staffId,
+      targetStaffId: targetStaffIdOf(c, query.staffId),
+      date: query.date,
+      meta: requestMeta(c),
+    };
+  };
+
   /** 指定日の予定一覧(ルート・移動時間は含まない軽量版)。 */
   app.get('/', requireSession(container, 'schedule.view'), async (c) => {
-    const request = parseScheduleRequest(c);
-    if (!request.ok) return request.response;
-    return c.json(await getScheduleForStaff(container, request.data));
+    const query = parseQuery(c, scheduleQuerySchema);
+    if (!query.ok) return query.response;
+    return jsonOk(
+      c,
+      scheduleLightResponseSchema,
+      await getScheduleForStaff(container, requestOf(c, query.data)),
+    );
   });
 
-  /** 指定日の予定にルート・移動時間を付与して取得する(地図APIの有料呼び出しを伴う)。 */
+  /** 指定日の予定にルート・移動時間を付けて返す(地図 API の有料呼び出しを伴う)。 */
   app.get('/route', requireSession(container, 'schedule.route'), async (c) => {
-    const request = parseScheduleRequest(c);
-    if (!request.ok) return request.response;
-    const forceRefresh = c.req.query('forceRefresh') === '1';
+    const query = parseQuery(c, scheduleRouteQuerySchema);
+    if (!query.ok) return query.response;
+    const forceRefresh = query.data.forceRefresh === '1';
     if (forceRefresh) {
       const limited = await enforceStaffQuota(
         c,
@@ -38,31 +62,12 @@ export function createScheduleRoutes(container: Container) {
       );
       if (limited) return limited;
     }
-    return c.json(await getScheduleWithRouteForStaff(container, { ...request.data, forceRefresh }));
+    const result = await getScheduleWithRouteForStaff(container, {
+      ...requestOf(c, query.data),
+      forceRefresh,
+    });
+    return jsonOk(c, scheduleWithRouteResponseSchema, result);
   });
 
   return app;
-}
-
-function parseScheduleRequest(c: Context<SessionEnv>) {
-  const date = businessDateSchema.safeParse(c.req.query('date'));
-  if (!date.success) {
-    return {
-      ok: false as const,
-      response: apiError(c, 400, 'validation_failed', 'date(YYYY-MM-DD)クエリパラメータが必要です', {
-        date: date.error.issues[0]?.message ?? 'YYYY-MM-DD 形式で指定してください',
-      }),
-    };
-  }
-  const session = c.get('session');
-  return {
-    ok: true as const,
-    data: {
-      tenantId: session.tenantId,
-      actorStaffId: session.staffId,
-      targetStaffId: resolveScheduleTargetStaffId(session, c.req.query('staffId')),
-      date: date.data,
-      meta: requestMeta(c),
-    },
-  };
 }

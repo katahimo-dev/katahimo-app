@@ -12,9 +12,9 @@ API(`GET /api/schedule`、`GET /api/schedule/route`)の応答の形はGAS版(=GA
 | 層 | ファイル | 役割 |
 | --- | --- | --- |
 | ドメイン(純粋関数) | `packages/core/src/domain/schedule/` | GAS版ロジックの移植。タイトルのタグ解析・予約の担当者/顧客突合・事務作業の結合・担当スタッフの抽出・経路区間の決定・住所2の適用・表示用の値の組み立て |
-| ポート | `packages/core/src/ports/` | `SchedulePort`(schedule.ts)、`GoogleCalendarPort`(googleCalendar.ts)、`MapsPort`(maps.ts)、`CachePort`(cache.ts)、`ScheduleDirectoryPort` / `StaffRouteProfileRepositoryPort`(scheduleDirectory.ts)、`StaffBusyBlockStorePort`(staffBusyBlocks.ts) |
-| ユースケース | `packages/core/src/usecases/schedule.ts` | スタッフID→氏名の解決とログ記録。`getScheduleForStaff` / `getScheduleWithRouteForStaff` / `getFreshScheduleWithRouteForStaff` |
-| | `packages/core/src/usecases/scheduleDirectory.ts` | 顧客・スタッフをDBから読み、緯度経度を復号する |
+| ポート | `packages/core/src/ports/` | `SchedulePort`(schedule.ts)、`GoogleCalendarPort`(googleCalendar.ts)、`MapsPort`(maps.ts)、`CachePort`(cache.ts)、`ScheduleDirectoryPort`(scheduleDirectory.ts)、`StaffCalendarRepository` / `StaffBusyBlockRepository`(calendars.ts) |
+| ユースケース | `packages/core/src/usecases/schedule.ts` | 対象スタッフの読み込み(`SchedulePort` にはスタッフIDと DB の氏名 `ScheduleTarget` を渡す)とログ記録。外部サービスの例外は詳細をログに残し、一般的な文言の 502 にする。`getScheduleForStaff` / `getScheduleWithRouteForStaff` / `getFreshScheduleWithRouteForStaff` |
+| | `packages/core/src/usecases/scheduleDirectory.ts` | 顧客・スタッフを DB から1トランザクションで読み、緯度経度を復号する(復号の監査は1件)。テナント × 顧客データの版数ごとにキャッシュし、同時の読み込みは1回にまとめる |
 | | `packages/core/src/usecases/staffBusyBlocks.ts` | マッチング用 free/busy の同期(`syncStaffBusyBlocks` / `syncStaffBusyBlocksForAllTenants`) |
 | アダプター | `packages/integrations/src/google-schedule/` | `GoogleSchedulePort`(取得・実行・キャッシュ)、`RouteCalculator`(実行内メモ) |
 | | `packages/integrations/src/google-calendar/` | Google Calendar API(サービスアカウント、読み取り専用) |
@@ -22,7 +22,7 @@ API(`GET /api/schedule`、`GET /api/schedule/route`)の応答の形はGAS版(=GA
 | | `packages/integrations/src/cache/` | プロセス内TTL付きLRU(`CachePort` 実装) |
 | | `packages/integrations/src/gas-bridge/` | 移行期の実装(GAS版Web App `Bridge.js` に委ねる) |
 | | `packages/integrations/src/schedule-provider/` | 実装の選択(`selectScheduleProvider` / `createScheduleServices`) |
-| DB | `packages/db/src/repositories/staffRouteProfileRepository.ts` | スタッフの自宅・移動手段・カレンダーIDの読み取り |
+| DB | `packages/db/src/repositories/tenant/staff.ts`(`listRouteProfiles`) | スタッフの自宅・移動手段・予定を読むカレンダーの読み取り |
 
 ## 2. 実装の切り替え(`SCHEDULE_PROVIDER`)
 
@@ -49,7 +49,7 @@ Cloud Run では Workload Identity(実行サービスアカウント)を使い `
 | `SCHEDULE_PROVIDER` | 本番は必須 | `google` / `gas_bridge` / `noop` |
 | `GOOGLE_MAPS_API_KEY` | `google` で必須 | Geocoding API と Routes API を有効にしたAPIキー(Secret Managerから注入する) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | ローカルのみ | サービスアカウントキー(JSON)のパス。Cloud Run では不要 |
-| `GOOGLE_CALENDAR_IDS` | 任意 | `staff.calendar_id` 以外に読むカレンダー。カンマ区切りで `カレンダーID` または `カレンダーID=持ち主のスタッフ名` |
+| `GOOGLE_CALENDAR_IDS` | 任意 | `staff_calendars`(`purpose = 'schedule'`) 以外に読むカレンダー。カンマ区切りで `カレンダーID` または `カレンダーID=持ち主のスタッフ名` |
 | `GOOGLE_CALENDAR_IMPERSONATE` | 任意 | ドメイン全体の委任で成り代わるWorkspaceユーザー(例: `info@cutest.biz`) |
 | `GAS_BRIDGE_URL` / `GAS_BRIDGE_SECRET` | `gas_bridge` で必須 | GAS版Web Appの `/exec` URL と `BRIDGE_API_SECRET` |
 
@@ -83,7 +83,7 @@ GAS版は実行アカウント(info@cutest.biz)が購読している全カレン
    読めずタグ判定ができない(free/busy同期だけなら時間枠のみで足りる)。
    - Workspace の管理コンソールで外部共有が制限されている場合でも、同じ組織のプロジェクトの
      サービスアカウントには共有できる(できない場合は方式Bを使う)。
-3. カレンダーIDを登録する: スタッフ本人のカレンダーは `staff.calendar_id`(通常は本人のメールアドレス)、
+3. カレンダーIDを登録する: スタッフ本人のカレンダーは `staff_calendars`(`purpose = 'schedule'`)(通常は本人のメールアドレス)、
    それ以外(共有カレンダー等)は `GOOGLE_CALENDAR_IDS`。
 
 ### 方式B: ドメイン全体の委任(domain-wide delegation)
@@ -102,7 +102,7 @@ GAS版は実行アカウント(info@cutest.biz)が購読している全カレン
 
 テナントごとに次の2つを合わせて読む(同じカレンダーIDは1回だけ。`calendarSources.ts`)。
 
-1. `staff.calendar_id` があるスタッフのカレンダー — 持ち主はそのスタッフ
+1. `staff_calendars`(`purpose = 'schedule'`) があるスタッフのカレンダー — 持ち主はそのスタッフ
 2. `GOOGLE_CALENDAR_IDS` — 持ち主は `=` の後の名前、省略時はカレンダーの名前(Google Calendarの summary)
 
 「持ち主」は、GAS版でカレンダー名がスタッフ名として使われていたのと同じ役割を持つ:
@@ -110,8 +110,8 @@ GAS版は実行アカウント(info@cutest.biz)が購読している全カレン
 `[予約確定]` は説明欄の「施設：<スタッフ名>[」で担当者が決まる(無ければ持ち主)。
 同じ予定(iCalUID)が複数のカレンダーにあれば、上の順で先に読んだカレンダーの持ち主になる。
 
-`GOOGLE_CALENDAR_IDS` は全テナント共通の設定のため、**複数テナントで運用する場合は `staff.calendar_id` だけを使う**
-(スキーマ凍結中のためテナント単位のカレンダー設定列は未追加。`app_settings` に列を追加するのが次の段階)。
+`GOOGLE_CALENDAR_IDS` は全テナント共通の設定のため、**複数テナントで運用する場合は `staff_calendars`(`purpose = 'schedule'`) だけを使う**
+(テナント単位のカレンダー設定は未追加。追加するなら `tenant_settings`)。
 
 閲覧時に読めないカレンダーがあった場合は、そのカレンダーを飛ばして WARN(`schedule.calendar_read_failed`)を記録する。
 勤怠記録用の `fresh` 計算では、予定が欠けたまま記録しないよう失敗させる。
@@ -132,11 +132,12 @@ GAS版は出勤経路(自宅→最初の訪問先)・退勤経路(最後の訪�
 (`importLegacyStaff.ts` はスタッフ台帳の住所列を取り込んでいない)。暫定の設定方法:
 
 ```sql
--- 自宅住所(平文、custom_fields内)
-UPDATE staff SET custom_fields = custom_fields || '{"homeAddress": "東京都世田谷区用賀4-1-1"}'
-WHERE id = '<staff id>';
--- 移動手段・カレンダーID
-UPDATE staff SET travel_mode = 'bicycle', calendar_id = 'sato@cutest.biz' WHERE id = '<staff id>';
+-- テナントを設定してから(RLS)。自宅住所(平文)・移動手段
+SELECT set_config('app.tenant_id', '<tenant id>', false);
+UPDATE staff SET home_address = '東京都世田谷区用賀4-1-1', travel_mode = 'bicycle' WHERE id = '<staff id>';
+-- 予定を読むカレンダー
+INSERT INTO staff_calendars (tenant_id, id, staff_id, calendar_id, purpose)
+VALUES ('<tenant id>', gen_random_uuid(), '<staff id>', 'sato@cutest.biz', 'schedule');
 ```
 
 緯度経度は暗号化が必要なためSQLでは直接入れられない(スタッフ編集機能の追加時に CryptoPort 経由で保存する)。
@@ -174,7 +175,7 @@ GAS版の3層のキャッシュとの対応:
 
 | GAS版 | 新アプリ | 範囲 |
 | --- | --- | --- |
-| `CacheService`(ルート結果2時間) | `InMemoryTtlCache`(`CachePort`)、キー `schedule-route:v1:<tenantId>:<正規化スタッフ名>:<日付>`、TTL 2時間、最大2000件のLRU | **APIプロセス内**。Cloud Run でインスタンスが複数立つとインスタンス間で共有されない(各インスタンスが別々に計算・課金する)。共有が必要になったら Memorystore 実装に `CachePort` ごと差し替える |
+| `CacheService`(ルート結果2時間) | `InMemoryTtlCache`(`CachePort`)、キー `schedule-route:v2:<tenantId>:<スタッフID>:<日付>`、TTL 2時間、最大2000件のLRU | **APIプロセス内**。Cloud Run でインスタンスが複数立つとインスタンス間で共有されない(各インスタンスが別々に計算・課金する)。共有が必要になったら Memorystore 実装に `CachePort` ごと差し替える |
 | `GEOCODE_MEMO_CACHE_` / `DIRECTIONS_MEMO_CACHE_` | `RouteCalculator`(1回の計算=1スタッフ×1日の中だけ) | 同じ住所・同じ区間を1回の計算の中で2回問い合わせない。通信エラー等の失敗は覚えない |
 | `CacheService`(顧客・スタッフ30分) | なし | DBから毎回読む(スプレッドシート全読みと違い軽いため) |
 | ブラウザ `localStorage`(2時間) | `packages/web` 側(変更なし) | ブラウザごと |
@@ -217,7 +218,7 @@ Geocoding。例: スタッフ20人×1日3件の訪問×毎日1回の計算 → R
 
 ## 12. マッチング用 free/busy 同期
 
-`syncStaffBusyBlocks(deps, tenantId, window)` は `staff.calendar_id` のある在籍スタッフの free/busy を
+`syncStaffBusyBlocks(deps, tenantId, window)` は `staff_calendars`(`purpose = 'schedule'`) のある在籍スタッフの free/busy を
 Calendar API から取得し(50カレンダーずつ)、`staff_busy_blocks`(source=`google_calendar`)の該当期間を
 置き換える。予定のタイトル・場所は取得も保存もしない。全テナント分は `syncStaffBusyBlocksForAllTenants`。
 ワーカーからは次のように組み立てて呼ぶ(スケジューラーへの登録はまだ行っていない):

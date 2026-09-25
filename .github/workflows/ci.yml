@@ -23,9 +23,10 @@ env:
   PGHOST: localhost
   PGUSER: postgres
   PGPASSWORD: postgres
-  # infra/initdb/*.sql が作るロール(.env.example と同じ)
+  # infra/initdb/*.sql が作るロール(.env.example と同じ)。DB の結合テスト(vitest の integration)もこれを使う
   DATABASE_URL: postgres://katahimo_app:katahimo_app@localhost:5432/katahimo_dev
-  MIGRATION_DATABASE_URL: postgres://katahimo:katahimo@localhost:5432/katahimo_dev
+  MIGRATION_DATABASE_URL: postgres://katahimo_migrator:katahimo_migrator@localhost:5432/katahimo_dev
+  WORKER_DATABASE_URL: postgres://katahimo_worker:katahimo_worker@localhost:5432/katahimo_dev
 
 jobs:
   check:
@@ -78,6 +79,7 @@ jobs:
             exit 1
           fi
 
+      # unit・web に加え、DATABASE_URL があるので integration(RLS・制約・並行性・API のルート)も動く
       - name: テスト
         run: pnpm test
 

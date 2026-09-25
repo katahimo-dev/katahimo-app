@@ -1,17 +1,22 @@
-import { isRetiredOn, jstBusinessDate } from '../../domain';
+import { isRetiredOn, newId, zonedBusinessDate } from '../../domain';
+import type { StaffRole } from '../../domain/model';
+import type { SessionRepository } from '../../ports/staff';
 import type { RequestMeta } from '../requestMeta';
-import type { AuthDeps, AuthWithLogDeps } from './deps';
-import { currentTime } from './deps';
-import { SESSION_TTL_MS } from './login';
-import { decodeSessionCookie, hashSessionToken } from './sessionCookie';
+import { currentTime } from '../requestMeta';
+import type { AuthDeps } from './deps';
+import {
+  decodeSessionCookie,
+  encodeSessionCookie,
+  hashSessionToken,
+  issueSessionToken,
+} from './sessionCookie';
 
-/** 残りがこの日数を切ったセッションは7日に延長する(GAS版checkSessionと同じ)。 */
+/** 無操作での有効期間(GAS版 verifyLogin と同じ7日。使うたびに延ばす)。 */
+export const SESSION_IDLE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** 残りがこの時間を切ったら無操作の期限を延ばす(毎回は書き込まない)。 */
 const SESSION_RENEW_THRESHOLD_MS = 6 * 24 * 60 * 60 * 1000;
-/**
- * ローリング延長しても、ログインからこの期間を過ぎたセッションは無効にする(GAS版には無い上限)。
- * 盗まれたCookieを使い続けられる期間を限るため。
- */
-export const SESSION_ABSOLUTE_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+/** ログインからの絶対的な有効期間(延長しても超えない。盗まれた Cookie を使い続けられる期間を限る)。 */
+export const SESSION_ABSOLUTE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface ResolvedSession {
   tenantId: string;
@@ -19,15 +24,17 @@ export interface ResolvedSession {
   sessionId: string;
   name: string;
   email: string;
-  isAdmin: boolean;
+  role: StaffRole;
+  /** Cookie の期限(無操作の期限)。 */
   expiresAt: Date;
-  /** このリクエストで有効期限を延長した(APIはCookieの期限も更新する)。 */
+  /** このリクエストで期限を延ばした(API は Cookie の期限も更新する)。 */
   renewed: boolean;
 }
 
 export type SessionFailureReason =
   | 'malformed'
   | 'unknown_token'
+  | 'revoked'
   | 'expired'
   | 'lifetime_exceeded'
   | 'tenant_suspended'
@@ -40,127 +47,141 @@ export type SessionCheckResult =
 
 export interface AuthenticateSessionOptions {
   /**
-   * ページ読み込み時(GET /api/auth/me)の検証か。GAS版checkSessionのisInitialLoadと同じく、
-   * 成功(AutoLogin)・失敗(AutoLoginFailed)のログはこのときだけ記録する(全APIで毎回書くと
-   * ログが溢れるため。各APIのアクセス拒否は呼び出し側が個別に記録する)。
+   * ページ読み込み時(GET /api/auth/me)の確認か。GAS版 checkSession の isInitialLoad と同じく、成功・失敗の
+   * ログはこのときだけ記録する(全 API で毎回書くとログが溢れるため)。
    */
   isInitialLoad?: boolean;
   meta?: RequestMeta;
 }
 
 /**
- * セッションCookieの値からログイン中ユーザーを解決する。GAS版Auth.js checkSessionに対応。
- * クライアント指定のスタッフ名/IDを一切信用せず、サーバー側でCookieだけから本人を特定する。
- *
- * - 退職日を毎回確認し、退職済みならそのスタッフの全セッションを削除する。
- * - テナントが停止中('suspended')なら拒否する(セッション行は残し、再開すればそのまま使える)。
- * - 期限切れのセッション行・ログインから30日を過ぎたセッション行はその場で削除する。
- * - 残り6日を切ったら7日に延長する(ローリング延長。毎回は書き込まない)。延長後の期限はログインから
- *   30日を超えない。
+ * セッション Cookie からログイン中のスタッフを解決する(GAS版 Auth.js checkSession)。
+ * クライアントが送ったスタッフ・テナントを一切信用せず、Cookie だけから本人を決める。
+ * セッション・テナント・スタッフの確認と期限の延長を1回の短いトランザクションで行う。
+ * - 失効済み・期限切れ・ログインから30日を過ぎたセッションは拒否する(行は保守ジョブが消す)。
+ * - テナントが利用停止中なら拒否する(セッションは残し、再開すればそのまま使える)。
+ * - 退職日(テナントのタイムゾーンの業務日)以降なら、そのスタッフの全セッションを失効させる。
  */
 export async function authenticateSession(
-  deps: AuthDeps & Partial<Pick<AuthWithLogDeps, 'appLog'>>,
+  deps: AuthDeps,
   cookieValue: string,
   options: AuthenticateSessionOptions = {},
 ): Promise<SessionCheckResult> {
   const now = currentTime(deps);
-  const fail = async (reason: SessionFailureReason, tenantId: string | null, staffId?: string) => {
-    if (options.isInitialLoad && deps.appLog) {
-      await deps.appLog.write({
-        tenantId,
-        level: 'WARN',
-        action: 'auth.session.auto_login_failed',
-        actorStaffId: staffId ?? null,
-        details: { reason },
-        ...options.meta,
-      });
-    }
-    return { ok: false as const, reason };
-  };
-
   const decoded = decodeSessionCookie(cookieValue);
-  if (!decoded) return fail('malformed', null);
+  const result: SessionCheckResult & { tenantId?: string | null; staffId?: string | null } = decoded
+    ? await deps.uow.run(decoded.tenantId, async (r) => {
+        const fail = (reason: SessionFailureReason, staffId: string | null = null) => ({
+          ok: false as const,
+          reason,
+          tenantId: reason === 'unknown_token' ? null : decoded.tenantId,
+          staffId,
+        });
+        const session = await r.sessions.findByTokenHash(hashSessionToken(decoded.rawToken));
+        // Cookie のテナント部分は書き換えられうるため、セッションが見つかるまではテナント不明として記録する
+        if (!session) return fail('unknown_token');
+        if (session.revokedAt) return fail('revoked', session.staffId);
+        if (session.absoluteExpiresAt.getTime() <= now.getTime())
+          return fail('lifetime_exceeded', session.staffId);
+        if (session.idleExpiresAt.getTime() <= now.getTime()) return fail('expired', session.staffId);
+        const tenant = await r.tenant();
+        if (tenant.status !== 'active') return fail('tenant_suspended', session.staffId);
+        const staff = await r.staff.findById(session.staffId);
+        if (!staff) return fail('staff_not_found');
+        if (isRetiredOn(staff.retiredOn, zonedBusinessDate(now, tenant.timezone))) {
+          await r.sessions.revokeAllForStaff(staff.id, now);
+          return fail('retired', staff.id);
+        }
+        let expiresAt = session.idleExpiresAt;
+        let renewed = false;
+        const renewedExpiry = Math.min(
+          now.getTime() + SESSION_IDLE_TTL_MS,
+          session.absoluteExpiresAt.getTime(),
+        );
+        if (
+          expiresAt.getTime() - now.getTime() < SESSION_RENEW_THRESHOLD_MS &&
+          renewedExpiry > expiresAt.getTime()
+        ) {
+          expiresAt = new Date(renewedExpiry);
+          await r.sessions.touch(session.id, now, expiresAt);
+          renewed = true;
+        }
+        return {
+          ok: true as const,
+          session: {
+            tenantId: decoded.tenantId,
+            staffId: staff.id,
+            sessionId: session.id,
+            name: staff.displayName,
+            email: staff.email,
+            role: staff.role,
+            expiresAt,
+            renewed,
+          },
+        };
+      })
+    : { ok: false, reason: 'malformed', tenantId: null };
 
-  const session = await deps.sessions.findByTokenHash(decoded.tenantId, hashSessionToken(decoded.rawToken));
-  // Cookieのテナント部分は改ざんされ得るため、セッションが見つからない間はテナント不明として記録する。
-  if (!session) return fail('unknown_token', null);
-
-  if (session.expiresAt.getTime() <= now.getTime()) {
-    await deps.sessions.delete(session.tenantId, session.id);
-    return fail('expired', session.tenantId, session.staffId);
+  if (options.isInitialLoad) {
+    await deps.appLog.write(
+      result.ok
+        ? {
+            tenantId: result.session.tenantId,
+            level: 'INFO',
+            action: 'auth.session.auto_login',
+            actorStaffId: result.session.staffId,
+            ...options.meta,
+          }
+        : {
+            tenantId: result.tenantId ?? null,
+            level: 'WARN',
+            action: 'auth.session.auto_login_failed',
+            actorStaffId: result.staffId ?? null,
+            details: { reason: result.reason },
+            ...options.meta,
+          },
+    );
   }
-  const absoluteExpiry = session.createdAt.getTime() + SESSION_ABSOLUTE_LIFETIME_MS;
-  if (absoluteExpiry <= now.getTime()) {
-    await deps.sessions.delete(session.tenantId, session.id);
-    return fail('lifetime_exceeded', session.tenantId, session.staffId);
-  }
-
-  const tenant = await deps.tenants.findById(session.tenantId);
-  if (tenant?.status !== 'active') return fail('tenant_suspended', session.tenantId, session.staffId);
-
-  const staff = await deps.staff.findById(session.tenantId, session.staffId);
-  if (!staff) return fail('staff_not_found', session.tenantId);
-
-  if (isRetiredOn(staff.retirementDate, jstBusinessDate(now))) {
-    await deps.sessions.deleteAllForStaff(session.tenantId, staff.id);
-    return fail('retired', session.tenantId, staff.id);
-  }
-
-  let expiresAt = session.expiresAt;
-  let renewed = false;
-  const renewedExpiry = Math.min(now.getTime() + SESSION_TTL_MS, absoluteExpiry);
-  if (
-    expiresAt.getTime() - now.getTime() < SESSION_RENEW_THRESHOLD_MS &&
-    renewedExpiry > expiresAt.getTime()
-  ) {
-    expiresAt = new Date(renewedExpiry);
-    await deps.sessions.updateExpiry(session.tenantId, session.id, expiresAt);
-    renewed = true;
-  }
-
-  if (options.isInitialLoad && deps.appLog) {
-    await deps.appLog.write({
-      tenantId: session.tenantId,
-      level: 'INFO',
-      action: 'auth.session.auto_login',
-      actorStaffId: staff.id,
-      ...options.meta,
-    });
-  }
-
-  return {
-    ok: true,
-    session: {
-      tenantId: session.tenantId,
-      staffId: staff.id,
-      sessionId: session.id,
-      name: staff.name,
-      email: staff.email,
-      isAdmin: staff.isAdmin,
-      expiresAt,
-      renewed,
-    },
-  };
+  return result.ok ? { ok: true, session: result.session } : { ok: false, reason: result.reason };
 }
 
-/** authenticateSessionの結果をセッションかnullだけにした簡易版(ログを伴わない通常のAPI呼び出し用)。 */
-export async function resolveSession(deps: AuthDeps, cookieValue: string): Promise<ResolvedSession | null> {
-  const result = await authenticateSession(deps, cookieValue);
-  return result.ok ? result.session : null;
+/** 新しいセッションを作り、Cookie の値を返す(ログインの最後の書き込みと同じトランザクションで呼ぶ)。 */
+export async function openSession(
+  sessions: SessionRepository,
+  input: { tenantId: string; staffId: string; now: Date; meta?: RequestMeta },
+): Promise<{ cookieValue: string; expiresAt: Date }> {
+  const rawToken = issueSessionToken();
+  const expiresAt = new Date(input.now.getTime() + SESSION_IDLE_TTL_MS);
+  await sessions.create({
+    id: newId(),
+    staffId: input.staffId,
+    tokenHash: hashSessionToken(rawToken),
+    createdAt: input.now,
+    idleExpiresAt: expiresAt,
+    absoluteExpiresAt: new Date(input.now.getTime() + SESSION_ABSOLUTE_TTL_MS),
+    ip: input.meta?.ip ?? null,
+    userAgent: input.meta?.userAgent ?? null,
+  });
+  return { cookieValue: encodeSessionCookie(input.tenantId, rawToken), expiresAt };
 }
 
-/** ログアウト。Cookieに対応するセッション行を削除する(Cookieが不正でも何もしないだけで失敗にしない)。 */
-export async function logout(deps: AuthWithLogDeps, cookieValue: string, meta?: RequestMeta): Promise<void> {
+/** ログアウト。Cookie のセッションを失効させる(Cookie が不正でも失敗にはしない)。 */
+export async function logout(deps: AuthDeps, cookieValue: string, meta?: RequestMeta): Promise<void> {
   const decoded = decodeSessionCookie(cookieValue);
   if (!decoded) return;
-  const session = await deps.sessions.findByTokenHash(decoded.tenantId, hashSessionToken(decoded.rawToken));
-  if (!session) return;
-  await deps.sessions.delete(session.tenantId, session.id);
+  const now = currentTime(deps);
+  const staffId = await deps.uow.run(decoded.tenantId, async (r) => {
+    const session = await r.sessions.findByTokenHash(hashSessionToken(decoded.rawToken));
+    if (!session || session.revokedAt) return null;
+    await r.sessions.revoke(session.id, now);
+    return session.staffId;
+  });
+  if (!staffId) return;
   await deps.appLog.write({
-    tenantId: session.tenantId,
+    tenantId: decoded.tenantId,
     level: 'INFO',
     action: 'auth.logout',
-    actorStaffId: session.staffId,
+    actorStaffId: staffId,
     ...meta,
   });
 }

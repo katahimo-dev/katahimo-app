@@ -9,8 +9,12 @@ const textSchema = z.string().default('');
  * - staffIdは管理者のみ有効(他スタッフ名義で保存する場合)。管理者以外は常に本人になる。
  * - reportIdを渡すと既存日報の上書き保存。管理者以外は本人の日報しか上書きできない。
  */
+const rowVersionSchema = z.number().int().positive();
+
 export const saveDailyReportRequestSchema = z.object({
   reportId: idSchema.optional(),
+  /** 上書きのとき、画面が読んだ記録の版(送れば、他の人が先に保存していた場合に 409)。 */
+  rowVersion: rowVersionSchema.optional(),
   staffId: idSchema.optional(),
   customerId: idSchema,
   /** 訪問日。省略時は保存時刻を記録日時にする(GAS版saveReportと同じ)。 */
@@ -32,6 +36,7 @@ export const dailyReportViewSchema = z.object({
   customerId: idSchema,
   riskRating: ratingSchema,
   esRating: ratingSchema,
+  rowVersion: rowVersionSchema,
   content: z.object({
     startTime: z.string(),
     endTime: z.string(),
@@ -50,6 +55,7 @@ export const saveDailyReportResponseSchema = z.object({
 /** POST /api/reports/accident (staffId/reportIdの扱いは日報と同じ) */
 export const saveAccidentReportRequestSchema = z.object({
   reportId: idSchema.optional(),
+  rowVersion: rowVersionSchema.optional(),
   staffId: idSchema.optional(),
   customerId: idSchema,
   reportType: z.enum(['事故報告', 'ヒヤリハット']).default('事故報告'),
@@ -73,6 +79,7 @@ export const accidentReportViewSchema = z.object({
   staffId: idSchema,
   customerId: idSchema,
   reportType: z.string(),
+  rowVersion: rowVersionSchema,
   content: z.record(z.string(), z.string()),
 });
 export const saveAccidentReportResponseSchema = z.object({
@@ -85,7 +92,7 @@ export const saveAccidentReportResponseSchema = z.object({
  * generateAccidentReport の引数)。start/end は 'HH:mm'。
  */
 export const generateReportRequestSchema = z.object({
-  text: z.string().trim().min(1, 'text が必要です'),
+  text: z.string().trim().min(1, 'text が必要です').max(20_000, 'メモが長すぎます'),
   start: z.string().optional(),
   end: z.string().optional(),
 });

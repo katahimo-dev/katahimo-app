@@ -1,4 +1,4 @@
-import { syncStaffBusyBlocksForAllTenants } from '@katahimo/core';
+import { syncStaffBusyBlocksForAllTenants } from '@katahimo/core/usecases';
 import type { WorkerContainer } from '../container';
 import { logJson } from './log';
 

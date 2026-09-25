@@ -1,17 +1,28 @@
-import { changePassword, confirmPasswordReset, login, logout, requestPasswordReset } from '@katahimo/core';
 import type { ResolvedSession } from '@katahimo/core/usecases';
+import {
+  changePassword,
+  confirmPasswordReset,
+  login,
+  logout,
+  requestPasswordReset,
+} from '@katahimo/core/usecases';
 import type { SessionUser } from '@katahimo/shared';
 import {
   changePasswordRequestSchema,
+  changePasswordResponseSchema,
   loginRequestSchema,
+  okResponseSchema,
   PASSWORD_POLICY_MESSAGES,
+  passwordResetConfirmResponseSchema,
   passwordResetConfirmSchema,
+  passwordResetRequestResponseSchema,
   passwordResetRequestSchema,
+  sessionUserResponseSchema,
 } from '@katahimo/shared';
 import { Hono } from 'hono';
 import type { Container } from '../container';
 import { requestMeta } from '../http/requestMeta';
-import { apiError, parseJsonBody, rateLimited } from '../http/responses';
+import { apiError, jsonOk, parseJsonBody, rateLimited } from '../http/responses';
 import type { SessionEnv } from '../session';
 import {
   clearSessionCookie,
@@ -27,7 +38,7 @@ function toSessionUser(session: ResolvedSession): SessionUser {
     tenantId: session.tenantId,
     name: session.name,
     email: session.email,
-    isAdmin: session.isAdmin,
+    role: session.role,
   };
 }
 
@@ -68,24 +79,24 @@ export function createAuthRoutes(container: Container) {
       tenantId: result.staff.tenantId,
       name: result.staff.name,
       email: result.staff.email,
-      isAdmin: result.staff.isAdmin,
+      role: result.staff.role,
     };
-    return c.json({ staff });
+    return jsonOk(c, sessionUserResponseSchema, { staff });
   });
 
   /** ページ読み込み時のセッション確認(GAS版checkSession(token, isInitialLoad=true))。 */
   app.get('/me', async (c) => {
     const session = await getAuthenticatedSession(c, container, { isInitialLoad: true });
     if (!session) return apiError(c, 401, 'unauthenticated', '未ログインです');
-    return c.json({ staff: toSessionUser(session) });
+    return jsonOk(c, sessionUserResponseSchema, { staff: toSessionUser(session) });
   });
 
-  /** ログアウト。Cookieを消すだけでなく、サーバー側のセッション行も削除する。 */
+  /** ログアウト。Cookie を消すだけでなく、サーバー側のセッションも失効させる。 */
   app.post('/logout', async (c) => {
     const cookieValue = readSessionCookie(c, container);
     if (cookieValue) await logout(container, cookieValue, requestMeta(c));
     clearSessionCookie(c, container);
-    return c.json({ ok: true });
+    return jsonOk(c, okResponseSchema, { ok: true });
   });
 
   /** ログイン中スタッフ自身のパスワード変更。GAS版Auth.js changePassword。 */
@@ -111,7 +122,7 @@ export function createAuthRoutes(container: Container) {
       }
       return apiError(c, 401, 'unauthenticated', 'セッションが無効です');
     }
-    return c.json({ success: true as const, message: 'パスワードを変更しました' });
+    return jsonOk(c, changePasswordResponseSchema, { success: true, message: 'パスワードを変更しました' });
   });
 
   /**
@@ -125,7 +136,10 @@ export function createAuthRoutes(container: Container) {
     if (outcome.status === 'ip_rate_limited') {
       return rateLimited(c, outcome.retryAfterMs, RESET_RATE_LIMITED_MESSAGE);
     }
-    return c.json({ ok: true as const, message: RESET_REQUEST_ACCEPTED_MESSAGE });
+    return jsonOk(c, passwordResetRequestResponseSchema, {
+      ok: true,
+      message: RESET_REQUEST_ACCEPTED_MESSAGE,
+    });
   });
 
   /** GAS版Auth.js resetPasswordWithCode。 */
@@ -148,7 +162,7 @@ export function createAuthRoutes(container: Container) {
               : '無効な認証コードです';
       return apiError(c, 400, 'validation_failed', message);
     }
-    return c.json({ ok: true as const, message: 'パスワードを再設定しました' });
+    return jsonOk(c, passwordResetConfirmResponseSchema, { ok: true, message: 'パスワードを再設定しました' });
   });
 
   return app;

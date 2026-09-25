@@ -1,9 +1,8 @@
-import type { Database } from '@katahimo/db';
-import { sql } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { createContainer } from './container';
+import type { Container } from './container';
 import type { Env } from './env';
 import { trustedProxyHops } from './env';
+import { onApiError, requestLogger, writeStructuredLog } from './http/requestLog';
 import { clientIpMiddleware } from './http/requestMeta';
 import {
   apiBodyLimits,
@@ -28,14 +27,15 @@ import { createUiConfigRoutes } from './routes/uiConfig';
 
 export interface AppDeps {
   env: Env;
-  db: Database;
+  container: Container;
 }
 
 export function createApp(deps: AppDeps) {
   const app = new Hono();
-  const container = createContainer(deps.env, deps.db);
+  const { container } = deps;
 
-  // 全レスポンス(API・画面)共通: 送信元IPの判定とセキュリティヘッダー(CSP・HSTS等)
+  // 全レスポンス(API・画面)共通: リクエストのログと ID、送信元IPの判定、セキュリティヘッダー(CSP・HSTS等)
+  app.use('*', requestLogger({ projectId: process.env.GOOGLE_CLOUD_PROJECT }));
   app.use('*', clientIpMiddleware(trustedProxyHops(deps.env)));
   app.use('*', securityHeaders(container.config.isProduction));
   // API: キャッシュさせない・CSRF対策(別サイトからの状態変更を拒否)・JSON以外の本体は415・本体の大きさの上限
@@ -53,16 +53,14 @@ export function createApp(deps: AppDeps) {
    */
   app.get('/api/health/db', async (c) => {
     try {
-      await deps.db.execute(sql`SELECT 1`);
+      await container.pingDatabase();
       return c.json({ status: 'ok' });
     } catch (e) {
-      console.error(
-        JSON.stringify({
-          severity: 'ERROR',
-          message: 'DBの疎通確認に失敗しました',
-          error: e instanceof Error ? e.message : String(e),
-        }),
-      );
+      writeStructuredLog({
+        severity: 'ERROR',
+        message: 'DBの疎通確認に失敗しました',
+        error: e instanceof Error ? e.message : String(e),
+      });
       return c.json({ status: 'error' }, 503);
     }
   });
@@ -84,6 +82,8 @@ export function createApp(deps: AppDeps) {
   if (deps.env.WEB_DIST_DIR) registerWebStatic(app, deps.env.WEB_DIST_DIR);
 
   app.notFound((c) => c.json({ code: 'not_found', message: '該当するAPIがありません' }, 404));
+  // DomainError → code に応じた応答、想定外の例外 → ログに残して 500 internal(応答に内部の情報を出さない)
+  app.onError(onApiError);
 
   return app;
 }

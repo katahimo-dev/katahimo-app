@@ -10,7 +10,7 @@ import { parse } from 'csv-parse/sync';
 const STAFF_MASTER_COLUMNS = {
   name: 1, // B列(verifyLoginの userRow[1])
   email: 4, // E列(STAFF_LOGIN_EMAIL_COL_IDX_)
-  retirementDate: 7, // H列
+  retiredOn: 7, // H列
   password: 9, // J列(SHA-256ハッシュ、または移行前の平文)
   isAdmin: 10, // K列(1なら管理者)
   altEmail: 12, // M列(STAFF_ALT_EMAIL_COL_IDX_。'@'を含む場合だけメールアドレスとして扱う)
@@ -41,9 +41,9 @@ export function parseStaffMasterCsv(text: string): ParsedStaffMaster {
     if (record.every((v) => !v.trim())) return;
     const rowNumber = index + 1;
 
-    const rawRetirement = cell(record, STAFF_MASTER_COLUMNS.retirementDate);
-    const retirementDate = rawRetirement ? normalizeRetirementDate(rawRetirement) : null;
-    if (rawRetirement && !retirementDate) {
+    const rawRetirement = cell(record, STAFF_MASTER_COLUMNS.retiredOn);
+    const retiredOn = rawRetirement ? normalizeRetirementDate(rawRetirement) : null;
+    if (rawRetirement && !retiredOn) {
       result.warnings.push({
         rowNumber,
         message: `退職日「${rawRetirement}」を解釈できないため空として扱います`,
@@ -58,7 +58,7 @@ export function parseStaffMasterCsv(text: string): ParsedStaffMaster {
       altEmail: altEmail.includes('@') ? altEmail : null,
       password: record[STAFF_MASTER_COLUMNS.password] ?? '',
       isAdmin: cell(record, STAFF_MASTER_COLUMNS.isAdmin) === '1',
-      retirementDate,
+      retiredOn,
     });
   });
   return result;

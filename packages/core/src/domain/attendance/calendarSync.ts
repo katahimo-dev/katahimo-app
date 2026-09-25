@@ -164,6 +164,14 @@ export function buildRowDataFromAppointments(
   return row;
 }
 
+/**
+ * 出勤簿の訪問の枠(#1〜)に入る順の予定(buildRowDataFromAppointments と同じ振り分け)。
+ * 枠に載らない4件目以降も含めて返す(実体の visits には全件を保存する)。
+ */
+export function visitAppointmentsInSlotOrder<T extends CalendarAppointment>(appointments: readonly T[]): T[] {
+  return mergeOverlappingOfficeAppointments(appointments).filter((a) => !isOfficeWorkAppointment(a));
+}
+
 /** 'HH:mm' の時間帯同士が重なるか(端点が接するだけなら重ならない)。 */
 export function timeRangesOverlap(startA: string, endA: string, startB: string, endB: string): boolean {
   const sA = parseTimeToMinutes(startA);

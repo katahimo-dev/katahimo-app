@@ -1,6 +1,7 @@
 # ローカル開発用 PostgreSQL。
-# 開発マシンに PostgreSQL が直接インストール済みの場合はこれを使わず、
-# infra/initdb/01_bootstrap.sql を psql で流すだけでよい(README参照)。
+# 開発マシンに PostgreSQL が直接インストール済みの場合はこれを使わず、infra/initdb の SQL を psql で流すだけでよい
+# (README 参照)。初回の起動で infra/initdb/docker-init.sh がロール(katahimo_owner / katahimo_migrator /
+# katahimo_app / katahimo_worker / katahimo_readonly)と katahimo_dev を作る。
 # PostgreSQL のメジャーバージョンは本番の Cloud SQL(infra/gcp の sql_database_version = POSTGRES_17)と
 # CI(.github/workflows/ci.yml)に合わせる。上げるときは3か所を揃える。
 services:
@@ -8,21 +9,22 @@ services:
     image: postgres:17-alpine
     container_name: katahimo-db
     environment:
-      POSTGRES_USER: katahimo
-      POSTGRES_PASSWORD: katahimo
-      POSTGRES_DB: katahimo_dev
+      # スーパーユーザー(初期化 SQL を流すためだけに使う。アプリは katahimo_app・katahimo_worker で接続する)
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
       TZ: Asia/Tokyo
     ports:
       - '5433:5432'
     volumes:
-      # メジャーバージョンごとにデータの形式が違うため、ボリューム名に版を入れる(版を変えたら作り直し)
-      - katahimo-pgdata-17:/var/lib/postgresql/data
-      - ./initdb/01_bootstrap.sql:/docker-entrypoint-initdb.d/01_bootstrap.sql:ro
+      # メジャーバージョンごとにデータの形式が違うため、ボリューム名に版を入れる(版・ロールの構成を変えたら作り直し)
+      - katahimo-pgdata-17-v2:/var/lib/postgresql/data
+      - ./initdb:/katahimo-initdb:ro
+      - ./initdb/docker-init.sh:/docker-entrypoint-initdb.d/00_katahimo.sh:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U katahimo -d katahimo_dev']
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d katahimo_dev']
       interval: 5s
       timeout: 5s
       retries: 20
 
 volumes:
-  katahimo-pgdata-17:
+  katahimo-pgdata-17-v2:

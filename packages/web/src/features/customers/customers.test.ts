@@ -70,7 +70,7 @@ const detail = (overrides: Partial<CustomerDetailView> = {}): CustomerDetailView
   ageBracket: null,
   registeredAt: '2025-08-12T04:12:00.000Z',
   externalLastUpdatedAt: null,
-  deactivatedAt: null,
+  archivedAt: null,
   familyMembers: [],
   ...overrides,
 });

@@ -185,7 +185,7 @@ async function ensureStaff(api: APIRequestContext): Promise<string> {
   const existing = staff.find((s) => s.email === STAFF.email);
   if (existing) return existing.id;
   const res = await api.post(`${WEB_URL}/api/admin/staff`, {
-    data: { name: STAFF.name, email: STAFF.email, isAdmin: false, initialPassword: STAFF.password },
+    data: { name: STAFF.name, email: STAFF.email, role: 'staff', initialPassword: STAFF.password },
   });
   assert(res.status() === 201, `POST /api/admin/staff が ${res.status()}: ${await res.text()}`);
   return ((await res.json()) as { staff: { id: string } }).staff.id;
@@ -530,7 +530,7 @@ async function runJourney() {
           [
             'POST /api/admin/staff',
             req.post(`${WEB_URL}/api/admin/staff`, {
-              data: { name: 'x', email: 'e2e-denied@example.com', isAdmin: true },
+              data: { name: 'x', email: 'e2e-denied@example.com', role: 'admin' },
             }),
           ],
           ['GET /api/settings/admin', req.get(`${WEB_URL}/api/settings/admin`)],

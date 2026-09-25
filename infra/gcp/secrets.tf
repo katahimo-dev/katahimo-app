@@ -3,14 +3,16 @@
 # で登録する(値を state に残さないため。doc/11 「5. シークレットの登録」)。
 #
 # LOCAL_DEV_KEK は本番では使わない(KMS_PROVIDER=gcp、Cloud KMS の tenant-kek を使う)。
-# LOCAL_DEV_MASTER_KEY は名前に反して本番でも使う blind index の HMAC 鍵(CryptoPort の鍵とは別)。
+# BLIND_INDEX_MASTER_KEY はブラインドインデックスの HMAC のマスター鍵(データの暗号化鍵とは別)。
+# DB の接続はロールごとに別の secret(API = katahimo_app、ワーカー = katahimo_worker、migrate = katahimo_migrator)。
 locals {
   secrets = {
     # 名前 = 読めるサービスアカウント
-    "database-url"           = ["api", "worker"] # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
-    "migration-database-url" = ["migrate"]       # postgres://katahimo:...@/katahimo?host=/cloudsql/<接続名>
+    "database-url"           = ["api"]     # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
+    "worker-database-url"    = ["worker"]  # postgres://katahimo_worker:...@/katahimo?host=/cloudsql/<接続名>
+    "migration-database-url" = ["migrate"] # postgres://katahimo_migrator:...@/katahimo?host=/cloudsql/<接続名>
     "session-secret"         = ["api"]
-    "blind-index-key"        = ["api"]    # LOCAL_DEV_MASTER_KEY
+    "blind-index-key"        = ["api"]    # BLIND_INDEX_MASTER_KEY
     "legacy-auth-salt"       = ["api"]    # GAS版の AUTH_SALT(移行期のみ)
     "smtp-pass"              = ["worker"] # パスワード再設定メールはワーカーが送る
     "gemini-api-key"         = ["api"]

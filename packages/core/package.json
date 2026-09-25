@@ -8,7 +8,7 @@
     "./ports": "./src/ports/index.ts",
     "./domain": "./src/domain/index.ts",
     "./usecases": "./src/usecases/index.ts",
-    "./test-utils": "./src/usecases/testDoubles.ts"
+    "./test-utils": "./src/usecases/testUtils.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

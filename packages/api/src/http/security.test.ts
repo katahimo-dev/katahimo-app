@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { Database } from '@katahimo/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../app';
+import { createContainer } from '../container';
 import { loadEnv } from '../env';
 
 /** DBに触らないエンドポイントだけを叩くため、DBは使われたら分かる偽物にする。 */
@@ -24,13 +25,13 @@ function appFor(overrides: Record<string, string> = {}) {
   const env = loadEnv({
     DATABASE_URL: 'postgres://katahimo_app:x@localhost:5432/katahimo_dev',
     SESSION_SECRET: 'test-session-secret-0123456789',
-    LOCAL_DEV_MASTER_KEY: 'a'.repeat(64),
+    BLIND_INDEX_MASTER_KEY: 'a'.repeat(64),
     LOCAL_DEV_KEK: 'b'.repeat(64),
     SCHEDULE_PROVIDER: 'noop',
     WEB_DIST_DIR: distDir,
     ...overrides,
   });
-  return createApp({ env, db: noDb });
+  return createApp({ env, container: createContainer(env, noDb) });
 }
 
 const json = (body: unknown, headers: Record<string, string> = {}) => ({

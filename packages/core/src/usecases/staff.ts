@@ -1,8 +1,7 @@
-import type { StaffRepositoryPort } from '../ports/repositories';
-
-export interface StaffDeps {
-  staff: StaffRepositoryPort;
-}
+import { canActForOthers, zonedBusinessDate } from '../domain';
+import type { UnitOfWorkPort } from '../ports/unitOfWork';
+import type { Actor, Clock } from './requestMeta';
+import { currentTime } from './requestMeta';
 
 export interface ActiveStaffView {
   id: string;
@@ -10,15 +9,18 @@ export interface ActiveStaffView {
 }
 
 /**
- * 管理者向け「対象スタッフ」一覧(退職済みは除く)。GAS版PastSchedule.js
- * getActiveStaffNamesForAdminに対応。呼び出し元のAPIルートで管理者権限チェックを行う
- * (管理者以外はここを呼ばず空配列を返す)。
- *
- * 並び替えはGAS版の`names.sort()`(ロケール非依存の単純な文字列比較)と同じ挙動にする。
+ * 「対象スタッフ」の選択肢(退職者を除く)。GAS版 PastSchedule.js getActiveStaffNamesForAdmin。他のスタッフを
+ * 扱えないロール(一般スタッフ)には空の一覧を返す(GAS版と同じ)。並びは GAS版の names.sort() と同じ単純な比較。
  */
-export async function listActiveStaffForAdmin(deps: StaffDeps, tenantId: string): Promise<ActiveStaffView[]> {
-  const rows = await deps.staff.listActive(tenantId);
-  return rows
-    .map((r) => ({ id: r.id, name: r.name }))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+export function listActiveStaffForActor(
+  deps: { uow: UnitOfWorkPort } & Clock,
+  actor: Actor,
+): Promise<ActiveStaffView[]> {
+  if (!canActForOthers(actor.role)) return Promise.resolve([]);
+  return deps.uow.run(actor.tenantId, async (r) => {
+    const today = zonedBusinessDate(currentTime(deps), (await r.tenant()).timezone);
+    return (await r.staff.listActiveOn(today))
+      .map((s) => ({ id: s.id, name: s.displayName }))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  });
 }

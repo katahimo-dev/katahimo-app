@@ -1,30 +1,15 @@
 /**
- * KEK(Key Encryption Key)によるDEKのラップ/アンラップを行うポート。
- *
- * CryptoPort(./crypto.ts)が使う「テナントごとのDEK」は平文のまま保存せず、必ずこのポートで
- * ラップした状態(TenantKeyRepositoryPortのwrappedDek列)だけを永続化する。
- *
- * ローカル開発実装(@katahimo/integrations の LocalKmsPort)は環境変数1本のKEKでAES-256-GCM
- * ラップを行う簡易実装。本番はCloud KMSの `CryptoKeyVersion` をKEKとして使う実装に差し替える
- * (Phase 5、実際のGCPプロジェクト・KMSキーリングが用意でき次第)。差し替えの際、このポートの
- * インターフェース自体は変えずに済む設計にしてある(呼び出し側はwrap/unwrapの実装詳細を知らない)。
+ * KEK(Key Encryption Key)による DEK のラップ/アンラップ(実装は @katahimo/integrations の
+ * LocalKmsPort(開発)/ CloudKmsPort(本番))。平文の DEK は CryptoPort 実装のプロセス内メモリにしか置かない。
  */
-
 export interface WrappedDek {
-  /** Base64エンコードされたラップ済みDEK(ローカル実装はnonce+authTag+ciphertext、KMS実装はKMSのAPIレスポンスをそのまま格納)。 */
-  ciphertext: string;
-  /** ラップに使ったKEKのバージョン。KEKローテーション時、旧バージョンでラップされたDEKを新KEKで再ラップするために必要。 */
-  kekVersion: number;
+  wrapped: Uint8Array;
+  /** ラップに使った KEK の名前(tenant_data_keys.kek_key_name)。 */
+  kekKeyName: string;
 }
 
 export interface KeyManagementPort {
-  /** 現在有効なKEKのバージョン。新規にDEKをラップする際に使う。 */
-  readonly currentKekVersion: number;
-  /**
-   * DEKをラップする。tenantIdは追加認証データ(AAD)としてラップに結び付け、あるテナントの
-   * wrapped_dek を別のテナントの行にコピーしてもアンラップできないようにする。
-   */
-  wrap(dek: Buffer, tenantId: string): Promise<WrappedDek>;
-  /** kekVersionが古い場合も含め、指定バージョンのKEKでアンラップできる必要がある。tenantIdはwrapと同じ値。 */
-  unwrap(wrapped: WrappedDek, tenantId: string): Promise<Buffer>;
+  /** tenantId は AAD としてラップに結び付ける(別テナントの行に写してもアンラップできない)。 */
+  wrap(dek: Uint8Array, tenantId: string): Promise<WrappedDek>;
+  unwrap(wrapped: WrappedDek, tenantId: string): Promise<Uint8Array>;
 }

@@ -108,17 +108,18 @@ pnpm install
 
 ### 2. データベース
 
-ロールは2つ: テーブル所有者 `katahimo`(マイグレーション用)と、アプリが接続する非所有者 `katahimo_app`。
-アプリは必ず `katahimo_app` で接続する(テナント分離を所有者の権限に頼らないため)。
+ロール(doc/09 第1.4節): 所有者 `katahimo_owner`(ログイン不可)、マイグレーション・テナント作成用の `katahimo_migrator`
+(ログインすると所有者になる)、API の `katahimo_app`、ワーカーの `katahimo_worker`、将来用の `katahimo_readonly`。
+どれも RLS をバイパスできず、全テーブルが FORCE ROW LEVEL SECURITY(所有者でもテナントを設定しないと読めない)。
 
 **PostgreSQL を直接入れている場合**(ポート 5432):
 
 ```bash
-psql -U postgres -h localhost -f infra/initdb/00_create_database.sql              # ロール katahimo と DB katahimo_dev
-psql -U postgres -h localhost -d katahimo_dev -f infra/initdb/01_bootstrap.sql    # btree_gist・katahimo_app・既定権限
+psql -U postgres -h localhost -f infra/initdb/00_create_database.sql              # ロールと DB katahimo_dev(-v dbname=<名前> で別の DB)
+psql -U postgres -h localhost -d katahimo_dev -f infra/initdb/01_bootstrap.sql    # btree_gist・接続の権限・public スキーマの所有者
 ```
 
-**Docker の場合**(ポート 5433。初期化SQLはコンテナが自動で流す):
+**Docker の場合**(ポート 5433。初期化SQL(`infra/initdb/docker-init.sh`)はコンテナが最初の起動で流す):
 
 ```bash
 docker compose -f infra/docker-compose.yml up -d
@@ -136,22 +137,24 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # 2�
 | キー | 値 |
 | --- | --- |
 | `DATABASE_URL` | `postgres://katahimo_app:katahimo_app@localhost:5432/katahimo_dev`(Docker なら `:5433`) |
-| `MIGRATION_DATABASE_URL` | `postgres://katahimo:katahimo@localhost:5432/katahimo_dev`(同上) |
+| `WORKER_DATABASE_URL` | `postgres://katahimo_worker:katahimo_worker@localhost:5432/katahimo_dev`(同上) |
+| `MIGRATION_DATABASE_URL` | `postgres://katahimo_migrator:katahimo_migrator@localhost:5432/katahimo_dev`(同上) |
 | `SESSION_SECRET` | 任意の文字列(本番は32文字以上) |
-| `LOCAL_DEV_MASTER_KEY` | 64桁hex(blind index の鍵) |
-| `LOCAL_DEV_KEK` | 64桁hex(テナント鍵をラップする鍵。`LOCAL_DEV_MASTER_KEY` とは別の値) |
+| `BLIND_INDEX_MASTER_KEY` | 64桁hex(ブラインドインデックスの鍵) |
+| `LOCAL_DEV_KEK` | 64桁hex(テナント鍵をラップする鍵。`BLIND_INDEX_MASTER_KEY` とは別の値) |
 
 空のままのときの動き: `SCHEDULE_PROVIDER` 未指定かつ Google の資格情報・GAS Bridge が無い → `noop`(予定は常に0件)、
 `GEMINI_API_KEY` 無し → AIの下書き・OCRはGAS版と同じ「API Key Missing」の応答、`SMTP_HOST` 無し → パスワード再設定の
 メールはワーカー(`pnpm worker`、outbox 経由で送る)の標準出力に出る、Webhook 無し → 通知しない、`STORAGE_PROVIDER=local` → 領収書画像は `LOCAL_RECEIPT_STORAGE_DIR`
-(既定 `./data/receipts`、API の作業ディレクトリから)。一度決めた `LOCAL_DEV_MASTER_KEY` / `LOCAL_DEV_KEK` / `KMS_PROVIDER` は
+(既定 `./data/receipts`、API の作業ディレクトリから)。一度決めた `BLIND_INDEX_MASTER_KEY` / `LOCAL_DEV_KEK` / `KMS_PROVIDER` は
 変えない(既存の検索用インデックス・暗号文が読めなくなる)。
 
 ### 4. マイグレーションと開発用データ
 
 ```bash
-pnpm db:migrate   # MIGRATION_DATABASE_URL(所有者)で packages/db/drizzle を適用
-pnpm db:seed      # テナント demo・管理者 admin@example.com / admin1234・お客様3件(何度流してもよい)
+pnpm db:migrate   # MIGRATION_DATABASE_URL(katahimo_migrator → 所有者)で packages/db/drizzle を適用
+pnpm db:seed      # platform.provision_tenant() でテナント demo、スタッフ admin@ / coordinator@ / staff@example.com
+                  # (パスワードは全員 admin1234)、お客様3件(何度流してもよい)
 ```
 
 実データの取込(運用スクリプト):
@@ -183,7 +186,7 @@ pnpm worker                          # outbox ポーラー(ミラーを使うと
 | コマンド | 内容 |
 | --- | --- |
 | `pnpm typecheck` | 全パッケージの `tsc --noEmit` |
-| `pnpm test` | Vitest(`packages/*/src/**/*.test.ts`。GAS版との一致確認を含む。DBは使わない) |
+| `pnpm test` | Vitest の projects: unit(サーバー)・web(画面、jsdom)と、`DATABASE_URL`・`MIGRATION_DATABASE_URL` があれば integration(実DBでの RLS・制約・並行性・API のルート)。GAS版との一致確認を含む |
 | `pnpm lint` / `pnpm lint:fix` | Biome(`legacy/` は対象外) |
 | `pnpm build` | api / worker / db(tsup)と web(vite)の本番ビルド |
 | `pnpm db:generate` | スキーマ(`packages/db/src/schema`)の変更から差分マイグレーションを作る(drizzle-kit) |
@@ -192,7 +195,8 @@ pnpm worker                          # outbox ポーラー(ミラーを使うと
 | `pnpm job:nightly-calendar-sync [-- YYYY-MM-DD]` | 全テナントの在籍スタッフの当日分をカレンダーから出勤簿へ反映(本番は 22:00 JST) |
 | `pnpm job:csv-import` | 各テナントの最新の顧客CSVが未取込なら取り込む(本番は 03:00 JST。ローカルは `CUSTOMER_CSV_LOCAL_DIR=<dir>` の `<dir>/<テナントslug>/Kokyaku_YYYYMMDDHHmm_N.csv`) |
 | `pnpm --filter @katahimo/worker job:sync-busy-blocks` | スタッフのカレンダーの free/busy を同期(将来のマッチング用) |
-| `pnpm --filter @katahimo/worker outbox:once` | outbox を1回だけ処理して終わる |
+| `pnpm --filter @katahimo/worker job:maintenance` | 保守(操作ログのパーティション・保存期間を過ぎた行・参照されないファイルの削除。本番は 04:00 JST) |
+| `pnpm --filter @katahimo/worker outbox:once` | outbox を空になるまで処理して終わる |
 | `pnpm --filter @katahimo/gas-preview shoot [-- --only <正規表現>]` | GAS版との見比べ(web 開発サーバーはこのコマンドが起動する。差分が 0.05% を越えたら終了コード1) |
 | `pnpm --filter @katahimo/gas-preview e2e [-- --web-url …]` | 実際のAPI・DBでの通し確認(API が動いていなければ起動し、web 開発サーバーも起動する) |
 

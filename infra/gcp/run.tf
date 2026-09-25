@@ -40,9 +40,9 @@ locals {
   # 環境変数名 = シークレット名(secrets.tf)。optional のものは var.optional_secrets にあるときだけ渡す。
   api_secret_env = merge(
     {
-      DATABASE_URL         = "database-url"
-      SESSION_SECRET       = "session-secret"
-      LOCAL_DEV_MASTER_KEY = "blind-index-key"
+      DATABASE_URL           = "database-url"
+      SESSION_SECRET         = "session-secret"
+      BLIND_INDEX_MASTER_KEY = "blind-index-key"
     },
     { for k, v in {
       GOOGLE_MAPS_API_KEY = "google-maps-api-key"
@@ -52,7 +52,8 @@ locals {
     } : k => v if contains(var.optional_secrets, v) },
   )
   worker_secret_env = merge(
-    { DATABASE_URL = "database-url" },
+    # ワーカーは専用の DB ユーザー(katahimo_worker。outbox をテナント横断で取るポリシーがある)
+    { WORKER_DATABASE_URL = "worker-database-url" },
     { for k, v in {
       SMTP_PASS           = "smtp-pass"
       GOOGLE_MAPS_API_KEY = "google-maps-api-key"
@@ -90,6 +91,16 @@ locals {
       max_retries     = 1
       timeout         = "1800s"
       schedule        = "0 3 * * *"
+    }
+    # 保守(操作ログのパーティション・保存期間を過ぎた行・参照されないファイルの削除)
+    maintenance = {
+      args            = ["dist/maintenance.js"]
+      service_account = google_service_account.worker.email
+      env             = local.worker_env
+      secret_env      = local.worker_secret_env
+      max_retries     = 1
+      timeout         = "1800s"
+      schedule        = "0 4 * * *"
     }
     # 将来のマッチング用(doc/10)。既定では定期実行しない
     sync-busy-blocks = {

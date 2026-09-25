@@ -2,14 +2,22 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { computeLegacyHash } from '../../domain';
 import { DEFAULT_RATE_LIMIT_POLICY } from '../rateLimits';
 import { changePassword } from './changePassword';
+import type { AuthDeps } from './deps';
 import { login } from './login';
-import { authenticateSession, logout, resolveSession } from './session';
+import { authenticateSession, logout } from './session';
 import { decodeSessionCookie } from './sessionCookie';
-import { importLegacyStaff, registerStaff } from './staffRegistration';
+import { registerStaff } from './staffRegistration';
 import type { AuthTestContext } from './testSetup';
 import { createAuthTestContext } from './testSetup';
 
 const DAY = 24 * 60 * 60 * 1000;
+
+async function resolveSession(deps: AuthDeps, cookie: string) {
+  const result = await authenticateSession(deps, cookie);
+  return result.ok ? result.session : null;
+}
+
+const UNKNOWN_TOKEN = 'f'.repeat(64);
 
 describe('login', () => {
   let ctx: AuthTestContext;
@@ -23,7 +31,7 @@ describe('login', () => {
       email: 'hanako@example.com',
       altEmail: 'hanako@cutest.biz',
       password: 'correct-horse',
-      isAdmin: false,
+      role: 'staff',
     });
     staffId = created.id;
   });
@@ -34,7 +42,7 @@ describe('login', () => {
   it('正しいテナント・メール・パスワードでログインでき、INFOログが残る', async () => {
     const result = await loginAs('hanako@example.com');
     if (!result.ok) throw new Error('unreachable');
-    expect(result.staff).toMatchObject({ name: '佐藤 花子', email: 'hanako@example.com', isAdmin: false });
+    expect(result.staff).toMatchObject({ name: '佐藤 花子', email: 'hanako@example.com', role: 'staff' });
     expect(decodeSessionCookie(result.sessionCookieValue)?.tenantId).toBe(ctx.tenantId);
     expect(ctx.appLog.entries.at(-1)).toMatchObject({
       level: 'INFO',
@@ -68,7 +76,7 @@ describe('login', () => {
   });
 
   it('退職日の当日以降はログインできない(JSTで判定。UTCでは前日の時間帯でも当日扱い)', async () => {
-    ctx.staff.setRetirementDateForTest(ctx.tenantId, staffId, '2026-10-01');
+    ctx.setRetiredOn(staffId, '2026-10-01');
     ctx.clock.now = new Date('2026-09-30T14:59:00Z'); // JST 9/30 23:59
     expect((await loginAs('hanako@example.com')).ok).toBe(true);
     ctx.clock.now = new Date('2026-09-30T15:30:00Z'); // JST 10/1 00:30
@@ -76,7 +84,7 @@ describe('login', () => {
   });
 
   it('退職済みでもパスワードが違えば「退職」とは伝えない', async () => {
-    ctx.staff.setRetirementDateForTest(ctx.tenantId, staffId, '2020-01-01');
+    ctx.setRetiredOn(staffId, '2020-01-01');
     expect(await loginAs('hanako@example.com', 'wrong')).toEqual({
       ok: false,
       reason: 'invalid_credentials',
@@ -88,7 +96,7 @@ describe('login', () => {
       tenantId: ctx.tenantId,
       name: '新人',
       email: 'new@example.com',
-      isAdmin: false,
+      role: 'staff',
     });
     expect(await loginAs('new@example.com', '')).toEqual({ ok: false, reason: 'invalid_credentials' });
     expect(ctx.appLog.entries.at(-1)?.details?.reason).toBe('password_not_set');
@@ -149,13 +157,13 @@ describe('login', () => {
   });
 
   it('停止中(suspended)のテナントは、パスワードが正しくてもログインできない', async () => {
-    ctx.tenants.setStatusForTest(ctx.tenantId, 'suspended');
+    ctx.setTenantStatus('suspended');
     expect(await loginAs('hanako@example.com')).toEqual({ ok: false, reason: 'tenant_suspended' });
     expect(await loginAs('hanako@example.com', 'wrong')).toEqual({
       ok: false,
       reason: 'invalid_credentials',
     });
-    expect(ctx.sessions.rows).toHaveLength(0);
+    expect(ctx.data().sessions).toHaveLength(0);
   });
 });
 
@@ -166,12 +174,12 @@ describe('GAS版レガシーパスワードハッシュからの移行ログイ�
   beforeEach(async () => {
     ctx = await createAuthTestContext();
     ctx.deps.legacyAuthSalt = legacySalt;
-    await importLegacyStaff(ctx.deps, {
+    await registerStaff(ctx.deps, {
       tenantId: ctx.tenantId,
       name: '鈴木 次郎',
       email: 'jiro@example.com',
       legacyPasswordHash: computeLegacyHash('legacy-password', legacySalt),
-      isAdmin: false,
+      role: 'staff',
     });
   });
 
@@ -180,7 +188,7 @@ describe('GAS版レガシーパスワードハッシュからの移行ログイ�
 
   it('GAS版のパスワードのまま(変更なし)ログインでき、argon2idへサイレント再ハッシュされる', async () => {
     expect((await loginJiro('legacy-password')).ok).toBe(true);
-    const record = await ctx.staff.findByLoginEmail(ctx.tenantId, 'jiro@example.com');
+    const record = ctx.data().staff.find((s) => s.record.email === 'jiro@example.com')?.credentials;
     expect(record?.passwordHash).toBe('HASH:legacy-password');
     expect(record?.legacyPasswordHash).toBeNull();
     expect((await loginJiro('legacy-password')).ok).toBe(true);
@@ -209,7 +217,7 @@ describe('authenticateSession / logout', () => {
         name: '佐藤 花子',
         email: 'hanako@example.com',
         password: 'correct-horse',
-        isAdmin: true,
+        role: 'admin',
       })
     ).id;
     const result = await login(ctx.deps, {
@@ -223,7 +231,7 @@ describe('authenticateSession / logout', () => {
 
   it('ログイン後のCookieで本人を解決できる', async () => {
     const session = await resolveSession(ctx.deps, cookie);
-    expect(session).toMatchObject({ staffId, tenantId: ctx.tenantId, isAdmin: true, renewed: false });
+    expect(session).toMatchObject({ staffId, tenantId: ctx.tenantId, role: 'admin', renewed: false });
   });
 
   it('残り6日を切ると7日に延長する(ローリング延長)', async () => {
@@ -235,10 +243,9 @@ describe('authenticateSession / logout', () => {
     expect(renewed?.expiresAt.getTime()).toBe(ctx.clock.now.getTime() + 7 * DAY);
   });
 
-  it('期限切れのセッションは無効で、行も削除される', async () => {
+  it('期限切れのセッションは無効(行は保守ジョブが消す)', async () => {
     ctx.clock.now = new Date(ctx.clock.now.getTime() + 8 * DAY);
     expect(await authenticateSession(ctx.deps, cookie)).toEqual({ ok: false, reason: 'expired' });
-    expect(ctx.sessions.rows).toHaveLength(0);
   });
 
   it('延長を続けても、ログインから30日を過ぎたセッションは無効にする(絶対的な有効期間)', async () => {
@@ -252,21 +259,20 @@ describe('authenticateSession / logout', () => {
       );
     }
     ctx.clock.now = new Date(new Date('2026-09-25T03:00:00Z').getTime() + 30 * DAY);
-    expect(await authenticateSession(ctx.deps, cookie)).toEqual({ ok: false, reason: 'expired' });
-    expect(ctx.sessions.rows).toHaveLength(0);
+    expect(await authenticateSession(ctx.deps, cookie)).toEqual({ ok: false, reason: 'lifetime_exceeded' });
   });
 
   it('テナントが停止されたら既存のセッションも使えない', async () => {
-    ctx.tenants.setStatusForTest(ctx.tenantId, 'suspended');
+    ctx.setTenantStatus('suspended');
     expect(await authenticateSession(ctx.deps, cookie)).toEqual({ ok: false, reason: 'tenant_suspended' });
-    ctx.tenants.setStatusForTest(ctx.tenantId, 'active');
+    ctx.setTenantStatus('active');
     expect(await resolveSession(ctx.deps, cookie)).not.toBeNull();
   });
 
   it('毎回退職日を確認し、退職済みになったら無効にする', async () => {
-    ctx.staff.setRetirementDateForTest(ctx.tenantId, staffId, '2026-09-25');
+    ctx.setRetiredOn(staffId, '2026-09-25');
     expect(await authenticateSession(ctx.deps, cookie)).toEqual({ ok: false, reason: 'retired' });
-    expect(ctx.sessions.rows).toHaveLength(0);
+    expect(ctx.data().sessions.every((s) => s.revokedAt)).toBe(true);
   });
 
   it('ページ読み込み時(isInitialLoad)だけ成功/失敗をログに残す', async () => {
@@ -276,7 +282,7 @@ describe('authenticateSession / logout', () => {
     expect(ctx.appLog.entries.length).toBe(before);
 
     await authenticateSession(ctx.deps, cookie, { isInitialLoad: true });
-    await authenticateSession(ctx.deps, `${ctx.tenantId}.unknown-token`, { isInitialLoad: true });
+    await authenticateSession(ctx.deps, `${ctx.tenantId}.${UNKNOWN_TOKEN}`, { isInitialLoad: true });
     expect(ctx.appLog.entries.slice(before)).toEqual([
       expect.objectContaining({ level: 'INFO', action: 'auth.session.auto_login', actorStaffId: staffId }),
       expect.objectContaining({
@@ -288,9 +294,9 @@ describe('authenticateSession / logout', () => {
     ]);
   });
 
-  it('ログアウトでセッション行が削除され、以後そのCookieは使えない', async () => {
+  it('ログアウトでセッションが失効し、以後そのCookieは使えない', async () => {
     await logout(ctx.deps, cookie);
-    expect(ctx.sessions.rows).toHaveLength(0);
+    expect(ctx.data().sessions[0]?.revokedAt).not.toBeNull();
     expect(await resolveSession(ctx.deps, cookie)).toBeNull();
   });
 
@@ -315,7 +321,7 @@ describe('changePassword', () => {
         name: '佐藤 花子',
         email: 'hanako@example.com',
         password: 'correct-horse',
-        isAdmin: false,
+        role: 'staff',
       })
     ).id;
     const loginOnce = () =>
@@ -331,7 +337,12 @@ describe('changePassword', () => {
 
   it('現在のパスワードが正しければ変更でき、操作中以外のセッションは失効する', async () => {
     expect(await change('correct-horse', 'new-password-1')).toEqual({ ok: true });
-    expect(ctx.sessions.rows.map((s) => s.id)).toEqual([sessionId]);
+    expect(
+      ctx
+        .data()
+        .sessions.filter((s) => !s.revokedAt)
+        .map((s) => s.id),
+    ).toEqual([sessionId]);
     expect(ctx.appLog.entries.at(-1)).toMatchObject({
       level: 'SECURITY',
       action: 'auth.password_change.succeeded',
@@ -372,7 +383,7 @@ describe('changePassword', () => {
   it('存在しないstaffIdでは無効セッション扱いにする', async () => {
     const result = await changePassword(ctx.deps, {
       tenantId: ctx.tenantId,
-      staffId: 'no-such-staff',
+      staffId: '00000000-0000-7000-8000-00000000ffff',
       sessionId,
       currentPassword: 'correct-horse',
       newPassword: 'new-password-1',

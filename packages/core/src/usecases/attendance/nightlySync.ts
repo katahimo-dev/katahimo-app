@@ -1,7 +1,7 @@
-import { jstBusinessDate } from '../../domain/calendarDate';
-import type { TenantRecord } from '../../ports/repositories';
+import { zonedBusinessDate } from '../../domain';
+import type { TenantRecord } from '../../ports/tenants';
+import { currentTime } from '../requestMeta';
 import { syncStaffDayFromCalendar } from './calendarSync';
-import { currentTime } from './clock';
 import type { NightlyCalendarSyncDeps } from './deps';
 
 export interface NightlySyncStaffFailure {
@@ -25,22 +25,23 @@ export interface NightlySyncTenantSummary {
 }
 
 export interface NightlySyncSummary {
-  date: string;
   tenants: NightlySyncTenantSummary[];
   succeeded: number;
   failed: number;
 }
 
 /**
- * 1テナント分: 在籍中の全スタッフについて、指定日の予定を出勤簿へ反映する。
- * 1スタッフの失敗で他スタッフの処理を止めないよう、スタッフごとに失敗を記録して続行する。
+ * 1テナント分: date の時点で在籍している全スタッフについて、date の予定を出勤簿へ反映する。
+ * 1スタッフの失敗で他のスタッフを止めないよう、スタッフごとに失敗を記録して続ける。shouldStop が true に
+ * なったら(ワーカーの停止)次のスタッフに進まない。
  */
 export async function syncDayForAllStaff(
   deps: NightlyCalendarSyncDeps,
   tenant: TenantRecord,
   date: string,
+  shouldStop: () => boolean = () => false,
 ): Promise<NightlySyncTenantSummary> {
-  const staffList = await deps.staff.listActive(tenant.id);
+  const staffList = await deps.uow.run(tenant.id, (r) => r.staff.listActiveOn(date));
   const summary: NightlySyncTenantSummary = {
     tenantId: tenant.id,
     tenantSlug: tenant.slug,
@@ -52,15 +53,14 @@ export async function syncDayForAllStaff(
     appointmentCount: 0,
     failures: [],
   };
-
   for (const staff of staffList) {
+    if (shouldStop()) break;
     try {
       const result = await syncStaffDayFromCalendar(
         deps,
-        tenant.id,
-        { staffId: staff.id, staffName: staff.name },
+        { tenantId: tenant.id, staffId: null },
+        { staffId: staff.id, staffName: staff.displayName },
         date,
-        null,
       );
       summary.succeeded++;
       summary.appointmentCount += result.appointmentCount;
@@ -78,7 +78,6 @@ export async function syncDayForAllStaff(
       });
     }
   }
-
   await deps.appLog.write({
     tenantId: tenant.id,
     level: 'INFO',
@@ -96,20 +95,20 @@ export async function syncDayForAllStaff(
 }
 
 /**
- * 夜間バッチ(GAS版 autoSyncTodayScheduleForAllStaff、毎日22時台): 利用中の全テナントの
- * 在籍中の全スタッフについて、当日(JST)の予定を出勤簿へ反映する。
- * 各スタッフの反映は冪等なので、途中で失敗して再実行しても二重に書き込まれることはない。
+ * 夜間バッチ(GAS版 autoSyncTodayScheduleForAllStaff、毎日22時台): 利用中の全テナントについて、テナントの
+ * タイムゾーンでの「今日」(または options.date)の予定を、その日に在籍している全スタッフの出勤簿へ反映する。
+ * 各スタッフの反映は冪等なので、途中で失敗して再実行しても二重には書かない。
  */
 export async function runNightlyCalendarSync(
   deps: NightlyCalendarSyncDeps,
-  options: { date?: string } = {},
+  options: { date?: string; shouldStop?: () => boolean } = {},
 ): Promise<NightlySyncSummary> {
-  const date = options.date ?? jstBusinessDate(currentTime(deps));
-  const tenants = await deps.tenants.listActive();
   const summaries: NightlySyncTenantSummary[] = [];
-  for (const tenant of tenants) {
+  for (const tenant of await deps.tenants.listActive()) {
+    if (options.shouldStop?.()) break;
+    const date = options.date ?? zonedBusinessDate(currentTime(deps), tenant.timezone);
     try {
-      summaries.push(await syncDayForAllStaff(deps, tenant, date));
+      summaries.push(await syncDayForAllStaff(deps, tenant, date, options.shouldStop));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await deps.appLog.write({
@@ -133,7 +132,6 @@ export async function runNightlyCalendarSync(
     }
   }
   return {
-    date,
     tenants: summaries,
     succeeded: summaries.reduce((n, s) => n + s.succeeded, 0),
     failed: summaries.reduce((n, s) => n + s.failed, 0),

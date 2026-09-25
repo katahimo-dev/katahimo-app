@@ -5,12 +5,13 @@ import {
   ASSESSMENT_DEFINITIONS,
   findAiPromptDefinition,
 } from '@katahimo/shared';
-import type { AiPromptRecord, AiPromptRepositoryPort } from '../ports/aiPrompts';
 import type { AppLogPort } from '../ports/appLog';
+import type { AiPromptRecord } from '../ports/settings';
+import type { UnitOfWorkPort } from '../ports/unitOfWork';
 import type { RequestMeta } from './requestMeta';
 
 export interface AiPromptDeps {
-  aiPrompts: AiPromptRepositoryPort;
+  uow: UnitOfWorkPort;
 }
 
 /**
@@ -22,7 +23,7 @@ export async function resolvePromptBody(
   tenantId: string,
   key: AiPromptKey,
 ): Promise<string> {
-  const row = await deps.aiPrompts.findByKey(tenantId, key);
+  const row = await deps.uow.run(tenantId, (r) => r.aiPrompts.findByKey(key));
   if (row?.body) return row.body;
   return findAiPromptDefinition(key)?.defaultBody ?? '';
 }
@@ -37,7 +38,9 @@ export interface UiConfigView {
 
 /** 日報/事故報告画面の文言・評価定義。GAS版Main.js getUiConfigに対応。 */
 export async function getUiConfig(deps: AiPromptDeps, tenantId: string): Promise<UiConfigView> {
-  const overrides = new Map((await deps.aiPrompts.listAll(tenantId)).map((r) => [r.key, r.body]));
+  const overrides = new Map(
+    (await deps.uow.run(tenantId, (r) => r.aiPrompts.listAll())).map((p) => [p.key, p.body]),
+  );
   const body = (key: AiPromptKey) => overrides.get(key) || findAiPromptDefinition(key)?.defaultBody || '';
   return {
     dailyPlaceholder: body(AI_PROMPT_KEYS.DAILY_MEMO_PLACEHOLDER),
@@ -75,7 +78,7 @@ function toView(
 
 /** 管理画面「AIプロンプト」の一覧(既定値の定義順)。 */
 export async function listAiPromptsForAdmin(deps: AiPromptDeps, tenantId: string): Promise<AiPromptView[]> {
-  const rows = new Map((await deps.aiPrompts.listAll(tenantId)).map((r) => [r.key, r]));
+  const rows = new Map((await deps.uow.run(tenantId, (r) => r.aiPrompts.listAll())).map((p) => [p.key, p]));
   return AI_PROMPT_DEFINITIONS.map((d) => toView(d, rows.get(d.key)));
 }
 
@@ -101,24 +104,27 @@ export async function updateAiPrompts(
 
   const updated: string[] = [];
   const reset: string[] = [];
-  for (const p of input.prompts) {
-    const definition = findAiPromptDefinition(p.key);
-    if (!definition) continue;
-    const body = p.body?.trim() ? p.body : '';
-    if (!body || body === definition.defaultBody) {
-      await deps.aiPrompts.delete(input.tenantId, p.key);
-      reset.push(p.key);
-    } else {
-      await deps.aiPrompts.upsert({
-        tenantId: input.tenantId,
-        kind: definition.kind,
-        key: p.key,
-        body,
-        updatedByStaffId: input.staffId,
-      });
-      updated.push(p.key);
-    }
-  }
+  await deps.uow.run(
+    input.tenantId,
+    async (r) => {
+      const current = new Map((await r.aiPrompts.listAll()).map((p) => [p.key, p.body]));
+      for (const p of input.prompts) {
+        const definition = findAiPromptDefinition(p.key);
+        if (!definition) continue;
+        const body = p.body?.trim() ? p.body : '';
+        if (!body || body === definition.defaultBody) {
+          if (current.has(p.key)) {
+            await r.aiPrompts.reset(p.key, input.staffId);
+            reset.push(p.key);
+          }
+        } else if (current.get(p.key) !== body) {
+          await r.aiPrompts.save({ key: p.key, kind: definition.kind, body, updatedBy: input.staffId });
+          updated.push(p.key);
+        }
+      }
+    },
+    { actorId: input.staffId },
+  );
   await deps.appLog.write({
     tenantId: input.tenantId,
     level: 'INFO',

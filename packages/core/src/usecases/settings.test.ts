@@ -7,20 +7,28 @@ import {
   saveGeminiModelSettings,
   saveGoogleChatWebhookSettings,
 } from './settings';
-import { FakeAppLogPort, FakeAppSettingsRepository, FakeCryptoPort } from './testDoubles';
+import type { TestContext } from './testContext';
+import { createTestContext } from './testContext';
+import type { FakeAppLogPort } from './testDoubles';
+import { fakePlaintext } from './testDoubles';
 
 describe('管理者設定(app_settings)', () => {
   let deps: SettingsDeps;
   let appLog: FakeAppLogPort;
   let listedWith: string[];
-  const actor: SettingsActor = { tenantId: 'tenant-1', staffId: 'admin-1' };
+  let ctx: TestContext;
+  let actor: SettingsActor;
+  let otherTenantId: string;
 
   beforeEach(() => {
-    appLog = new FakeAppLogPort();
+    ctx = createTestContext();
+    otherTenantId = ctx.db.addTenant({ slug: 'other' }).id;
+    actor = { tenantId: ctx.tenantId, staffId: '00000000-0000-7000-8000-0000000000aa', role: 'admin' };
+    appLog = ctx.appLog;
     listedWith = [];
     deps = {
-      appSettings: new FakeAppSettingsRepository(),
-      crypto: new FakeCryptoPort(),
+      uow: ctx.uow,
+      crypto: ctx.crypto,
       appLog,
       listGeminiModels: async (apiKey) => {
         listedWith.push(apiKey);
@@ -29,14 +37,14 @@ describe('管理者設定(app_settings)', () => {
     };
   });
 
-  /** 保存済みの平文(テスト用のFakeCryptoPortは ENC: を外すだけ)。 */
+  /** 保存済みの平文(tenant_secrets)。 */
   const stored = async (tenantId = actor.tenantId) => {
-    const row = await deps.appSettings.find(tenantId);
-    const plain = (v: { ciphertext: string } | null | undefined) => v?.ciphertext.replace(/^ENC:/, '') ?? '';
+    const plain = (name: string) =>
+      fakePlaintext(ctx.data(tenantId).secrets.find((s) => s.name === name)?.valueEnc ?? null) ?? '';
     return {
-      geminiApiKey: plain(row?.geminiApiKey),
-      report: plain(row?.gchatReportWebhookUrl),
-      receipt: plain(row?.gchatReceiptWebhookUrl),
+      geminiApiKey: plain('gemini_api_key'),
+      report: plain('gchat_report_webhook'),
+      receipt: plain('gchat_receipt_webhook'),
     };
   };
   const REPORT_URL = 'https://chat.googleapis.com/v1/spaces/AAAA/messages?key=k1&token=t1';
@@ -163,7 +171,7 @@ describe('管理者設定(app_settings)', () => {
 
   it('別テナントの設定は互いに影響しない', async () => {
     await saveGeminiApiKey(deps, actor, 'key-1');
-    await saveGeminiApiKey(deps, { ...actor, tenantId: 'tenant-2' }, 'key-2');
+    await saveGeminiApiKey(deps, { ...actor, tenantId: otherTenantId }, 'key-2');
     expect((await stored()).geminiApiKey).toBe('key-1');
   });
 

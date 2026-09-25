@@ -1,149 +1,249 @@
+import { ADDRESS_KINDS, ARCHIVE_REASONS, CUSTOMER_SOURCES, GENDERS } from '@katahimo/core/domain';
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
+  check,
   date,
   index,
-  integer,
   jsonb,
-  pgPolicy,
   pgTable,
+  primaryKey,
+  smallint,
   text,
+  time,
   timestamp,
   unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { TENANT_RLS_USING } from './_rls';
-import { tenants } from './tenants';
+import {
+  constraintName,
+  createdAt,
+  idColumn,
+  oneOf,
+  rowVersion,
+  tenantIdColumn,
+  updatedAt,
+} from './_columns';
+import { tenantFk, tenantIsolation, tenantRef, tenantScoped } from './_helpers';
+import { bytea, daterange } from './_types';
+import { serviceItems } from './services';
+import { importRuns } from './tenancy';
 
 /**
- * 顧客(利用世帯の代表者)。GAS版の「顧客DB_New」シートに対応。
- *
- * RESERVA(外部予約システム)の顧客CSVを1件も情報を落とさず取り込めるよう、CSVの全列に
- * 対応するカラムを持つ(packages/ingestion の reservaCsv パーサー参照)。
- *
- * 【暗号化方針(2026-08 データベース構造レビューで見直し)】
- * 当初は個人特定につながる項目を全てランダム化暗号(ciphertext+keyVersion)で保存していたが、
- * 「DB個別の暗号化は過剰、バックアップの暗号化で十分」という有識者指摘を踏まえ、対象を
- * 要配慮性の高い項目(第三者情報・位置情報・自由記述・識別子)に絞った(doc/09参照)。
- * - 平文のまま(TDE+RLS+アクセス制御で保護): 氏名・かな・メール・電話・住所・駐車場情報
- * - 引き続き暗号化(ciphertext+keyVersion): 緊急連絡先(第三者情報)・避難場所(通学先を
- *   特定しうる)・メモ(自由記述で内容予測不可)・Benefit会員ID(識別子)・緯度経度(自宅の
- *   正確な位置情報)
- *
- * 唯一の例外: CSVの「パスワード」列(RESERVA側のログインパスワード)は取り込まない。
- * この値は本アプリの認証に一切使わず、他システムの認証情報を不必要に複製する理由がないため
- * (漏洩時の被害範囲を広げるだけになる)。
- *
- * 氏名は「苗字だけで検索する」現場運用があるため、familyName/givenNameを平文で別カラムに持つ
- * (packages/core/src/domain/pii/japaneseName.ts の splitJapaneseFullName で分割し、
- * normalizeStaffNameで正規化済みの値を保存する)。
- * externalSource/externalIdは、氏名の文字列一致ではなく外部システムのIDで顧客を一意に
- * 追跡するためのもの(doc/07 第5章の方針)。取込元に存在しなくなった顧客はdeactivatedAtを
- * 立てるソフトデリートとし、物理削除はしない。
+ * 顧客(利用世帯)。氏名・かな・メール・電話は平文。自由記述(memo)・他システムの会員ID・避難場所
+ * (通学先を特定しうる)は暗号化。住所は customer_addresses、連絡先(第三者)は customer_contacts、
+ * 子ども(サービスの対象者)は care_recipients、取込元固有の項目は customer_source_records に分ける。
+ * 取込元から消えた顧客・手動で外した顧客は archived_at(+理由)。個人情報の消去依頼は purged_at。
  */
 export const customers = pgTable(
   'customers',
   {
-    id: uuid().primaryKey().default(sql`gen_random_uuid()`),
-    tenantId: uuid()
-      .notNull()
-      .references(() => tenants.id),
-
-    /** 取込元システム識別子(例: 'reserva')。手動登録の場合はnull。 */
-    externalSource: text(),
-    /** 取込元システムでの顧客ID(RESERVA CSVの「顧客ID」列)。 */
-    externalId: text(),
-
-    name: text().notNull(),
-    /** 苗字だけの完全一致検索用(normalizeStaffNameで正規化済み)。表示にはnameを使う。 */
+    tenantId: tenantIdColumn(),
+    id: idColumn(),
+    displayName: text().notNull(),
+    /** 苗字(正規化済み。空白を除いた NFKC)。苗字検索の索引に使う。 */
     familyName: text().notNull(),
-    givenName: text().notNull(),
-
+    givenName: text().notNull().default(''),
     familyNameKana: text(),
     givenNameKana: text(),
-
     email: text(),
     phone: text(),
-
-    /** 番地・建物名等、市区町村より詳細な住所。 */
-    addressDetail: text(),
-    city: text(),
-
-    /** 駐車場(位置)。RESERVA CSVの「駐車場」列。 */
-    parkingArea: text(),
-    /** 駐車場番号・指定場所の詳細など。 */
-    parkingDetail: text(),
-
-    /** 第三者(緊急連絡先本人)の情報のため引き続き暗号化する。 */
-    emergencyContactCiphertext: text(),
-    emergencyContactKeyVersion: integer(),
-    /** 緊急連絡先の方(申請者との関係性)。例: "父"。 */
-    emergencyContactRelationCiphertext: text(),
-    emergencyContactRelationKeyVersion: integer(),
-
-    /** 災害時の避難場所(最寄りの小中学校)。通学先の特定につながりうるため暗号化する。 */
-    evacuationSiteCiphertext: text(),
-    evacuationSiteKeyVersion: integer(),
-
-    /** 自由記述で内容が予測できないため暗号化する。 */
-    memoCiphertext: text(),
-    memoKeyVersion: integer(),
-
-    /** Benefit会員ID。他システムの会員証番号のため、識別子として保守的に暗号化する。 */
-    benefitMemberIdCiphertext: text(),
-    benefitMemberIdKeyVersion: integer(),
-
-    /** 住所2(単身赴任先等、期間限定の別住所)。 */
-    address2: text(),
-    address2StartDate: date(),
-    address2EndDate: date(),
-
-    /** 緯度・経度。自宅の正確な位置情報のため暗号化する。 */
-    latLngCiphertext: text(),
-    latLngKeyVersion: integer(),
-
-    // ── 以下は個人特定に直結しない運用・分類情報のため平文で保持する ──
-    /** 会員種別(例: Family Sitter 会員)。 */
-    memberType: text(),
-    /** 会員状況(有効／無効)。 */
-    memberStatus: text(),
-    /** 会費支払方法(現地決済／銀行振込／口座振替／請求書払い)。 */
-    paymentMethod: text(),
-    /** 会費支払状況(未払／支払済み)。 */
-    paymentStatus: text(),
-    /** 性別。 */
-    gender: text(),
-    /** 年代(例: "30代")。生年月日そのものではなく既に丸められた区分のため平文で扱う。 */
-    ageBracket: text(),
-
-    /** RESERVA側の登録日時(CSVのExcelシリアル日時から変換)。 */
-    registeredAt: timestamp({ withTimezone: true }),
-    /** RESERVA側の最終更新日時。このアプリ内でのupdatedAtとは別物。 */
-    externalLastUpdatedAt: timestamp({ withTimezone: true }),
-
-    /**
-     * テナント独自の表示・検索用項目(doc/07 第4.2節、2026-09追加)。請求・記録などの本体データは
-     * 置かない。要配慮性の高い値(自由記述メモ等)は暗号化されないためここに入れないこと。
-     * マッチング用の顧客の希望条件は customer_preferences(customerMatching.ts)に持つ。
-     */
+    memoEnc: bytea(),
+    benefitMemberIdEnc: bytea(),
+    evacuationSiteEnc: bytea(),
     customFields: jsonb().$type<Record<string, unknown>>().notNull().default({}),
-
-    /** 取込元に存在しなくなった場合に設定するソフトデリートのタイムスタンプ。nullなら有効。 */
-    deactivatedAt: timestamp({ withTimezone: true }),
-
-    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    archivedAt: timestamp({ withTimezone: true }),
+    archiveReason: text({ enum: ARCHIVE_REASONS }),
+    purgedAt: timestamp({ withTimezone: true }),
+    rowVersion: rowVersion(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (t) => [
-    pgPolicy('tenant_isolation', { for: 'all', using: TENANT_RLS_USING, withCheck: TENANT_RLS_USING }),
-    uniqueIndex('customers_tenant_external_idx').on(t.tenantId, t.externalSource, t.externalId),
-    // daily_reports等からの複合外部キー(tenant_id, customer_id)の参照先。RLSはSELECTしか
-    // 絞り込まずFK制約はRLSを常にバイパスするため、単一列PKだけでは他テナントのcustomer_idを
-    // 誤って参照してもDBが検知できない。この複合UNIQUEにより「そのidが本当にそのtenant_idの
-    // 顧客か」をFK制約自体で強制できるようにする。
-    unique('customers_tenant_id_uk').on(t.tenantId, t.id),
-    // 苗字だけの完全一致検索(searchCustomersByFamilyName)用。同姓の顧客が複数いる前提のため
-    // UNIQUEにはしない。
-    index('customers_tenant_family_name_idx').on(t.tenantId, t.familyName),
+    ...tenantScoped('customers', t),
+    index('customers_tenant_id_family_name_idx').on(t.tenantId, t.familyName),
+    index('customers_tenant_id_family_name_kana_idx').on(
+      t.tenantId,
+      sql`${t.familyNameKana} text_pattern_ops`,
+    ),
+    check('customers_archive_reason_check', oneOf(t.archiveReason, ARCHIVE_REASONS)),
+    check('customers_archived_check', sql`(${t.archivedAt} is null) = (${t.archiveReason} is null)`),
+  ],
+).enableRLS();
+
+/**
+ * 取込元の顧客レコードとの対応((source, external_id) で一意)。RESERVA 固有の項目(会員種別・会費の
+ * 支払方法/状況・性別・年代等)は attributes(jsonb、個人を特定しない分類値だけ)に置く。
+ */
+export const customerSourceRecords = pgTable(
+  'customer_source_records',
+  {
+    tenantId: tenantIdColumn(),
+    id: idColumn(),
+    customerId: uuid().notNull(),
+    source: text({ enum: CUSTOMER_SOURCES }).notNull(),
+    externalId: text().notNull(),
+    attributes: jsonb().$type<Record<string, string>>().notNull().default({}),
+    externalRegisteredAt: timestamp({ withTimezone: true }),
+    externalUpdatedAt: timestamp({ withTimezone: true }),
+    lastImportRunId: uuid(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    ...tenantScoped('customer_source_records', t),
+    tenantRef('customer_source_records', 'customer_id', t, t.customerId, customers, 'cascade'),
+    tenantRef('customer_source_records', 'last_import_run_id', t, t.lastImportRunId, importRuns),
+    unique(constraintName('customer_source_records', ['tenant_id', 'source', 'external_id'], 'key')).on(
+      t.tenantId,
+      t.source,
+      t.externalId,
+    ),
+    index('customer_source_records_tenant_id_customer_id_idx').on(t.tenantId, t.customerId),
+    check('customer_source_records_source_check', oneOf(t.source, CUSTOMER_SOURCES)),
+  ],
+).enableRLS();
+
+/**
+ * 住所。kind: home(自宅。期間の重なる自宅は EXCLUDE で禁止)/ secondary(単身赴任先等の期間限定の住所、
+ * GAS版の「住所2」)/ visit(訪問先が自宅以外の場合)。address_line は取込元の住所文字列のまま
+ * (prefecture・city は検索・絞り込み用に取り出した値)。正確な緯度経度は geo_enc、粗い区画は geo_cell。
+ * valid は `[開始日, 終了日の翌日)`(無期限は上限なし)。
+ */
+export const customerAddresses = pgTable(
+  'customer_addresses',
+  {
+    tenantId: tenantIdColumn(),
+    id: idColumn(),
+    customerId: uuid().notNull(),
+    kind: text({ enum: ADDRESS_KINDS }).notNull(),
+    postalCode: text(),
+    prefecture: text(),
+    city: text(),
+    addressLine: text().notNull(),
+    building: text(),
+    parkingArea: text(),
+    parkingDetail: text(),
+    geoEnc: bytea(),
+    geoCell: text(),
+    valid: daterange().notNull().default(sql`'(,)'::daterange`),
+    isPrimary: boolean().notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    ...tenantScoped('customer_addresses', t),
+    tenantRef('customer_addresses', 'customer_id', t, t.customerId, customers, 'cascade'),
+    index('customer_addresses_tenant_id_customer_id_idx').on(t.tenantId, t.customerId),
+    index('customer_addresses_tenant_id_city_idx').on(t.tenantId, t.city),
+    uniqueIndex('customer_addresses_tenant_id_customer_id_primary_key')
+      .on(t.tenantId, t.customerId)
+      .where(sql`is_primary`),
+    check('customer_addresses_kind_check', oneOf(t.kind, ADDRESS_KINDS)),
+    check('customer_addresses_valid_check', sql`not isempty(${t.valid})`),
+    check('customer_addresses_geo_cell_check', sql`${t.geoCell} ~ '^[0-9b-hjkmnp-z]{6}$'`),
+  ],
+).enableRLS();
+
+/**
+ * 連絡先(緊急連絡先等)。本人ではない第三者の情報のため氏名・電話・メモを暗号化する(relation は
+ * 「父」等の続柄で平文)。
+ */
+export const customerContacts = pgTable(
+  'customer_contacts',
+  {
+    tenantId: tenantIdColumn(),
+    id: idColumn(),
+    customerId: uuid().notNull(),
+    relation: text(),
+    nameEnc: bytea(),
+    phoneEnc: bytea(),
+    notesEnc: bytea(),
+    isEmergency: boolean().notNull().default(false),
+    sortOrder: smallint().notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    ...tenantScoped('customer_contacts', t),
+    tenantRef('customer_contacts', 'customer_id', t, t.customerId, customers, 'cascade'),
+    index('customer_contacts_tenant_id_customer_id_idx').on(t.tenantId, t.customerId),
+  ],
+).enableRLS();
+
+/**
+ * サービスの対象者(子ども)。氏名・かな・生年月日は平文(訪問準備・年齢の計算に使う通常の個人情報)、
+ * アレルギー(健康情報)と配慮事項・付帯情報の自由記述は暗号化。取込は差分で行い(IDを保つ)、
+ * 取込元から消えた子どもは archived_at。
+ */
+export const careRecipients = pgTable(
+  'care_recipients',
+  {
+    tenantId: tenantIdColumn(),
+    id: idColumn(),
+    customerId: uuid().notNull(),
+    name: text().notNull(),
+    nameKana: text(),
+    birthDate: date(),
+    sex: text({ enum: GENDERS }),
+    allergyEnc: bytea(),
+    needsEnc: bytea(),
+    sortOrder: smallint().notNull().default(0),
+    archivedAt: timestamp({ withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    ...tenantScoped('care_recipients', t),
+    tenantRef('care_recipients', 'customer_id', t, t.customerId, customers, 'cascade'),
+    index('care_recipients_tenant_id_customer_id_idx').on(t.tenantId, t.customerId),
+    check('care_recipients_sex_check', oneOf(t.sex, GENDERS)),
+  ],
+).enableRLS();
+
+/** 定期利用の枠(毎週◯曜日の◯時〜◯時)。壁時計時刻はテナントのタイムゾーン。 */
+export const customerRecurringSlots = pgTable(
+  'customer_recurring_slots',
+  {
+    tenantId: tenantIdColumn(),
+    id: idColumn(),
+    customerId: uuid().notNull(),
+    weekday: smallint().notNull(),
+    startTime: time().notNull(),
+    endTime: time().notNull(),
+    valid: daterange().notNull().default(sql`'(,)'::daterange`),
+    serviceItemId: uuid(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    ...tenantScoped('customer_recurring_slots', t),
+    tenantRef('customer_recurring_slots', 'customer_id', t, t.customerId, customers, 'cascade'),
+    tenantRef('customer_recurring_slots', 'service_item_id', t, t.serviceItemId, serviceItems),
+    index('customer_recurring_slots_tenant_id_customer_id_idx').on(t.tenantId, t.customerId),
+    check('customer_recurring_slots_weekday_check', sql`${t.weekday} between 0 and 6`),
+    check('customer_recurring_slots_time_check', sql`${t.startTime} < ${t.endTime}`),
+  ],
+).enableRLS();
+
+/** 顧客の希望(1顧客1行)。性別の希望は gender_is_hard でハード制約かどうかを決める。 */
+export const customerPreferences = pgTable(
+  'customer_preferences',
+  {
+    tenantId: tenantIdColumn(),
+    customerId: uuid().notNull(),
+    preferredStaffGender: text({ enum: GENDERS }),
+    genderIsHard: boolean().notNull().default(false),
+    notesEnc: bytea(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ name: 'customer_preferences_pkey', columns: [t.tenantId, t.customerId] }),
+    tenantFk('customer_preferences', t),
+    tenantIsolation(),
+    tenantRef('customer_preferences', 'customer_id', t, t.customerId, customers, 'cascade'),
+    check('customer_preferences_preferred_staff_gender_check', oneOf(t.preferredStaffGender, GENDERS)),
   ],
 ).enableRLS();

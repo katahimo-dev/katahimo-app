@@ -8,8 +8,8 @@ export type KmsProvider = (typeof KMS_PROVIDERS)[number];
 /** テナントDEKをラップするKEKの選択に使う環境変数(api/worker の env から渡す)。 */
 export interface KmsProviderEnv {
   KMS_PROVIDER: KmsProvider;
-  LOCAL_DEV_KEK?: string;
-  GCP_KMS_KEY_NAME?: string;
+  LOCAL_DEV_KEK?: string | undefined;
+  GCP_KMS_KEY_NAME?: string | undefined;
 }
 
 /** 起動時の設定検証(環境変数の検証エラーと同じ形式の行)。本番は Cloud KMS 必須。 */

@@ -1,5 +1,4 @@
 import { AI_PROMPT_KEYS } from '@katahimo/shared';
-import { ENCRYPTION_PURPOSES } from '../domain/pii';
 import type {
   AccidentReportDraft,
   AccidentReportDraftError,
@@ -10,14 +9,13 @@ import type {
 } from '../ports/ai';
 import type { AppLogPort } from '../ports/appLog';
 import type { CryptoPort } from '../ports/crypto';
-import type { AppSettingsRepositoryPort } from '../ports/repositories';
 import type { AiPromptDeps } from './aiPrompts';
 import { resolvePromptBody } from './aiPrompts';
+import { readTenantSecret } from './settings';
 
 export interface ReportAiDeps extends AiPromptDeps {
-  /** テナントが独自のGemini APIキーを設定していない場合に使うフォールバック(.env設定 or Noop)。 */
+  /** テナントが独自の Gemini API キーを設定していない場合に使うフォールバック(.env の設定か Noop)。 */
   reportAi: ReportAiPort;
-  appSettings: AppSettingsRepositoryPort;
   crypto: CryptoPort;
   reportAiFactory: ReportAiPortFactory;
   appLog: AppLogPort;
@@ -29,16 +27,19 @@ export interface ReportAiCaller {
 }
 
 /**
- * テナントの管理者設定(app_settings)にGemini APIキーが保存されていればそれを使い、
- * 無ければ.env設定(deps.reportAi、未設定ならNoop)にフォールバックする。
+ * テナントの秘密値(tenant_secrets)に Gemini API キーがあればそれとテナントのモデル設定を使い、無ければ .env の
+ * 設定(deps.reportAi、未設定なら Noop)にする。
  */
 async function resolveReportAiPort(deps: ReportAiDeps, tenantId: string): Promise<ReportAiPort> {
-  const settings = await deps.appSettings.find(tenantId);
-  if (!settings?.geminiApiKey) return deps.reportAi;
+  const { apiKey, settings } = await deps.uow.run(tenantId, async (r) => ({
+    apiKey: await readTenantSecret(deps.crypto, r, 'gemini_api_key'),
+    settings: await r.settings.get(),
+  }));
+  if (!apiKey) return deps.reportAi;
   return deps.reportAiFactory.create({
-    apiKey: await deps.crypto.decrypt(tenantId, settings.geminiApiKey, ENCRYPTION_PURPOSES.geminiApiKey),
-    reportModel: settings.geminiReportModel ?? undefined,
-    ocrModel: settings.geminiOcrModel ?? undefined,
+    apiKey,
+    ...(settings.geminiReportModel ? { reportModel: settings.geminiReportModel } : {}),
+    ...(settings.geminiOcrModel ? { ocrModel: settings.geminiOcrModel } : {}),
   });
 }
 
@@ -60,7 +61,7 @@ function logAiError(deps: ReportAiDeps, caller: ReportAiCaller, action: string, 
 export async function generateDailyReportDraft(
   deps: ReportAiDeps,
   caller: ReportAiCaller,
-  input: { text: string; start?: string; end?: string },
+  input: { text: string; start?: string | undefined; end?: string | undefined },
 ): Promise<DailyReportDraft> {
   const [reportAi, promptTemplate] = await Promise.all([
     resolveReportAiPort(deps, caller.tenantId),
@@ -77,7 +78,7 @@ export async function generateDailyReportDraft(
 export async function generateAccidentReportDraft(
   deps: ReportAiDeps,
   caller: ReportAiCaller,
-  input: { text: string; start?: string; end?: string },
+  input: { text: string; start?: string | undefined; end?: string | undefined },
 ): Promise<AccidentReportDraft | AccidentReportDraftError> {
   const [reportAi, promptTemplate] = await Promise.all([
     resolveReportAiPort(deps, caller.tenantId),

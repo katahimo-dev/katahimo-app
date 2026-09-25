@@ -8,7 +8,7 @@
 locals {
   notification_channels = [for c in google_monitoring_notification_channel.email : c.id]
 
-  # 失敗を見張る Cloud Run Jobs(run.tf の local.jobs。migrate / nightly-calendar-sync / csv-import / sync-busy-blocks)
+  # 失敗を見張る Cloud Run Jobs(run.tf の local.jobs。migrate / nightly-calendar-sync / csv-import / maintenance / sync-busy-blocks)
   monitored_job_names = [for name in keys(local.jobs) : "katahimo-${name}"]
 
   sql_database_id = "${var.project_id}:${var.sql_instance_name}"
