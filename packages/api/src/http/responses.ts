@@ -46,3 +46,9 @@ export function parseQuery<S extends z.ZodTypeAny>(c: Context, schema: S): Parse
   const message = parsed.error.issues[0]?.message ?? '入力内容に誤りがあります';
   return { ok: false, response: apiError(c, 400, 'validation_failed', message, fields) };
 }
+
+/** 回数制限を超えた要求への 429(rate_limited)。Retry-After に再試行までの秒数を付ける。 */
+export function rateLimited(c: Context, retryAfterMs: number, message: string) {
+  c.header('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+  return apiError(c, 429, 'rate_limited', message);
+}

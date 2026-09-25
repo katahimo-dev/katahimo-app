@@ -143,7 +143,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # 2�
 
 空のままのときの動き: `SCHEDULE_PROVIDER` 未指定かつ Google の資格情報・GAS Bridge が無い → `noop`(予定は常に0件)、
 `GEMINI_API_KEY` 無し → AIの下書き・OCRはGAS版と同じ「API Key Missing」の応答、`SMTP_HOST` 無し → パスワード再設定の
-メールは標準出力に出る、Webhook 無し → 通知しない、`STORAGE_PROVIDER=local` → 領収書画像は `LOCAL_RECEIPT_STORAGE_DIR`
+メールはワーカー(`pnpm worker`、outbox 経由で送る)の標準出力に出る、Webhook 無し → 通知しない、`STORAGE_PROVIDER=local` → 領収書画像は `LOCAL_RECEIPT_STORAGE_DIR`
 (既定 `./data/receipts`、API の作業ディレクトリから)。一度決めた `LOCAL_DEV_MASTER_KEY` / `LOCAL_DEV_KEK` / `KMS_PROVIDER` は
 変えない(既存の検索用インデックス・暗号文が読めなくなる)。
 

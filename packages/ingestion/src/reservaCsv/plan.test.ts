@@ -129,7 +129,7 @@ describe('planReservaImport / applyReservaImportPlan', () => {
     expect(members).toHaveLength(1);
     const firstMember = members[0];
     if (!firstMember) throw new Error('family member not found');
-    expect(await deps.crypto.decrypt(tenantId, firstMember.name)).toBe('佐藤 太郎');
+    expect(await deps.crypto.decrypt(tenantId, firstMember.name, 'family_members.name')).toBe('佐藤 太郎');
   });
 
   it('手動登録済みの顧客(externalSourceが無い)は取込の既存件数にカウントされない', async () => {

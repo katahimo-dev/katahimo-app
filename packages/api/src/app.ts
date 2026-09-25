@@ -3,6 +3,15 @@ import { sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { createContainer } from './container';
 import type { Env } from './env';
+import { trustedProxyHops } from './env';
+import { clientIpMiddleware } from './http/requestMeta';
+import {
+  apiBodyLimits,
+  csrfProtection,
+  noStoreApiResponses,
+  requireJsonBody,
+  securityHeaders,
+} from './http/security';
 import { registerWebStatic } from './http/webStatic';
 import { createAdminImportRoutes } from './routes/adminImport';
 import { createAdminStaffRoutes } from './routes/adminStaff';
@@ -26,16 +35,35 @@ export function createApp(deps: AppDeps) {
   const app = new Hono();
   const container = createContainer(deps.env, deps.db);
 
+  // 全レスポンス(API・画面)共通: 送信元IPの判定とセキュリティヘッダー(CSP・HSTS等)
+  app.use('*', clientIpMiddleware(trustedProxyHops(deps.env)));
+  app.use('*', securityHeaders(container.config.isProduction));
+  // API: キャッシュさせない・CSRF対策(別サイトからの状態変更を拒否)・JSON以外の本体は415・本体の大きさの上限
+  app.use('/api/*', noStoreApiResponses());
+  app.use('/api/*', csrfProtection());
+  app.use('/api/*', requireJsonBody());
+  app.use('/api/*', apiBodyLimits());
+
   /** Cloud Run のヘルスチェック用。DBに触らない軽量な生存確認。 */
   app.get('/api/health', (c) => c.json({ status: 'ok' }));
 
-  /** DB接続まで含めた疎通確認。デプロイ直後の確認とローカル動作確認に使う。 */
+  /**
+   * DB接続まで含めた疎通確認。デプロイ直後の確認とローカル動作確認に使う。認証なしで呼べるため、
+   * 失敗の詳細(接続先・エラー文)は応答に含めずプロセスログにだけ出す。
+   */
   app.get('/api/health/db', async (c) => {
     try {
-      const rows = await deps.db.execute<{ now: string }>(sql`SELECT now() AS now`);
-      return c.json({ status: 'ok', now: rows[0]?.now ?? null });
+      await deps.db.execute(sql`SELECT 1`);
+      return c.json({ status: 'ok' });
     } catch (e) {
-      return c.json({ status: 'error', message: e instanceof Error ? e.message : String(e) }, 503);
+      console.error(
+        JSON.stringify({
+          severity: 'ERROR',
+          message: 'DBの疎通確認に失敗しました',
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      );
+      return c.json({ status: 'error' }, 503);
     }
   });
 

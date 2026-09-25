@@ -18,7 +18,8 @@ import {
   FakeStoragePort,
 } from './testDoubles';
 
-const IMAGE = 'data:image/jpeg;base64,AAAA';
+/** JPEGの先頭バイト(FF D8 FF E0 …)だけの最小のデータ。 */
+const IMAGE = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
 
 describe('uploadReceipts', () => {
   const tenantId = 'tenant-1';
@@ -87,9 +88,9 @@ describe('uploadReceipts', () => {
 
     const rows = await Promise.all(['receipt-1', 'receipt-2'].map((id) => receipts.findById(tenantId, id)));
     expect(rows.map((r) => r?.uploadBatchId)).toEqual([result.uploadBatchId, result.uploadBatchId]);
-    expect(rows[0]?.handoffText && (await crypto.decrypt(tenantId, rows[0].handoffText))).toBe(
-      '鍵はポストへ',
-    );
+    expect(
+      rows[0]?.handoffText && (await crypto.decrypt(tenantId, rows[0].handoffText, 'receipts.handoff_text')),
+    ).toBe('鍵はポストへ');
     expect(rows[1]?.handoffText).toBeNull();
   });
 
@@ -137,6 +138,30 @@ describe('uploadReceipts', () => {
       input({ actor: { staffId, isAdmin: true }, requestedStaffId: otherStaffId, images: [{ data: IMAGE }] }),
     );
     expect((await receipts.findById(tenantId, 'receipt-3'))?.staffId).toBe(otherStaffId);
+  });
+
+  it('画像の種類は中身の先頭バイトで判定し、保存する種類・拡張子もそれに合わせる', async () => {
+    const png = `data:image/jpeg;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64')}`;
+    const result = await uploadReceipts(deps, tenantId, input({ images: [{ data: png }] }));
+    expect(result.ok).toBe(true);
+    const saved = await receipts.findById(tenantId, 'receipt-1');
+    expect(saved?.contentType).toBe('image/png');
+    expect(saved?.fileKey).toMatch(/\.png$/);
+  });
+
+  it('画像以外のデータが1枚でもあれば何も保存しない', async () => {
+    const html = `data:image/jpeg;base64,${Buffer.from('<html></html>').toString('base64')}`;
+    const result = await uploadReceipts(deps, tenantId, input({ images: [{ data: IMAGE }, { data: html }] }));
+    expect(result).toEqual({ ok: false, reason: 'invalid_image', index: 1, detail: 'unsupported_type' });
+    expect(await receipts.findById(tenantId, 'receipt-1')).toBeNull();
+  });
+
+  it('7枚以上は受け付けない(GAS版と同じ6枚まで)', async () => {
+    const images = Array.from({ length: 7 }, () => ({ data: IMAGE }));
+    expect(await uploadReceipts(deps, tenantId, input({ images }))).toEqual({
+      ok: false,
+      reason: 'too_many_images',
+    });
   });
 
   it('存在しない顧客IDはエラーにする', async () => {

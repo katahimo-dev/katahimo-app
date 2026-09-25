@@ -19,7 +19,8 @@ $$;
 GRANT CONNECT ON DATABASE katahimo_dev TO katahimo_app;
 GRANT USAGE ON SCHEMA public TO katahimo_app;
 
--- 以後 katahimo が作るテーブルに、自動でアプリロールの権限を付ける
+-- 以後 katahimo が作るテーブルに、自動でアプリロールの権限を付ける。使わない権限はマイグレーションで外す
+-- (0001: app_logs の UPDATE、0003: tenants の UPDATE/DELETE・app_logs の DELETE・tenant_keys の UPDATE/DELETE)。
 ALTER DEFAULT PRIVILEGES FOR ROLE katahimo IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO katahimo_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE katahimo IN SCHEMA public

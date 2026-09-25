@@ -22,7 +22,6 @@ const production = {
   STORAGE_PROVIDER: 'gcs',
   GCS_BUCKET: 'p-katahimo-receipts',
   SCHEDULE_PROVIDER: 'google',
-  SMTP_HOST: 'smtp.example.com',
   WEB_DIST_DIR: '/app/web',
 };
 
@@ -38,7 +37,7 @@ describe('loadEnv', () => {
   });
 
   it('本番で足りない・開発用のままの設定をまとめて起動前に落とす', () => {
-    const missing = ['KMS_PROVIDER', 'STORAGE_PROVIDER', 'SCHEDULE_PROVIDER', 'SMTP_HOST'];
+    const missing = ['KMS_PROVIDER', 'STORAGE_PROVIDER', 'SCHEDULE_PROVIDER'];
     const source = Object.fromEntries(
       Object.entries({ ...production, SESSION_SECRET: 'change-me-in-production' }).filter(
         ([key]) => !missing.includes(key),

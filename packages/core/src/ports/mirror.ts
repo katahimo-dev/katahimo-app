@@ -21,7 +21,13 @@ export type MirrorKind =
   /** 領収書ログシート + Driveフォルダへの保存 */
   | 'receipt'
   /** Googleカレンダーの予定 */
-  | 'calendar_event';
+  | 'calendar_event'
+  /**
+   * パスワード再設定メールの送信(ミラーではないが、同じoutboxとワーカーの再試行の仕組みを使う)。
+   * targetIdはpassword_reset_codes.id。APIの応答時間からアカウントの有無が分からないよう、送信は
+   * リクエストの外でワーカーが行う。MIRROR_TO_GOOGLE_SHEETS の設定にかかわらず常に積む。
+   */
+  | 'password_reset_mail';
 
 export interface MirrorJob {
   tenantId: string;

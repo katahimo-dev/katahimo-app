@@ -6,9 +6,23 @@ export const receiptTimestampSchema = z
   .string()
   .regex(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}(:\d{2})?$/, 'yyyy/MM/dd HH:mm[:ss] 形式で指定してください');
 
+/** 1回の登録で送れる領収書画像の枚数(GAS版と同じ6枚)。 */
+export const RECEIPT_MAX_IMAGES = 6;
+/**
+ * 領収書画像1枚の大きさの上限(復号後のバイト数)。画面は長い辺1200px・JPEG品質0.7に縮めてから送るため
+ * 通常は数百KB。種類は JPEG・PNG・WebP だけ(サーバーが中身の先頭バイトで判定する)。
+ */
+export const RECEIPT_IMAGE_MAX_BYTES = 1.5 * 1024 * 1024;
+/** data URL の文字数の上限(base64 は4/3倍、接頭辞の分の余裕を足す)。 */
+const RECEIPT_IMAGE_DATA_URL_MAX_LENGTH = Math.ceil((RECEIPT_IMAGE_MAX_BYTES * 4) / 3) + 100;
+const imageDataSchema = z
+  .string()
+  .min(1, '領収書画像がありません。')
+  .max(RECEIPT_IMAGE_DATA_URL_MAX_LENGTH, '領収書画像が大きすぎます。');
+
 export const receiptImageUploadSchema = z.object({
-  /** data URL('data:image/jpeg;base64,...') */
-  data: z.string().min(1),
+  /** data URL('data:image/jpeg;base64,...')。JPEG・PNG・WebP のみ。 */
+  data: imageDataSchema,
   amount: z.union([z.string(), z.number()]).nullable().optional(),
   storeName: z.string().nullable().optional(),
   /** OCR等で得た領収書日時。空なら下記のフォールバック日時を使う。 */
@@ -30,7 +44,10 @@ export const uploadReceiptsRequestSchema = z.object({
   staffId: idSchema.optional(),
   customerId: idSchema.nullable().optional(),
   customerNameText: z.string().trim().max(200).optional(),
-  images: z.array(receiptImageUploadSchema).min(1, '領収書画像がありません。'),
+  images: z
+    .array(receiptImageUploadSchema)
+    .min(1, '領収書画像がありません。')
+    .max(RECEIPT_MAX_IMAGES, `領収書画像は${RECEIPT_MAX_IMAGES}枚までです。`),
   receiptTimestamp: receiptTimestampSchema.optional(),
   reportDate: businessDateSchema.optional(),
   startTime: timeOfDaySchema.optional(),
@@ -57,7 +74,12 @@ export const uploadReceiptsResponseSchema = z.object({
 export type UploadReceiptsResponse = z.infer<typeof uploadReceiptsResponseSchema>;
 
 /** POST /api/receipts/ocr(領収書1枚から金額・店名・日時を読む。GAS版 extractAmountFromImage) */
-export const receiptOcrRequestSchema = z.object({ image: z.string().min(1, 'image が必要です') });
+export const receiptOcrRequestSchema = z.object({
+  image: z
+    .string()
+    .min(1, 'image が必要です')
+    .max(RECEIPT_IMAGE_DATA_URL_MAX_LENGTH, '領収書画像が大きすぎます。'),
+});
 export type ReceiptOcrRequest = z.infer<typeof receiptOcrRequestSchema>;
 
 /**

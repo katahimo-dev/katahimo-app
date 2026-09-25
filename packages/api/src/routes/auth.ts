@@ -11,7 +11,7 @@ import {
 import { Hono } from 'hono';
 import type { Container } from '../container';
 import { requestMeta } from '../http/requestMeta';
-import { apiError, parseJsonBody } from '../http/responses';
+import { apiError, parseJsonBody, rateLimited } from '../http/responses';
 import type { SessionEnv } from '../session';
 import {
   clearSessionCookie,
@@ -31,6 +31,13 @@ function toSessionUser(session: ResolvedSession): SessionUser {
   };
 }
 
+/** ログインの失敗が続いたときの案内(アカウント単位・送信元IP単位のどちらのロックでも同じ文面)。 */
+const LOGIN_LOCKED_MESSAGE =
+  'ログインの失敗が続いたため、一時的にログインできません。しばらく(15分ほど)待ってから再度お試しください。';
+/** パスワード再設定の要求が多すぎるときの案内。 */
+const RESET_RATE_LIMITED_MESSAGE =
+  'パスワード再設定の要求が多すぎます。しばらく待ってから再度お試しください。';
+
 /** 再設定コードの発行要求への応答(アカウントの有無を伝えないため常に同じ文面)。 */
 const RESET_REQUEST_ACCEPTED_MESSAGE =
   '登録されているメールアドレスであれば、認証コードを送信しました。メールをご確認ください(有効期限30分)。';
@@ -45,10 +52,13 @@ export function createAuthRoutes(container: Container) {
 
     const result = await login(container, { ...body.data, meta: requestMeta(c) });
     if (!result.ok) {
+      if (result.reason === 'locked') return rateLimited(c, result.retryAfterMs, LOGIN_LOCKED_MESSAGE);
       const message =
         result.reason === 'retired'
           ? 'ログイン権限のないユーザーです'
-          : 'メールアドレスまたはパスワードが違います';
+          : result.reason === 'tenant_suspended'
+            ? 'ご利用の法人は現在利用を停止しています。管理者にお問い合わせください'
+            : 'メールアドレスまたはパスワードが違います';
       return apiError(c, 401, 'unauthenticated', message);
     }
 
@@ -72,9 +82,9 @@ export function createAuthRoutes(container: Container) {
 
   /** ログアウト。Cookieを消すだけでなく、サーバー側のセッション行も削除する。 */
   app.post('/logout', async (c) => {
-    const cookieValue = readSessionCookie(c);
+    const cookieValue = readSessionCookie(c, container);
     if (cookieValue) await logout(container, cookieValue, requestMeta(c));
-    clearSessionCookie(c);
+    clearSessionCookie(c, container);
     return c.json({ ok: true });
   });
 
@@ -104,11 +114,17 @@ export function createAuthRoutes(container: Container) {
     return c.json({ success: true as const, message: 'パスワードを変更しました' });
   });
 
-  /** GAS版Auth.js requestPasswordReset。成否・アカウントの有無にかかわらず同じ応答を返す。 */
+  /**
+   * GAS版Auth.js requestPasswordReset。成否・アカウントの有無にかかわらず同じ応答を返す(メールは
+   * ワーカーが送る)。送信元IP単位の上限を超えた場合だけ 429(アカウントの有無とは関係しないため)。
+   */
   app.post('/password-reset/request', async (c) => {
     const body = await parseJsonBody(c, passwordResetRequestSchema);
     if (!body.ok) return body.response;
-    await requestPasswordReset(container, { ...body.data, meta: requestMeta(c) });
+    const outcome = await requestPasswordReset(container, { ...body.data, meta: requestMeta(c) });
+    if (outcome.status === 'ip_rate_limited') {
+      return rateLimited(c, outcome.retryAfterMs, RESET_RATE_LIMITED_MESSAGE);
+    }
     return c.json({ ok: true as const, message: RESET_REQUEST_ACCEPTED_MESSAGE });
   });
 
@@ -119,6 +135,9 @@ export function createAuthRoutes(container: Container) {
 
     const result = await confirmPasswordReset(container, { ...body.data, meta: requestMeta(c) });
     if (!result.ok) {
+      if (result.reason === 'rate_limited') {
+        return rateLimited(c, result.retryAfterMs, RESET_RATE_LIMITED_MESSAGE);
+      }
       const message =
         result.reason === 'weak_password'
           ? PASSWORD_POLICY_MESSAGES[result.violation]

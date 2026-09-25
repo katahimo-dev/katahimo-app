@@ -18,13 +18,19 @@ export function createCloudKmsApiClient(): CloudKmsClient {
   const keys = async () => (await kms()).projects.locations.keyRings.cryptoKeys;
 
   return {
-    async encrypt(name, plaintext) {
-      const res = await (await keys()).encrypt({ name, requestBody: { plaintext } });
+    async encrypt(name, plaintext, additionalAuthenticatedData) {
+      const res = await (await keys()).encrypt({
+        name,
+        requestBody: { plaintext, additionalAuthenticatedData },
+      });
       if (!res.data.ciphertext) throw new Error('Cloud KMS encrypt の応答に ciphertext がありません');
       return res.data.ciphertext;
     },
-    async decrypt(name, ciphertext) {
-      const res = await (await keys()).decrypt({ name, requestBody: { ciphertext } });
+    async decrypt(name, ciphertext, additionalAuthenticatedData) {
+      const res = await (await keys()).decrypt({
+        name,
+        requestBody: { ciphertext, additionalAuthenticatedData },
+      });
       if (!res.data.plaintext) throw new Error('Cloud KMS decrypt の応答に plaintext がありません');
       return res.data.plaintext;
     },

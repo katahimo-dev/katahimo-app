@@ -47,8 +47,9 @@ flowchart LR
   (`packages/api/src/http/webStatic.ts`)。
 - **worker**: outbox ミラー(GAS 版スプレッドシート/Drive への書き込み)の常駐ポーラー。Cloud Run サービスは
   ポートで待ち受ける必要があるため、`WORKER_HEALTH_PORT` で最小限のヘルスチェック応答だけを返す。
-  外部からは呼べない(ingress internal・IAM 認証あり)。ミラーを使わない間は `outbox_poller_enabled = false`
-  で止められる(8章)。
+  外部からは呼べない(ingress internal・IAM 認証あり)。パスワード再設定メールも outbox 経由でワーカーが送る
+  (API は応答時間からアカウントの有無が分からないよう送らない)ため、本番では常に動かす
+  (`outbox_poller_enabled = true`。SMTP の設定・`smtp-pass` はワーカーに渡す)。
 - **jobs**: 同じ worker イメージの別コマンド(`node dist/<job>.js`、migrate は `node db/dist/migrate.js`)。
   失敗すると終了コード1になり、Cloud Run Jobs の再試行とアラートに乗る。
 - **鍵**: テナントごとの DEK は Cloud KMS の `tenant-kek` でラップして DB(`tenant_keys`)に保存する
@@ -56,7 +57,7 @@ flowchart LR
   本番も使う)は Secret Manager に置く。`LOCAL_DEV_KEK` は本番では使わない。
 - **本番の起動時検証**: `NODE_ENV=production` のとき、API・ワーカーとも次を満たさなければ起動前に落ちる:
   `KMS_PROVIDER=gcp` + `GCP_KMS_KEY_NAME`、`STORAGE_PROVIDER=gcs` + `GCS_BUCKET`、`SCHEDULE_PROVIDER` の明示、
-  (API のみ)`SMTP_HOST`、32文字以上の `SESSION_SECRET`。
+  (ワーカーのみ)`SMTP_HOST`、(API のみ)32文字以上の `SESSION_SECRET`。
 
 ### DB 接続方式
 
@@ -223,7 +224,7 @@ add gas-bridge-secret      '<GAS版 Script Properties の BRIDGE_API_SECRET>'
   (サーバーから呼ぶためアプリケーションの制限は「なし」か、Cloud Run の送信元IPが固定でないため IP 制限は不可)。
 - **Gemini API キー**: Google AI Studio で発行(管理画面からテナントごとに設定したキーはDBに暗号化して保存され、
   こちらはその未設定時のフォールバック)。
-- **SMTP**: パスワード再設定メールの送信に必須(Google Workspace の SMTP リレー等)。
+- **SMTP**: パスワード再設定メールの送信に必須(Google Workspace の SMTP リレー等)。送信はワーカーが行う。
 
 ### 3.6 イメージのビルドと push(初回はデプロイしない)
 
@@ -264,7 +265,8 @@ gcloud run jobs execute katahimo-migrate --region="$REGION" --wait
 ```bash
 URL="$(terraform -chdir=infra/gcp output -raw api_url)"
 curl -s "$URL/api/health"      # {"status":"ok"}
-curl -s "$URL/api/health/db"   # {"status":"ok","now":"..."}(DB 接続まで確認)
+curl -s "$URL/api/health/db"   # {"status":"ok"}(DB 接続まで確認。失敗時は {"status":"error"} で詳細はログ)
+curl -sI "$URL/api/health" | grep -iE 'content-security-policy|strict-transport-security'   # セキュリティヘッダー
 curl -sI "$URL/" | grep -i cache-control   # no-cache
 ```
 
@@ -422,7 +424,19 @@ GAS 側の変更は `katahimo-dev/gas-childcare-visit-app` リポジトリで行
 
 ## 8. 未決事項・今後の対応
 
-- worker の常駐方式(6章の選択肢)。ミラーを当面使わないなら `outbox_poller_enabled = false` が最も安い。
+- worker の常駐方式(6章の選択肢)。パスワード再設定メールを outbox 経由で送るため、ミラーを使わない間も
+  outbox の処理は要る(常駐をやめる場合は Cloud Scheduler から `outbox-once` を数分おきに動かす等の代わりが必要)。
+- **ネットワークの防御(セキュリティレビュー 2026-09、未対応)**:
+  - Cloud Armor: API の前に外部HTTPSロードバランサ+サーバーレスNEGを置き、Cloud Armor のセキュリティポリシー
+    (IP単位のレート制限・国/地域の制限・OWASP のプリセットルール)を付けるか。アプリ側でもログイン・パスワード
+    再設定・AI・地図の回数制限(`rate_limit_buckets`)は行っているが、大量の要求そのものは Cloud Run に届く。
+    ロードバランサを置く場合は、ingress を `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` にして run.app の URL を
+    閉じ、`TRUSTED_PROXY_HOPS=2`(X-Forwarded-For の末尾にLBのIPが加わるため。`doc/api/auth-reports-settings.md`
+    「送信元IPの判定」)にする。
+  - Cloud SQL のプライベートIP: 現在は Cloud Run の「Cloud SQL 接続」(Auth Proxy 相当、パブリックIP+IAM許可)。
+    パブリックIPを無効にしてプライベートIP(Private Service Connect / VPC ピアリング)+ Direct VPC egress で
+    接続するか(`authorized_networks` を空にしているため外部から直接は繋がらないが、パブリックIPを持たない方が
+    攻撃面は小さい)。
 - 本番テナントと最初の管理者を作るスクリプト、および管理用スクリプト(スタッフマスタ・顧客CSV の取込)の
   Cloud Run Job 化(3.10)。
 - 独自ドメインの方式(3.11)。

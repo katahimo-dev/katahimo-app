@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import type { KeyManagementPort, WrappedDek } from '@katahimo/core/ports';
+import { dekWrapAad, WRAPPED_DEK_PREFIX } from './dekWrapAad';
 
 /**
  * KeyManagementPortの開発用実装。
@@ -16,6 +17,9 @@ import type { KeyManagementPort, WrappedDek } from '@katahimo/core/ports';
  *
  * kekVersionは常に1を返す(実際のKEKローテーションが必要になった時点でロジックを足す。
  * 環境変数を複数バージョン管理する形に拡張する想定)。
+ *
+ * ラップはテナントIDをAADに含め(dekWrapAad)、保存形式に `v2:` を付ける(2026-09 のセキュリティレビューで
+ * 変更。それより前のAADなしの形式は読めないため、開発DBは作り直す)。
  */
 export class LocalKmsPort implements KeyManagementPort {
   readonly currentKekVersion = 1;
@@ -31,27 +35,36 @@ export class LocalKmsPort implements KeyManagementPort {
     this.kek = Buffer.from(kekHex, 'hex');
   }
 
-  async wrap(dek: Buffer): Promise<WrappedDek> {
+  async wrap(dek: Buffer, tenantId: string): Promise<WrappedDek> {
     const nonce = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.kek, nonce);
+    cipher.setAAD(dekWrapAad(tenantId));
     const wrapped = Buffer.concat([cipher.update(dek), cipher.final()]);
-    const authTag = cipher.getAuthTag();
-    const payload = Buffer.concat([nonce, authTag, wrapped]);
-    return { ciphertext: payload.toString('base64'), kekVersion: this.currentKekVersion };
+    const payload = Buffer.concat([nonce, cipher.getAuthTag(), wrapped]);
+    return {
+      ciphertext: `${WRAPPED_DEK_PREFIX}${payload.toString('base64')}`,
+      kekVersion: this.currentKekVersion,
+    };
   }
 
-  async unwrap(wrapped: WrappedDek): Promise<Buffer> {
+  async unwrap(wrapped: WrappedDek, tenantId: string): Promise<Buffer> {
     if (wrapped.kekVersion !== this.currentKekVersion) {
       throw new Error(
         `未対応のKEKバージョンです(kekVersion=${wrapped.kekVersion})。LocalKmsPortは複数バージョンの` +
           'KEKを保持しない簡易実装のため、ローテーション済みの場合は再ラップ(rewrap)が必要です。',
       );
     }
-    const payload = Buffer.from(wrapped.ciphertext, 'base64');
+    if (!wrapped.ciphertext.startsWith(WRAPPED_DEK_PREFIX)) {
+      throw new Error(
+        `未対応の形式のラップ済みDEKです(tenantId=${tenantId})。2026-09 より前の形式の開発DBは作り直してください。`,
+      );
+    }
+    const payload = Buffer.from(wrapped.ciphertext.slice(WRAPPED_DEK_PREFIX.length), 'base64');
     const nonce = payload.subarray(0, 12);
     const authTag = payload.subarray(12, 28);
     const ciphertext = payload.subarray(28);
     const decipher = createDecipheriv('aes-256-gcm', this.kek, nonce);
+    decipher.setAAD(dekWrapAad(tenantId));
     decipher.setAuthTag(authTag);
     return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   }

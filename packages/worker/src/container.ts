@@ -1,4 +1,5 @@
 import type { MirrorWorkerDeps, NightlyCalendarSyncDeps, StaffBusyBlockSyncDeps } from '@katahimo/core';
+import type { MailerPort } from '@katahimo/core/ports';
 import { createScheduleDirectory } from '@katahimo/core/usecases';
 import type { Database } from '@katahimo/db';
 import {
@@ -10,6 +11,7 @@ import {
   DrizzleDailyReportRepository,
   DrizzleFamilyMemberRepository,
   DrizzleOutboxRepository,
+  DrizzlePasswordResetCodeRepository,
   DrizzleReceiptRepository,
   DrizzleStaffBusyBlockRepository,
   DrizzleStaffRepository,
@@ -20,6 +22,7 @@ import {
 import type { CustomerCsvImportDeps } from '@katahimo/ingestion';
 import {
   ConsoleAuditLogPort,
+  ConsoleMailerPort,
   createCustomerCsvSource,
   createGoogleCalendarPort,
   createKeyManagementPort,
@@ -29,6 +32,7 @@ import {
   InMemoryTtlCache,
   LocalCryptoPort,
   NoopMirrorSenderPort,
+  SmtpMailerPort,
 } from '@katahimo/integrations';
 import type { WorkerEnv } from './env';
 
@@ -37,6 +41,18 @@ export interface WorkerContainer extends MirrorWorkerDeps, NightlyCalendarSyncDe
   tenants: DrizzleTenantRepository;
   /** job:sync-busy-blocks 用(Google Calendar freeBusy を使うため、実行時に初めて組み立てる)。 */
   busyBlockSync: () => StaffBusyBlockSyncDeps;
+}
+
+/** パスワード再設定メール。SMTP_HOST設定時はSMTP、未設定(開発)時は標準出力。 */
+function createMailer(env: WorkerEnv): MailerPort {
+  if (!env.SMTP_HOST) return new ConsoleMailerPort();
+  return new SmtpMailerPort({
+    host: env.SMTP_HOST,
+    port: env.SMTP_PORT,
+    user: env.SMTP_USER,
+    pass: env.SMTP_PASS,
+    from: env.SMTP_FROM,
+  });
 }
 
 export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerContainer {
@@ -72,6 +88,8 @@ export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerConta
     crypto,
     storage: createStoragePort(env),
     sender: gasBridgeOptions ? new GasBridgeMirrorSenderPort(gasBridgeOptions) : new NoopMirrorSenderPort(),
+    passwordResetCodes: new DrizzlePasswordResetCodeRepository(db),
+    mailer: createMailer(env),
     schedule: scheduleServices.schedule,
     appLog,
     busyBlockSync: () => ({

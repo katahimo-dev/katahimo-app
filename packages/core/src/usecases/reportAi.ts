@@ -1,4 +1,5 @@
 import { AI_PROMPT_KEYS } from '@katahimo/shared';
+import { ENCRYPTION_PURPOSES } from '../domain/pii';
 import type {
   AccidentReportDraft,
   AccidentReportDraftError,
@@ -35,7 +36,7 @@ async function resolveReportAiPort(deps: ReportAiDeps, tenantId: string): Promis
   const settings = await deps.appSettings.find(tenantId);
   if (!settings?.geminiApiKey) return deps.reportAi;
   return deps.reportAiFactory.create({
-    apiKey: await deps.crypto.decrypt(tenantId, settings.geminiApiKey),
+    apiKey: await deps.crypto.decrypt(tenantId, settings.geminiApiKey, ENCRYPTION_PURPOSES.geminiApiKey),
     reportModel: settings.geminiReportModel ?? undefined,
     ocrModel: settings.geminiOcrModel ?? undefined,
   });

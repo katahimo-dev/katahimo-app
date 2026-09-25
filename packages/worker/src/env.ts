@@ -59,6 +59,15 @@ const envSchema = z.object({
   GAS_BRIDGE_URL: z.string().optional(),
   GAS_BRIDGE_SECRET: z.string().optional(),
 
+  // パスワード再設定メール(outbox の kind='password_reset_mail')の送信。APIは応答時間からアカウントの有無が
+  // 分からないようメールを送らず、ワーカーが送る。SMTP_HOSTが未設定の場合、開発環境では送信せず内容を
+  // 標準出力に出す(ConsoleMailerPort)。本番では設定必須。
+  SMTP_HOST: z.preprocess(emptyToUndefined, z.string().optional()),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().default('保育日報 <noreply@localhost>'),
+
   // job:sync-busy-blocks が同期する期間(今日から何日先まで)。
   BUSY_BLOCK_SYNC_DAYS: z.coerce.number().int().positive().default(28),
 
@@ -103,6 +112,9 @@ export function loadWorkerEnv(source: NodeJS.ProcessEnv = process.env): WorkerEn
     ...storageEnvProblems(parsed.data, isProduction),
     ...scheduleEnvProblems(parsed.data, isProduction),
   ];
+  if (isProduction && !parsed.data.SMTP_HOST) {
+    problems.push('  - SMTP_HOST: 本番ではパスワード再設定メールの送信にSMTP設定が必要です');
+  }
   if (problems.length > 0) throw new Error(`環境変数の設定に問題があります:\n${problems.join('\n')}`);
   return parsed.data;
 }

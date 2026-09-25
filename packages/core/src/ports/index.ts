@@ -16,6 +16,7 @@ export * from './mirror';
 export * from './mirrorSender';
 export * from './notifier';
 export * from './passwordResetCodes';
+export * from './rateLimiter';
 export * from './repositories';
 export * from './schedule';
 export * from './scheduleDirectory';

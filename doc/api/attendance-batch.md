@@ -182,6 +182,15 @@ ERROR(`mirror.job_failed`)を残す。`processing` のまま10分以上更新さ
    予定の取得を新版の SchedulePort(Google Calendar + Maps の直接呼び出し)に切り替えた後も、勤怠集計シートの
    行はGAS側の計算のままになる点に注意(両者の計算結果を揃えたい場合は、将来 `rows` をペイロードで渡す action を
    追加する)。
-3. GAS版の時限トリガー `autoSyncTodayScheduleForAllStaff` / `checkAndImportLatestCsv`(`Triggers.js`)は、新版の
+3. **共有シークレットの受け取り方**(推奨、セキュリティレビュー 2026-09): 新版は Bridge.js への要求に
+   シークレットを `X-Katahimo-Bridge-Secret` ヘッダーとURLクエリ `secret` の両方で付けている。Apps Script の Web App
+   (`doGet(e)` / `doPost(e)`)はリクエストヘッダーを読めないため、現行の Bridge.js はクエリの `secret` で認証しており、
+   クエリは外せない(URLはGoogle側のアクセスログ等に残りやすい)。Bridge.js を次のように変えたら、新版
+   (`packages/integrations/src/gas-bridge/gasBridgeClient.ts`)の POST からクエリの `secret` を外す:
+   - `doPost`: `verifyBridgeSecret_(params.secret)` を、本体の JSON(`JSON.parse(e.postData.contents).secret`)の
+     値でも認証できるようにする(移行期間は両方を受け付ける)。書き込み処理は本体の `secret` を無視するようにする。
+   - 読み取り系(`doGet` の `?api=1`、ジオコーディング・ルート計算・予定)も POST(本体に `secret`)で受け付ける
+     action を足す(GET には本体が無いため、クエリ以外にシークレットを載せる場所が無い)。
+4. GAS版の時限トリガー `autoSyncTodayScheduleForAllStaff` / `checkAndImportLatestCsv`(`Triggers.js`)は、新版の
    ジョブを本番で動かし始めたら `setupAllTriggers()` の定義で `enabled: false` にして止める(二重反映・二重取込を
    避けるため)。

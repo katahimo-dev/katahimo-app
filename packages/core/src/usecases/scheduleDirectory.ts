@@ -1,6 +1,7 @@
+import { ENCRYPTION_PURPOSES } from '../domain/pii';
 import { parseLatLng } from '../domain/schedule/place';
 import type { Place, ScheduleCustomer } from '../domain/schedule/types';
-import type { CryptoPort } from '../ports/crypto';
+import type { CryptoPort, EncryptionPurpose } from '../ports/crypto';
 import { DEFAULT_TRAVEL_MODE } from '../ports/maps';
 import type { CustomerRecord, CustomerRepositoryPort, EncryptedField } from '../ports/repositories';
 import type {
@@ -29,14 +30,20 @@ export function createScheduleDirectory(deps: ScheduleDirectoryDeps): ScheduleDi
         deps.customers.listActive(tenantId),
         deps.staffRouteProfiles.listByTenant(tenantId),
       ]);
-      const decryptLatLng = async (field: EncryptedField | null) =>
-        field ? parseLatLng(await deps.crypto.decrypt(tenantId, field)) : null;
+      const decryptLatLng = async (field: EncryptedField | null, purpose: EncryptionPurpose) =>
+        field ? parseLatLng(await deps.crypto.decrypt(tenantId, field, purpose)) : null;
 
       const [customers, staff] = await Promise.all([
         Promise.all(
-          customerRows.map(async (row) => toScheduleCustomer(row, await decryptLatLng(row.latLng))),
+          customerRows.map(async (row) =>
+            toScheduleCustomer(row, await decryptLatLng(row.latLng, ENCRYPTION_PURPOSES.customerLatLng)),
+          ),
         ),
-        Promise.all(staffRows.map(async (row) => toScheduleStaff(row, await decryptLatLng(row.homeLatLng)))),
+        Promise.all(
+          staffRows.map(async (row) =>
+            toScheduleStaff(row, await decryptLatLng(row.homeLatLng, ENCRYPTION_PURPOSES.staffHomeLatLng)),
+          ),
+        ),
       ]);
       return { customers, staff };
     },

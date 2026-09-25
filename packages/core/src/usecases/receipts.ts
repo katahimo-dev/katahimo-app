@@ -1,14 +1,17 @@
 import { randomUUID } from 'node:crypto';
+import { RECEIPT_IMAGE_MAX_BYTES, RECEIPT_MAX_IMAGES } from '@katahimo/shared';
 import {
   buildReceiptDedupeKey,
   buildReceiptNotificationText,
   canCheckReceiptDuplicate,
+  decodeReceiptImage,
+  ENCRYPTION_PURPOSES,
   normalizeAmount,
   normalizeText,
   parseJstTimestampString,
 } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
-import type { BlindIndexPort, CryptoPort, EncryptedValue } from '../ports/crypto';
+import type { BlindIndexPort, CryptoPort, EncryptedValue, EncryptionPurpose } from '../ports/crypto';
 import type { MirrorPort } from '../ports/mirror';
 import type { NotifierPort } from '../ports/notifier';
 import type {
@@ -76,19 +79,21 @@ export interface UploadReceiptsSummary {
 
 export type UploadReceiptsResult =
   | ({ ok: true } & UploadReceiptsSummary)
-  | { ok: false; reason: 'no_images' | 'staff_not_found' | 'customer_not_found' };
+  | { ok: false; reason: 'no_images' | 'too_many_images' | 'staff_not_found' | 'customer_not_found' }
+  | {
+      ok: false;
+      reason: 'invalid_image';
+      index: number;
+      detail: 'malformed' | 'too_large' | 'unsupported_type';
+    };
 
-function decodeDataUrl(dataUrl: string): { contentType: string; bytes: Uint8Array } | null {
-  const commaIndex = dataUrl.indexOf(',');
-  if (commaIndex < 0) return null;
-  const base64Body = dataUrl.slice(commaIndex + 1);
-  if (!base64Body) return null;
-  const contentType = /^data:(.*?);base64$/.exec(dataUrl.slice(0, commaIndex))?.[1] || 'image/jpeg';
-  return { contentType, bytes: new Uint8Array(Buffer.from(base64Body, 'base64')) };
-}
-
-function encryptOptional(deps: ReceiptDeps, tenantId: string, value: string): Promise<EncryptedValue | null> {
-  return value ? deps.crypto.encrypt(tenantId, value) : Promise.resolve(null);
+function encryptOptional(
+  deps: ReceiptDeps,
+  tenantId: string,
+  value: string,
+  purpose: EncryptionPurpose,
+): Promise<EncryptedValue | null> {
+  return value ? deps.crypto.encrypt(tenantId, value, purpose) : Promise.resolve(null);
 }
 
 /**
@@ -106,6 +111,14 @@ export async function uploadReceipts(
   input: UploadReceiptsInput,
 ): Promise<UploadReceiptsResult> {
   if (input.images.length === 0) return { ok: false, reason: 'no_images' };
+  if (input.images.length > RECEIPT_MAX_IMAGES) return { ok: false, reason: 'too_many_images' };
+  // 1枚でも不正な画像があれば何も保存しない(中身の先頭バイトで種類を判定し、保存する種類・拡張子もそれに合わせる)
+  const decodedImages = [];
+  for (const [index, img] of input.images.entries()) {
+    const decoded = decodeReceiptImage(img.data, RECEIPT_IMAGE_MAX_BYTES);
+    if (!decoded.ok) return { ok: false, reason: 'invalid_image', index, detail: decoded.reason };
+    decodedImages.push(decoded);
+  }
 
   const staffId = input.actor.isAdmin
     ? input.requestedStaffId?.trim() || input.actor.staffId
@@ -156,19 +169,19 @@ export async function uploadReceipts(
       });
       continue;
     }
-    const decoded = decodeDataUrl(c.img.data);
+    const decoded = decodedImages[c.index];
     if (!decoded) continue;
 
-    const fileKey = `${tenantId}/receipts/${randomUUID()}.jpg`;
+    const fileKey = `${tenantId}/receipts/${randomUUID()}.${decoded.extension}`;
     await deps.storage.put(fileKey, decoded.contentType, decoded.bytes);
 
     const amount = normalizeText(c.img.amount == null ? '' : String(c.img.amount));
     const storeName = normalizeText(c.img.storeName);
     const isFirst = registered.length === 0;
     const [amountEnc, storeNameEnc, handoffEnc] = await Promise.all([
-      encryptOptional(deps, tenantId, amount),
-      encryptOptional(deps, tenantId, storeName),
-      encryptOptional(deps, tenantId, isFirst ? handoffText : ''),
+      encryptOptional(deps, tenantId, amount, ENCRYPTION_PURPOSES.receiptAmount),
+      encryptOptional(deps, tenantId, storeName, ENCRYPTION_PURPOSES.receiptStoreName),
+      encryptOptional(deps, tenantId, isFirst ? handoffText : '', ENCRYPTION_PURPOSES.receiptHandoffText),
     ]);
 
     const receipt = await deps.receipts.create({
