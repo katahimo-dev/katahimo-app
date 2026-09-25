@@ -103,7 +103,7 @@ export const scheduleShots: Shot[] = [
 ポートを変えて撮る(並行して別の開発サーバーを動かしているとき)は環境変数で:
 `KATAHIMO_WEB_URL=http://127.0.0.1:5321 GAS_PREVIEW_PORT=5192`(pnpm 11 では `pnpm … shoot -- --only …` の
 `--` がそのまま渡り、うしろのオプションが効かないため、`cd tools/gas-preview && npx tsx src/shoot.ts --only '^report-'` のように直接動かす)。
-新アプリの開発サーバーの中継先は `KATAHIMO_API_PROXY_TARGET=http://localhost:8521 pnpm --filter @katahimo/web exec vite --port 5321`。
+新アプリの開発サーバーのポート・中継先は `WEB_DEV_PORT=5321 WEB_API_PROXY_TARGET=http://localhost:8521 pnpm --filter @katahimo/web dev`。
 
 ## 分かっている違い(GAS版の不具合などで、新アプリでは再現していないもの)
 

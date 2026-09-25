@@ -404,3 +404,49 @@ export const AVAILABLE_MODELS = [
 ];
 
 export const DATA_VERSION = '12';
+
+// ── お客様の情報(予定・お客様の担当) ──────────────────────────
+
+/**
+ * 顧客CSV(RESERVA)の列名での「住所・連絡先」(本物のGAS版 getData の details と同じ形・同じ並び)。
+ * gasMock.ts の customerDetails は仮の列名のため、お客様の情報の場面ではこちらでGAS版の getData を
+ * 差しかえる(shots/customers.ts)。新アプリのモック(webMock.ts)は同じ値を項目ごとに返す。
+ * 顧客ID・パスワードはGAS版のサーバーが除くので入れない。国番号・世帯全員の情報は新しいAPIに無いため入れない。
+ */
+export function reservaCustomerDetails(c: FixtureCustomer): Array<{ key: string; value: string }> {
+  const [sei = '', mei = ''] = c.name.split(' ');
+  const [seiKana = '', meiKana = ''] = c.kana.split(' ');
+  return [
+    { key: '姓', value: sei },
+    { key: '名', value: mei },
+    { key: '姓（カナ）※必須項目', value: seiKana },
+    { key: '名（カナ）※必須項目', value: meiKana },
+    { key: 'メールアドレス', value: c.email },
+    { key: '電話番号※必須項目', value: c.phone },
+    { key: '会員種別', value: 'Family Sitter 会員' },
+    { key: '会員状況（有効／無効）', value: '有効' },
+    { key: '会費支払方法（現地決済／銀行振込／口座振替／請求書払い）', value: '口座振替' },
+    { key: '会費支払状況（未払／支払済み）', value: '支払済み' },
+    { key: '顧客メモ', value: c.memo },
+    { key: '登録日時', value: '2025/08/12 13:12' },
+    { key: '最終更新日時', value: '' },
+    { key: '性別', value: '女' },
+    { key: '年代', value: '30代' },
+    { key: '住所', value: c.address },
+    { key: '駐車場', value: c.parking },
+    { key: '駐車場番号・指定場所の詳細など', value: '' },
+    { key: '緊急連絡先', value: c.emergencyContact },
+    { key: '緊急連絡先の方（申請者との関係性）', value: c.emergencyContact ? '夫' : '' },
+    { key: '災害時の避難場所（最寄りの小中学校）', value: '' },
+    { key: 'Benefit会員ID', value: '' },
+    { key: '住所2', value: '' },
+    { key: '住所2[適用開始日YYYY/MM/DD]', value: '' },
+    { key: '住所2[適用終了日YYYY/MM/DD]', value: '' },
+    { key: '緯度・経度', value: `${c.lat},${c.lng}` },
+  ];
+}
+
+/** これまでの記録の1件の新アプリ用ID(UUID)。GAS版の記録にはIDが無いため並び順から作る。 */
+export function reportUuid(customerIndex: number, reportIndex: number): string {
+  return `00000000-0000-4000-8000-${(customerIndex * 1000 + reportIndex + 1).toString(16).padStart(12, '0')}`;
+}

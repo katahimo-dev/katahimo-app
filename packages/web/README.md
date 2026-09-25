@@ -128,6 +128,7 @@ src/
 | `app_text_size` | 文字の大きさ `normal` / `large` / `xlarge`(古い `small` / `medium` は `normal` に置きかえる) | ○ |
 | `katahimo_last_tenant_slug` | 最後にログインできた法人ID | (新規) |
 | `katahimo_session_hint` | ログインしていた印(期限切れの案内を出し分ける。Cookieはスクリプトから読めないため) | (GAS版はトークンの有無で判断) |
+| `katahimo_schedule_route_v1_<スタッフID>_<日付>` | 予定タブのルートつき予定の2時間キャッシュ(`{res, ts}`) | (GAS版 `GAS_SCHEDULE_ROUTE_V2_<スタッフ名>_<日付>` と同じ役割。スタッフをIDで区別するため別名) |
 | `cal_week_view_mode` / `recent_customers` / `pending_report_draft` / `last_start_hour` / `last_start_minute` / `last_acc_time` / `GAS_RECEIPT_KEYS_V1_*` | 各機能の担当が使う(GAS版と同じ意味・形で) | ○ |
 
 GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使わない(ログインは httpOnly Cookie、管理者かどうかは `/api/auth/me`)。

@@ -25,10 +25,11 @@ export default defineConfig({
     }),
   ],
   server: {
-    port: 5173,
+    // 並行して別のAPI・画面を動かすときは環境変数で変える(例: WEB_DEV_PORT=5311 WEB_API_PROXY_TARGET=http://localhost:8511)
+    port: Number(process.env.WEB_DEV_PORT ?? 5173),
     // 開発中はAPI(:8080)へプロキシし、本番と同じ同一オリジン構成(Cookie認証)にする
     proxy: {
-      '/api': { target: 'http://localhost:8080', changeOrigin: true },
+      '/api': { target: process.env.WEB_API_PROXY_TARGET ?? 'http://localhost:8080', changeOrigin: true },
     },
   },
 });

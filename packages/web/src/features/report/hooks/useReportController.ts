@@ -2,8 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { ApiRequestError, isUnauthenticated } from '../../../api/client';
-import { queryKeys } from '../../../api/queryKeys';
-import { reportCustomersApi, reportsApi } from '../../../api/reports';
+import { customerQueryKeys, customersApi } from '../../../api/customers';
+import { reportsApi } from '../../../api/reports';
 import { useUiConfig } from '../../../app/uiConfig/useUiConfig';
 import { readStorage, STORAGE_KEYS, writeStorage } from '../../../lib/storage';
 import { confirmNative, useConfirmModal } from '../../../ui/confirm';
@@ -107,9 +107,9 @@ export function useReportController(session: ReportSession | null) {
   // ── お客様 ──
   const customerId = session?.kind === 'customer' ? session.target.customerId : null;
   const detailQuery = useQuery({
-    // お客様タブの担当のクエリと形がぶつからないよう、日報ダイアログ専用のキーにする(顧客データの版数が変わると一緒に読み直される)
-    queryKey: [...queryKeys.customers.all, 'report', 'detail', customerId],
-    queryFn: ({ signal }) => reportCustomersApi.detail(customerId as string, signal),
+    // お客様タブの「お客様の情報」と同じクエリ(読み取りだけ。同じお客様なら読み込み済みの内容を使う)
+    queryKey: customerQueryKeys.detail(customerId ?? ''),
+    queryFn: ({ signal }) => customersApi.detail(customerId as string, signal),
     enabled: customerId !== null,
     staleTime: 5 * 60 * 1000,
   });

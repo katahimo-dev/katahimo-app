@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { queryKeys } from '../../../api/queryKeys';
-import { reportCustomersApi } from '../../../api/reports';
+import { customerQueryKeys, customersApi } from '../../../api/customers';
 import { useHomeTabs } from '../../../app/homeTabs';
 import { readPendingDraft } from '../model/reportDraft';
 import type { ReportTarget } from '../types';
@@ -18,10 +17,10 @@ export function usePendingDraftRestore(openReport: (target: ReportTarget) => voi
   const attemptedRef = useRef(false);
 
   const { data } = useQuery({
-    queryKey: [...queryKeys.customers.all, 'report', 'draft-lookup'],
-    queryFn: ({ signal }) => reportCustomersApi.list(signal),
+    // お客様タブの一覧と同じクエリ(読み取りだけ。お客様タブが読んだ一覧をそのまま使う)
+    queryKey: customerQueryKeys.list,
+    queryFn: ({ signal }) => customersApi.list(signal),
     enabled: draftCustomerId !== null,
-    staleTime: Number.POSITIVE_INFINITY,
   });
 
   useEffect(() => {
