@@ -36,10 +36,10 @@ export const customerCsvImportResponseSchema = z.object({
     .object({
       created: z.number().int(),
       updated: z.number().int(),
-      deactivated: z.number().int(),
+      archived: z.number().int(),
       existingActiveCount: z.number().int(),
       incomingCount: z.number().int(),
-      deactivateRatio: z.number(),
+      missingRatio: z.number(),
     })
     .nullable(),
   dataVersion: z.string(),

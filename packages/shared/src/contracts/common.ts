@@ -21,7 +21,7 @@ export const apiErrorSchema = z.object({
 });
 export type ApiError = z.infer<typeof apiErrorSchema>;
 
-/** 全テナントスコープのリソースが持つ識別子。UUID v4 を想定。 */
+/** リソースの識別子(UUID。アプリが UUIDv7 で採番する)。 */
 export const idSchema = z.string().uuid();
 
 /** 'YYYY-MM-DD' 形式の日付文字列(JST基準の業務日)。 */

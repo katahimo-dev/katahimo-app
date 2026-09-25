@@ -44,7 +44,8 @@ export const customerDetailViewSchema = z.object({
   ageBracket: nullableString,
   registeredAt: nullableString,
   externalLastUpdatedAt: nullableString,
-  deactivatedAt: nullableString,
+  /** 取込元から消えた等でアーカイブされた日時(ISO8601)。 */
+  archivedAt: nullableString,
   familyMembers: z.array(familyMemberViewSchema),
 });
 export type CustomerDetailView = z.infer<typeof customerDetailViewSchema>;

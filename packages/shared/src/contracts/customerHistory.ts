@@ -4,12 +4,12 @@ import { idSchema } from './common';
 /**
  * 「これまでの記録」(GET /api/reports/history?customerId=&before=)の応答。
  * GAS版 Main.js getCustomerReports の戻り値と同じ項目名(packages/core の HistoryItem)。
- * 1回に5件まで、新しい順。次の5件は before に最後の occurredAtIso を渡して読む。
+ * 1回に5件まで、新しい順。次の5件は before に前の応答の nextCursor を渡して読む(キーセットページング)。
  */
 export const customerHistoryItemSchema = z.object({
   type: z.enum(['daily', 'accident']),
   id: idSchema,
-  /** 次の5件を読むときの before に使う(ISO8601)。 */
+  /** 記録日時(ISO8601)。 */
   occurredAtIso: z.string(),
   /** 表示用 'yyyy/MM/dd HH:mm'(JST)。 */
   timestamp: z.string(),
@@ -30,5 +30,15 @@ export const customerHistoryItemSchema = z.object({
 });
 export type CustomerHistoryItem = z.infer<typeof customerHistoryItemSchema>;
 
-export const customerHistoryResponseSchema = z.object({ items: z.array(customerHistoryItemSchema) });
+export const customerHistoryResponseSchema = z.object({
+  items: z.array(customerHistoryItemSchema),
+  /** 続きがあれば次の before に渡す値(不透明な文字列)。無ければ null。 */
+  nextCursor: z.string().nullable(),
+});
+
+export const customerHistoryQuerySchema = z.object({
+  customerId: idSchema,
+  /** 前の応答の nextCursor。 */
+  before: z.string().max(200).optional(),
+});
 export type CustomerHistoryResponse = z.infer<typeof customerHistoryResponseSchema>;

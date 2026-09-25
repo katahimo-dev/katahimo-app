@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { businessDateSchema, idSchema } from './common';
 
 /**
  * 「今日/明日の予定」API(GET /api/schedule・GET /api/schedule/route)の応答。
@@ -73,3 +74,16 @@ export const scheduleWithRouteResponseSchema = z.object({
   message: z.string().optional(),
 });
 export type ScheduleWithRouteResponse = z.infer<typeof scheduleWithRouteResponseSchema>;
+
+// ── クエリ ──────────────────────────────────────────────────
+
+/** GET /api/schedule・GET /api/schedule/route のクエリ。staffId は管理者・コーディネーターだけが有効。 */
+export const scheduleQuerySchema = z.object({
+  date: businessDateSchema,
+  staffId: idSchema.optional(),
+});
+
+/** GET /api/schedule/route。forceRefresh=1 でキャッシュを使わずに再計算する(回数制限あり)。 */
+export const scheduleRouteQuerySchema = scheduleQuerySchema.extend({
+  forceRefresh: z.enum(['0', '1']).optional(),
+});

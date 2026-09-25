@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '../defaults/passwordPolicy';
 import { idSchema } from './common';
+import { staffRoleSchema } from './roles';
 
 /** 新しいパスワードの入力規則(変更・再設定・管理者による初期パスワード設定で共通)。 */
 export const newPasswordSchema = z
@@ -30,7 +31,8 @@ export const sessionUserSchema = z.object({
   tenantId: idSchema,
   name: z.string(),
   email: z.string(),
-  isAdmin: z.boolean(),
+  /** 役割(isAdminRole / canActForOthers で表示を出し分ける)。 */
+  role: staffRoleSchema,
 });
 export type SessionUser = z.infer<typeof sessionUserSchema>;
 

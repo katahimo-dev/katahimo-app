@@ -1,4 +1,4 @@
-import type { ActiveStaff } from '@katahimo/shared';
+import { type ActiveStaff, canActForOthers } from '@katahimo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from 'react';
 import { queryKeys } from '../../api/queryKeys';
@@ -35,13 +35,15 @@ const AdminTargetStaffContext = createContext<AdminTargetStaffContextValue | nul
 
 export function AdminTargetStaffProvider({ children }: { children: ReactNode }) {
   const { user } = useSession();
+  // 他のスタッフを選べるのは管理者・コーディネーター(サーバーの canActForOthers と同じ)
+  const canChooseStaff = canActForOthers(user.role);
   const [targetStaffId, setTargetStaffIdState] = useState(user.staffId);
   const [listRequested, setListRequested] = useState(false);
 
   const staffQuery = useQuery({
     queryKey: queryKeys.activeStaff,
     queryFn: ({ signal }) => staffApi.listActive(signal),
-    enabled: user.isAdmin && listRequested,
+    enabled: canChooseStaff && listRequested,
     staleTime: Number.POSITIVE_INFINITY,
     select: (res) => res.staff,
   });
@@ -49,26 +51,34 @@ export function AdminTargetStaffProvider({ children }: { children: ReactNode }) 
   const requestStaffList = useCallback(() => setListRequested(true), []);
   const setTargetStaffId = useCallback(
     (staffId: string) => {
-      if (user.isAdmin) setTargetStaffIdState(staffId);
+      if (canChooseStaff) setTargetStaffIdState(staffId);
     },
-    [user.isAdmin],
+    [canChooseStaff],
   );
 
   const value = useMemo<AdminTargetStaffContextValue>(() => {
-    const staffList = user.isAdmin ? (staffQuery.data ?? []) : [];
-    const effectiveId = user.isAdmin ? targetStaffId : user.staffId;
+    const staffList = canChooseStaff ? (staffQuery.data ?? []) : [];
+    const effectiveId = canChooseStaff ? targetStaffId : user.staffId;
     const targetStaffName = staffList.find((s) => s.id === effectiveId)?.name ?? user.name;
     return {
-      isAdmin: user.isAdmin,
+      isAdmin: canChooseStaff,
       targetStaffId: effectiveId,
       targetStaffName,
-      requestStaffId: user.isAdmin ? effectiveId : undefined,
+      requestStaffId: canChooseStaff ? effectiveId : undefined,
       staffList,
       setTargetStaffId,
       requestStaffList,
       staffListLoaded: staffQuery.isSuccess,
     };
-  }, [user, targetStaffId, staffQuery.data, staffQuery.isSuccess, setTargetStaffId, requestStaffList]);
+  }, [
+    user,
+    canChooseStaff,
+    targetStaffId,
+    staffQuery.data,
+    staffQuery.isSuccess,
+    setTargetStaffId,
+    requestStaffList,
+  ]);
 
   return <AdminTargetStaffContext value={value}>{children}</AdminTargetStaffContext>;
 }

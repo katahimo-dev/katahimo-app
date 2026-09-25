@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { newPasswordSchema } from './auth';
 import { businessDateSchema, idSchema } from './common';
+import { staffRoleSchema } from './roles';
 
 const emailSchema = z.string().trim().email('メールアドレスの形式が正しくありません');
 const nameSchema = z.string().trim().min(1, '氏名を入力してください');
@@ -12,10 +13,10 @@ export const adminStaffViewSchema = z.object({
   email: z.string(),
   altEmail: z.string().nullable(),
   phone: z.string().nullable(),
-  isAdmin: z.boolean(),
+  role: staffRoleSchema,
   /** 'YYYY-MM-DD'。この日以降はログインできない(GAS版スタッフ台帳H列と同じ意味)。 */
-  retirementDate: businessDateSchema.nullable(),
-  /** 退職日を過ぎている(JST基準)。 */
+  retiredOn: businessDateSchema.nullable(),
+  /** 退職日を過ぎている(テナントのタイムゾーンの今日で判定)。 */
   isRetired: z.boolean(),
   /**
    * パスワードの状態。
@@ -41,7 +42,7 @@ export const createStaffRequestSchema = z.object({
   email: emailSchema,
   altEmail: emailSchema.nullable().optional(),
   phone: z.string().trim().nullable().optional(),
-  isAdmin: z.boolean().default(false),
+  role: staffRoleSchema.default('staff'),
   initialPassword: newPasswordSchema.optional(),
 });
 export type CreateStaffRequest = z.infer<typeof createStaffRequestSchema>;
@@ -53,8 +54,8 @@ export const updateStaffRequestSchema = z
     email: emailSchema,
     altEmail: emailSchema.nullable(),
     phone: z.string().trim().nullable(),
-    isAdmin: z.boolean(),
-    retirementDate: businessDateSchema.nullable(),
+    role: staffRoleSchema,
+    retiredOn: businessDateSchema.nullable(),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, { message: '更新する項目がありません' });
@@ -67,8 +68,8 @@ export type AdminStaffResponse = z.infer<typeof adminStaffResponseSchema>;
 // ── GET /api/staff ───────────────────────────────────────────
 
 /**
- * 管理者用「表示するスタッフ」の選択肢(退職者を除く、氏名順)。
- * 管理者以外が呼ぶと空配列(GAS版 getActiveStaffNamesForAdmin と同じ)。
+ * 「表示するスタッフ」の選択肢(退職者を除く、氏名順)。
+ * 他のスタッフを扱えない役割(一般スタッフ)が呼ぶと空配列(GAS版 getActiveStaffNamesForAdmin と同じ)。
  */
 export const activeStaffSchema = z.object({ id: idSchema, name: z.string() });
 export type ActiveStaff = z.infer<typeof activeStaffSchema>;
