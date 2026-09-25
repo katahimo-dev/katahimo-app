@@ -22,7 +22,7 @@ describe('parseStaffMasterCsv', () => {
         altEmail: 'hanako@cutest.biz',
         password: HASH,
         isAdmin: true,
-        retirementDate: null,
+        retiredOn: null,
       },
       {
         rowNumber: 3,
@@ -31,7 +31,7 @@ describe('parseStaffMasterCsv', () => {
         altEmail: null,
         password: 'plain',
         isAdmin: false,
-        retirementDate: '2026-03-31',
+        retiredOn: '2026-03-31',
       },
     ]);
     expect(parsed.warnings).toEqual([]);
@@ -39,7 +39,7 @@ describe('parseStaffMasterCsv', () => {
 
   it('解釈できない退職日は警告を出して空として扱う', () => {
     const parsed = parseStaffMasterCsv(`${header}\n1,A,,,a@example.com,,,未定,,,,,`);
-    expect(parsed.rows[0]?.retirementDate).toBeNull();
+    expect(parsed.rows[0]?.retiredOn).toBeNull();
     expect(parsed.warnings).toHaveLength(1);
   });
 });

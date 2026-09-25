@@ -1,115 +1,145 @@
-import type { CustomerRepositoryPort } from '@katahimo/core/ports';
-import type { CustomerDeps } from '@katahimo/core/usecases';
-import { createCustomer, deactivateCustomer, updateCustomer } from '@katahimo/core/usecases';
-import { mapReservaRowToCustomerInput, RESERVA_EXTERNAL_SOURCE } from './mapToCustomerInput';
+import { newId } from '@katahimo/core/domain';
+import type { CryptoPort, UnitOfWorkPort } from '@katahimo/core/ports';
+import { applyCustomerSnapshot } from '@katahimo/core/usecases';
+import { toCustomerSnapshot } from './toCustomerSnapshot';
 import type { ReservaCsvRow } from './types';
 
-/** 既存件数のこの割合を超える変更(更新+消失)があれば、自動適用せず人手のレビューを求める。 */
-const DEFAULT_REVIEW_THRESHOLD = 0.2;
+/** 取込データから消えた顧客がアーカイブ前の顧客のこの割合を超えたら、自動適用せず人手の確認を求める。 */
+export const DEFAULT_REVIEW_THRESHOLD = 0.2;
 
 export interface ReservaImportPlan {
   toCreate: ReservaCsvRow[];
   toUpdate: ReservaCsvRow[];
-  /** 取込データに存在しなくなった顧客の外部ID。適用時にソフトデリートする。 */
-  toDeactivateExternalIds: string[];
+  /** 取込データに存在しなくなった(アーカイブ前の)顧客の ID。 */
+  toArchiveCustomerIds: string[];
   stats: {
     existingActiveCount: number;
     incomingCount: number;
     createCount: number;
     updateCount: number;
-    deactivateCount: number;
-    /** (更新+消失) / 既存件数。ゼロ除算回避のため既存0件なら0。 */
-    changedRatio: number;
+    archiveCount: number;
+    /** 消失 / 既存(アーカイブ前)。既存0件なら0。 */
+    missingRatio: number;
   };
-  /** trueの場合、applyReservaImportPlanは例外を投げて適用を拒否する(人手のレビューが必要)。 */
   requiresReview: boolean;
 }
 
 /**
- * RESERVA CSVの取込差分を計算する(DBへの書き込みは一切行わない、読み取り専用の計画)。
- *
- * 氏名の文字列一致ではなく、外部ID(RESERVAの顧客ID)による突き合わせで
- * 作成/更新/消失(ソフトデリート対象)を判定する(doc/07 第5章・第8章の方針)。
- * 「取込データで既存データを丸ごと置き換える」旧GAS版の危険な挙動(CsvImport.jsの
- * updateDatabaseFromLinesV2)は踏襲せず、差分適用+安全装置付きにする。
+ * 取込の差分を計算する(書き込まない)。氏名ではなく取込元の ID(RESERVA の顧客ID)で突き合わせる。
+ * 旧GAS版(CsvImport.js updateDatabaseFromLinesV2)の「丸ごと置き換え」は踏襲しない。
+ * 安全装置の対象は「消失」の割合だけ(更新は日次の取込でも大量に起きる正常な挙動のため含めない)。
  */
-export async function planReservaImport(
-  customers: CustomerRepositoryPort,
-  tenantId: string,
+export function planReservaImport(
+  existing: ReadonlyMap<string, { customerId: string; archived: boolean }>,
   rows: ReservaCsvRow[],
   reviewThreshold: number = DEFAULT_REVIEW_THRESHOLD,
-): Promise<ReservaImportPlan> {
-  const existingIds = new Set(await customers.listActiveExternalIds(tenantId, RESERVA_EXTERNAL_SOURCE));
-  const incomingIds = new Set(rows.map((r) => r.customerId));
-
-  const toCreate = rows.filter((r) => !existingIds.has(r.customerId));
-  const toUpdate = rows.filter((r) => existingIds.has(r.customerId));
-  const toDeactivateExternalIds = [...existingIds].filter((id) => !incomingIds.has(id));
-
-  const existingActiveCount = existingIds.size;
-  // 閾値の対象は「消失(取込データに存在しなくなった=データ損失リスク)」の割合のみとする。
-  // 「更新」は安定した顧客基盤で日次取込するだけでもほぼ毎回大量に発生する正常な挙動であり、
-  // これを閾値に含めると通常運用のたびに毎回レビュー待ちになってしまい安全装置として機能しない。
-  const changedRatio = existingActiveCount > 0 ? toDeactivateExternalIds.length / existingActiveCount : 0;
-
+): ReservaImportPlan {
+  const incoming = new Set(rows.map((r) => r.customerId));
+  const toCreate = rows.filter((r) => !existing.has(r.customerId));
+  const toUpdate = rows.filter((r) => existing.has(r.customerId));
+  const active = [...existing].filter(([, link]) => !link.archived);
+  const toArchiveCustomerIds = active
+    .filter(([externalId]) => !incoming.has(externalId))
+    .map(([, l]) => l.customerId);
+  const missingRatio = active.length > 0 ? toArchiveCustomerIds.length / active.length : 0;
   return {
     toCreate,
     toUpdate,
-    toDeactivateExternalIds,
+    toArchiveCustomerIds,
     stats: {
-      existingActiveCount,
+      existingActiveCount: active.length,
       incomingCount: rows.length,
       createCount: toCreate.length,
       updateCount: toUpdate.length,
-      deactivateCount: toDeactivateExternalIds.length,
-      changedRatio,
+      archiveCount: toArchiveCustomerIds.length,
+      missingRatio,
     },
-    requiresReview: existingActiveCount > 0 && changedRatio > reviewThreshold,
+    requiresReview: active.length > 0 && missingRatio > reviewThreshold,
   };
 }
 
-export interface ApplyReservaImportResult {
-  created: number;
-  updated: number;
-  deactivated: number;
+export interface ReservaImportDeps {
+  uow: UnitOfWorkPort;
+  crypto: CryptoPort;
+  now?: () => Date;
 }
+
+export interface ReservaImportOptions {
+  /** 消失の割合が閾値を超えても適用する(内容を確認した管理者の明示の操作)。 */
+  force?: boolean;
+  fileName?: string | null;
+  fileVersion?: string | null;
+  triggeredBy?: string | null;
+  reviewThreshold?: number;
+}
+
+export type ReservaImportOutcome =
+  | {
+      status: 'applied';
+      runId: string;
+      plan: ReservaImportPlan;
+      created: number;
+      updated: number;
+      unchanged: number;
+      archived: number;
+      customerDataVersion: number;
+    }
+  | { status: 'review_required'; runId: string; plan: ReservaImportPlan };
 
 /**
- * 取込計画をDBに適用する。requiresReview=trueの計画は明示的にforce=trueを渡さない限り拒否する
- * (安全装置。想定外に欠損したCSVを誤って適用しないため)。
+ * 顧客CSVの行を1トランザクションで適用する: 差分の計算 → 作成・変わった項目だけの更新(ID を保つ)→
+ * 消えた顧客のアーカイブ(reason = import_missing)→ 顧客データの版数を上げる(予定計算のキャッシュを作り直す)。
+ * 実行は import_runs に残す(安全装置で止めた場合も review_required として残す)。
  */
-export async function applyReservaImportPlan(
-  deps: CustomerDeps,
+export async function applyReservaImport(
+  deps: ReservaImportDeps,
   tenantId: string,
-  plan: ReservaImportPlan,
-  options: { force?: boolean } = {},
-): Promise<ApplyReservaImportResult> {
-  if (plan.requiresReview && !options.force) {
-    throw new Error(
-      `取込データから消失した顧客の割合が閾値を超えています(消失率 ${(plan.stats.changedRatio * 100).toFixed(1)}%: ` +
-        `消失${plan.stats.deactivateCount}件 / 既存${plan.stats.existingActiveCount}件)。` +
-        'CSVの欠損等が無いか内容を確認し、問題なければ { force: true } を指定して再実行してください。',
-    );
-  }
-
-  for (const row of plan.toCreate) {
-    await createCustomer(deps, mapReservaRowToCustomerInput(tenantId, row));
-  }
-
-  for (const row of plan.toUpdate) {
-    const existing = await deps.customers.findByExternalId(tenantId, RESERVA_EXTERNAL_SOURCE, row.customerId);
-    if (!existing) continue;
-    await updateCustomer(deps, tenantId, existing.id, mapReservaRowToCustomerInput(tenantId, row));
-  }
-
-  for (const externalId of plan.toDeactivateExternalIds) {
-    const existing = await deps.customers.findByExternalId(tenantId, RESERVA_EXTERNAL_SOURCE, externalId);
-    if (existing) await deactivateCustomer(deps, tenantId, existing.id);
-  }
-
-  return {
-    created: plan.toCreate.length,
-    updated: plan.toUpdate.length,
-    deactivated: plan.toDeactivateExternalIds.length,
-  };
+  rows: ReservaCsvRow[],
+  options: ReservaImportOptions = {},
+): Promise<ReservaImportOutcome> {
+  const runId = newId();
+  const now = deps.now?.() ?? new Date();
+  return deps.uow.run(
+    tenantId,
+    async (r) => {
+      await r.importRuns.start({
+        id: runId,
+        source: 'reserva_csv',
+        fileName: options.fileName ?? null,
+        fileVersion: options.fileVersion ?? null,
+        triggeredBy: options.triggeredBy ?? null,
+      });
+      const plan = planReservaImport(
+        await r.customerSourceRecords.mapExternalIds('reserva'),
+        rows,
+        options.reviewThreshold,
+      );
+      if (plan.requiresReview && !options.force) {
+        await r.importRuns.finish(runId, {
+          status: 'review_required',
+          counts: { ...plan.stats, missingRatio: Math.round(plan.stats.missingRatio * 1000) / 1000 },
+          message: `取込データから消えた顧客が多すぎます(消失${plan.stats.archiveCount}件 / 既存${plan.stats.existingActiveCount}件)`,
+        });
+        return { status: 'review_required' as const, runId, plan };
+      }
+      const counts = { created: 0, updated: 0, unchanged: 0, archived: 0 };
+      for (const row of rows) {
+        const outcome = await applyCustomerSnapshot(
+          { crypto: deps.crypto, runId },
+          r,
+          toCustomerSnapshot(row),
+          now,
+        );
+        counts[outcome]++;
+      }
+      for (const customerId of plan.toArchiveCustomerIds) {
+        await r.customers.archive(customerId, 'import_missing', now);
+        counts.archived++;
+      }
+      const customerDataVersion = await r.settings.bumpCustomerDataVersion();
+      await r.importRuns.finish(runId, { status: 'applied', counts, message: null });
+      return { status: 'applied' as const, runId, plan, ...counts, customerDataVersion };
+    },
+    { actorId: options.triggeredBy ?? null },
+  );
 }

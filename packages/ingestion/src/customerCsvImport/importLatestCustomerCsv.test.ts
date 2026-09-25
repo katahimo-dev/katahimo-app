@@ -1,39 +1,27 @@
 import { readFileSync } from 'node:fs';
-import {
-  FakeAppLogPort,
-  FakeCryptoPort,
-  FakeCustomerCsvSource,
-  FakeCustomerImportStateRepository,
-  FakeCustomerRepository,
-  FakeFamilyMemberRepository,
-} from '@katahimo/core/test-utils';
+import type { TestContext } from '@katahimo/core/test-utils';
+import { createTestContext, type FakeAppLogPort, FakeCustomerCsvSource } from '@katahimo/core/test-utils';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type CustomerCsvImportDeps, importLatestCustomerCsv } from './importLatestCustomerCsv';
 
 const FIXTURE = readFileSync(
   new URL('../reservaCsv/__fixtures__/Kokyaku_202601191958_1_dummy.csv', import.meta.url),
 );
-const tenant = { id: 'tenant-1', slug: 'demo' };
 
 describe('importLatestCustomerCsv(GAS版 checkAndImportLatestCsv)', () => {
   let deps: CustomerCsvImportDeps;
   let source: FakeCustomerCsvSource;
   let appLog: FakeAppLogPort;
-  let customers: FakeCustomerRepository;
+  let ctx: TestContext;
+  let tenant: { id: string; slug: string };
+  const activeCustomers = () => ctx.data().customers.filter((c) => !c.archivedAt);
 
   beforeEach(() => {
+    ctx = createTestContext({ now: '2026-09-25T18:00:00Z' });
+    tenant = { id: ctx.tenantId, slug: 'demo' };
     source = new FakeCustomerCsvSource();
-    appLog = new FakeAppLogPort();
-    customers = new FakeCustomerRepository();
-    deps = {
-      customers,
-      familyMembers: new FakeFamilyMemberRepository(),
-      crypto: new FakeCryptoPort(),
-      csvSource: source,
-      importState: new FakeCustomerImportStateRepository(),
-      appLog,
-      now: () => new Date('2026-09-25T18:00:00Z'),
-    };
+    appLog = ctx.appLog;
+    deps = { ...ctx.deps, csvSource: source };
   });
 
   it('取込元が無いテナントは not_configured、該当ファイルが無ければ no_files', async () => {
@@ -54,7 +42,7 @@ describe('importLatestCustomerCsv(GAS版 checkAndImportLatestCsv)', () => {
       dataVersion: '1',
     });
     expect(first.stats?.created).toBeGreaterThan(0);
-    expect((await customers.listActive(tenant.id)).length).toBe(first.stats?.created);
+    expect(activeCustomers().length).toBe(first.stats?.created);
     expect(appLog.byAction('customer_csv.imported')).toEqual([
       expect.objectContaining({ level: 'INFO', details: expect.objectContaining({ triggeredBy: 'system' }) }),
     ]);
@@ -69,11 +57,11 @@ describe('importLatestCustomerCsv(GAS版 checkAndImportLatestCsv)', () => {
     const forced = await importLatestCustomerCsv(deps, {
       tenant,
       force: true,
-      actor: { staffId: 'admin-1', name: '管理者 太郎' },
+      actor: { staffId: '00000000-0000-7000-8000-0000000000aa', name: '管理者 太郎' },
     });
     expect(forced).toMatchObject({ status: 'imported', dataVersion: '2', stats: { created: 0 } });
     expect(appLog.byAction('customer_csv.imported').at(-1)).toMatchObject({
-      actorStaffId: 'admin-1',
+      actorStaffId: '00000000-0000-7000-8000-0000000000aa',
       details: expect.objectContaining({ force: true, triggeredBy: '管理者 太郎' }),
     });
   });
@@ -90,7 +78,7 @@ describe('importLatestCustomerCsv(GAS版 checkAndImportLatestCsv)', () => {
     const result = await importLatestCustomerCsv(deps, { tenant });
     expect(result.status, result.message).toBe('review_required');
     expect(result.dataVersion).toBe('1');
-    expect((await customers.listActive(tenant.id)).length).toBe(count);
+    expect(activeCustomers().length).toBe(count);
     expect(appLog.byAction('customer_csv.import_review_required')).toHaveLength(1);
   });
 

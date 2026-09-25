@@ -61,7 +61,7 @@ function logAiError(deps: ReportAiDeps, caller: ReportAiCaller, action: string, 
 export async function generateDailyReportDraft(
   deps: ReportAiDeps,
   caller: ReportAiCaller,
-  input: { text: string; start?: string; end?: string },
+  input: { text: string; start?: string | undefined; end?: string | undefined },
 ): Promise<DailyReportDraft> {
   const [reportAi, promptTemplate] = await Promise.all([
     resolveReportAiPort(deps, caller.tenantId),
@@ -78,7 +78,7 @@ export async function generateDailyReportDraft(
 export async function generateAccidentReportDraft(
   deps: ReportAiDeps,
   caller: ReportAiCaller,
-  input: { text: string; start?: string; end?: string },
+  input: { text: string; start?: string | undefined; end?: string | undefined },
 ): Promise<AccidentReportDraft | AccidentReportDraftError> {
   const [reportAi, promptTemplate] = await Promise.all([
     resolveReportAiPort(deps, caller.tenantId),

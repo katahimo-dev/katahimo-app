@@ -1,17 +1,8 @@
-import type { StaffRole } from '../model';
+import type { StaffRole } from '@katahimo/shared';
+import { canActForOthers } from '@katahimo/shared';
 
-/** 管理者(管理者設定・スタッフ管理・顧客CSVの取込・勤怠集計の書き直しができる)。 */
-export function isAdminRole(role: StaffRole): boolean {
-  return role === 'admin';
-}
-
-/**
- * 他のスタッフの予定・出勤簿・報告を扱えるか(管理者とコーディネーター)。一般スタッフは常に本人の分だけ
- * (GAS版の「管理者だけが対象スタッフを選べる」規則をコーディネーターに広げたもの)。
- */
-export function canActForOthers(role: StaffRole): boolean {
-  return role === 'admin' || role === 'coordinator';
-}
+// 役割の判定はブラウザと共通(@katahimo/shared)
+export { canActForOthers, isAdminRole } from '@katahimo/shared';
 
 /**
  * 操作の対象スタッフ。他人を扱えないロールは要求にかかわらず本人、扱えるロールは指定があればそのスタッフ

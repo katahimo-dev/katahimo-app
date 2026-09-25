@@ -40,8 +40,7 @@ export const CUSTOM_FIELD_ENTITIES = ['staff', 'customer'] as const;
 export const CUSTOM_FIELD_VALUE_TYPES = ['text', 'number', 'boolean', 'date', 'select'] as const;
 
 /** スタッフの権限。admin: 全操作 / coordinator: 他スタッフの予定・出勤簿・報告の代行(管理設定は不可) / staff: 本人のみ。 */
-export const STAFF_ROLES = ['staff', 'coordinator', 'admin'] as const;
-export type StaffRole = (typeof STAFF_ROLES)[number];
+export { STAFF_ROLES, type StaffRole } from '@katahimo/shared';
 
 export const GENDERS = ['female', 'male', 'other', 'unknown'] as const;
 export type Gender = (typeof GENDERS)[number];
