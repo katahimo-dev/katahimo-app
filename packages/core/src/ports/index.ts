@@ -1,4 +1,5 @@
 export * from './ai';
+export * from './appLog';
 export * from './audit';
 export * from './calendar';
 export * from './crypto';

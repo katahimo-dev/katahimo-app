@@ -1,4 +1,5 @@
 import type {
+  AppLogPort,
   MapsPort,
   MirrorPort,
   NotifierPort,
@@ -10,6 +11,7 @@ import type {
 import type { Database } from '@katahimo/db';
 import {
   DrizzleAccidentReportRepository,
+  DrizzleAppLogRepository,
   DrizzleAppSettingsRepository,
   DrizzleAttendanceDayRepository,
   DrizzleCustomerRepository,
@@ -82,6 +84,8 @@ export interface Container {
    * (GAS版スプレッドシート/Driveへの反映)はAPIサーバーではなくワーカー(packages/worker)が行う。
    */
   mirror: MirrorPort;
+  /** アプリ操作ログ・監査ログ(app_logs)。GAS版 logToBuffer に相当。 */
+  appLog: AppLogPort;
   /** GAS版 Script Properties AUTH_SALT と同じ値。移行済みスタッフのログインにのみ使う。 */
   legacyAuthSalt?: string;
 }
@@ -132,6 +136,7 @@ export function createContainer(env: Env, db: Database): Container {
     maps: gasBridgeOptions ? new GasBridgeMapsPort(gasBridgeOptions) : new NoopMapsPort(),
     schedule: gasBridgeOptions ? new GasBridgeSchedulePort(gasBridgeOptions) : new NoopSchedulePort(),
     mirror: env.MIRROR_TO_GOOGLE_SHEETS ? new DrizzleOutboxRepository(db) : new NoopMirrorPort(),
+    appLog: new DrizzleAppLogRepository(db),
     legacyAuthSalt: env.LEGACY_AUTH_SALT,
   };
 }

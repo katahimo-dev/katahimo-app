@@ -15,3 +15,4 @@ export * from './staffBusyBlockRepository';
 export * from './staffRepository';
 export * from './tenantKeyRepository';
 export * from './tenantRepository';
+export * from './appLogRepository';
