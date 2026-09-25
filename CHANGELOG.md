@@ -1,5 +1,42 @@
 # 更新履歴 (katahimo-app)
 
+## [Ver. 0.1.0] - 2026-09-25
+
+GAS版 `gas-childcare-visit-app` の作り直しの一区切り。画面・サーバー処理ともGAS版の機能をひととおり移し終え、
+並行して作った機能をつないだ状態で通し確認まで行った(本番環境への適用はまだ)。0.0.1〜0.0.3 の内容を含む。
+
+- **DBの再設計**: 旧試作(Hono + Drizzle + PostgreSQL)を土台に取り込み、マイグレーションを
+  `0000_initial_schema`(drizzle-kit 生成)と `0001_custom_constraints`(手書き: スタッフの二重予約を防ぐ EXCLUDE 制約・
+  全テーブルの FORCE RLS・`app_logs` の UPDATE 禁止)の2本に作り直した。RLS 条件を
+  `nullif(current_setting('app.tenant_id', true), '')` に直し(プール接続で uuid 変換エラーになる不具合)、
+  複数法人(テナントの状態・タイムゾーン・業種・機能フラグ・独自項目)とマッチング拡張(スタッフ属性・勤務可能時間・
+  カレンダーの busy・顧客の希望・相性・予約と割当・実行結果)のテーブル、GAS版の完全移植に要るテーブル(パスワード
+  再設定コード・操作ログ・AIプロンプト・出勤簿の変更履歴・CSV取込の版数など)を足した(`doc/09`・`doc/10`)。
+- **サーバー処理のGAS版との同等化**: 操作ログの共通ポート `AppLogPort`。認証(メール/サブメール・退職日・7日の
+  ローリング延長・パスワード再設定/変更)、日報・事故報告(AIの下書き・他人の報告を上書きできたGAS版の穴を修正)、
+  領収書(OCR・重複判定・お客様の指定なし・登録バッチ)、管理者設定・AIプロンプト・UI設定、スタッフ管理と台帳の
+  一括取込、出勤簿(当月のみ編集・変わった列だけ保存・変更履歴・カレンダーからの反映・月次まとめ・週間予定)、
+  顧客CSVの自動取込(差分適用・消失率の安全装置・データ版数)。APIの入出力は `@katahimo/shared` の zod 契約で揃え、
+  エラーは `{code, message, fields}`(`doc/api/*.md`)。出勤簿の計算・カレンダー反映・予定の分類とルートは、GAS版の
+  コードそのものを node:vm で動かして出力の一致を確かめるテストを付けた。
+- **GASに頼らない予定・ルート計算**: Google Calendar API + Google Maps Platform(Geocoding / Routes)を直接呼ぶ
+  `GoogleSchedulePort`(2時間の共有キャッシュ、正式な記録に使うときはキャッシュを使わない fresh 計算)。
+  `SCHEDULE_PROVIDER`(google / gas_bridge / noop)で切り替える(`doc/api/schedule-route.md`)。
+- **バッチ・ミラー**: ワーカーを常駐の outbox ポーラー(GAS版 Bridge.js へのミラー書き込み、指数バックオフの再試行・
+  上限で failed・止まったジョブの取り直し)と単発ジョブ(夜間カレンダー反映 22:00・顧客CSV取込 03:00 JST・
+  free/busy 同期・outbox 1回)に分けた(`doc/api/attendance-batch.md`)。
+- **デプロイ**: Cloud Run(API + Web画面 / ワーカー / Jobs)+ Cloud SQL の構成一式(Dockerfile・Cloud Build・Terraform・
+  Cloud SQL 初期化SQL)、GCS / Cloud KMS の実装、本番の起動時検証、GAS版からの切替チェックリスト(`doc/11`)。
+- **画面のGAS版との同等化**: `packages/web` をGAS版 `index.html` を正として作り直した(骨格・ログイン・設定・お知らせ、
+  今日の予定、お客様・お客様の情報・これまでの記録、日報・事故報告・領収書、出勤簿)。GAS版と新アプリを同じ場面・
+  同じデータで撮って並べる見比べハーネス `tools/gas-preview`(124場面、差分はすべて 0.05% 以下)。
+- **通し確認**: 実際のAPI・DBで、ログインから日報・領収書・出勤簿・設定・ログアウトまでと、一般スタッフでの管理者機能の
+  拒否をスマホの大きさで操作する `tools/gas-preview/src/e2e.ts`(`pnpm --filter @katahimo/gas-preview e2e`)を追加し、
+  開発サーバーと本番ビルドの配信(`WEB_DIST_DIR`)の両方で全手順が通ることを確かめた。
+- 通し確認で見つけた不具合の修正: `pnpm db:seed` が中身の無いスクリプトを呼んでいた(api の seed を呼ぶようにした)、
+  `import:reserva` と見比べハーネスが pnpm 11 の `--` を引数として読んでいた。
+- README・CLAUDE.md を現状に合わせて書き直した。
+
 ## [Ver. 0.0.3] - 2026-09-25
 
 - GCP 本番環境へのデプロイ一式を追加(`doc/11_GCPデプロイ手順.md`): `Dockerfile`(api / worker の2ターゲット、
