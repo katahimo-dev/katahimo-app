@@ -162,6 +162,7 @@ pnpm db:seed      # platform.provision_tenant() でテナント demo、スタッ
 ```bash
 pnpm --filter @katahimo/api import:reserva -- <テナントslug> <顧客CSV> [--force]
 pnpm --filter @katahimo/api import:staff-master -- <テナントslug> <スタッフ台帳CSV> [--dry-run]
+pnpm --filter @katahimo/api import:attendance -- <テナントslug> <スタッフのログインメール> <出勤簿CSVの絶対パス> [--year YYYY]
 ```
 
 ### 5. 起動

@@ -47,7 +47,11 @@ GAS版 `gas-childcare-visit-app` の `Auth.js` / `Main.js` / `GeminiReport.js` /
 | 領収書OCR | スタッフ | 1日300回 | 429(手入力を案内) | `RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY` |
 | 予定のルート再計算(`forceRefresh=1`) | スタッフ | 1時間30回 | 429 | `RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR` |
 
-上限を超えた記録は WARN `rate_limit.exceeded`(規則名・回数)に残る(ログインのロックは上記の SECURITY)。古い行はアダプタが時々まとめて削除する。
+ログインの2つの規則は、パスワードの照合(argon2)の**前に**1回分を数える(枠を先に取る)。同時に大量の試行が来ても、
+照合まで進むのは上限の回数までで、残りは照合せずに 429。パスワードが一致した回は数えない(アカウントは数え直し、
+送信元IPは先に取った1回分を返す。上限に達した回そのものが成功ならロックも解く)。
+
+上限を超えた記録は WARN `rate_limit.exceeded`(規則名・回数)に残る(ログインのロックは上記の SECURITY)。古い行はワーカーの保守ジョブが消す。
 
 ### 送信元IPの判定
 
@@ -66,6 +70,8 @@ GAS版 `gas-childcare-visit-app` の `Auth.js` / `Main.js` / `GeminiReport.js` /
 - 担当スタッフ: 一般スタッフは常に本人(`staffId` は無視)。管理者・コーディネーターは `staffId` 指定 → 上書き対象の元の担当者 → 本人 の順。
 - 日報・事故報告・ヒヤリハットは `care_records` の1行(本文は暗号化した JSON)。上書きで本文が変わるとトリガーが変更前を
   `care_record_revisions` に残す。`rowVersion` を送れば、他の人が先に保存していた場合に 409 `conflict`。
+- 上書きで事故報告とヒヤリハットを切り替えられる(`reportType` を変えて同じ `reportId` で保存。記録は1件のまま、GAS版と同じ)。
+  日報と事故報告の間の切り替えはできない(404 `report_not_found`)。確定済み(locked)の記録は変更・削除できない(400 `locked`)。
 - 活動記録は `(occurred_at DESC, id DESC)` のキーセットで読む(同じ時刻の記録があっても重複・抜けが無い)。`before` が
   読めなければ 400。
 - **上書き(`reportId`)の権限**: 管理者以外は自分の報告しか上書きできない(403、SECURITY `report.<daily|accident>.save_denied`)。GAS版は行番号さえ分かれば他人の日報を上書きできた穴を塞いだ。存在しない `reportId` は404。`reportId` の報告が送られた `customerId` のお客様のものでなければ409 `conflict`(WARN `report.<daily|accident>.save_denied` reason `customer_mismatch`。別のお客様の日報を開き直したあとに前の保存が届いた場合などに、前のお客様の報告を書きかえないため)。同じく担当スタッフの異なる報告を指定して上書きしようとした場合も409(reason `author_mismatch`)。
@@ -83,8 +89,14 @@ GAS版 `gas-childcare-visit-app` の `Auth.js` / `Main.js` / `GeminiReport.js` /
 
 - `customerId` を省略/nullにすると「お客様の指定なし」の領収書(GAS版 `openStandaloneReceiptModal`)。`customerNameText` に未登録のお客様の氏名を保存し、通知の「顧客名:」にも使う。
 - 画像ごとの日時が無い場合のフォールバック: `receiptTimestamp` → `reportDate`+`startTime`(秒は00、GAS版 `buildReceiptTimestamp`)→ 登録時刻。
-- 1回の操作で登録した行は同じ `upload_batch_id` を持ち、申し送りは最初に登録した行にだけ保存する。重複判定(スタッフ・顧客・日時・金額・店舗名)はGAS版と同じ。
+- 画像ごとの日時(`receiptDate`、OCRの結果)の表記は問わない(GAS版はシートがそのまま日時として読んでいた)。
+  1桁の月・日・時(`2026/9/5 9:05`)、日付だけ(`2026/09/05`、0:00)、区切りの `-`・`.`・年月日を日時として記録し、
+  読めない表記は上のフォールバックの日時で記録する(登録時刻ではない)。重複判定には文字列のまま使う(GAS版と同じ)。
+- 1回の操作で登録した行は同じ `upload_batch_id` を持ち、申し送りは最初に登録した行にだけ保存する。重複判定(スタッフ・顧客・日時・金額・店舗名)はGAS版と同じ:
+  既に登録済みの内容は登録しない。同じ操作の中の同じ内容(往復の運賃等)は全て登録するが、その内容が既に登録済みなら
+  同じ内容の画像を全て重複にする(同じ束を送り直しても1枚も増えない)。
 - ミラー(Bridge.js `writeReceipt`)のペイロードに `receiptId`・`uploadBatchId` を追加し、`customerName` は未登録のお客様なら入力された氏名を送る(既存項目は互換)。
+  Bridge.js Ver. 1.1.38 以降は `receiptId` を「領収書一覧」の `KatahimoReceiptId` 列で追跡し、再送では何もしない(doc/api/attendance-batch.md「GAS側」)。
 - ログ: INFO `receipt.uploaded`(件数・バッチID)。
 
 ## UI設定 `/api/ui-config`
@@ -137,7 +149,7 @@ GAS版 `gas-childcare-visit-app` の `Auth.js` / `Main.js` / `GeminiReport.js` /
 pnpm --filter @katahimo/api import:staff-master -- <tenantSlug> <CSVファイル> [--dry-run]
 ```
 
-GAS版スタッフ台帳(Staffシート)をCSV(UTF-8)で書き出したものを取り込む。列はGAS版 `Auth.js` と同じ位置で読む(B=氏名、E=メール、H=退職日、J=パスワード、K=管理者フラグ(1)、M=サブメール('@'を含む場合のみ))。メールで照合して既存は更新・無ければ作成。J列が64桁hexならGAS版ハッシュとして移行(初回ログイン時にargon2idへ自動移行、`LEGACY_AUTH_SALT` が必要)、それ以外の値は平文パスワードとみなしてargon2idで保存。本アプリでパスワード設定済みのスタッフのパスワードは上書きしない。
+GAS版スタッフ台帳(Staffシート)をCSV(UTF-8)で書き出したものを取り込む。列はGAS版 `Auth.js` と同じ位置で読む(B=氏名、E=メール、H=退職日、J=パスワード、K=管理者フラグ(1)、M=サブメール('@'を含む場合のみ))。メールで照合して既存は更新・無ければ作成。権限は上げるだけで下げない(K列=1なら管理者。空なら既存のスタッフは本アプリで付けた管理者・コーディネーターのまま、新規は一般スタッフ。権限を外すのは管理画面で行う)。J列が64桁hexならGAS版ハッシュとして移行(初回ログイン時にargon2idへ自動移行、`LEGACY_AUTH_SALT` が必要)、それ以外の値は平文パスワードとみなしてargon2idで保存。本アプリでパスワード設定済みのスタッフのパスワードは上書きしない。
 
 ## 顧客 `/api/customers/:id`(変更点)
 
