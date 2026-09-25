@@ -93,7 +93,7 @@ importers:
         version: 0.30.6
       tsup:
         specifier: ^8.3.5
-        version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@5.9.3)
+        version: 8.5.1(jiti@1.21.7)(postcss@8.5.26)(tsx@4.23.12)(typescript@5.9.3)(yaml@2.9.1)
 
   packages/ingestion:
     dependencies:
@@ -213,7 +213,7 @@ importers:
     devDependencies:
       tsup:
         specifier: ^8.3.5
-        version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@5.9.3)
+        version: 8.5.1(jiti@1.21.7)(postcss@8.5.26)(tsx@4.23.12)(typescript@5.9.3)(yaml@2.9.1)
 
   tools/gas-preview:
     dependencies:
