@@ -4,27 +4,37 @@ import {
   activeStaffListResponseSchema,
   adminSettingsResponseSchema,
   changePasswordResponseSchema,
+  customerDetailResponseSchema,
   dataVersionResponseSchema,
   findAiPromptDefinition,
+  generateAccidentReportResponseSchema,
+  generateDailyReportResponseSchema,
   listGeminiModelsResponseSchema,
   okResponseSchema,
   passwordResetConfirmResponseSchema,
   passwordResetRequestResponseSchema,
+  receiptOcrResponseSchema,
+  saveAccidentReportResponseSchema,
+  saveDailyReportResponseSchema,
   saveSettingsResponseSchema,
   sessionUserResponseSchema,
   uiConfigResponseSchema,
+  uploadReceiptsResponseSchema,
+  visitCompleteResponseSchema,
 } from '@katahimo/shared';
 import type { BrowserContext, Route } from 'playwright-core';
 import type { ZodTypeAny } from 'zod';
 import {
   ADMIN_SETTINGS,
   AVAILABLE_MODELS,
+  CUSTOMERS,
   DATA_VERSION,
   type FixtureStaff,
   MOCK_PASSWORD,
   STAFF,
   TENANT,
 } from './fixtures';
+import { gasHandlers } from './gasMock';
 
 /**
  * 新アプリ(packages/web)のAPIのモック。Playwright の route で /api/** を受け、fixtures.ts の
@@ -90,6 +100,53 @@ const saved = (message: string): WebMockResponse => ({
   body: { ok: true, changed: true, message },
   schema: saveSettingsResponseSchema,
 });
+
+/** 日報・領収書を保存したときに返すID(モックでは固定) */
+const MOCK_REPORT_ID = '00000000-0000-4000-8000-0000000000d1';
+
+/** fixtures の顧客を GET /api/customers/:id の形にする(世帯構成員のIDは顧客のIDから作る) */
+function customerDetailView(c: (typeof CUSTOMERS)[number]) {
+  const [familyName = '', givenName = ''] = c.kana.split(' ');
+  return {
+    id: c.uuid,
+    externalSource: null,
+    externalId: c.id,
+    name: c.name,
+    familyNameKana: familyName,
+    givenNameKana: givenName,
+    email: c.email || null,
+    phone: c.phone || null,
+    addressDetail: c.address,
+    city: c.city,
+    parkingArea: c.parking || null,
+    parkingDetail: null,
+    emergencyContact: c.emergencyContact || null,
+    emergencyContactRelation: null,
+    evacuationSite: null,
+    memo: c.memo || null,
+    benefitMemberId: null,
+    address2: null,
+    address2StartDate: null,
+    address2EndDate: null,
+    latLng: `${c.lat},${c.lng}`,
+    memberType: null,
+    memberStatus: null,
+    paymentMethod: null,
+    paymentStatus: null,
+    gender: null,
+    ageBracket: null,
+    registeredAt: null,
+    externalLastUpdatedAt: null,
+    deactivatedAt: null,
+    familyMembers: c.family.map((m, idx) => ({
+      id: `${c.uuid.slice(0, -4)}f${String(idx).padStart(3, '0')}`,
+      name: m.name,
+      dob: m.dob || null,
+      info: m.info || null,
+      allergy: m.allergy || null,
+    })),
+  };
+}
 
 export const webHandlers: Record<string, WebHandler> = {
   // ── 認証 ──
@@ -177,6 +234,86 @@ export const webHandlers: Record<string, WebHandler> = {
     body: { success: true, models: AVAILABLE_MODELS },
     schema: listGeminiModelsResponseSchema,
   })),
+  // ── 日報・事故報告・領収書(日報の担当) ──
+  // AIの下書き・OCRの結果はGAS版のモック(gasMock.ts)と同じ値を返す(両方の画面に同じ文が出るように)。
+  // お客様の一覧・詳細は日報ダイアログが読む分だけ(お客様タブの担当が同じキーを足したらどちらか一方にする)。
+  'GET /api/customers': withUser(() => ({
+    body: {
+      customers: CUSTOMERS.map((c) => ({ id: c.uuid, name: c.name, phone: c.phone, city: c.city })),
+      cities: [...new Set(CUSTOMERS.map((c) => c.city))].sort(),
+    },
+  })),
+  'GET /api/customers/:id': withUser((req) => {
+    const c = CUSTOMERS.find((x) => x.uuid === req.match[1]);
+    if (!c) return { status: 404, body: { code: 'not_found', message: '顧客が見つかりません' } };
+    return { body: { customer: customerDetailView(c) }, schema: customerDetailResponseSchema };
+  }),
+  'POST /api/reports/daily/generate': withUser(() => ({
+    body: { draft: gasHandlers.generateReportWithWarnings?.([], { today: '' }) },
+    schema: generateDailyReportResponseSchema,
+  })),
+  'POST /api/reports/accident/generate': withUser(() => ({
+    body: { draft: gasHandlers.generateAccidentReport?.([], { today: '' }) },
+    schema: generateAccidentReportResponseSchema,
+  })),
+  'POST /api/reports/daily': withUser((req, user) => ({
+    body: {
+      success: true,
+      message: '保存しました',
+      report: {
+        id: String(req.body.reportId ?? MOCK_REPORT_ID),
+        occurredAt: `${req.state.today}T01:00:00.000Z`,
+        staffId: user.id,
+        customerId: String(req.body.customerId),
+        riskRating: (req.body.riskRating as number | null) ?? null,
+        esRating: (req.body.esRating as number | null) ?? null,
+        content: {
+          startTime: String(req.body.startTime ?? ''),
+          endTime: String(req.body.endTime ?? ''),
+          inputText: String(req.body.inputText ?? ''),
+          internalText: String(req.body.internalText ?? ''),
+          customerText: String(req.body.customerText ?? ''),
+        },
+      },
+    },
+    schema: saveDailyReportResponseSchema,
+  })),
+  'POST /api/reports/accident': withUser((req, user) => ({
+    body: {
+      success: true,
+      report: {
+        id: String(req.body.reportId ?? MOCK_REPORT_ID),
+        occurredAt: `${req.state.today}T01:00:00.000Z`,
+        staffId: user.id,
+        customerId: String(req.body.customerId),
+        reportType: String(req.body.reportType ?? '事故報告'),
+        content: {},
+      },
+    },
+    schema: saveAccidentReportResponseSchema,
+  })),
+  'POST /api/reports/visit-complete': withUser(() => ({
+    body: { success: true },
+    schema: visitCompleteResponseSchema,
+  })),
+  'POST /api/receipts/ocr': withUser(() => ({
+    body: { result: gasHandlers.extractAmountFromImage?.([], { today: '' }) },
+    schema: receiptOcrResponseSchema,
+  })),
+  'POST /api/receipts': withUser((req) => {
+    const count = Array.isArray(req.body.images) ? req.body.images.length : 0;
+    return {
+      body: {
+        success: true,
+        message: '領収書を送りました',
+        uploadedCount: count,
+        duplicateCount: 0,
+        duplicates: [],
+        uploadBatchId: MOCK_REPORT_ID,
+      },
+      schema: uploadReceiptsResponseSchema,
+    };
+  }),
 };
 
 /** キー 'GET /api/customers/:id' のような書き方を正規表現にする。 */
