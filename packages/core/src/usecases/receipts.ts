@@ -7,7 +7,8 @@ import {
   normalizeText,
   parseJstTimestampString,
 } from '../domain';
-import type { BlindIndexPort, CryptoPort } from '../ports/crypto';
+import type { AppLogPort } from '../ports/appLog';
+import type { BlindIndexPort, CryptoPort, EncryptedValue } from '../ports/crypto';
 import type { MirrorPort } from '../ports/mirror';
 import type { NotifierPort } from '../ports/notifier';
 import type {
@@ -16,6 +17,8 @@ import type {
   StaffRepositoryPort,
 } from '../ports/repositories';
 import type { StoragePort } from '../ports/storage';
+import { notifyWithLog } from './notify';
+import type { Actor, RequestMeta } from './requestMeta';
 
 export interface ReceiptDeps {
   receipts: ReceiptRepositoryPort;
@@ -25,12 +28,13 @@ export interface ReceiptDeps {
   blindIndex: BlindIndexPort;
   storage: StoragePort;
   notifier: NotifierPort;
-  /** 領収書ログシート+Driveフォルダへのミラー書き込み要求をoutboxに積む(Phase 5)。 */
+  /** 領収書ログシート+Driveフォルダへのミラー書き込み要求をoutboxに積む。 */
   mirror: MirrorPort;
+  appLog: AppLogPort;
 }
 
 export interface ReceiptImageInput {
-  /** data URL('data:image/jpeg;base64,...')。GAS版processReceiptImagesの base64Data と同じ。 */
+  /** data URL('data:image/jpeg;base64,...')。 */
   data: string;
   amount?: string | number | null;
   storeName?: string | null;
@@ -39,12 +43,19 @@ export interface ReceiptImageInput {
 }
 
 export interface UploadReceiptsInput {
-  staffId: string;
+  actor: Actor;
+  /** 管理者が他スタッフ名義で登録する場合のみ有効。 */
+  requestedStaffId?: string;
+  /** nullは「お客様の指定なし」の領収書(GAS版openStandaloneReceiptModal)。 */
   customerId: string | null;
+  /** 顧客マスタに無いお客様の氏名。customerIdがある場合は無視する。 */
+  customerNameText?: string;
   images: ReceiptImageInput[];
-  /** 'yyyy/MM/dd HH:mm:ss'。各画像にreceiptDateが無い場合のフォールバック時刻。 */
+  /** 'yyyy/MM/dd HH:mm:ss'。画像にreceiptDateが無い場合の日時(resolveReceiptFallbackTimestamp参照)。 */
   fallbackTimestamp: string;
-  handoffText?: string;
+  /** 申し送り。1回のアップロードに1つだけで、バッチ先頭の行にだけ保存する。 */
+  handoffText: string;
+  meta?: RequestMeta;
 }
 
 export interface ReceiptDuplicateInfo {
@@ -54,56 +65,68 @@ export interface ReceiptDuplicateInfo {
   storeName: string;
 }
 
-export interface UploadReceiptsResult {
-  success: boolean;
+export interface UploadReceiptsSummary {
   message: string;
   uploadedCount: number;
   duplicateCount: number;
   duplicates: ReceiptDuplicateInfo[];
+  /** 今回の登録で採番したバッチID。1件も登録しなかった場合はnull。 */
+  uploadBatchId: string | null;
 }
+
+export type UploadReceiptsResult =
+  | ({ ok: true } & UploadReceiptsSummary)
+  | { ok: false; reason: 'no_images' | 'staff_not_found' | 'customer_not_found' };
 
 function decodeDataUrl(dataUrl: string): { contentType: string; bytes: Uint8Array } | null {
   const commaIndex = dataUrl.indexOf(',');
   if (commaIndex < 0) return null;
-  const header = dataUrl.slice(0, commaIndex);
   const base64Body = dataUrl.slice(commaIndex + 1);
   if (!base64Body) return null;
-  const match = /^data:(.*?);base64$/.exec(header);
-  const contentType = match?.[1] || 'image/jpeg';
+  const contentType = /^data:(.*?);base64$/.exec(dataUrl.slice(0, commaIndex))?.[1] || 'image/jpeg';
   return { contentType, bytes: new Uint8Array(Buffer.from(base64Body, 'base64')) };
 }
 
+function encryptOptional(deps: ReceiptDeps, tenantId: string, value: string): Promise<EncryptedValue | null> {
+  return value ? deps.crypto.encrypt(tenantId, value) : Promise.resolve(null);
+}
+
 /**
- * 領収書画像をアップロードする。GAS版Main.jsのprocessReceiptImages/uploadReceiptsOnlyに対応。
- * 「スタッフ・顧客・日時・金額・店舗名」が全て一致するものはブラインドインデックスで重複検出し
- * 登録をブロックする(金額または店舗名が未入力の画像は判定対象外。GAS版canCheckDuplicateと同じ)。
- * 登録成功が1件以上あればGoogle Chatへ通知する。
+ * 領収書画像をアップロードする。GAS版Main.js uploadReceiptsOnly/processReceiptImagesに対応。
+ *
+ * - 担当スタッフは管理者以外は本人に固定する(CLAUDE.mdのadmin-vs-selfパターン)。
+ * - 「スタッフ・顧客・日時・金額・店舗名」が既存の登録と全て一致する画像は重複として登録しない
+ *   (金額または店舗名が未入力の画像は判定しない。同じ操作内の同一内容は往復運賃等のため全件登録する)。
+ * - 1回の操作で登録した行は同じupload_batch_idを持ち、申し送りは最初に登録した行にだけ保存する。
+ * - 1件以上登録できたらGoogle Chatへ通知する(GAS版sendReceiptNotification)。
  */
 export async function uploadReceipts(
   deps: ReceiptDeps,
   tenantId: string,
   input: UploadReceiptsInput,
 ): Promise<UploadReceiptsResult> {
-  if (!input.images || input.images.length === 0) {
-    return {
-      success: false,
-      message: '領収書画像がありません。',
-      uploadedCount: 0,
-      duplicateCount: 0,
-      duplicates: [],
-    };
-  }
+  if (input.images.length === 0) return { ok: false, reason: 'no_images' };
 
-  const perImage = await Promise.all(
+  const staffId = input.actor.isAdmin
+    ? input.requestedStaffId?.trim() || input.actor.staffId
+    : input.actor.staffId;
+  const [staff, customer] = await Promise.all([
+    deps.staff.findById(tenantId, staffId),
+    input.customerId ? deps.customers.findById(tenantId, input.customerId) : Promise.resolve(null),
+  ]);
+  if (!staff) return { ok: false, reason: 'staff_not_found' };
+  if (input.customerId && !customer) return { ok: false, reason: 'customer_not_found' };
+  const customerNameText = customer ? null : normalizeText(input.customerNameText) || null;
+
+  const candidates = await Promise.all(
     input.images.map(async (img, index) => {
       const timestamp = normalizeText(img.receiptDate) || input.fallbackTimestamp;
-      const canCheck = canCheckReceiptDuplicate({ amount: img.amount, storeName: img.storeName });
-      const dedupeBlindIndex = canCheck
+      const dedupeBlindIndex = canCheckReceiptDuplicate({ amount: img.amount, storeName: img.storeName })
         ? await deps.blindIndex.compute(
             tenantId,
             buildReceiptDedupeKey({
               timestamp,
-              staffId: input.staffId,
+              staffId,
               customerId: input.customerId ?? '',
               amount: img.amount,
               storeName: img.storeName,
@@ -113,50 +136,49 @@ export async function uploadReceipts(
       return { index, img, timestamp, dedupeBlindIndex };
     }),
   );
+  const existing = await deps.receipts.findExistingDedupeIndexes(
+    tenantId,
+    candidates.map((c) => c.dedupeBlindIndex).filter((v): v is string => v !== null),
+  );
 
-  const candidateIndexes = perImage.map((p) => p.dedupeBlindIndex).filter((v): v is string => v !== null);
-  const existing =
-    candidateIndexes.length > 0
-      ? await deps.receipts.findExistingDedupeIndexes(tenantId, candidateIndexes)
-      : new Set<string>();
-
+  const uploadBatchId = randomUUID();
+  const handoffText = input.handoffText.trim();
   const duplicates: ReceiptDuplicateInfo[] = [];
-  const registeredImages: { amount: string; storeName: string }[] = [];
-  let uploadedCount = 0;
+  const registered: { amount: string; storeName: string }[] = [];
 
-  for (const p of perImage) {
-    if (p.dedupeBlindIndex && existing.has(p.dedupeBlindIndex)) {
+  for (const c of candidates) {
+    if (c.dedupeBlindIndex && existing.has(c.dedupeBlindIndex)) {
       duplicates.push({
-        index: p.index,
-        timestamp: p.timestamp,
-        amount: normalizeAmount(p.img.amount),
-        storeName: normalizeText(p.img.storeName),
+        index: c.index,
+        timestamp: c.timestamp,
+        amount: normalizeAmount(c.img.amount),
+        storeName: normalizeText(c.img.storeName),
       });
       continue;
     }
-
-    const decoded = decodeDataUrl(p.img.data);
+    const decoded = decodeDataUrl(c.img.data);
     if (!decoded) continue;
 
     const fileKey = `${tenantId}/receipts/${randomUUID()}.jpg`;
     await deps.storage.put(fileKey, decoded.contentType, decoded.bytes);
 
+    const amount = normalizeText(c.img.amount == null ? '' : String(c.img.amount));
+    const storeName = normalizeText(c.img.storeName);
+    const isFirst = registered.length === 0;
     const [amountEnc, storeNameEnc, handoffEnc] = await Promise.all([
-      p.img.amount !== undefined && p.img.amount !== null && p.img.amount !== ''
-        ? deps.crypto.encrypt(tenantId, String(p.img.amount))
-        : Promise.resolve(null),
-      p.img.storeName ? deps.crypto.encrypt(tenantId, p.img.storeName) : Promise.resolve(null),
-      input.handoffText && input.handoffText.trim()
-        ? deps.crypto.encrypt(tenantId, input.handoffText.trim())
-        : Promise.resolve(null),
+      encryptOptional(deps, tenantId, amount),
+      encryptOptional(deps, tenantId, storeName),
+      encryptOptional(deps, tenantId, isFirst ? handoffText : ''),
     ]);
 
-    const receiptRecord = await deps.receipts.create({
+    const receipt = await deps.receipts.create({
       tenantId,
-      staffId: input.staffId,
-      customerId: input.customerId,
-      receiptTimestamp: parseJstTimestampString(p.timestamp),
-      dedupeBlindIndex: p.dedupeBlindIndex,
+      staffId,
+      customerId: customer?.id ?? null,
+      customerNameText,
+      uploadBatchId,
+      receiptTimestamp: parseJstTimestampString(c.timestamp),
+      dedupeBlindIndex: c.dedupeBlindIndex,
       amount: amountEnc,
       storeName: storeNameEnc,
       handoffText: handoffEnc,
@@ -166,37 +188,53 @@ export async function uploadReceipts(
     await deps.mirror.enqueue({
       tenantId,
       kind: 'receipt',
-      targetId: receiptRecord.id,
+      targetId: receipt.id,
       idempotencyKey: randomUUID(),
     });
-
-    registeredImages.push({
-      amount: normalizeText(String(p.img.amount ?? '')),
-      storeName: normalizeText(p.img.storeName),
-    });
-    uploadedCount++;
+    registered.push({ amount, storeName });
   }
 
-  let message = `領収書を${uploadedCount}件アップロードしました`;
-  if (duplicates.length > 0) message += `(重複${duplicates.length}件は登録しませんでした)`;
+  let message = `領収書を${registered.length}件アップロードしました`;
+  if (duplicates.length > 0) message += `（重複${duplicates.length}件は登録しませんでした）`;
 
-  if (uploadedCount > 0) {
-    const staffRecord = await deps.staff.findById(tenantId, input.staffId);
-    const staffName = staffRecord ? staffRecord.name : '不明';
-    const customerRecord = input.customerId
-      ? await deps.customers.findById(tenantId, input.customerId)
-      : null;
-    const customerName = customerRecord ? customerRecord.name : null;
-
-    const notificationText = buildReceiptNotificationText({
-      staffName,
-      customerName,
-      receiptTimestamp: input.fallbackTimestamp,
-      registeredImages,
-      handoffText: input.handoffText || '',
-    });
-    await deps.notifier.notify(tenantId, 'receipt', notificationText);
+  if (registered.length > 0) {
+    await notifyWithLog(
+      deps,
+      tenantId,
+      'receipt',
+      buildReceiptNotificationText({
+        staffName: staff.name,
+        customerName: customer?.name ?? customerNameText,
+        receiptTimestamp: input.fallbackTimestamp,
+        registeredImages: registered,
+        handoffText,
+      }),
+      input.actor.staffId,
+    );
   }
 
-  return { success: true, message, uploadedCount, duplicateCount: duplicates.length, duplicates };
+  await deps.appLog.write({
+    tenantId,
+    level: 'INFO',
+    action: 'receipt.uploaded',
+    actorStaffId: input.actor.staffId,
+    targetStaffId: staffId === input.actor.staffId ? null : staffId,
+    details: {
+      uploadBatchId: registered.length > 0 ? uploadBatchId : null,
+      customerId: customer?.id ?? null,
+      standalone: !customer,
+      uploadedCount: registered.length,
+      duplicateCount: duplicates.length,
+    },
+    ...input.meta,
+  });
+
+  return {
+    ok: true,
+    message,
+    uploadedCount: registered.length,
+    duplicateCount: duplicates.length,
+    duplicates,
+    uploadBatchId: registered.length > 0 ? uploadBatchId : null,
+  };
 }

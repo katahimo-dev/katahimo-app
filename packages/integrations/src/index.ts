@@ -11,4 +11,5 @@ export * from './google-chat';
 export * from './local-crypto';
 export * from './local-kms';
 export * from './local-storage';
+export * from './mail';
 export * from './mirror';

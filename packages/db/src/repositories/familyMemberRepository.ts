@@ -23,6 +23,22 @@ function toRecord(row: FamilyMemberRow): FamilyMemberRecord {
     name: { ciphertext: row.nameCiphertext, keyVersion: row.nameKeyVersion },
     dob: encField(row.dobCiphertext, row.dobKeyVersion),
     info: encField(row.infoCiphertext, row.infoKeyVersion),
+    allergy: encField(row.allergyCiphertext, row.allergyKeyVersion),
+  };
+}
+
+function toRow(input: NewFamilyMemberInput): typeof familyMembers.$inferInsert {
+  return {
+    tenantId: input.tenantId,
+    customerId: input.customerId,
+    nameCiphertext: input.name.ciphertext,
+    nameKeyVersion: input.name.keyVersion,
+    dobCiphertext: input.dob?.ciphertext ?? null,
+    dobKeyVersion: input.dob?.keyVersion ?? null,
+    infoCiphertext: input.info?.ciphertext ?? null,
+    infoKeyVersion: input.info?.keyVersion ?? null,
+    allergyCiphertext: input.allergy?.ciphertext ?? null,
+    allergyKeyVersion: input.allergy?.keyVersion ?? null,
   };
 }
 
@@ -34,21 +50,7 @@ export class DrizzleFamilyMemberRepository implements FamilyMemberRepositoryPort
     const tenantId = inputs[0]?.tenantId;
     if (!tenantId) return [];
     return withTenant(this.db, tenantId, async (tx) => {
-      const rows = await tx
-        .insert(familyMembers)
-        .values(
-          inputs.map((input) => ({
-            tenantId: input.tenantId,
-            customerId: input.customerId,
-            nameCiphertext: input.name.ciphertext,
-            nameKeyVersion: input.name.keyVersion,
-            dobCiphertext: input.dob?.ciphertext ?? null,
-            dobKeyVersion: input.dob?.keyVersion ?? null,
-            infoCiphertext: input.info?.ciphertext ?? null,
-            infoKeyVersion: input.info?.keyVersion ?? null,
-          })),
-        )
-        .returning();
+      const rows = await tx.insert(familyMembers).values(inputs.map(toRow)).returning();
       return rows.map(toRecord);
     });
   }
@@ -75,21 +77,7 @@ export class DrizzleFamilyMemberRepository implements FamilyMemberRepositoryPort
 
       if (inputs.length === 0) return [];
 
-      const rows = await tx
-        .insert(familyMembers)
-        .values(
-          inputs.map((input) => ({
-            tenantId: input.tenantId,
-            customerId: input.customerId,
-            nameCiphertext: input.name.ciphertext,
-            nameKeyVersion: input.name.keyVersion,
-            dobCiphertext: input.dob?.ciphertext ?? null,
-            dobKeyVersion: input.dob?.keyVersion ?? null,
-            infoCiphertext: input.info?.ciphertext ?? null,
-            infoKeyVersion: input.info?.keyVersion ?? null,
-          })),
-        )
-        .returning();
+      const rows = await tx.insert(familyMembers).values(inputs.map(toRow)).returning();
       return rows.map(toRecord);
     });
   }

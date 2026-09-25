@@ -1,4 +1,4 @@
-import type { NotificationChannel, NotifierPort } from '@katahimo/core/ports';
+import type { NotificationChannel, NotifierPort, NotifyResult } from '@katahimo/core/ports';
 
 /**
  * チャンネルごとのWebhook URLを解決する。テナントが管理者設定画面で独自のURLを保存していれば
@@ -10,9 +10,8 @@ export interface WebhookUrlResolver {
 
 /**
  * Google Chat Incoming Webhookへの通知。GAS版GoogleChat.js sendToGoogleChatWebhook_に対応。
- * Webhook URL未設定の場合は通知をスキップする(GAS版と同じフォールバック)。
- * URLの解決先はresolver(WebhookUrlResolver)に委譲する(テナントごとのWebhook URL管理画面が
- * 追加されたため、コンストラクタに静的なURLを固定で持たせず、呼び出しのたびに解決する)。
+ * 例外は投げず結果を返す(未設定・失敗のログ記録は呼び出し側のusecases/notify.tsが行う)。
+ * testMode(GAS版Script Properties TEST_MODEに相当)では送信をスキップする。
  */
 export class WebhookNotifierPort implements NotifierPort {
   constructor(
@@ -20,16 +19,10 @@ export class WebhookNotifierPort implements NotifierPort {
     private readonly testMode = false,
   ) {}
 
-  async notify(tenantId: string, channel: NotificationChannel, text: string): Promise<void> {
+  async notify(tenantId: string, channel: NotificationChannel, text: string): Promise<NotifyResult> {
     const url = await this.resolver.resolve(tenantId, channel);
-    if (!url) {
-      console.warn(`[GoogleChat] Webhook URL not configured for channel=${channel}; skipping notification`);
-      return;
-    }
-    if (this.testMode) {
-      console.log(`[GoogleChat][TEST_MODE] notification skipped. text=${text.slice(0, 80)}`);
-      return;
-    }
+    if (!url) return { status: 'not_configured' };
+    if (this.testMode) return { status: 'skipped', reason: 'test_mode' };
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -38,10 +31,11 @@ export class WebhookNotifierPort implements NotifierPort {
       });
       if (!response.ok) {
         const body = await response.text();
-        console.error(`[GoogleChat] Notification failed: HTTP ${response.status} ${body.slice(0, 200)}`);
+        return { status: 'failed', httpStatus: response.status, error: body.slice(0, 200) };
       }
+      return { status: 'sent' };
     } catch (e) {
-      console.error(`[GoogleChat] Notification error: ${e instanceof Error ? e.message : String(e)}`);
+      return { status: 'failed', error: e instanceof Error ? e.message : String(e) };
     }
   }
 }

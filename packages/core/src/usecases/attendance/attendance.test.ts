@@ -388,6 +388,8 @@ describe('勤怠usecase', () => {
           tenantId,
           staffId: self.staffId,
           customerId: null,
+          customerNameText: null,
+          uploadBatchId: null,
           receiptTimestamp: new Date(timestamp),
           dedupeBlindIndex: null,
           amount: amount === null ? null : { ciphertext: `ENC:${amount}`, keyVersion: 1 },

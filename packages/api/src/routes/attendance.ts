@@ -10,6 +10,7 @@ import {
   updateAttendanceDay,
 } from '@katahimo/core';
 import type { ResolvedSession } from '@katahimo/core/usecases';
+import type { ApiError } from '@katahimo/shared';
 import {
   attendanceDayQuerySchema,
   attendanceMonthQuerySchema,
@@ -22,10 +23,13 @@ import {
 import { type Context, Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Container } from '../container';
-import { getAuthenticatedSession, resolveAttendanceTargetStaffId } from '../session';
-import { parseJsonBody, parseQuery } from '../validation';
+import { apiError, parseJsonBody, parseQuery } from '../http/responses';
+import { requireSession, resolveAttendanceTargetStaffId, type SessionEnv } from '../session';
 
-const ERROR_RESPONSES: Record<AttendanceError['code'], { status: ContentfulStatusCode; code: string }> = {
+const ERROR_RESPONSES: Record<
+  AttendanceError['code'],
+  { status: ContentfulStatusCode; code: ApiError['code'] }
+> = {
   staff_not_found: { status: 404, code: 'not_found' },
   forbidden: { status: 403, code: 'forbidden' },
   locked: { status: 400, code: 'locked' },
@@ -43,24 +47,19 @@ function toActor(session: ResolvedSession): AttendanceActor {
  * staffId で他スタッフを指定できる(resolveAttendanceTargetStaffId)。
  */
 export function createAttendanceRoutes(container: Container) {
-  const app = new Hono<{ Variables: { session: ResolvedSession } }>();
+  const app = new Hono<SessionEnv>();
 
-  app.use('*', async (c, next) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-    c.set('session', session);
-    await next();
-  });
+  app.use('*', requireSession(container, 'attendance'));
 
   app.onError((error, c) => {
     if (error instanceof AttendanceError) {
       const { status, code } = ERROR_RESPONSES[error.code];
-      return c.json({ code, message: error.message }, status);
+      return apiError(c, status, code, error.message);
     }
     throw error;
   });
 
-  const target = (c: Context<{ Variables: { session: ResolvedSession } }>, staffId: string | undefined) =>
+  const target = (c: Context<SessionEnv>, staffId: string | undefined) =>
     resolveAttendanceTargetStaffId(c.get('session'), staffId);
 
   /** 指定日の出勤簿1日分(GAS版 getPastScheduleForDate)。 */

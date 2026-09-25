@@ -32,7 +32,3 @@ export interface CalendarSyncDeps extends AttendanceDeps {
 export interface NightlyCalendarSyncDeps extends CalendarSyncDeps {
   tenants: TenantRepositoryPort;
 }
-
-export function currentTime(deps: Pick<AttendanceDeps, 'now'>): Date {
-  return deps.now ? deps.now() : new Date();
-}

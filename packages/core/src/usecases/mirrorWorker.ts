@@ -118,9 +118,11 @@ const mirrorReceipt: JobHandler = async (deps, tenantId, targetId) => {
   ]);
   if (!imageBytes) return;
   await deps.sender.sendReceipt({
+    receiptId: record.id,
+    uploadBatchId: record.uploadBatchId ?? '',
     staffName,
     customerId: record.customerId ?? '',
-    customerName,
+    customerName: customerName || (record.customerNameText ?? ''),
     receiptTimestampJst: formatJstDateTime(record.receiptTimestamp),
     amount,
     storeName,

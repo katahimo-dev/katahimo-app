@@ -19,7 +19,8 @@ import {
   logCrossStaffRead,
   writeActorLog,
 } from './access';
-import { type AttendanceDeps, currentTime } from './deps';
+import { currentTime } from './clock';
+import type { AttendanceDeps } from './deps';
 import { AttendanceError } from './errors';
 import { encryptRowData, enqueueAttendanceDayMirror, readRowData } from './records';
 

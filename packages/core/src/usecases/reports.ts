@@ -7,6 +7,7 @@ import {
   parseJstDateTime,
 } from '../domain';
 import type { AccidentReportContent, DailyReportContent } from '../domain/reports/types';
+import type { AppLogPort } from '../ports/appLog';
 import type { CryptoPort } from '../ports/crypto';
 import type { MirrorPort } from '../ports/mirror';
 import type { NotifierPort } from '../ports/notifier';
@@ -16,6 +17,8 @@ import type {
   DailyReportRepositoryPort,
   StaffRepositoryPort,
 } from '../ports/repositories';
+import { notifyWithLog } from './notify';
+import type { Actor, RequestMeta } from './requestMeta';
 
 export interface ReportDeps {
   dailyReports: DailyReportRepositoryPort;
@@ -24,30 +27,100 @@ export interface ReportDeps {
   staff: StaffRepositoryPort;
   crypto: CryptoPort;
   notifier: NotifierPort;
-  /** GAS版「日報」「事故報告」シートへのミラー書き込み要求をoutboxに積む(Phase 5)。 */
+  /** GAS版「日報」「事故報告」シートへのミラー書き込み要求をoutboxに積む。 */
   mirror: MirrorPort;
+  appLog: AppLogPort;
 }
 
-async function resolveNames(
+export type SaveReportFailure = 'report_not_found' | 'forbidden' | 'staff_not_found' | 'customer_not_found';
+
+export type SaveReportResult<T> = { ok: true; report: T } | { ok: false; reason: SaveReportFailure };
+
+/** 保存・上書きの共通入力。担当スタッフはクライアントの申告ではなくactorから決める。 */
+interface SaveReportCommon {
+  actor: Actor;
+  /** 管理者が他スタッフ名義で保存する場合のみ有効。管理者以外が渡しても無視する。 */
+  requestedStaffId?: string;
+  /** 既存レポートの上書き保存(GAS版のrowIndex指定に相当)。 */
+  reportId?: string;
+  customerId: string;
+  meta?: RequestMeta;
+}
+
+interface ReportTarget {
+  staffId: string;
+  staffName: string;
+  customerName: string;
+}
+
+/**
+ * 保存先の担当スタッフを決め、上書きの権限を確認する(CLAUDE.mdのadmin-vs-selfパターン)。
+ * - 管理者以外: 常に本人。上書きは本人のレポートに限る(GAS版は行番号さえ分かれば他人の日報を
+ *   上書きできてしまっていた穴を塞ぐ)。
+ * - 管理者: 明示指定 → 上書き対象の元の担当者 → 本人 の順。
+ */
+async function resolveReportTarget(
   deps: ReportDeps,
   tenantId: string,
-  staffId: string,
-  customerId: string,
-): Promise<{ staffName: string; customerName: string }> {
-  const [staffRecord, customerRecord] = await Promise.all([
+  input: SaveReportCommon,
+  existingStaffId: string | null,
+): Promise<{ ok: true; target: ReportTarget } | { ok: false; reason: SaveReportFailure }> {
+  const { actor } = input;
+  if (existingStaffId !== null && !actor.isAdmin && existingStaffId !== actor.staffId) {
+    return { ok: false, reason: 'forbidden' };
+  }
+  const staffId = actor.isAdmin
+    ? input.requestedStaffId?.trim() || existingStaffId || actor.staffId
+    : actor.staffId;
+
+  const [staff, customer] = await Promise.all([
     deps.staff.findById(tenantId, staffId),
-    deps.customers.findById(tenantId, customerId),
+    deps.customers.findById(tenantId, input.customerId),
   ]);
-  if (!staffRecord) throw new Error('スタッフが見つかりません');
-  if (!customerRecord) throw new Error('顧客が見つかりません');
-  return { staffName: staffRecord.name, customerName: customerRecord.name };
+  if (!staff) return { ok: false, reason: 'staff_not_found' };
+  if (!customer) return { ok: false, reason: 'customer_not_found' };
+  return { ok: true, target: { staffId, staffName: staff.name, customerName: customer.name } };
 }
 
-export interface SaveDailyReportInput {
-  /** 既存レポートの上書き保存(GAS版saveReportのrowIndex指定に相当)。 */
-  reportId?: string;
-  staffId: string;
-  customerId: string;
+async function logReportDenied(
+  deps: ReportDeps,
+  tenantId: string,
+  kind: 'daily' | 'accident',
+  input: SaveReportCommon,
+  reason: SaveReportFailure,
+  existingStaffId: string | null,
+): Promise<void> {
+  await deps.appLog.write({
+    tenantId,
+    level: reason === 'forbidden' ? 'SECURITY' : 'WARN',
+    action: `report.${kind}.save_denied`,
+    actorStaffId: input.actor.staffId,
+    targetStaffId: existingStaffId,
+    details: { reason, reportId: input.reportId ?? null, customerId: input.customerId },
+    ...input.meta,
+  });
+}
+
+async function logReportSaved(
+  deps: ReportDeps,
+  tenantId: string,
+  kind: 'daily' | 'accident',
+  input: SaveReportCommon,
+  reportId: string,
+  targetStaffId: string,
+): Promise<void> {
+  await deps.appLog.write({
+    tenantId,
+    level: 'INFO',
+    action: `report.${kind}.saved`,
+    actorStaffId: input.actor.staffId,
+    targetStaffId: targetStaffId === input.actor.staffId ? null : targetStaffId,
+    details: { reportId, customerId: input.customerId, mode: input.reportId ? 'update' : 'create' },
+    ...input.meta,
+  });
+}
+
+export interface SaveDailyReportInput extends SaveReportCommon {
   /** 'YYYY-MM-DD'。省略時は保存時刻をそのまま使う(GAS版saveReportと同じ)。 */
   reportDate?: string;
   startTime: string;
@@ -70,74 +143,85 @@ export interface DailyReportView {
 }
 
 /**
- * 保育日報を保存する。GAS版Main.js saveReportに対応(スタッフ名/顧客IDの権限チェックは
- * 呼び出し側のAPIルートがCLAUDE.mdのセキュリティパターンに沿って解決済みのstaffIdを渡す前提)。
- * 保存に成功したらGoogle Chatへ通知する(GAS版のsendReportNotification相当)。
+ * 保育日報を保存する。GAS版Main.js saveReportに対応。
+ * 保存に成功したらGoogle Chatへ通知し(GAS版sendReportNotification)、スプレッドシートへのミラーを積む。
  */
 export async function saveDailyReport(
   deps: ReportDeps,
   tenantId: string,
   input: SaveDailyReportInput,
-): Promise<DailyReportView> {
-  const occurredAt = input.reportDate ? parseJstDateTime(input.reportDate, input.startTime) : new Date();
-  const content: DailyReportContent = {
-    startTime: input.startTime || '',
-    endTime: input.endTime || '',
-    inputText: input.inputText || '',
-    internalText: input.internalText || '',
-    customerText: input.customerText || '',
-  };
-  const encryptedContent = await deps.crypto.encrypt(tenantId, JSON.stringify(content));
+): Promise<SaveReportResult<DailyReportView>> {
+  const existing = input.reportId ? await deps.dailyReports.findById(tenantId, input.reportId) : null;
+  if (input.reportId && !existing) {
+    await logReportDenied(deps, tenantId, 'daily', input, 'report_not_found', null);
+    return { ok: false, reason: 'report_not_found' };
+  }
+  const resolved = await resolveReportTarget(deps, tenantId, input, existing?.staffId ?? null);
+  if (!resolved.ok) {
+    await logReportDenied(deps, tenantId, 'daily', input, resolved.reason, existing?.staffId ?? null);
+    return resolved;
+  }
+  const { target } = resolved;
 
-  const newInput = {
+  const content: DailyReportContent = {
+    startTime: input.startTime,
+    endTime: input.endTime,
+    inputText: input.inputText,
+    internalText: input.internalText,
+    customerText: input.customerText,
+  };
+  const record = {
     tenantId,
-    staffId: input.staffId,
+    staffId: target.staffId,
     customerId: input.customerId,
-    occurredAt,
+    occurredAt: input.reportDate ? parseJstDateTime(input.reportDate, input.startTime) : new Date(),
     riskRating: input.riskRating,
     esRating: input.esRating,
-    content: encryptedContent,
+    content: await deps.crypto.encrypt(tenantId, JSON.stringify(content)),
   };
-
-  const record = input.reportId
-    ? ((await deps.dailyReports.update(tenantId, input.reportId, newInput)) ??
-      (await deps.dailyReports.create(newInput)))
-    : await deps.dailyReports.create(newInput);
+  const saved = existing
+    ? await deps.dailyReports.update(tenantId, existing.id, record)
+    : await deps.dailyReports.create(record);
+  if (!saved) return { ok: false, reason: 'report_not_found' };
 
   await deps.mirror.enqueue({
     tenantId,
     kind: 'daily_report',
-    targetId: record.id,
+    targetId: saved.id,
     idempotencyKey: randomUUID(),
   });
-
-  const { staffName, customerName } = await resolveNames(deps, tenantId, input.staffId, input.customerId);
-  const notificationText = buildDailyReportNotificationText({
-    staffName,
-    customerName,
-    content: { startTime: content.startTime, endTime: content.endTime, internalText: content.internalText },
-    riskRating: input.riskRating,
-    esRating: input.esRating,
-  });
-  await deps.notifier.notify(tenantId, 'report', notificationText);
+  await notifyWithLog(
+    deps,
+    tenantId,
+    'report',
+    buildDailyReportNotificationText({
+      staffName: target.staffName,
+      customerName: target.customerName,
+      content,
+      riskRating: input.riskRating,
+      esRating: input.esRating,
+    }),
+    input.actor.staffId,
+  );
+  await logReportSaved(deps, tenantId, 'daily', input, saved.id, target.staffId);
 
   return {
-    id: record.id,
-    occurredAt: record.occurredAt,
-    staffId: record.staffId,
-    customerId: record.customerId,
-    riskRating: record.riskRating,
-    esRating: record.esRating,
-    content,
+    ok: true,
+    report: {
+      id: saved.id,
+      occurredAt: saved.occurredAt,
+      staffId: saved.staffId,
+      customerId: saved.customerId,
+      riskRating: saved.riskRating,
+      esRating: saved.esRating,
+      content,
+    },
   };
 }
 
-export interface SaveAccidentReportInput {
-  reportId?: string;
-  staffId: string;
-  customerId: string;
-  /** '事故報告' | 'ヒヤリハット'。省略時は'事故報告'(GAS版と同じデフォルト)。 */
-  reportType?: string;
+export interface SaveAccidentReportInput extends SaveReportCommon {
+  /** '事故報告' | 'ヒヤリハット'。 */
+  reportType: string;
   targetName: string;
   targetDob: string;
   occurrenceTime: string;
@@ -162,16 +246,28 @@ export interface AccidentReportView {
 
 /**
  * 事故報告/ヒヤリハットを保存する。GAS版Main.js saveAccidentReportに対応。
- * 保存日時は常に保存操作時の時刻(GAS版と同じく、訪問日時の遡り指定はできない)。
+ * 記録日時は常に保存操作時の時刻(GAS版と同じく、上書き時も保存時刻に更新される)。
  */
 export async function saveAccidentReport(
   deps: ReportDeps,
   tenantId: string,
   input: SaveAccidentReportInput,
-): Promise<AccidentReportView> {
+): Promise<SaveReportResult<AccidentReportView>> {
+  const existing = input.reportId ? await deps.accidentReports.findById(tenantId, input.reportId) : null;
+  if (input.reportId && !existing) {
+    await logReportDenied(deps, tenantId, 'accident', input, 'report_not_found', null);
+    return { ok: false, reason: 'report_not_found' };
+  }
+  const resolved = await resolveReportTarget(deps, tenantId, input, existing?.staffId ?? null);
+  if (!resolved.ok) {
+    await logReportDenied(deps, tenantId, 'accident', input, resolved.reason, existing?.staffId ?? null);
+    return resolved;
+  }
+  const { target } = resolved;
+
   const content: AccidentReportContent = {
-    targetName: input.targetName || '',
-    targetDob: input.targetDob || '',
+    targetName: input.targetName,
+    targetDob: input.targetDob,
     occurrenceTime: input.occurrenceTime,
     location: input.location,
     accidentContent: input.accidentContent,
@@ -183,45 +279,49 @@ export async function saveAccidentReport(
     inputText: input.inputText,
   };
   const reportType = input.reportType || '事故報告';
-  const encryptedContent = await deps.crypto.encrypt(tenantId, JSON.stringify(content));
-
-  const newInput = {
+  const record = {
     tenantId,
-    staffId: input.staffId,
+    staffId: target.staffId,
     customerId: input.customerId,
     occurredAt: new Date(),
     reportType,
-    content: encryptedContent,
+    content: await deps.crypto.encrypt(tenantId, JSON.stringify(content)),
   };
-
-  const record = input.reportId
-    ? ((await deps.accidentReports.update(tenantId, input.reportId, newInput)) ??
-      (await deps.accidentReports.create(newInput)))
-    : await deps.accidentReports.create(newInput);
+  const saved = existing
+    ? await deps.accidentReports.update(tenantId, existing.id, record)
+    : await deps.accidentReports.create(record);
+  if (!saved) return { ok: false, reason: 'report_not_found' };
 
   await deps.mirror.enqueue({
     tenantId,
     kind: 'accident_report',
-    targetId: record.id,
+    targetId: saved.id,
     idempotencyKey: randomUUID(),
   });
-
-  const { staffName, customerName } = await resolveNames(deps, tenantId, input.staffId, input.customerId);
-  const notificationText = buildAccidentReportNotificationText({
-    staffName,
-    customerName,
-    reportType,
-    content,
-  });
-  await deps.notifier.notify(tenantId, 'report', notificationText);
+  await notifyWithLog(
+    deps,
+    tenantId,
+    'report',
+    buildAccidentReportNotificationText({
+      staffName: target.staffName,
+      customerName: target.customerName,
+      reportType,
+      content,
+    }),
+    input.actor.staffId,
+  );
+  await logReportSaved(deps, tenantId, 'accident', input, saved.id, target.staffId);
 
   return {
-    id: record.id,
-    occurredAt: record.occurredAt,
-    staffId: record.staffId,
-    customerId: record.customerId,
-    reportType: record.reportType,
-    content,
+    ok: true,
+    report: {
+      id: saved.id,
+      occurredAt: saved.occurredAt,
+      staffId: saved.staffId,
+      customerId: saved.customerId,
+      reportType: saved.reportType,
+      content,
+    },
   };
 }
 
@@ -242,15 +342,21 @@ export interface SendVisitCompleteInput {
  * 常にセッション/DBから解決する(CLAUDE.mdのセキュリティパターン)。
  */
 export async function sendVisitCompleteNotification(
-  deps: ReportDeps,
+  deps: Pick<ReportDeps, 'staff' | 'customers' | 'notifier' | 'appLog'>,
   tenantId: string,
   input: SendVisitCompleteInput,
-): Promise<void> {
-  const { staffName, customerName } = await resolveNames(deps, tenantId, input.staffId, input.customerId);
-  const [y, m, d] = input.visitDate.split('-');
-  const dateStr = `${y}/${m}/${d}`;
-  const message = `【訪問完了】\n担当: ${staffName}\n顧客名: ${customerName}\n訪問日時: ${dateStr} ${input.startTime}〜${input.endTime}`;
-  await deps.notifier.notify(tenantId, 'report', message);
+): Promise<{ ok: true } | { ok: false; reason: 'staff_not_found' | 'customer_not_found' }> {
+  const [staff, customer] = await Promise.all([
+    deps.staff.findById(tenantId, input.staffId),
+    deps.customers.findById(tenantId, input.customerId),
+  ]);
+  if (!staff) return { ok: false, reason: 'staff_not_found' };
+  if (!customer) return { ok: false, reason: 'customer_not_found' };
+
+  const dateStr = input.visitDate.replaceAll('-', '/');
+  const message = `【訪問完了】\n担当: ${staff.name}\n顧客名: ${customer.name}\n訪問日時: ${dateStr} ${input.startTime}〜${input.endTime}`;
+  await notifyWithLog(deps, tenantId, 'report', message, input.staffId);
+  return { ok: true };
 }
 
 export interface HistoryItem {
@@ -275,7 +381,7 @@ export interface HistoryItem {
  * beforeを渡すと、それより古いものだけを返す(「もっと見る」ページネーション)。
  */
 export async function getCustomerHistory(
-  deps: ReportDeps,
+  deps: Pick<ReportDeps, 'dailyReports' | 'accidentReports' | 'staff' | 'crypto'>,
   tenantId: string,
   customerId: string,
   before: Date | null,
@@ -286,22 +392,18 @@ export async function getCustomerHistory(
     deps.accidentReports.listByCustomer(tenantId, customerId, before, limit),
   ]);
 
-  const staffIds = Array.from(
-    new Set([...dailyRecords.map((r) => r.staffId), ...accidentRecords.map((r) => r.staffId)]),
-  );
+  const staffIds = Array.from(new Set([...dailyRecords, ...accidentRecords].map((r) => r.staffId)));
   const staffNameById = new Map<string, string>();
   await Promise.all(
     staffIds.map(async (staffId) => {
       const staffRecord = await deps.staff.findById(tenantId, staffId);
-      if (!staffRecord) return;
-      staffNameById.set(staffId, staffRecord.name);
+      if (staffRecord) staffNameById.set(staffId, staffRecord.name);
     }),
   );
 
   const dailyItems: HistoryItem[] = await Promise.all(
     dailyRecords.map(async (r) => {
-      const json = await deps.crypto.decrypt(tenantId, r.content);
-      const content = JSON.parse(json) as DailyReportContent;
+      const content = JSON.parse(await deps.crypto.decrypt(tenantId, r.content)) as DailyReportContent;
       return {
         type: 'daily' as const,
         id: r.id,
@@ -319,8 +421,7 @@ export async function getCustomerHistory(
 
   const accidentItems: HistoryItem[] = await Promise.all(
     accidentRecords.map(async (r) => {
-      const json = await deps.crypto.decrypt(tenantId, r.content);
-      const content = JSON.parse(json) as AccidentReportContent;
+      const content = JSON.parse(await deps.crypto.decrypt(tenantId, r.content)) as AccidentReportContent;
       return {
         type: 'accident' as const,
         id: r.id,

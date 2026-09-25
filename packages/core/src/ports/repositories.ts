@@ -12,20 +12,22 @@ export interface StaffRecord {
   id: string;
   tenantId: string;
   /**
-   * 氏名・メール・電話は平文で保持する(2026-08のデータベース構造レビューを踏まえ、要配慮性の
-   * 低い通常の個人情報はフィールド暗号化の対象から外し、DB/バックアップの透過的暗号化(TDE)+
-   * Row Level Security+アクセス制御に委ねる方針へ変更。doc/09参照)。emailは大文字小文字・
-   * 前後空白を無視できるよう、書き込み時に`normalizeEmailForIndex`で正規化した値を保存する
-   * (ログイン時の検索キーとして使うため、表記ゆれで一致しないと困る)。
+   * 氏名・メール・電話は平文で保持する(要配慮性の低い通常の個人情報はフィールド暗号化の対象から
+   * 外し、DB/バックアップの透過的暗号化+Row Level Security+アクセス制御に委ねる方針。doc/09参照)。
+   * email/altEmailはログイン時の検索キーになるため、書き込み時に`normalizeEmailForIndex`で
+   * 正規化した値を保存する。
    */
   name: string;
   email: string;
+  /** 2つ目のログイン用メール(GAS版スタッフ台帳M列)。 */
+  altEmail: string | null;
   phone: string | null;
-  /** argon2id。GAS版から移行し未ログインのスタッフはnull(legacyPasswordHashのみ持つ)。 */
+  /** argon2id。GAS版から移行し未ログインのスタッフ・パスワード未設定のスタッフはnull。 */
   passwordHash: string | null;
   /** GAS版のsha256(password+AUTH_SALT)。argon2idへの再ハッシュが完了したらnullに戻す。 */
   legacyPasswordHash: string | null;
   isAdmin: boolean;
+  /** 'YYYY-MM-DD'(JSTの業務日)。この日以降はログインできない。 */
   retirementDate: string | null;
 }
 
@@ -33,11 +35,25 @@ export interface NewStaffInput {
   tenantId: string;
   name: string;
   email: string;
+  altEmail?: string | null;
   phone?: string | null;
-  /** 新規登録は必ずargon2idを渡す。GAS版からの移行はlegacyPasswordHashを渡し、こちらはnullにする。 */
+  /** 新規登録はargon2idを渡す。GAS版からの移行はlegacyPasswordHashを渡す。どちらも無ければ未設定。 */
   passwordHash?: string | null;
   legacyPasswordHash?: string | null;
   isAdmin: boolean;
+  retirementDate?: string | null;
+}
+
+/** 管理者によるスタッフ情報の部分更新。渡した項目だけを上書きする(nullは値の削除)。 */
+export interface StaffPatch {
+  name?: string;
+  email?: string;
+  altEmail?: string | null;
+  phone?: string | null;
+  isAdmin?: boolean;
+  retirementDate?: string | null;
+  /** GAS版台帳の再取込時のみ使う(本アプリのパスワードが未設定のスタッフに限る)。 */
+  legacyPasswordHash?: string | null;
 }
 
 /** 管理者向け「対象スタッフ」セレクタ用の最小情報。 */
@@ -47,16 +63,26 @@ export interface ActiveStaffRecord {
 }
 
 export interface StaffRepositoryPort {
-  /** emailは呼び出し側が`normalizeEmailForIndex`で正規化済みの値を渡す前提(ログイン時の検索キー)。 */
-  findByEmail(tenantId: string, email: string): Promise<StaffRecord | null>;
+  /**
+   * ログインIDでの検索。email・altEmailのどちらかが一致するスタッフを返す(GAS版
+   * findStaffRowByLoginId_のE列/M列照合に相当)。呼び出し側は`normalizeEmailForIndex`で
+   * 正規化済みの値を渡す。
+   */
+  findByLoginEmail(tenantId: string, email: string): Promise<StaffRecord | null>;
   findById(tenantId: string, staffId: string): Promise<StaffRecord | null>;
   create(input: NewStaffInput): Promise<StaffRecord>;
-  /** ログイン成功時、レガシーハッシュをargon2idへサイレント再ハッシュするために使う。changePasswordでも同じ形の更新に使う。 */
-  upgradeToArgon2Hash(tenantId: string, staffId: string, passwordHash: string): Promise<void>;
+  /** 存在しないIDならnull。 */
+  update(tenantId: string, staffId: string, patch: StaffPatch): Promise<StaffRecord | null>;
   /**
-   * 退職済み(retirementDateが今日以前)を除いた全スタッフ。GAS版PastSchedule.js
+   * パスワード(argon2id)を設定し、レガシーハッシュを消す。ログイン時のサイレント再ハッシュ・
+   * パスワード変更・パスワード再設定で使う。
+   */
+  updatePasswordHash(tenantId: string, staffId: string, passwordHash: string): Promise<void>;
+  /** 退職者を含む全スタッフ(管理者のスタッフ管理画面用)。 */
+  listAll(tenantId: string): Promise<StaffRecord[]>;
+  /**
+   * 退職済み(retirementDateがJSTの今日以前)を除いた全スタッフ。GAS版PastSchedule.js
    * getActiveStaffNames_に対応(管理者が「対象スタッフ」を選ぶセレクタ用)。
-   * 氏名は暗号化されているため並び替えは呼び出し側(usecase)で復号後に行う。
    */
   listActive(tenantId: string): Promise<ActiveStaffRecord[]>;
 }
@@ -78,12 +104,16 @@ export interface SessionRecord {
 export interface SessionRepositoryPort {
   create(input: NewSessionInput): Promise<SessionRecord>;
   /**
-   * セッションCookieには `tenantId.rawToken` の形でテナントIDを含める(usecases/auth.ts の
-   * encodeSessionCookie/decodeSessionCookie参照)ため、この検索は常にtenantIdが先に分かっている
-   * 前提で呼ぶ。sessionsテーブルはRLS対象であり、tenantIdが分からないまま検索しようとすると
-   * (app.tenant_idが未設定のため)常に0件になる、というRLSの設計上の制約に対応するための構造。
+   * セッションCookieには `tenantId.rawToken` の形でテナントIDを含める(usecases/auth/sessionCookie.ts
+   * 参照)ため、この検索は常にtenantIdが先に分かっている前提で呼ぶ(sessionsはRLS対象のため)。
    */
   findByTokenHash(tenantId: string, tokenHash: string): Promise<SessionRecord | null>;
+  /** 有効期限の延長(GAS版checkSessionのローリング延長)。 */
+  updateExpiry(tenantId: string, sessionId: string, expiresAt: Date): Promise<void>;
+  /** ログアウト。 */
+  delete(tenantId: string, sessionId: string): Promise<void>;
+  /** パスワード変更・再設定・退職時の強制ログアウト。exceptSessionIdを渡すとそのセッションだけ残す。 */
+  deleteAllForStaff(tenantId: string, staffId: string, exceptSessionId?: string): Promise<void>;
 }
 
 export interface TenantRecord {
@@ -202,6 +232,7 @@ export interface FamilyMemberRecord {
   name: EncryptedField;
   dob: EncryptedField | null;
   info: EncryptedField | null;
+  allergy: EncryptedField | null;
 }
 
 export interface NewFamilyMemberInput {
@@ -210,6 +241,7 @@ export interface NewFamilyMemberInput {
   name: EncryptedField;
   dob: EncryptedField | null;
   info: EncryptedField | null;
+  allergy: EncryptedField | null;
 }
 
 export interface FamilyMemberRepositoryPort {
@@ -302,12 +334,17 @@ export interface AccidentReportRepositoryPort {
 
 /**
  * 領収書登録1件。GAS版processReceiptImagesの1画像分に相当。amount/storeNameは未入力ならnull。
+ * 1回のアップロード操作で登録した行は同じuploadBatchIdを持ち、申し送り(handoffText)は
+ * バッチの先頭行にだけ入る(packages/db/src/schema/receipts.ts参照)。
  */
 export interface ReceiptRecord {
   id: string;
   tenantId: string;
   staffId: string;
   customerId: string | null;
+  /** 顧客マスタに無いお客様の氏名(customerIdがnullの場合のみ)。 */
+  customerNameText: string | null;
+  uploadBatchId: string | null;
   receiptTimestamp: Date;
   amount: EncryptedField | null;
   storeName: EncryptedField | null;
@@ -320,6 +357,8 @@ export interface NewReceiptInput {
   tenantId: string;
   staffId: string;
   customerId: string | null;
+  customerNameText: string | null;
+  uploadBatchId: string | null;
   receiptTimestamp: Date;
   dedupeBlindIndex: string | null;
   amount: EncryptedField | null;

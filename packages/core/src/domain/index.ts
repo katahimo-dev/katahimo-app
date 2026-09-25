@@ -6,4 +6,5 @@ export * from './legacyImport';
 export * from './outbox';
 export * from './pii';
 export * from './reports';
+export * from './staff';
 export * from './staffName';

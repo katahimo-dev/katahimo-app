@@ -1,7 +1,8 @@
 import { jstBusinessDate } from '../../domain/calendarDate';
 import type { TenantRecord } from '../../ports/repositories';
 import { syncStaffDayFromCalendar } from './calendarSync';
-import { currentTime, type NightlyCalendarSyncDeps } from './deps';
+import { currentTime } from './clock';
+import type { NightlyCalendarSyncDeps } from './deps';
 
 export interface NightlySyncStaffFailure {
   staffId: string;

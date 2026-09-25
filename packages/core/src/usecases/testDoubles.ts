@@ -1,5 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
+import { isRetiredOn, jstBusinessDate } from '../domain';
 import { jstMonthInstantRange } from '../domain/calendarDate';
+import type { AiPromptRecord, AiPromptRepositoryPort, UpsertAiPromptInput } from '../ports/aiPrompts';
 import type { AppLogEntry, AppLogPort } from '../ports/appLog';
 import type {
   AttendanceDayHistoryEntry,
@@ -14,6 +16,7 @@ import type {
   CustomerCsvSourceTenant,
 } from '../ports/customerCsvSource';
 import type { CustomerImportState, CustomerImportStateRepositoryPort } from '../ports/customerImportState';
+import type { MailerPort, MailMessage } from '../ports/mailer';
 import type { MirrorJob, OutboxJobRecord, OutboxRepositoryPort } from '../ports/mirror';
 import type {
   AccidentReportMirrorPayload,
@@ -23,7 +26,12 @@ import type {
   MirrorSenderPort,
   ReceiptMirrorPayload,
 } from '../ports/mirrorSender';
-import type { NotificationChannel, NotifierPort } from '../ports/notifier';
+import type { NotificationChannel, NotifierPort, NotifyResult } from '../ports/notifier';
+import type {
+  NewPasswordResetCodeInput,
+  PasswordResetCodeRecord,
+  PasswordResetCodeRepositoryPort,
+} from '../ports/passwordResetCodes';
 import type {
   AccidentReportRecord,
   AccidentReportRepositoryPort,
@@ -52,6 +60,7 @@ import type {
   ReceiptRepositoryPort,
   SessionRecord,
   SessionRepositoryPort,
+  StaffPatch,
   StaffRecord,
   StaffRepositoryPort,
   TenantRecord,
@@ -59,7 +68,7 @@ import type {
 } from '../ports/repositories';
 import type { ScheduleLightResult, SchedulePort, ScheduleWithRouteResult } from '../ports/schedule';
 import type { StoragePort, StoredFile } from '../ports/storage';
-import type { PasswordHasherPort } from './auth';
+import type { PasswordHasherPort } from './auth/deps';
 
 /**
  * usecasesのテスト用インメモリ実装群。実DBやKMSを使わず、ports契約だけを満たす形で
@@ -85,12 +94,102 @@ export class FakeBlindIndexPort implements BlindIndexPort {
   }
 }
 
-/** notify()の呼び出しを記録するだけの、通知先を持たないフェイク実装。 */
+/** notify()の呼び出しを記録するだけの、通知先を持たないフェイク実装。resultで返す結果を差し替えられる。 */
 export class FakeNotifierPort implements NotifierPort {
   readonly notifications: { tenantId: string; channel: NotificationChannel; text: string }[] = [];
+  result: NotifyResult = { status: 'sent' };
 
-  async notify(tenantId: string, channel: NotificationChannel, text: string): Promise<void> {
+  async notify(tenantId: string, channel: NotificationChannel, text: string): Promise<NotifyResult> {
     this.notifications.push({ tenantId, channel, text });
+    return this.result;
+  }
+}
+
+/** アプリログを配列に貯めるだけのフェイク実装。 */
+export class FakeAppLogPort implements AppLogPort {
+  readonly entries: AppLogEntry[] = [];
+
+  async write(entry: AppLogEntry): Promise<void> {
+    this.entries.push(entry);
+  }
+
+  actions(): string[] {
+    return this.entries.map((e) => e.action);
+  }
+
+  /** 指定actionのログだけを返す。 */
+  byAction(action: string): AppLogEntry[] {
+    return this.entries.filter((e) => e.action === action);
+  }
+}
+
+/** 送信したメールを配列に貯めるフェイク実装。failをtrueにすると送信失敗を再現する。 */
+export class FakeMailerPort implements MailerPort {
+  readonly sent: MailMessage[] = [];
+  fail = false;
+
+  async send(message: MailMessage): Promise<void> {
+    if (this.fail) throw new Error('SMTP送信エラー(テスト)');
+    this.sent.push(message);
+  }
+}
+
+export class FakePasswordResetCodeRepository implements PasswordResetCodeRepositoryPort {
+  readonly rows: PasswordResetCodeRecord[] = [];
+  private seq = 0;
+
+  async replaceActive(input: NewPasswordResetCodeInput, now: Date): Promise<PasswordResetCodeRecord> {
+    for (const r of this.rows) {
+      if (r.tenantId === input.tenantId && r.staffId === input.staffId && !r.usedAt) r.usedAt = now;
+    }
+    const record: PasswordResetCodeRecord = {
+      id: `reset-${++this.seq}`,
+      ...input,
+      usedAt: null,
+      attemptCount: 0,
+      createdAt: now,
+    };
+    this.rows.push(record);
+    return record;
+  }
+  async findLatestUnused(tenantId: string, staffId: string): Promise<PasswordResetCodeRecord | null> {
+    const candidates = this.rows.filter((r) => r.tenantId === tenantId && r.staffId === staffId && !r.usedAt);
+    return candidates[candidates.length - 1] ?? null;
+  }
+  async countIssuedSince(tenantId: string, staffId: string, since: Date): Promise<number> {
+    return this.rows.filter((r) => r.tenantId === tenantId && r.staffId === staffId && r.createdAt >= since)
+      .length;
+  }
+  async incrementAttempts(tenantId: string, id: string): Promise<number> {
+    const row = this.rows.find((r) => r.tenantId === tenantId && r.id === id);
+    if (!row) return 0;
+    row.attemptCount += 1;
+    return row.attemptCount;
+  }
+  async markUsed(tenantId: string, id: string, usedAt: Date): Promise<void> {
+    const row = this.rows.find((r) => r.tenantId === tenantId && r.id === id);
+    if (row) row.usedAt = usedAt;
+  }
+}
+
+export class FakeAiPromptRepository implements AiPromptRepositoryPort {
+  private readonly rows: AiPromptRecord[] = [];
+
+  async listAll(tenantId: string): Promise<AiPromptRecord[]> {
+    return this.rows.filter((r) => r.tenantId === tenantId);
+  }
+  async findByKey(tenantId: string, key: string): Promise<AiPromptRecord | null> {
+    return this.rows.find((r) => r.tenantId === tenantId && r.key === key) ?? null;
+  }
+  async upsert(input: UpsertAiPromptInput): Promise<AiPromptRecord> {
+    await this.delete(input.tenantId, input.key);
+    const record: AiPromptRecord = { ...input, updatedAt: new Date() };
+    this.rows.push(record);
+    return record;
+  }
+  async delete(tenantId: string, key: string): Promise<void> {
+    const index = this.rows.findIndex((r) => r.tenantId === tenantId && r.key === key);
+    if (index >= 0) this.rows.splice(index, 1);
   }
 }
 
@@ -130,8 +229,10 @@ export class FakeStaffRepository implements StaffRepositoryPort {
   private readonly rows: StaffRecord[] = [];
   private seq = 0;
 
-  async findByEmail(tenantId: string, email: string): Promise<StaffRecord | null> {
-    return this.rows.find((s) => s.tenantId === tenantId && s.email === email) ?? null;
+  async findByLoginEmail(tenantId: string, email: string): Promise<StaffRecord | null> {
+    return (
+      this.rows.find((s) => s.tenantId === tenantId && (s.email === email || s.altEmail === email)) ?? null
+    );
   }
   async findById(tenantId: string, staffId: string): Promise<StaffRecord | null> {
     return this.rows.find((s) => s.tenantId === tenantId && s.id === staffId) ?? null;
@@ -142,32 +243,40 @@ export class FakeStaffRepository implements StaffRepositoryPort {
       tenantId: input.tenantId,
       name: input.name,
       email: input.email,
+      altEmail: input.altEmail ?? null,
       phone: input.phone ?? null,
       passwordHash: input.passwordHash ?? null,
       legacyPasswordHash: input.legacyPasswordHash ?? null,
       isAdmin: input.isAdmin,
-      retirementDate: null,
+      retirementDate: input.retirementDate ?? null,
     };
     this.rows.push(record);
     return record;
   }
-
-  async upgradeToArgon2Hash(tenantId: string, staffId: string, passwordHash: string): Promise<void> {
+  async update(tenantId: string, staffId: string, patch: StaffPatch): Promise<StaffRecord | null> {
+    const record = this.rows.find((s) => s.tenantId === tenantId && s.id === staffId);
+    if (!record) return null;
+    Object.assign(record, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+    return record;
+  }
+  async updatePasswordHash(tenantId: string, staffId: string, passwordHash: string): Promise<void> {
     const record = this.rows.find((s) => s.tenantId === tenantId && s.id === staffId);
     if (record) {
       record.passwordHash = passwordHash;
       record.legacyPasswordHash = null;
     }
   }
-
+  async listAll(tenantId: string): Promise<StaffRecord[]> {
+    return this.rows.filter((s) => s.tenantId === tenantId);
+  }
   async listActive(tenantId: string): Promise<ActiveStaffRecord[]> {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const today = jstBusinessDate(new Date());
     return this.rows
-      .filter((s) => s.tenantId === tenantId && (!s.retirementDate || s.retirementDate > todayStr))
+      .filter((s) => s.tenantId === tenantId && !isRetiredOn(s.retirementDate, today))
       .map((s) => ({ id: s.id, name: s.name }));
   }
 
-  /** テスト専用: 退職日を設定する(create()の入力にretirementDateが無いため)。 */
+  /** テスト専用: 退職日を設定する。 */
   setRetirementDateForTest(tenantId: string, staffId: string, retirementDate: string | null): void {
     const record = this.rows.find((s) => s.tenantId === tenantId && s.id === staffId);
     if (record) record.retirementDate = retirementDate;
@@ -175,7 +284,7 @@ export class FakeStaffRepository implements StaffRepositoryPort {
 }
 
 export class FakeSessionRepository implements SessionRepositoryPort {
-  private readonly rows: (SessionRecord & { tokenHash: string })[] = [];
+  readonly rows: (SessionRecord & { tokenHash: string })[] = [];
   private seq = 0;
 
   async create(input: NewSessionInput): Promise<SessionRecord> {
@@ -187,10 +296,28 @@ export class FakeSessionRepository implements SessionRepositoryPort {
       tokenHash: input.tokenHash,
     };
     this.rows.push(record);
-    return record;
+    return { id: record.id, tenantId: record.tenantId, staffId: record.staffId, expiresAt: record.expiresAt };
   }
   async findByTokenHash(tenantId: string, tokenHash: string): Promise<SessionRecord | null> {
-    return this.rows.find((s) => s.tenantId === tenantId && s.tokenHash === tokenHash) ?? null;
+    const row = this.rows.find((s) => s.tenantId === tenantId && s.tokenHash === tokenHash);
+    return row
+      ? { id: row.id, tenantId: row.tenantId, staffId: row.staffId, expiresAt: row.expiresAt }
+      : null;
+  }
+  async updateExpiry(tenantId: string, sessionId: string, expiresAt: Date): Promise<void> {
+    const row = this.rows.find((s) => s.tenantId === tenantId && s.id === sessionId);
+    if (row) row.expiresAt = expiresAt;
+  }
+  async delete(tenantId: string, sessionId: string): Promise<void> {
+    this.removeWhere((s) => s.tenantId === tenantId && s.id === sessionId);
+  }
+  async deleteAllForStaff(tenantId: string, staffId: string, exceptSessionId?: string): Promise<void> {
+    this.removeWhere((s) => s.tenantId === tenantId && s.staffId === staffId && s.id !== exceptSessionId);
+  }
+  private removeWhere(predicate: (s: SessionRecord) => boolean): void {
+    const keep = this.rows.filter((s) => !predicate(s));
+    this.rows.length = 0;
+    this.rows.push(...keep);
   }
 }
 
@@ -317,6 +444,7 @@ export class FakeFamilyMemberRepository implements FamilyMemberRepositoryPort {
       name: input.name,
       dob: input.dob,
       info: input.info,
+      allergy: input.allergy,
     };
   }
 
@@ -566,6 +694,8 @@ export class FakeReceiptRepository implements ReceiptRepositoryPort {
       tenantId: input.tenantId,
       staffId: input.staffId,
       customerId: input.customerId,
+      customerNameText: input.customerNameText,
+      uploadBatchId: input.uploadBatchId,
       receiptTimestamp: input.receiptTimestamp,
       amount: input.amount,
       storeName: input.storeName,
@@ -705,20 +835,6 @@ export class FakeMirrorSenderPort implements MirrorSenderPort {
   }
   async sendAttendanceAggregate(payload: AttendanceAggregateMirrorPayload): Promise<void> {
     this.attendanceAggregates.push(payload);
-  }
-}
-
-/** write() された操作ログを記録するだけのフェイク実装。 */
-export class FakeAppLogPort implements AppLogPort {
-  readonly entries: AppLogEntry[] = [];
-
-  async write(entry: AppLogEntry): Promise<void> {
-    this.entries.push(entry);
-  }
-
-  /** テスト用: 指定actionのログだけを返す。 */
-  byAction(action: string): AppLogEntry[] {
-    return this.entries.filter((e) => e.action === action);
   }
 }
 
