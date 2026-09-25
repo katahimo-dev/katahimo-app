@@ -1,0 +1,83 @@
+/*
+ * GAS版 gas-childcare-visit-app/index.html の <style> ブロックをそのまま移植したもの。
+ * Tailwind(v3)のユーティリティはGAS版と同じクラス名で書けば同じ見た目になるため、
+ * ここにはGAS版が独自に書いていたCSSだけを置く。値を変えるときはGAS版と見比べること
+ * (tools/gas-preview で並べて撮影できる)。
+ */
+/* biome-ignore lint/suspicious/noUnknownAtRules: Tailwind(v3)のディレクティブ */
+@tailwind base;
+/* biome-ignore lint/suspicious/noUnknownAtRules: Tailwind(v3)のディレクティブ */
+@tailwind components;
+/* biome-ignore lint/suspicious/noUnknownAtRules: Tailwind(v3)のディレクティブ */
+@tailwind utilities;
+
+body {
+  font-family: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: #1f2933;
+  background-color: #f3f4f6;
+}
+
+body h1,
+body h2,
+body h3,
+body h4,
+body button {
+  font-family: "Zen Maru Gothic", "BIZ UDPGothic", "Hiragino Sans", sans-serif;
+}
+
+body button {
+  font-weight: 700;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+}
+
+.slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.loading-spinner {
+  border-top-color: #3b82f6;
+  border-left-color: #3b82f6;
+  animation: spin 1s infinite linear;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* 文字の大きさ設定。Tailwindのサイズはrem基準のため、ルートのfont-sizeを
+   変えるだけで画面全体(文字・余白)がまとめて拡大・縮小される。 */
+html[data-text-size="normal"] {
+  font-size: 100%;
+}
+
+html[data-text-size="large"] {
+  font-size: 112.5%;
+}
+
+html[data-text-size="xlarge"] {
+  font-size: 125%;
+}

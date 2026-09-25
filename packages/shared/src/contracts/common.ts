@@ -35,3 +35,6 @@ export const yearMonthSchema = z.string().regex(/^\d{4}-\d{2}$/, 'YYYY-MM 形式
 
 /** 'HH:MM' 形式の時刻。出勤簿の時刻セルはこの形で正規化して扱う。 */
 export const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:MM 形式で指定してください');
+
+/** `{ ok: true }` だけを返すAPI(POST /api/auth/logout 等)の応答。 */
+export const okResponseSchema = z.object({ ok: z.literal(true) });
