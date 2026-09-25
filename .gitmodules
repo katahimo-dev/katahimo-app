@@ -1,0 +1,4 @@
+[submodule "legacy/gas-childcare-visit-app"]
+	path = legacy/gas-childcare-visit-app
+	url = https://github.com/katahimo-dev/gas-childcare-visit-app
+	branch = main
