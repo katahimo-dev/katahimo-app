@@ -124,8 +124,7 @@ export type ReportFormAction =
   | { type: 'dailyGenerated'; internal: string; customer: string; warnings: string | null }
   | { type: 'showWarnings'; message: string }
   | { type: 'accidentGenerated'; draft: AccidentDraftFields }
-  | { type: 'saved'; mode: ReportMode; reportId: string }
-  | { type: 'restoreDraft'; patch: Partial<ReportFormState> };
+  | { type: 'saved'; mode: ReportMode; reportId: string };
 
 export function reportFormReducer(state: ReportFormState, action: ReportFormAction): ReportFormState {
   switch (action.type) {
@@ -203,8 +202,6 @@ export function reportFormReducer(state: ReportFormState, action: ReportFormActi
         ...state,
         saved: { ...state.saved, [action.mode]: { reportId: action.reportId, isDirty: false } },
       };
-    case 'restoreDraft':
-      return { ...state, ...action.patch };
   }
 }
 

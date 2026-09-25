@@ -1,3 +1,5 @@
+import { jstDateString, jstHHmm } from '../../../lib/date';
+
 /**
  * 領収書の写真まわりの小さな計算(GAS版 resizeAndAddImage / toDatetimeLocalFormat /
  * fromDatetimeLocalFormat / getNowDatetimeLocal)。
@@ -46,30 +48,64 @@ export function fromDatetimeLocal(value: string | null | undefined): string {
   return value.replace(/-/g, '/').replace('T', ' ');
 }
 
-/** 今の日時(分まで)の datetime-local 値 */
-export function nowDatetimeLocal(now: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}T${p(now.getHours())}:${p(now.getMinutes())}`;
+/** 今の日時(分まで。日本時間)の datetime-local 値 */
+export function nowDatetimeLocal(now: Date | number = Date.now()): string {
+  return `${jstDateString(now)}T${jstHHmm(now)}`;
 }
 
-/** ブラウザで写真を読み込み、縮めて JPEG(品質0.7)の data URL にする */
+/**
+ * ブラウザで写真を読み込み、縮めて JPEG(品質0.7)の data URL にする(GAS版 resizeAndAddImage)。
+ * 元の写真は data URL にしない(数MBの写真を base64 の文字列にすると、その分メモリを使うため)。
+ * createImageBitmap / OffscreenCanvas が使えるブラウザではそれを使い、使えなければ <img> と <canvas> で行う。
+ */
 export async function resizeImageFile(file: Blob): Promise<string> {
-  const source = await readAsDataUrl(file);
-  const img = await loadImage(source);
-  const { width, height } = computeResizedSize(img.width, img.height);
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  canvas.getContext('2d')?.drawImage(img, 0, 0, width, height);
-  return canvas.toDataURL('image/jpeg', RECEIPT_IMAGE_JPEG_QUALITY);
+  const jpeg =
+    typeof createImageBitmap === 'function' && typeof OffscreenCanvas === 'function'
+      ? await resizeWithBitmap(file)
+      : await resizeWithImageElement(file);
+  return blobToDataUrl(jpeg);
 }
 
-function readAsDataUrl(file: Blob): Promise<string> {
+async function resizeWithBitmap(file: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  try {
+    const { width, height } = computeResizedSize(bitmap.width, bitmap.height);
+    // canvas の幅・高さは整数に切り捨てられる(GAS版と同じ)。描くときは小数のまま
+    const canvas = new OffscreenCanvas(Math.trunc(width), Math.trunc(height));
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0, width, height);
+    return await canvas.convertToBlob({ type: 'image/jpeg', quality: RECEIPT_IMAGE_JPEG_QUALITY });
+  } finally {
+    bitmap.close();
+  }
+}
+
+async function resizeWithImageElement(file: Blob): Promise<Blob> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url);
+    const { width, height } = computeResizedSize(img.width, img.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext('2d')?.drawImage(img, 0, 0, width, height);
+    return await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error('写真を縮められませんでした'))),
+        'image/jpeg',
+        RECEIPT_IMAGE_JPEG_QUALITY,
+      ),
+    );
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
 }
 

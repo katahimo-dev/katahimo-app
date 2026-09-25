@@ -27,6 +27,7 @@ interface SpeechRecognitionLike {
   onerror: ((event: { error: string }) => void) | null;
   start: () => void;
   stop: () => void;
+  abort: () => void;
 }
 
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
@@ -47,11 +48,38 @@ export function voiceInputErrorMessage(error: string): string | null {
   return `音声入力エラー: ${error}`;
 }
 
-export function useVoiceInput(onTranscript: (text: string) => void) {
+/**
+ * @param active ダイアログが開いているか。閉じたら聞くのをやめる(聞き取り途中の文も捨てる)
+ * @param sessionKey 開き直すたびに変わる値(日報ダイアログの nonce)。変わったら聞くのをやめる
+ *   (前に開いたお客様の聞き取りが、次のお客様のメモに入らないように)
+ */
+export function useVoiceInput(
+  onTranscript: (text: string) => void,
+  active = true,
+  sessionKey: unknown = null,
+) {
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const onTranscriptRef = useRef(onTranscript);
-  onTranscriptRef.current = onTranscript;
+  useEffect(() => {
+    onTranscriptRef.current = onTranscript;
+  });
+
+  /** すぐにやめる。まだ届いていない聞き取りの結果は捨てる */
+  const cancel = useCallback(() => {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+    recognitionRef.current = null;
+    recognition.onresult = null;
+    recognition.onerror = null;
+    recognition.onend = null;
+    try {
+      recognition.abort();
+    } catch (e) {
+      console.error(e);
+    }
+    setListening(false);
+  }, []);
 
   const toggle = useCallback(() => {
     const Ctor = speechRecognitionCtor();
@@ -91,8 +119,9 @@ export function useVoiceInput(onTranscript: (text: string) => void) {
     recognition.start();
   }, []);
 
-  // 画面を離れたら聞くのをやめる
-  useEffect(() => () => recognitionRef.current?.stop(), []);
+  // ダイアログを閉じた・開き直した・画面を離れたら聞くのをやめる
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionKey は開き直したきっかけとしてだけ使う
+  useEffect(() => cancel, [active, sessionKey, cancel]);
 
-  return { listening, toggle };
+  return { listening, toggle, cancel };
 }

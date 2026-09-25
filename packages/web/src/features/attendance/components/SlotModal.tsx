@@ -3,11 +3,10 @@ import { useMutation } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { attendanceApi } from '../../../api/attendance';
 import { confirmNative } from '../../../ui/confirm';
-import { ModalHeader } from '../../../ui/modal';
+import { Modal, ModalHeader } from '../../../ui/modal';
 import { showErrorToast, showToast } from '../../../ui/toast';
 import { isSlotFilled, type SlotDef, type SlotValues, slotPatch, toDayRecord } from '../model/dayRecord';
 import { savedMessage } from '../model/saveMessage';
-import { Dialog } from './Dialog';
 import { LoadingBlock } from './LoadingBlock';
 
 /**
@@ -34,7 +33,9 @@ export function SlotModal({
   onSaved: () => void;
 }) {
   return (
-    <Dialog
+    <Modal
+      transition="none"
+      onClose={onClose}
       open
       labelledBy="pastScheduleSlotModalTitle"
       className="fixed inset-0 bg-black bg-opacity-50 z-[120] flex items-center justify-center p-4"
@@ -63,7 +64,7 @@ export function SlotModal({
           </>
         )}
       </div>
-    </Dialog>
+    </Modal>
   );
 }
 

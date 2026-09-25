@@ -39,6 +39,8 @@ describe('datetime-local との変換', () => {
     expect(fromDatetimeLocal('')).toBe('');
   });
   it('今の日時(分まで)', () => {
-    expect(nowDatetimeLocal(new Date(2026, 8, 5, 7, 3, 59))).toBe('2026-09-05T07:03');
+    expect(nowDatetimeLocal(Date.parse('2026-09-05T07:03:59+09:00'))).toBe('2026-09-05T07:03');
+    // 端末の時刻帯に関係なく日本時間
+    expect(nowDatetimeLocal(Date.parse('2026-09-04T22:10:00Z'))).toBe('2026-09-05T07:10');
   });
 });

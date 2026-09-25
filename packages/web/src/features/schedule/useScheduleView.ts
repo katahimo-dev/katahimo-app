@@ -1,11 +1,12 @@
 import type { ScheduleLightResponse, ScheduleWithRouteResponse } from '@katahimo/shared';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { userMessageOf } from '../../api/client';
 import { type ScheduleRequest, scheduleApi } from '../../api/schedule';
 import { useAdminTargetStaff } from '../../app/adminTargetStaff';
 import { NETWORK_ERROR_MESSAGE } from '../../lib/messages';
 import { showErrorToast, showToast } from '../../ui/toast';
-import { readCachedRoute, writeCachedRoute } from './routeCache';
+import { type CachedRoute, readCachedRoute, writeCachedRoute } from './routeCache';
 import { type ScheduleDate, type ScheduleOffset, scheduleDateFor } from './scheduleDate';
 import { itemsFromPlainSchedule, itemsFromRouteSchedule, type ScheduleItem } from './scheduleItems';
 
@@ -39,102 +40,147 @@ function listFromPlain(res: ScheduleLightResponse): ScheduleListState {
   return { kind: 'items', items: itemsFromPlainSchedule(res.appointments ?? []) };
 }
 
+/** 予定タブのクエリキー(スタッフ・日付ごと。その下にルートつき・ルートなし) */
+export const scheduleKeys = {
+  all: ['schedule'] as const,
+  day: (staffKey: string, date: string) => ['schedule', staffKey, date] as const,
+  route: (staffKey: string, date: string) => ['schedule', staffKey, date, 'route'] as const,
+  plain: (staffKey: string, date: string) => ['schedule', staffKey, date, 'plain'] as const,
+};
+
+/** ルートを調べられなかった(サーバーが success:false を返した) */
+class RouteUnavailableError extends Error {}
+
 /**
  * 「今日の予定」タブの読み込みの流れ(GAS版 loadScheduleForOffset_ / loadRouteInfo /
- * loadPlainScheduleOnRouteFailure_):
+ * loadPlainScheduleOnRouteFailure_)。TanStack Query で持つ:
  *
  * 1. 日付・表示するスタッフが決まったら、まずこのブラウザの2時間キャッシュを見る。あればそのまま出す。
  * 2. 無ければルート・移動時間つきの予定を自動で調べる(10秒ほどかかる)。
  * 3. 自動で調べるのに失敗したら赤いお知らせを出し、ルートなしの予定だけでも出す。
- *    「🔄 最新にする」で失敗したときは、お知らせだけ出して今の表示を残す。
- * 古い要求(日付・スタッフを切り替える前のもの)の応答は捨てる。
+ * 4. 「🔄 最新にする」はサーバーのキャッシュも使わずに調べ直す。失敗したときは、お知らせだけ出して
+ *    今の表示を残す。
+ * 日付・スタッフを切り替えたら、前の要求は取り消す(応答が届いても出さない)。StrictMode で2回描画されても、
+ * 同じ要求は1回だけ送る(地図APIの呼び出しを増やさない)。
  */
 export function useScheduleView(): ScheduleView {
+  const queryClient = useQueryClient();
   const { targetStaffId, requestStaffId } = useAdminTargetStaff();
   const [offset, setOffset] = useState<ScheduleOffset>(0);
-  const [reloadCount, setReloadCount] = useState(0);
   const [date, setDate] = useState(() => scheduleDateFor(0));
-  const [list, setList] = useState<ScheduleListState>({ kind: 'loading' });
-  const [routeLoading, setRouteLoading] = useState(false);
-  const [routeFetchedAt, setRouteFetchedAt] = useState<number | null>(null);
+  const request: ScheduleRequest = { date: date.dateStr, staffId: requestStaffId };
+  const routeKey = scheduleKeys.route(targetStaffId, date.dateStr);
 
-  /** いま表示している要求。応答が届いたとき、これと違えば(切り替えたあとなら)捨てる */
-  const currentRef = useRef<{ seq: number; request: ScheduleRequest; cacheStaffId: string } | null>(null);
-  const seqRef = useRef(0);
-
-  const loadPlainFallback = useCallback(async (seq: number, request: ScheduleRequest) => {
-    const isCurrent = () => currentRef.current?.seq === seq;
-    try {
-      const res = await scheduleApi.get(request);
-      if (isCurrent()) setList(listFromPlain(res));
-    } catch (error) {
-      if (!isCurrent()) return;
-      console.error('GET /api/schedule failed:', error);
-      setList({ kind: 'error', message: NETWORK_ERROR_MESSAGE });
-    }
-  }, []);
-
-  const loadRoute = useCallback(
-    async (isAutoLoad: boolean) => {
-      const current = currentRef.current;
-      if (!current) return;
-      const { seq, request, cacheStaffId } = current;
-      const isCurrent = () => currentRef.current?.seq === seq;
-      setRouteLoading(true);
+  const routeQuery = useQuery({
+    queryKey: routeKey,
+    queryFn: async ({ signal }): Promise<CachedRoute> => {
+      const cached = readCachedRoute(targetStaffId, request.date);
+      if (cached) return cached;
       try {
-        const res = await scheduleApi.getWithRoute(request, !isAutoLoad);
-        if (!isCurrent()) return;
-        setRouteLoading(false);
-        if (!res.success) {
-          showToast(res.message || 'ルートを調べられませんでした', true);
-          if (isAutoLoad) void loadPlainFallback(seq, request);
-          return;
-        }
-        const now = Date.now();
-        writeCachedRoute(cacheStaffId, request.date, res, now);
-        setRouteFetchedAt(now);
-        setList(listFromRoute(res));
+        const res = await scheduleApi.getWithRoute(request, false, signal);
+        if (!res.success) throw new RouteUnavailableError(res.message || 'ルートを調べられませんでした');
+        const ts = Date.now();
+        writeCachedRoute(targetStaffId, request.date, res, ts);
+        return { res, ts };
       } catch (error) {
-        if (!isCurrent()) return;
-        setRouteLoading(false);
-        console.error('GET /api/schedule/route failed:', userMessageOf(error), error);
-        showErrorToast(error);
-        if (isAutoLoad) void loadPlainFallback(seq, request);
+        // 切り替えて取り消した要求は知らせない
+        if (!signal.aborted) {
+          if (error instanceof RouteUnavailableError) {
+            showToast(error.message, true);
+          } else {
+            console.error('GET /api/schedule/route failed:', userMessageOf(error), error);
+            showErrorToast(error);
+          }
+        }
+        throw error;
       }
     },
-    [loadPlainFallback],
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
+  });
+
+  // ルートつきの予定を自動で調べられなかったときだけ、ルートなしの予定を読む
+  const routeFailed = routeQuery.isError && !routeQuery.isFetching && !routeQuery.data;
+  const plainQuery = useQuery({
+    queryKey: scheduleKeys.plain(targetStaffId, date.dateStr),
+    queryFn: ({ signal }) =>
+      scheduleApi.get(request, signal).catch((error: unknown) => {
+        if (!signal.aborted) console.error('GET /api/schedule failed:', error);
+        throw error;
+      }),
+    enabled: routeFailed,
+    staleTime: 0,
+    retry: false,
+  });
+
+  /** いま表示している要求(🔄 の結果が届いたとき、切り替えたあとならお知らせは出さない) */
+  const currentKeyRef = useRef('');
+  const currentKey = routeKey.join('\u0000');
+  useEffect(() => {
+    currentKeyRef.current = currentKey;
+  });
+
+  const refresh = useMutation({
+    mutationFn: (vars: { staffKey: string; request: ScheduleRequest; keyId: string }) =>
+      scheduleApi.getWithRoute(vars.request, true),
+    onSuccess: (res, vars) => {
+      const isCurrent = currentKeyRef.current === vars.keyId;
+      if (!res.success) {
+        if (isCurrent) showToast(res.message || 'ルートを調べられませんでした', true);
+        return;
+      }
+      const ts = Date.now();
+      writeCachedRoute(vars.staffKey, vars.request.date, res, ts);
+      queryClient.setQueryData<CachedRoute>(scheduleKeys.route(vars.staffKey, vars.request.date), {
+        res,
+        ts,
+      });
+    },
+    onError: (error, vars) => {
+      if (currentKeyRef.current !== vars.keyId) return;
+      console.error('GET /api/schedule/route failed:', userMessageOf(error), error);
+      showErrorToast(error);
+    },
+  });
+
+  let list: ScheduleListState = { kind: 'loading' };
+  if (routeQuery.data) {
+    list = listFromRoute(routeQuery.data.res);
+  } else if (routeFailed) {
+    if (plainQuery.data) list = listFromPlain(plainQuery.data);
+    else if (plainQuery.isError && !plainQuery.isFetching)
+      list = { kind: 'error', message: NETWORK_ERROR_MESSAGE };
+  }
+
+  const refreshing = refresh.isPending && refresh.variables?.keyId === currentKey;
+
+  // ☀️ / 🌙: 同じ日をもう一度押しても、キャッシュを見るところから読み直す(GAS版 loadSchedule)
+  const selectDay = useCallback(
+    (next: ScheduleOffset) => {
+      const nextDate = scheduleDateFor(next);
+      setOffset(next);
+      setDate(nextDate);
+      void queryClient.resetQueries({ queryKey: scheduleKeys.day(targetStaffId, nextDate.dateStr) });
+    },
+    [queryClient, targetStaffId],
   );
 
-  // 日付・表示するスタッフが変わったとき(と、☀️/🌙 を押したとき)に読み直す。reloadCount は押した回数。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadCount は同じ日を押し直したときに読み直すためのきっかけ
-  useEffect(() => {
-    const nextDate = scheduleDateFor(offset);
-    const request: ScheduleRequest = { date: nextDate.dateStr, staffId: requestStaffId };
-    seqRef.current += 1;
-    currentRef.current = { seq: seqRef.current, request, cacheStaffId: targetStaffId };
-
-    setDate(nextDate);
-    setRouteLoading(false);
-    setRouteFetchedAt(null);
-    setList({ kind: 'loading' });
-
-    const cached = readCachedRoute(targetStaffId, nextDate.dateStr);
-    if (cached) {
-      setRouteFetchedAt(cached.ts);
-      setList(listFromRoute(cached.res));
-      return;
-    }
-    void loadRoute(true);
-  }, [offset, reloadCount, targetStaffId, requestStaffId, loadRoute]);
-
-  const selectDay = useCallback((next: ScheduleOffset) => {
-    setOffset(next);
-    setReloadCount((n) => n + 1);
-  }, []);
-
+  const { mutate } = refresh;
   const refreshRoute = useCallback(() => {
-    void loadRoute(false);
-  }, [loadRoute]);
+    mutate({
+      staffKey: targetStaffId,
+      request: { date: date.dateStr, staffId: requestStaffId },
+      keyId: currentKey,
+    });
+  }, [mutate, targetStaffId, date.dateStr, requestStaffId, currentKey]);
 
-  return { offset, date, list, routeLoading, routeFetchedAt, selectDay, refreshRoute };
+  return {
+    offset,
+    date,
+    list,
+    routeLoading: routeQuery.isFetching || refreshing,
+    routeFetchedAt: routeQuery.data?.ts ?? null,
+    selectDay,
+    refreshRoute,
+  };
 }

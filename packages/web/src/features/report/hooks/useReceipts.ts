@@ -1,5 +1,7 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { receiptsApi } from '../../../api/receipts';
+import { pushRecentCustomer } from '../../../lib/recentCustomers';
+import type { UserStorageScope } from '../../../lib/storage';
 import { showErrorToast, showToast } from '../../../ui/toast';
 import {
   findLocalReceiptDuplicates,
@@ -15,7 +17,6 @@ import {
   resizeImageFile,
   toDatetimeLocal,
 } from '../model/receiptImage';
-import { pushRecentCustomer } from '../model/recentCustomers';
 
 /**
  * 「レシート・領収書（6枚まで）」の写真・入力・送信(GAS版 currentImages / handleFileSelect /
@@ -46,9 +47,12 @@ export interface ReceiptSendContext {
   fallbackTimestamp: string;
 }
 
+/** 写真を読み込めなかったとき(GAS版は何も出さずに足さなかった) */
+export const IMAGE_LOAD_FAILED_MESSAGE = '写真を読み込めませんでした。別の写真を選んでください';
+
 let nextImageId = 1;
 
-export function useReceipts() {
+export function useReceipts(storageScope: UserStorageScope) {
   const [images, setImages] = useState<ReceiptImage[]>([]);
   const [handoff, setHandoff] = useState('');
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
@@ -56,10 +60,18 @@ export function useReceipts() {
   // 読み取りの結果が返る前にダイアログを開き直したら、その結果は捨てる
   const generationRef = useRef(0);
   const imagesRef = useRef(images);
-  imagesRef.current = images;
+  useEffect(() => {
+    imagesRef.current = images;
+  });
+  const sendingRef = useRef(false);
+  /** 縮めている途中の写真の枚数(6枚までの数に入れる。縮め終わる前に続けて選ばれても越えないように) */
+  const reservedRef = useRef(0);
 
   const reset = useCallback(() => {
     generationRef.current++;
+    reservedRef.current = 0;
+    sendingRef.current = false;
+    imagesRef.current = [];
     setImages([]);
     setHandoff('');
     setDuplicateWarning(null);
@@ -81,52 +93,68 @@ export function useReceipts() {
           amount: result.amount ? String(result.amount) : img.amount,
           storeName: result.storeName || img.storeName,
           // 読み取れた日時、読めなければ今の日時
-          receiptDate: toDatetimeLocal(result.receiptDate) || nowDatetimeLocal(new Date()),
+          receiptDate: toDatetimeLocal(result.receiptDate) || nowDatetimeLocal(),
         }));
       } catch (e) {
         console.error('OCR Failed', e);
         if (generation !== generationRef.current) return;
         patchImage(id, (img) => ({
           loading: false,
-          receiptDate: img.receiptDate || nowDatetimeLocal(new Date()),
+          receiptDate: img.receiptDate || nowDatetimeLocal(),
         }));
       }
     },
     [patchImage],
   );
 
-  /** 写真を足す(6枚を越えるときは足さずに知らせる) */
+  /** 写真を足す(6枚を越えるときは足さずに知らせる)。1枚でも読み込めなければ知らせる */
   const addFiles = useCallback(
     async (files: readonly File[]) => {
       if (files.length === 0) return;
       setDuplicateWarning(null);
-      if (imagesRef.current.length + files.length > MAX_RECEIPT_IMAGES) {
+      if (imagesRef.current.length + reservedRef.current + files.length > MAX_RECEIPT_IMAGES) {
         showToast('写真は6枚までです', true);
         return;
       }
       const generation = generationRef.current;
-      await Promise.all(
+      reservedRef.current += files.length;
+      const results = await Promise.allSettled(
         files.map(async (file) => {
-          const data = await resizeImageFile(file);
-          if (generation !== generationRef.current) return;
-          const id = nextImageId++;
-          setImages((prev) => [
-            ...prev,
-            { id, data, amount: '', storeName: '', receiptDate: '', loading: true },
-          ]);
-          void runOcr(id, data);
+          try {
+            const data = await resizeImageFile(file);
+            if (generation !== generationRef.current) return;
+            const id = nextImageId++;
+            const image: ReceiptImage = {
+              id,
+              data,
+              amount: '',
+              storeName: '',
+              receiptDate: '',
+              loading: true,
+            };
+            imagesRef.current = [...imagesRef.current, image];
+            setImages((prev) => [...prev, image]);
+            void runOcr(id, data);
+          } finally {
+            if (generation === generationRef.current) reservedRef.current -= 1;
+          }
         }),
       );
+      if (generation !== generationRef.current) return;
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length > 0) {
+        console.error('写真を読み込めませんでした', failed);
+        showToast(IMAGE_LOAD_FAILED_MESSAGE, true);
+      }
     },
     [runOcr],
   );
 
   const removeImage = useCallback((id: number) => {
-    setImages((prev) => {
-      const next = prev.filter((img) => img.id !== id);
-      if (next.length === 0) setDuplicateWarning(null);
-      return next;
-    });
+    // 送っている間は消せない(送った写真と、重複の知らせの対応がずれないように)
+    if (sendingRef.current) return;
+    setImages((prev) => prev.filter((img) => img.id !== id));
+    if (imagesRef.current.every((img) => img.id === id)) setDuplicateWarning(null);
   }, []);
 
   const updateImage = useCallback(
@@ -169,7 +197,10 @@ export function useReceipts() {
 
       setDuplicateWarning(null);
       setSending(true);
+      sendingRef.current = true;
       const generation = generationRef.current;
+      /** 送った写真のID(応答の重複は送った順の番号で返るため、IDに置きかえて扱う) */
+      const sentIds = current.map((img) => img.id);
       try {
         const res = await receiptsApi.upload({
           customerId: ctx.customerId,
@@ -189,29 +220,30 @@ export function useReceipts() {
           }),
           now,
         );
-        if (ctx.customerId) pushRecentCustomer(ctx.customerId);
+        if (ctx.customerId) pushRecentCustomer(ctx.customerId, storageScope);
         setHandoff('');
 
-        // すでに登録ずみだったものだけを残し、登録できたものは消す
-        const duplicateIndexes = new Set(res.duplicates.map((d) => d.index));
-        if (duplicateIndexes.size > 0) {
-          // サーバーの応答にはお客様の名前が無いので、登録のあるお客様の名前を添える(GAS版と同じ)
-          setDuplicateWarning(
-            formatReceiptDuplicateWarning(res.duplicates, ctx.customerId ? ctx.customerName : ''),
-          );
-          setImages((prev) => prev.filter((_, idx) => duplicateIndexes.has(idx)));
-        } else {
-          setDuplicateWarning(null);
-          setImages([]);
-        }
+        // すでに登録ずみだったものだけを残し、登録できたものは消す(送っている間に足した写真は残す)
+        const duplicateIds = new Set(res.duplicates.map((d) => sentIds[d.index]));
+        const sent = new Set(sentIds);
+        setImages((prev) => prev.filter((img) => duplicateIds.has(img.id) || !sent.has(img.id)));
+        // サーバーの応答にはお客様の名前が無いので、登録のあるお客様の名前を添える(GAS版と同じ)
+        setDuplicateWarning(
+          duplicateIds.size > 0
+            ? formatReceiptDuplicateWarning(res.duplicates, ctx.customerId ? ctx.customerName : '')
+            : null,
+        );
         showToast(res.message || '領収書を送りました');
       } catch (e) {
         showErrorToast(e);
       } finally {
-        if (generation === generationRef.current) setSending(false);
+        if (generation === generationRef.current) {
+          sendingRef.current = false;
+          setSending(false);
+        }
       }
     },
-    [handoff],
+    [handoff, storageScope],
   );
 
   return {

@@ -31,6 +31,7 @@ export function ReportHeader({
         <input
           type="text"
           id="unregisteredCustomerName"
+          aria-label="お客様の名前"
           value={unregisteredName}
           onChange={(e) => onUnregisteredNameChange(e.target.value)}
           className={cx(

@@ -66,33 +66,44 @@ describe('退避する内容(GAS版 saveReportDraftSnapshot と同じ形)', () =
   });
 });
 
+const SCOPE = { tenantId: 't1', staffId: 's1' };
+const KEY = 'pending_report_draft@t1/s1';
+
 describe('保存・読み込み', () => {
   it('書いて読める。消したら null', () => {
     const storage = createMemoryStorage();
-    writePendingDraft(buildDraftSnapshot(freshForm(), customer, 'daily', NOW), storage);
-    expect(readPendingDraft(storage)?.customerId).toBe(customer.id);
-    clearPendingDraft(storage);
-    expect(readPendingDraft(storage)).toBeNull();
+    writePendingDraft(buildDraftSnapshot(freshForm(), customer, 'daily', NOW), SCOPE, storage);
+    expect(Object.keys(storage.snapshot())).toEqual([KEY]);
+    expect(readPendingDraft(SCOPE, storage)?.customerId).toBe(customer.id);
+    clearPendingDraft(SCOPE, storage);
+    expect(readPendingDraft(SCOPE, storage)).toBeNull();
+  });
+
+  it('ほかのスタッフ・ほかの法人の書きかけは見えない', () => {
+    const storage = createMemoryStorage();
+    writePendingDraft(buildDraftSnapshot(freshForm(), customer, 'daily', NOW), SCOPE, storage);
+    expect(readPendingDraft({ tenantId: 't1', staffId: 's2' }, storage)).toBeNull();
+    expect(readPendingDraft({ tenantId: 't2', staffId: 's1' }, storage)).toBeNull();
   });
 
   it('GAS版で書いた形(数字のお客様ID)も読める', () => {
     const storage = createMemoryStorage({
-      pending_report_draft: JSON.stringify({
+      [KEY]: JSON.stringify({
         customerId: 12,
         customerName: 'A',
         mode: 'daily',
         inputText: 'x',
       }),
     });
-    expect(readPendingDraft(storage)?.customerId).toBe('12');
+    expect(readPendingDraft(SCOPE, storage)?.customerId).toBe('12');
   });
 
   it('壊れていたら消して null', () => {
-    const storage = createMemoryStorage({ pending_report_draft: '{broken' });
-    expect(readPendingDraft(storage)).toBeNull();
+    const storage = createMemoryStorage({ [KEY]: '{broken' });
+    expect(readPendingDraft(SCOPE, storage)).toBeNull();
     expect(storage.snapshot()).toEqual({});
-    const storage2 = createMemoryStorage({ pending_report_draft: JSON.stringify({ mode: 'daily' }) });
-    expect(readPendingDraft(storage2)).toBeNull();
+    const storage2 = createMemoryStorage({ [KEY]: JSON.stringify({ mode: 'daily' }) });
+    expect(readPendingDraft(SCOPE, storage2)).toBeNull();
     expect(storage2.snapshot()).toEqual({});
   });
 });

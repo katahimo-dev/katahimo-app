@@ -11,7 +11,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 新しい版は勝手に切り替えず、お知らせの「更新する」で切り替える(src/app/pwa/PwaUpdatePrompt.tsx)
+      registerType: 'prompt',
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: '保育日報アプリ',
         short_name: '保育日報',
@@ -21,6 +23,16 @@ export default defineConfig({
         background_color: '#f3f4f6',
         display: 'standalone',
         start_url: '/',
+        // public/ のアイコン(元の絵は public/favicon.svg。maskable は周りに余白を取った版)
+        icons: [
+          { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+          { src: 'maskable-icon-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      },
+      workbox: {
+        // API は Service Worker の画面(index.html)で代わりに返さない(常にサーバーへ)
+        navigateFallbackDenylist: [/^\/api\//],
       },
     }),
   ],

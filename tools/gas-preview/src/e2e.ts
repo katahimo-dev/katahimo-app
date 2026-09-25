@@ -2,15 +2,18 @@ import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { APIRequestContext, BrowserContext, Page } from 'playwright-core';
+import { ensureApiServer } from './apiServer';
 import { launchChromium } from './browser';
 import { installFontCache } from './fontCache';
 import { OUT_DIR } from './paths';
+import { ensureWebServer } from './webServer';
 
 /**
  * 実際のAPI・DBにつないだ新アプリを、スマホの大きさ(390×844)で最初から最後まで操作する通し確認。
  * GAS版との見比べ(shoot.ts)とは別に、並行して作った機能をつないだときに壊れていないかを確かめる。
  *
- *   # API(:8080)と web 開発サーバー(:5173)を起動し、pnpm db:migrate && pnpm db:seed 済みであること
+ *   # pnpm db:migrate && pnpm db:seed 済みであること。API(--api-url、既定 :8080)が動いていなければ起動し、
+ *   # 新アプリの Vite もこのコマンドの中で起動する(終わったら両方止める)
  *   cd tools/gas-preview && npx tsx src/e2e.ts
  *   npx tsx src/e2e.ts --web-url http://127.0.0.1:8484 --only '^(login|logout)$'   # 本番ビルドの配信で
  *
@@ -23,7 +26,8 @@ import { OUT_DIR } from './paths';
 const { values } = parseArgs({
   args: process.argv.slice(2).filter((a) => a !== '--'),
   options: {
-    'web-url': { type: 'string', default: process.env.KATAHIMO_WEB_URL ?? 'http://127.0.0.1:5173' },
+    'web-url': { type: 'string', default: process.env.KATAHIMO_WEB_URL },
+    'api-url': { type: 'string', default: process.env.WEB_API_PROXY_TARGET ?? 'http://localhost:8080' },
     only: { type: 'string' },
     tenant: { type: 'string', default: process.env.KATAHIMO_LIVE_TENANT ?? 'demo' },
     email: { type: 'string', default: process.env.KATAHIMO_LIVE_EMAIL ?? 'admin@example.com' },
@@ -31,7 +35,8 @@ const { values } = parseArgs({
   },
 });
 
-const WEB_URL = String(values['web-url']).replace(/\/$/, '');
+/** main() で決まる(--web-url の値、または起動した Vite のURL) */
+let WEB_URL = '';
 const TENANT = String(values.tenant);
 const ADMIN = { email: String(values.email), password: String(values.password) };
 const STAFF = { name: 'e2e 一般スタッフ', email: 'e2e-staff@example.com', password: 'e2e-staff-pass1' };
@@ -42,7 +47,7 @@ const only = values.only ? new RegExp(values.only) : null;
 const visible = { visible: true } as const;
 const button = (page: Page, name: string | RegExp) =>
   page.getByRole('button', { name }).filter(visible).first();
-const toast = (page: Page) => page.getByRole('status');
+const toast = (page: Page) => page.locator('#toast');
 const wait = (page: Page, ms = 400) => page.waitForTimeout(ms);
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -188,6 +193,25 @@ async function ensureStaff(api: APIRequestContext): Promise<string> {
 
 async function main() {
   mkdirSync(E2E_DIR, { recursive: true });
+  // --web-url を指定したときは、その画面(本番ビルドなら API も同じオリジン)をそのまま使う
+  const api = values['web-url'] ? null : await ensureApiServer(String(values['api-url']));
+  const web = await ensureWebServer({
+    existingUrl: values['web-url'] ?? null,
+    apiProxyTarget: String(values['api-url']),
+  }).catch(async (e: unknown) => {
+    await api?.close();
+    throw e;
+  });
+  WEB_URL = web.url;
+  try {
+    await runJourney();
+  } finally {
+    await web.close();
+    await api?.close();
+  }
+}
+
+async function runJourney() {
   const results: StepResult[] = [];
   const step = createRunner(results);
   const browser = await launchChromium();

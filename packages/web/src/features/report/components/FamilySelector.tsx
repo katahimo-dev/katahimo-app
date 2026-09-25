@@ -15,7 +15,8 @@ export function FamilySelector({
   hidden: boolean;
   family: readonly { name: string; dob: string }[];
   value: string;
-  today: Date;
+  /** 業務日 'YYYY-MM-DD'(JST) */
+  today: string;
   onSelect: (index: string) => void;
 }) {
   return (

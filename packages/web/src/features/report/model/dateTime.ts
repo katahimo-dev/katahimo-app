@@ -1,12 +1,12 @@
+import { addDaysYmd, WEEKDAY_LABELS, weekdayOfYmd, ymdParts } from '../../../lib/date';
+
 /**
  * 日報ダイアログの日付・時刻まわりの小さな計算(GAS版 updateDateDisplay / updateDateTimeSummary_ /
  * changeDate / autoSetEndTime / buildReceiptTimestamp)。
  *
- * 日付は 'YYYY-MM-DD'(ブラウザの暦日。GAS版も端末の時計の日付を使っていた)で持つ。
+ * 日付は 'YYYY-MM-DD'(業務日。日本時間の暦日。lib/date.ts)で持つ。
  * 時刻は時・分の2つのセレクトの値('09' / '00')で持つ。
  */
-
-export const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
 /** 時・分のセレクトの値(どちらも2桁。分は 00 / 15 / 30 / 45) */
 export interface ClockTime {
@@ -40,31 +40,8 @@ export function autoEndTime(start: ClockTime): ClockTime | null {
   return { hour: pad2((hour + 2) % 24), minute: start.minute };
 }
 
-/** Date(端末の時計)の暦日を 'YYYY-MM-DD' にする */
-export function toLocalDateString(date: Date): string {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-}
-
-interface DateParts {
-  year: number;
-  month: number;
-  day: number;
-  /** 0 = 日曜 */
-  weekday: number;
-}
-
-function partsOf(dateStr: string): DateParts {
-  const [y = 0, m = 1, d = 1] = dateStr.split('-').map(Number);
-  // 曜日だけが欲しいので、時差の影響を受けないUTCで計算する
-  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-  return { year: y, month: m, day: d, weekday };
-}
-
-/** 日付を offset 日ずらす('YYYY-MM-DD') */
-export function addDaysTo(dateStr: string, offset: number): string {
-  const { year, month, day } = partsOf(dateStr);
-  const shifted = new Date(Date.UTC(year, month - 1, day + offset));
-  return `${shifted.getUTCFullYear()}-${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}`;
+function partsOf(dateStr: string) {
+  return { ...ymdParts(dateStr), weekday: weekdayOfYmd(dateStr) };
 }
 
 /**
@@ -72,7 +49,7 @@ export function addDaysTo(dateStr: string, offset: number): string {
  * @returns 動かしたあとの日付。動かせないときは null
  */
 export function shiftReportDate(current: string, offset: number, today: string): string | null {
-  const next = addDaysTo(current, offset);
+  const next = addDaysYmd(current, offset);
   if (offset > 0 && next > today) return null;
   return next;
 }
@@ -126,9 +103,4 @@ export function toSlashDate(dateStr: string): string {
  */
 export function buildReceiptTimestamp(dateStr: string, start: Partial<ClockTime>): string {
   return `${toSlashDate(dateStr)} ${start.hour || '00'}:${start.minute || '00'}:00`;
-}
-
-/** 'HH:mm'(「✅ 送りました HH:MM」などに使う現在時刻) */
-export function formatNowHHmm(now: Date): string {
-  return `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
 }

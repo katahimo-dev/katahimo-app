@@ -1,10 +1,9 @@
 import type { CalendarSyncPreviewResponse } from '@katahimo/shared';
 import { useMutation } from '@tanstack/react-query';
 import { calendarSyncApi } from '../../../api/calendarSync';
-import { ModalHeader } from '../../../ui/modal';
+import { Modal, ModalHeader } from '../../../ui/modal';
 import { showErrorToast, showToast } from '../../../ui/toast';
 import { buildDiffRows, diffCountText } from '../model/diff';
-import { Dialog } from './Dialog';
 
 /**
  * 「カレンダーと違うところ」(GAS版 #calendarSyncDiffModal / confirmCalendarSyncDiff)。
@@ -32,7 +31,9 @@ export function CalendarSyncDiffModal({
   });
 
   return (
-    <Dialog
+    <Modal
+      transition="none"
+      onClose={onClose}
       open
       labelledBy="calendarSyncDiffTitle"
       className="fixed inset-0 bg-black bg-opacity-50 z-[115] flex items-center justify-center p-4"
@@ -75,6 +76,6 @@ export function CalendarSyncDiffModal({
           </button>
         </div>
       </div>
-    </Dialog>
+    </Modal>
   );
 }

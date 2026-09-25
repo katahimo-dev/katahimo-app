@@ -41,7 +41,7 @@ GAS版 `gas-childcare-visit-app` の `Auth.js` / `Main.js` / `GeminiReport.js` /
 | `GET /history?customerId=&before=` | ログイン中 | - | `{items}`(5件) | - |
 
 - 担当スタッフ: 管理者以外は常に本人(`staffId` は無視)。管理者は `staffId` 指定 → 上書き対象の元の担当者 → 本人 の順。
-- **上書き(`reportId`)の権限**: 管理者以外は自分の報告しか上書きできない(403、SECURITY `report.<daily|accident>.save_denied`)。GAS版は行番号さえ分かれば他人の日報を上書きできた穴を塞いだ。存在しない `reportId` は404。
+- **上書き(`reportId`)の権限**: 管理者以外は自分の報告しか上書きできない(403、SECURITY `report.<daily|accident>.save_denied`)。GAS版は行番号さえ分かれば他人の日報を上書きできた穴を塞いだ。存在しない `reportId` は404。`reportId` の報告が送られた `customerId` のお客様のものでなければ409 `conflict`(WARN `report.<daily|accident>.save_denied` reason `customer_mismatch`。別のお客様の日報を開き直したあとに前の保存が届いた場合などに、前のお客様の報告を書きかえないため)。
 - 保存成功で INFO `report.<daily|accident>.saved`(管理者が他スタッフ名義で保存した場合は target_staff_id に担当者)。
 - Google Chat通知の未設定は WARN `notification.gchat.not_configured`、送信失敗は ERROR `notification.gchat.failed`(保存自体は成功扱い)。
 

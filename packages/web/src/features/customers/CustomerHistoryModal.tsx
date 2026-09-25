@@ -1,6 +1,6 @@
 import type { CustomerListItem } from '@katahimo/shared';
 import { NETWORK_ERROR_MESSAGE } from '../../lib/messages';
-import { FadeModal, ModalFooter, ModalHeader } from '../../ui/modal';
+import { Modal, ModalFooter, ModalHeader } from '../../ui/modal';
 import { HistoryTimelineItem } from './HistoryTimelineItem';
 import { useCustomerHistory } from './useCustomerHistory';
 
@@ -18,8 +18,9 @@ export function CustomerHistoryModal({
   onClose: () => void;
 }) {
   return (
-    <FadeModal
+    <Modal
       open={open}
+      onClose={onClose}
       labelledBy="customerHistoryTitle"
       className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4 transition-opacity"
     >
@@ -44,7 +45,7 @@ export function CustomerHistoryModal({
           </button>
         </ModalFooter>
       </div>
-    </FadeModal>
+    </Modal>
   );
 }
 

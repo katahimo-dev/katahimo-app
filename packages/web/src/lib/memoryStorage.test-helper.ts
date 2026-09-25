@@ -1,11 +1,16 @@
 import type { KeyValueStorage } from './storage';
 
 /** テスト用のメモリ上のStorage。 */
-export function createMemoryStorage(initial: Record<string, string> = {}): KeyValueStorage & {
-  snapshot: () => Record<string, string>;
-} {
+export function createMemoryStorage(initial: Record<string, string> = {}): KeyValueStorage &
+  Pick<Storage, 'key' | 'length'> & {
+    snapshot: () => Record<string, string>;
+  } {
   const map = new Map(Object.entries(initial));
   return {
+    key: (index) => [...map.keys()][index] ?? null,
+    get length() {
+      return map.size;
+    },
     getItem: (key) => map.get(key) ?? null,
     setItem: (key, value) => {
       map.set(key, String(value));

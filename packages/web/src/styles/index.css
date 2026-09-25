@@ -31,27 +31,6 @@ body button {
   font-weight: 700;
 }
 
-.glass {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(10px);
-}
-
-.slide-in {
-  animation: slideIn 0.3s ease-out;
-}
-
-@keyframes slideIn {
-  from {
-    transform: translateY(20px);
-    opacity: 0;
-  }
-
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
 .loading-spinner {
   border-top-color: #3b82f6;
   border-left-color: #3b82f6;

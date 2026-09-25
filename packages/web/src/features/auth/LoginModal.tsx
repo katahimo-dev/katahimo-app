@@ -18,7 +18,10 @@ interface LoginModalProps {
   onForgotPassword: () => void;
 }
 
-/** GAS版 #loginModal と同じ見た目。入力の検証・送信は LoginScreen が行う。 */
+/**
+ * GAS版 #loginModal と同じ見た目。入力の検証・送信は LoginScreen が行う。
+ * 中身は <form> にしてあり、キーボードの Enter / 「開く」でもログインできる(検証は自前のため noValidate)。
+ */
 export function LoginModal({
   values,
   onChange,
@@ -31,7 +34,14 @@ export function LoginModal({
 }: LoginModalProps) {
   return (
     <div className="fixed inset-0 bg-gray-900 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm space-y-6">
+      <form
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit();
+        }}
+        className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm space-y-6"
+      >
         <div className="text-center">
           <h2 className="text-2xl font-bold text-gray-800">ログイン</h2>
           <p className="text-sm text-gray-500 mt-1">スタッフ情報を入力してください</p>
@@ -59,8 +69,9 @@ export function LoginModal({
               メールアドレス
             </label>
             <input
-              type="text"
+              type="email"
               id="loginEmail"
+              inputMode="email"
               autoCapitalize="none"
               autoComplete="username"
               value={values.email}
@@ -106,14 +117,13 @@ export function LoginModal({
           </button>
         </div>
         <button
-          type="button"
-          onClick={onSubmit}
+          type="submit"
           disabled={submitting}
           className="w-full min-h-12 py-3 bg-blue-600 text-white text-base font-bold rounded-xl shadow-lg transform transition-transform active:scale-95"
         >
           {submitting ? '確認中...' : 'ログイン'}
         </button>
-      </div>
+      </form>
     </div>
   );
 }
