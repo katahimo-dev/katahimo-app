@@ -42,6 +42,8 @@ export const dailyReportViewSchema = z.object({
 });
 export const saveDailyReportResponseSchema = z.object({
   success: z.literal(true),
+  /** 画面のお知らせに出す文言(GAS版 saveReport の message。いまは「保存しました」) */
+  message: z.string().optional(),
   report: dailyReportViewSchema,
 });
 
@@ -77,3 +79,53 @@ export const saveAccidentReportResponseSchema = z.object({
   success: z.literal(true),
   report: accidentReportViewSchema,
 });
+
+/**
+ * POST /api/reports/daily/generate・/accident/generate のリクエスト(GAS版 generateReportWithWarnings /
+ * generateAccidentReport の引数)。start/end は 'HH:mm'。
+ */
+export const generateReportRequestSchema = z.object({
+  text: z.string().trim().min(1, 'text が必要です'),
+  start: z.string().optional(),
+  end: z.string().optional(),
+});
+export type GenerateReportRequest = z.infer<typeof generateReportRequestSchema>;
+
+/**
+ * POST /api/reports/daily/generate の応答。失敗してもエラーにはせず、warnings に 'API Error' /
+ * 'API Key Missing' を入れ、internal に理由を書いた同じ形を返す(GAS版と同じ)。
+ */
+export const dailyReportDraftSchema = z.object({
+  warnings: z.array(z.string()),
+  internal: z.string(),
+  customer: z.string(),
+});
+export type DailyReportDraft = z.infer<typeof dailyReportDraftSchema>;
+export const generateDailyReportResponseSchema = z.object({ draft: dailyReportDraftSchema });
+
+/** POST /api/reports/accident/generate の応答。失敗時は draft が { error }(GAS版と同じ)。 */
+export const accidentReportDraftSchema = z.object({
+  occurrenceTime: z.string(),
+  location: z.string(),
+  accidentContent: z.string(),
+  situation: z.string(),
+  immediateResponse: z.string(),
+  parentCorrespondence: z.string(),
+  diagnosisTreatment: z.string(),
+  prevention: z.string(),
+});
+export type AccidentReportDraft = z.infer<typeof accidentReportDraftSchema>;
+export const generateAccidentReportResponseSchema = z.object({
+  draft: z.union([accidentReportDraftSchema, z.object({ error: z.string() })]),
+});
+
+/** POST /api/reports/visit-complete(「訪問終わりました」の通知だけを送る。GAS版 sendVisitCompleteNotification) */
+export const visitCompleteRequestSchema = z.object({
+  staffId: idSchema.optional(),
+  customerId: idSchema,
+  visitDate: businessDateSchema,
+  startTime: z.string(),
+  endTime: z.string(),
+});
+export type VisitCompleteRequest = z.infer<typeof visitCompleteRequestSchema>;
+export const visitCompleteResponseSchema = z.object({ success: z.literal(true) });
