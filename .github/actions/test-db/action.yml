@@ -1,9 +1,9 @@
 name: テスト用DB・鍵の準備
 description: >-
-  services の PostgreSQL に infra/initdb の SQL でロール katahimo(所有者)/ katahimo_app(アプリ)と
-  katahimo_dev を作ってマイグレーションを流し、開発用の鍵を生成して以後の手順の環境変数に入れる。
-  呼び出し側のジョブで PGHOST / PGUSER / PGPASSWORD(スーパーユーザー)と
-  DATABASE_URL / MIGRATION_DATABASE_URL を設定しておくこと。
+  services の PostgreSQL に infra/initdb の SQL でロール(katahimo_owner / katahimo_migrator / katahimo_app /
+  katahimo_worker / katahimo_readonly)と katahimo_dev を作ってマイグレーションを流し、開発用の鍵を生成して
+  以後の手順の環境変数に入れる。呼び出し側のジョブで PGHOST / PGUSER / PGPASSWORD(スーパーユーザー)と
+  DATABASE_URL / MIGRATION_DATABASE_URL / WORKER_DATABASE_URL を設定しておくこと。
 
 runs:
   using: composite
@@ -21,8 +21,8 @@ runs:
     - name: 開発用の鍵を生成
       shell: bash
       run: |
-        # ジョブの中だけで使う使い捨ての値(LOCAL_DEV_MASTER_KEY と LOCAL_DEV_KEK は別の値にする)
-        for name in SESSION_SECRET LOCAL_DEV_MASTER_KEY LOCAL_DEV_KEK; do
+        # ジョブの中だけで使う使い捨ての値(BLIND_INDEX_MASTER_KEY と LOCAL_DEV_KEK は別の値にする)
+        for name in SESSION_SECRET BLIND_INDEX_MASTER_KEY LOCAL_DEV_KEK; do
           value="$(openssl rand -hex 32)"
           echo "::add-mask::${value}"
           echo "${name}=${value}" >> "$GITHUB_ENV"
