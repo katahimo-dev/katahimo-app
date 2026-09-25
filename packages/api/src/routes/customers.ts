@@ -1,14 +1,16 @@
 import type { CustomerSummary } from '@katahimo/core/ports';
 import { getCustomerDetail, listCustomers, searchCustomersByFamilyName } from '@katahimo/core/usecases';
-import { customerDetailResponseSchema, customerListResponseSchema, idSchema } from '@katahimo/shared';
+import {
+  customerDetailResponseSchema,
+  customerListQuerySchema,
+  customerListResponseSchema,
+  idSchema,
+} from '@katahimo/shared';
 import { Hono } from 'hono';
-import { z } from 'zod';
 import type { Container } from '../container';
 import { apiError, jsonOk, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
 import { actorOf, requireSession } from '../session';
-
-const listQuerySchema = z.object({ familyName: z.string().trim().max(100).optional() });
 
 const toListItem = (c: CustomerSummary) => ({ id: c.id, name: c.displayName, phone: c.phone, city: c.city });
 
@@ -21,7 +23,7 @@ export function createCustomerRoutes(container: Container) {
    * 絞り込み・並び替えは画面で行う)。指定時は苗字の完全一致。テナントは必ずセッションのものだけを使う。
    */
   app.get('/', async (c) => {
-    const query = parseQuery(c, listQuerySchema);
+    const query = parseQuery(c, customerListQuerySchema);
     if (!query.ok) return query.response;
     const { tenantId } = c.get('session');
     if (!query.data.familyName) {
