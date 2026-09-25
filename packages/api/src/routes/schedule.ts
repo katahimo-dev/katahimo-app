@@ -3,7 +3,10 @@ import { businessDateSchema } from '@katahimo/shared';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { Container } from '../container';
-import { getAuthenticatedSession, resolveScheduleTargetStaffId } from '../session';
+import { requestMeta } from '../http/requestMeta';
+import { apiError } from '../http/responses';
+import type { SessionEnv } from '../session';
+import { requireSession, resolveScheduleTargetStaffId } from '../session';
 
 /**
  * 「予定」タブのAPI。GAS版Schedule.js(getScheduleForDate / getRouteForStaffOnDate)相当。
@@ -11,44 +14,45 @@ import { getAuthenticatedSession, resolveScheduleTargetStaffId } from '../sessio
  * ログ(ルート計算のINFO・失敗のWARN/ERROR)は usecases/schedule.ts が記録する。
  */
 export function createScheduleRoutes(container: Container) {
-  const app = new Hono();
+  const app = new Hono<SessionEnv>();
 
   /** 指定日の予定一覧(ルート・移動時間は含まない軽量版)。 */
-  app.get('/', async (c) => {
-    const request = await parseScheduleRequest(c, container);
-    if ('error' in request) return request.error;
-    return c.json(await getScheduleForStaff(container, request));
+  app.get('/', requireSession(container, 'schedule.view'), async (c) => {
+    const request = parseScheduleRequest(c);
+    if (!request.ok) return request.response;
+    return c.json(await getScheduleForStaff(container, request.data));
   });
 
   /** 指定日の予定にルート・移動時間を付与して取得する(地図APIの有料呼び出しを伴う)。 */
-  app.get('/route', async (c) => {
-    const request = await parseScheduleRequest(c, container);
-    if ('error' in request) return request.error;
+  app.get('/route', requireSession(container, 'schedule.route'), async (c) => {
+    const request = parseScheduleRequest(c);
+    if (!request.ok) return request.response;
     const forceRefresh = c.req.query('forceRefresh') === '1';
-    return c.json(await getScheduleWithRouteForStaff(container, { ...request, forceRefresh }));
+    return c.json(await getScheduleWithRouteForStaff(container, { ...request.data, forceRefresh }));
   });
 
   return app;
 }
 
-async function parseScheduleRequest(c: Context, container: Container) {
-  const session = await getAuthenticatedSession(c, container);
-  if (!session) return { error: c.json({ code: 'unauthenticated', message: '未ログインです' }, 401) };
-
+function parseScheduleRequest(c: Context<SessionEnv>) {
   const date = businessDateSchema.safeParse(c.req.query('date'));
   if (!date.success) {
     return {
-      error: c.json(
-        { code: 'validation_failed', message: 'date(YYYY-MM-DD)クエリパラメータが必要です' },
-        400,
-      ),
+      ok: false as const,
+      response: apiError(c, 400, 'validation_failed', 'date(YYYY-MM-DD)クエリパラメータが必要です', {
+        date: date.error.issues[0]?.message ?? 'YYYY-MM-DD 形式で指定してください',
+      }),
     };
   }
-
+  const session = c.get('session');
   return {
-    tenantId: session.tenantId,
-    actorStaffId: session.staffId,
-    targetStaffId: resolveScheduleTargetStaffId(session, c.req.query('staffId')),
-    date: date.data,
+    ok: true as const,
+    data: {
+      tenantId: session.tenantId,
+      actorStaffId: session.staffId,
+      targetStaffId: resolveScheduleTargetStaffId(session, c.req.query('staffId')),
+      date: date.data,
+      meta: requestMeta(c),
+    },
   };
 }

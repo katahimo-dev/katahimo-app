@@ -13,6 +13,7 @@ export * from './google-schedule';
 export * from './local-crypto';
 export * from './local-kms';
 export * from './local-storage';
+export * from './mail';
 export * from './mirror';
 export * from './noop';
 export * from './schedule-provider';

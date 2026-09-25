@@ -1,6 +1,7 @@
 import type { AppLogPort } from '../ports/appLog';
 import type { StaffRepositoryPort } from '../ports/repositories';
 import type { ScheduleLightResult, SchedulePort, ScheduleWithRouteResult } from '../ports/schedule';
+import type { RequestMeta } from './requestMeta';
 
 export interface ScheduleDeps {
   schedule: SchedulePort;
@@ -18,6 +19,8 @@ export interface ScheduleViewRequest {
   targetStaffId: string;
   /** 'YYYY-MM-DD'(JSTの業務日) */
   date: string;
+  /** ログに添える送信元情報。 */
+  meta?: RequestMeta;
 }
 
 export interface ScheduleRouteViewRequest extends ScheduleViewRequest {
@@ -101,7 +104,13 @@ interface LoggedOutcome<T> {
 async function runLogged<T extends ScheduleLightResult | ScheduleWithRouteResult>(
   deps: ScheduleDeps,
   action: string,
-  request: { tenantId: string; actorStaffId: string | null; targetStaffId: string; date: string },
+  request: {
+    tenantId: string;
+    actorStaffId: string | null;
+    targetStaffId: string;
+    date: string;
+    meta?: RequestMeta;
+  },
   run: (staffName: string) => Promise<LoggedOutcome<T>>,
 ): Promise<T | FailedResult> {
   const log = (level: 'INFO' | 'WARN' | 'ERROR', suffix: string, details: Record<string, unknown>) =>
@@ -112,6 +121,7 @@ async function runLogged<T extends ScheduleLightResult | ScheduleWithRouteResult
       actorStaffId: request.actorStaffId,
       targetStaffId: request.targetStaffId !== request.actorStaffId ? request.targetStaffId : null,
       details: { date: request.date, ...details },
+      ...request.meta,
     });
 
   try {

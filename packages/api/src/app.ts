@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { createContainer } from './container';
 import type { Env } from './env';
+import { createAdminStaffRoutes } from './routes/adminStaff';
 import { createAttendanceRoutes } from './routes/attendance';
 import { createAuthRoutes } from './routes/auth';
 import { createCustomerRoutes } from './routes/customers';
@@ -11,6 +12,7 @@ import { createReportRoutes } from './routes/reports';
 import { createScheduleRoutes } from './routes/schedule';
 import { createSettingsRoutes } from './routes/settings';
 import { createStaffRoutes } from './routes/staff';
+import { createUiConfigRoutes } from './routes/uiConfig';
 
 export interface AppDeps {
   env: Env;
@@ -34,7 +36,7 @@ export function createApp(deps: AppDeps) {
     }
   });
 
-  app.route('/api/auth', createAuthRoutes(container, deps.env.NODE_ENV === 'production'));
+  app.route('/api/auth', createAuthRoutes(container));
   app.route('/api/customers', createCustomerRoutes(container));
   app.route('/api/attendance', createAttendanceRoutes(container));
   app.route('/api/reports', createReportRoutes(container));
@@ -42,6 +44,8 @@ export function createApp(deps: AppDeps) {
   app.route('/api/schedule', createScheduleRoutes(container));
   app.route('/api/settings', createSettingsRoutes(container));
   app.route('/api/staff', createStaffRoutes(container));
+  app.route('/api/admin/staff', createAdminStaffRoutes(container));
+  app.route('/api/ui-config', createUiConfigRoutes(container));
 
   app.notFound((c) => c.json({ code: 'not_found', message: '該当するAPIがありません' }, 404));
 

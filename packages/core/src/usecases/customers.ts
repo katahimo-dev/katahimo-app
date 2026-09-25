@@ -39,6 +39,8 @@ export interface FamilyMemberInput {
   name: string;
   dob?: string;
   info?: string;
+  /** アレルギー(RESERVA取込時はextractAllergyでinfoから抽出したもの)。 */
+  allergy?: string;
 }
 
 /**
@@ -157,6 +159,7 @@ async function buildFamilyMemberInputs(
       name: await deps.crypto.encrypt(tenantId, m.name),
       dob: await encryptIfPresent(deps.crypto, tenantId, m.dob),
       info: await encryptIfPresent(deps.crypto, tenantId, m.info),
+      allergy: await encryptIfPresent(deps.crypto, tenantId, m.allergy),
     })),
   );
 }
@@ -258,6 +261,8 @@ export interface FamilyMemberView {
   name: string;
   dob: string | null;
   info: string | null;
+  /** nullの場合、UIは「アレルギー: なし」と表示する(GAS版showCustomerDetailと同じ)。 */
+  allergy: string | null;
 }
 
 /** 顧客の全項目(RESERVA CSV由来の全フィールド)を復号した詳細ビュー。 */
@@ -305,6 +310,7 @@ async function decryptFamilyMember(
     name: await crypto.decrypt(tenantId, row.name),
     dob: await decryptIfPresent(crypto, tenantId, row.dob),
     info: await decryptIfPresent(crypto, tenantId, row.info),
+    allergy: await decryptIfPresent(crypto, tenantId, row.allergy),
   };
 }
 

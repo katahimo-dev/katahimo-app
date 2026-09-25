@@ -1,111 +1,108 @@
+import type { SaveSettingsResult } from '@katahimo/core';
 import {
   getAdminSettings,
+  listAiPromptsForAdmin,
+  listGeminiModelsForAdmin,
   saveGeminiApiKey,
   saveGeminiModelSettings,
   saveGoogleChatWebhookSettings,
+  updateAiPrompts,
 } from '@katahimo/core';
-import type { ResolvedSession } from '@katahimo/core/usecases';
+import {
+  listGeminiModelsRequestSchema,
+  saveGchatWebhooksRequestSchema,
+  saveGeminiApiKeyRequestSchema,
+  saveGeminiModelsRequestSchema,
+  updateAiPromptsRequestSchema,
+} from '@katahimo/shared';
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { Container } from '../container';
-import { getAuthenticatedSession } from '../session';
+import { requestMeta } from '../http/requestMeta';
+import { apiError, parseJsonBody } from '../http/responses';
+import type { SessionEnv } from '../session';
+import { requireAdmin } from '../session';
 
-/**
- * GAS版の各getXXXForAdmin/saveXXXForAdminの `!session.isAdmin` チェックに対応。
- * 管理者以外には403を返す(GAS版は`{success:false, message:'権限がありません。'}`を200で
- * 返していたが、RESTらしく403にする)。
- */
-function isAdmin(session: ResolvedSession | null): session is ResolvedSession {
-  return !!session && session.isAdmin;
+function actorOf(c: Context<SessionEnv>) {
+  const session = c.get('session');
+  return { tenantId: session.tenantId, staffId: session.staffId, meta: requestMeta(c) };
 }
 
+function respondSave(c: Context, result: SaveSettingsResult) {
+  if (!result.ok) return apiError(c, 400, 'validation_failed', result.message);
+  return c.json(result);
+}
+
+/**
+ * 管理者設定(GAS版の設定モーダル「管理者設定」)。全て管理者専用で、管理者以外・未ログインの
+ * アクセスはrequireAdminがWARNログに残す(GAS版logAdminAccessDenied_)。
+ */
 export function createSettingsRoutes(container: Container) {
-  const app = new Hono();
+  const app = new Hono<SessionEnv>();
 
-  /** 現在の管理者設定を復号して返す。GAS版のgetGeminiApiKeyForAdmin等をまとめたもの。 */
-  app.get('/admin', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-    if (!isAdmin(session)) return c.json({ code: 'forbidden', message: '権限がありません' }, 403);
-
-    const settings = await getAdminSettings(container, session.tenantId);
-    return c.json({ settings });
+  /** 現在の管理者設定を復号して返す(閲覧はSECURITYログに残る)。 */
+  app.get('/admin', requireAdmin(container, 'settings.admin.view'), async (c) => {
+    return c.json({ settings: await getAdminSettings(container, actorOf(c)) });
   });
 
-  /** GAS版saveGeminiApiKeyForAdmin相当。空文字は拒否される(usecase側のガード)。 */
-  app.post('/admin/gemini-key', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-    if (!isAdmin(session)) return c.json({ code: 'forbidden', message: '権限がありません' }, 403);
-
-    const body = await c.req.json().catch(() => null);
-    if (typeof body?.apiKey !== 'string') {
-      return c.json({ ok: false, message: 'apiKey が必要です' }, 400);
-    }
-    const result = await saveGeminiApiKey(container, session.tenantId, body.apiKey);
-    return c.json(result);
+  app.post('/admin/gemini-key', requireAdmin(container, 'settings.gemini_api_key.save'), async (c) => {
+    const body = await parseJsonBody(c, saveGeminiApiKeyRequestSchema);
+    if (!body.ok) return body.response;
+    return respondSave(c, await saveGeminiApiKey(container, actorOf(c), body.data.apiKey));
   });
 
-  /** GAS版saveGeminiModelSettingsForAdmin相当。 */
-  app.post('/admin/gemini-models', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-    if (!isAdmin(session)) return c.json({ code: 'forbidden', message: '権限がありません' }, 403);
-
-    const body = await c.req.json().catch(() => null);
-    if (typeof body?.reportModel !== 'string' || typeof body?.ocrModel !== 'string') {
-      return c.json({ ok: false, message: 'reportModel, ocrModel が必要です' }, 400);
-    }
-    const result = await saveGeminiModelSettings(
-      container,
-      session.tenantId,
-      body.reportModel,
-      body.ocrModel,
+  app.post('/admin/gemini-models', requireAdmin(container, 'settings.gemini_models.save'), async (c) => {
+    const body = await parseJsonBody(c, saveGeminiModelsRequestSchema);
+    if (!body.ok) return body.response;
+    return respondSave(
+      c,
+      await saveGeminiModelSettings(container, actorOf(c), body.data.reportModel, body.data.ocrModel),
     );
-    return c.json(result);
   });
 
-  /** GAS版saveGoogleChatWebhookSettingsForAdmin相当。 */
-  app.post('/admin/gchat-webhooks', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-    if (!isAdmin(session)) return c.json({ code: 'forbidden', message: '権限がありません' }, 403);
-
-    const body = await c.req.json().catch(() => null);
-    if (typeof body?.reportWebhookUrl !== 'string' || typeof body?.receiptWebhookUrl !== 'string') {
-      return c.json({ ok: false, message: 'reportWebhookUrl, receiptWebhookUrl が必要です' }, 400);
-    }
-    const result = await saveGoogleChatWebhookSettings(
-      container,
-      session.tenantId,
-      body.reportWebhookUrl,
-      body.receiptWebhookUrl,
+  app.post('/admin/gchat-webhooks', requireAdmin(container, 'settings.gchat_webhooks.save'), async (c) => {
+    const body = await parseJsonBody(c, saveGchatWebhooksRequestSchema);
+    if (!body.ok) return body.response;
+    return respondSave(
+      c,
+      await saveGoogleChatWebhookSettings(
+        container,
+        actorOf(c),
+        body.data.reportWebhookUrl,
+        body.data.receiptWebhookUrl,
+      ),
     );
-    return c.json(result);
   });
 
-  /**
-   * 保存前の入力中キーでも確認できるよう、apiKeyは明示的にリクエストボディで受け取る
-   * (GAS版listAvailableGeminiModelsForAdminのapiKeyOverrideと同じ)。
-   */
-  app.post('/admin/gemini-models/available', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-    if (!isAdmin(session)) return c.json({ code: 'forbidden', message: '権限がありません' }, 403);
+  /** 入力中のキー(空なら保存済みのキー)で使えるモデル一覧を取得する。 */
+  app.post(
+    '/admin/gemini-models/available',
+    requireAdmin(container, 'settings.gemini_models.list'),
+    async (c) => {
+      const body = await parseJsonBody(c, listGeminiModelsRequestSchema);
+      if (!body.ok) return body.response;
+      const result = await listGeminiModelsForAdmin(container, actorOf(c), body.data.apiKey);
+      if (!result.ok) {
+        return apiError(c, result.reason === 'no_api_key' ? 400 : 502, 'validation_failed', result.message);
+      }
+      return c.json({ success: true as const, models: result.models });
+    },
+  );
 
-    const body = await c.req.json().catch(() => null);
-    const apiKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : '';
-    if (!apiKey) {
-      return c.json({
-        success: false,
-        message: 'Gemini APIキーが設定されていません。先にAPIキーを入力してください。',
-      });
+  /** 編集可能なAIプロンプト・入力欄プレースホルダーの一覧(GAS版「ＡＩプロンプト」シート)。 */
+  app.get('/admin/prompts', requireAdmin(container, 'settings.ai_prompts.view'), async (c) => {
+    return c.json({ prompts: await listAiPromptsForAdmin(container, c.get('session').tenantId) });
+  });
+
+  app.put('/admin/prompts', requireAdmin(container, 'settings.ai_prompts.save'), async (c) => {
+    const body = await parseJsonBody(c, updateAiPromptsRequestSchema);
+    if (!body.ok) return body.response;
+    const actor = actorOf(c);
+    const result = await updateAiPrompts(container, { ...actor, prompts: body.data.prompts });
+    if (!result.ok) {
+      return apiError(c, 400, 'validation_failed', `不明なプロンプトです: ${result.keys.join(', ')}`);
     }
-    try {
-      const models = await container.listGeminiModels(apiKey);
-      return c.json({ success: true, models });
-    } catch (e) {
-      return c.json({ success: false, message: e instanceof Error ? e.message : String(e) });
-    }
+    return c.json({ prompts: result.prompts });
   });
 
   return app;
