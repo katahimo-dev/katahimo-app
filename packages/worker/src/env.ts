@@ -1,5 +1,7 @@
-import { parseTenantFolderMap } from '@katahimo/integrations';
+import { parseTenantFolderMap, SCHEDULE_PROVIDERS } from '@katahimo/integrations';
 import { z } from 'zod';
+
+const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
 
 /** 'true'/'1' だけを真とする機能フラグ(z.coerce.boolean() は 'false' も真にしてしまうため)。 */
 const booleanFlag = z
@@ -23,9 +25,19 @@ const envSchema = z.object({
   // (ワーカーはAPIサーバーが保存したファイルを読み直してGAS版Driveへミラーする)。
   LOCAL_RECEIPT_STORAGE_DIR: z.string().default('./data/receipts'),
 
-  // GAS版 Web App(Bridge.js)。未設定ならミラー送信は何もせず成功扱い、予定は常に「予定なし」になる。
+  // 予定・ルート計算の実装(packages/api/src/env.ts と同じ意味。夜間のカレンダー反映に使う)。
+  SCHEDULE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(SCHEDULE_PROVIDERS).optional()),
+  GOOGLE_MAPS_API_KEY: z.string().optional(),
+  GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
+  GOOGLE_CALENDAR_IDS: z.string().optional(),
+  GOOGLE_CALENDAR_IMPERSONATE: z.string().optional(),
+
+  // GAS版 Web App(Bridge.js)。未設定ならミラー送信は何もせず成功扱いになる。
   GAS_BRIDGE_URL: z.string().optional(),
   GAS_BRIDGE_SECRET: z.string().optional(),
+
+  // job:sync-busy-blocks が同期する期間(今日から何日先まで)。
+  BUSY_BLOCK_SYNC_DAYS: z.coerce.number().int().positive().default(28),
 
   // ── outboxミラー ──
   OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),

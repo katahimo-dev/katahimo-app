@@ -4,7 +4,7 @@ import {
   buildCalendarSyncPlan,
   buildRowDataFromAppointments,
   type CalendarAppointment,
-  mergeOverlappingOfficeWork,
+  mergeOverlappingOfficeAppointments,
 } from '../../domain/attendance';
 import type { AttendanceDayRecord } from '../../ports/attendanceDays';
 import {
@@ -44,15 +44,20 @@ interface CalendarSnapshot {
 
 async function fetchCalendarRowData(
   deps: CalendarSyncDeps,
+  tenantId: string,
   staff: StaffRef,
   date: string,
 ): Promise<CalendarSnapshot> {
-  const result = await deps.schedule.getScheduleWithRoute(staff.staffName, date, true);
+  // fresh: 共有キャッシュを読み書きせず、読めないカレンダーがあれば部分的な結果ではなく失敗にする。
+  const result = await deps.schedule.getScheduleWithRoute(staff.staffName, date, false, {
+    tenantId,
+    fresh: true,
+  });
   if (!result.success) {
     const reason = result.message ? `(${result.message})` : '';
     throw new AttendanceError('schedule_unavailable', `カレンダー予定の取得に失敗しました。${reason}`);
   }
-  const appointments = mergeOverlappingOfficeWork(result.appointments ?? []);
+  const appointments = mergeOverlappingOfficeAppointments(result.appointments ?? []);
   return { appointments, rowData: buildRowDataFromAppointments(appointments) };
 }
 
@@ -70,7 +75,7 @@ async function computeSync(
   staff: StaffRef,
   date: string,
 ): Promise<ComputedSync> {
-  const calendar = await fetchCalendarRowData(deps, staff, date);
+  const calendar = await fetchCalendarRowData(deps, tenantId, staff, date);
   const record = await deps.attendanceDays.findByStaffAndDate(tenantId, staff.staffId, date);
   const current = await readRowData(deps, tenantId, record);
   const plan = buildCalendarSyncPlan(current, calendar.rowData);
@@ -254,7 +259,7 @@ export async function refreshAttendanceAggregate(
   }
   const target = await loadAttendanceTarget(deps, actor, targetStaffId);
   try {
-    const calendar = await fetchCalendarRowData(deps, target, date);
+    const calendar = await fetchCalendarRowData(deps, actor.tenantId, target, date);
     const record = await deps.attendanceDays.findOrCreate(
       actor.tenantId,
       target.staffId,

@@ -11,15 +11,27 @@ export interface LatLng {
   lng: number;
 }
 
+/** 移動手段。値は staff.travel_mode 列と同じ。GAS版は全員 'car'(DRIVING)固定だった。 */
+export type TravelMode = 'car' | 'bicycle' | 'transit' | 'walk';
+
+export const DEFAULT_TRAVEL_MODE: TravelMode = 'car';
+
+/** 経路1区間の生の値。分・kmへの丸めはドメイン側(domain/schedule/routeLegs.ts)で行う。 */
 export interface RouteLeg {
-  /** 所要時間(分)。出勤簿の移動時間セルに入る値。 */
-  durationMin: number;
-  /** 距離(km)。基準距離超過の判定に使うため、丸め方を変えると手当額が変わる。 */
-  distanceKm: number;
+  durationSeconds: number;
+  distanceMeters: number;
+}
+
+export interface RouteOptions {
+  travelMode?: TravelMode;
 }
 
 export interface MapsPort {
+  /** 住所が見つからなければnull。通信・認証・クォータ等の失敗は例外。 */
   geocode(address: string): Promise<LatLng | null>;
-  /** 自動車での経路。出発時刻を渡せる場合は渡す(交通状況を考慮するため)。 */
-  route(origin: LatLng, destination: LatLng, departureAt?: Date): Promise<RouteLeg | null>;
+  /**
+   * 経路が見つからなければnull。通信・認証・クォータ等の失敗は例外。
+   * 出発時刻は指定しない(GAS版と同じく交通状況を考慮しない経路)。
+   */
+  route(origin: LatLng, destination: LatLng, options?: RouteOptions): Promise<RouteLeg | null>;
 }

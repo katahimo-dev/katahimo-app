@@ -5,7 +5,7 @@ import {
   buildCalendarSyncPlan,
   buildRowDataFromAppointments,
   type CalendarAppointment,
-  mergeOverlappingOfficeWork,
+  mergeOverlappingOfficeAppointments,
 } from './calendarSync';
 import { buildScheduleEventsFromRowData } from './scheduleEvents';
 import { ATTENDANCE_COLUMN_KEYS, type AttendanceColumnKey } from './sheetLayout';
@@ -180,7 +180,7 @@ describe.skipIf(!GAS_LEGACY_AVAILABLE)('GAS版コードとの出力一致', () =
     for (let i = 0; i < CASES; i++) {
       // GAS版は事務作業のまとめ(mergeOverlappingOfficeWork)をカレンダー取得時に済ませているため、
       // まとめ済みの予定をGAS版に渡して比較する。
-      const appointments = mergeOverlappingOfficeWork(randomAppointments(r));
+      const appointments = mergeOverlappingOfficeAppointments(randomAppointments(r));
       const gasInput = appointments.map((a) => ({ ...a }));
       expect(buildRowDataFromAppointments(appointments), JSON.stringify(appointments)).toEqual(
         stringifyValues(plain(gasFn('buildTimesheetRowDataFromAppointments_')(gasInput))),
@@ -188,7 +188,7 @@ describe.skipIf(!GAS_LEGACY_AVAILABLE)('GAS版コードとの出力一致', () =
     }
   });
 
-  it('mergeOverlappingOfficeWork(RouteSearch.js、同名関数+開始時刻順の並べ替え)', () => {
+  it('mergeOverlappingOfficeAppointments(RouteSearch.js mergeOverlappingOfficeWork+開始時刻順の並べ替え)', () => {
     const r = createRandom(3);
     const day = (time: string): Date => new Date(`2026-09-25T${time}:00+09:00`);
     const jst = new Intl.DateTimeFormat('en-GB', {
@@ -210,7 +210,7 @@ describe.skipIf(!GAS_LEGACY_AVAILABLE)('GAS版コードとの出力一致', () =
         .slice()
         .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
       expect(
-        mergeOverlappingOfficeWork(appointments).map((a) => [
+        mergeOverlappingOfficeAppointments(appointments).map((a) => [
           a.eventType,
           a.customerName,
           a.startTime,

@@ -66,7 +66,12 @@ import type {
   TenantRecord,
   TenantRepositoryPort,
 } from '../ports/repositories';
-import type { ScheduleLightResult, SchedulePort, ScheduleWithRouteResult } from '../ports/schedule';
+import type {
+  ScheduleLightResult,
+  SchedulePort,
+  ScheduleWithRouteOptions,
+  ScheduleWithRouteResult,
+} from '../ports/schedule';
 import type { StoragePort, StoredFile } from '../ports/storage';
 import type { PasswordHasherPort } from './auth/deps';
 
@@ -840,11 +845,16 @@ export class FakeMirrorSenderPort implements MirrorSenderPort {
 
 /**
  * スタッフ名×日付ごとに返す予定を設定できる SchedulePort のフェイク実装。
- * getScheduleWithRoute の forceRefresh の値も記録する(出勤簿の反映は常に最新を取る必要があるため)。
+ * getScheduleWithRoute の引数(forceRefresh・options)も記録する(出勤簿の反映は常に fresh で取る必要があるため)。
  */
 export class FakeSchedulePort implements SchedulePort {
   private readonly results = new Map<string, ScheduleWithRouteResult>();
-  readonly calls: { staffName: string; date: string; forceRefresh: boolean }[] = [];
+  readonly calls: {
+    staffName: string;
+    date: string;
+    forceRefresh: boolean;
+    options?: ScheduleWithRouteOptions;
+  }[] = [];
 
   setAppointments(
     staffName: string,
@@ -876,8 +886,9 @@ export class FakeSchedulePort implements SchedulePort {
     staffName: string,
     dateString: string,
     forceRefresh: boolean,
+    options?: ScheduleWithRouteOptions,
   ): Promise<ScheduleWithRouteResult> {
-    this.calls.push({ staffName, date: dateString, forceRefresh });
+    this.calls.push({ staffName, date: dateString, forceRefresh, options });
     return this.results.get(`${staffName}|${dateString}`) ?? { success: true, appointments: [] };
   }
 }

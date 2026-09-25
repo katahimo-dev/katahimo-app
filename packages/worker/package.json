@@ -12,7 +12,8 @@
     "start": "tsx src/main.ts",
     "outbox:once": "tsx src/entrypoints/outboxOnce.ts",
     "job:nightly-calendar-sync": "tsx src/entrypoints/nightlyCalendarSync.ts",
-    "job:csv-import": "tsx src/entrypoints/csvImport.ts"
+    "job:csv-import": "tsx src/entrypoints/csvImport.ts",
+    "job:sync-busy-blocks": "tsx src/entrypoints/syncBusyBlocks.ts"
   },
   "dependencies": {
     "@katahimo/core": "workspace:*",

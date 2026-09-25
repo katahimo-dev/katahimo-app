@@ -3,12 +3,12 @@ import {
   addDays,
   countDaysInclusive,
   datesOfMonth,
-  isValidBusinessDate,
   isValidYearMonth,
   jstBusinessDate,
   jstMonthInstantRange,
   lastDayOfMonth,
 } from './calendarDate';
+import { isValidBusinessDate } from './schedule/jstDate';
 
 describe('calendarDate', () => {
   it('JSTの暦日はUTC15時で切り替わる', () => {

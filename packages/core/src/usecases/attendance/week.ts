@@ -1,5 +1,6 @@
 import { buildScheduleEventsFromRowData, type ScheduleEvent } from '../../domain/attendance';
-import { countDaysInclusive, isValidBusinessDate } from '../../domain/calendarDate';
+import { countDaysInclusive } from '../../domain/calendarDate';
+import { isValidBusinessDate } from '../../domain/schedule/jstDate';
 import { type AttendanceActor, loadAttendanceTarget, logCrossStaffRead } from './access';
 import type { AttendanceDeps } from './deps';
 import { AttendanceError } from './errors';

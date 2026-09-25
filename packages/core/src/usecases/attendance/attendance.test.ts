@@ -242,7 +242,7 @@ describe('勤怠usecase', () => {
       ]);
     });
 
-    it('プレビューは書き込まずに差分だけを返し、予定は常に最新(forceRefresh)で取る', async () => {
+    it('プレビューは書き込まずに差分だけを返し、予定はキャッシュを使わず(fresh)に取る', async () => {
       const preview = await previewCalendarSync(deps, self, self.staffId, '2026-09-10');
       expect(preview).toMatchObject({ appointmentCount: 3, hasChanges: true, staffName: '佐藤 花子' });
       expect(preview.changes.map((c) => c.column)).toEqual([
@@ -260,7 +260,14 @@ describe('勤怠usecase', () => {
         'Z',
         'AJ',
       ]);
-      expect(schedule.calls).toEqual([{ staffName: '佐藤 花子', date: '2026-09-10', forceRefresh: true }]);
+      expect(schedule.calls).toEqual([
+        {
+          staffName: '佐藤 花子',
+          date: '2026-09-10',
+          forceRefresh: false,
+          options: { tenantId, fresh: true },
+        },
+      ]);
       expect(attendanceDays.countForTest()).toBe(0);
       expect(outbox.listAllForTest()).toEqual([]);
     });

@@ -70,9 +70,14 @@ export function isOfficeWorkAppointment(appointment: CalendarAppointment): boole
 /**
  * 時間の重なる事務作業を1件にまとめる(内容は「,」区切りで連結、終了は遅い方)。
  * 結果は開始時刻順に並べ直す(GAS版はこの後スタッフごとに開始時刻で並べていた)。
- * 既にまとめ済みの予定に再適用しても結果は変わらない。
+ *
+ * 予定の取得側(domain/schedule の mergeOverlappingOfficeWork)でもカレンダーの予定の段階で同じまとめを
+ * 行っている。こちらは1スタッフ分の 'HH:mm' の予定に対する版で、どの SchedulePort 実装から来た予定でも
+ * 出勤簿の枠の割り当てが同じになるよう、出勤簿へ変換する直前に必ず通す(まとめ済みなら結果は変わらない)。
  */
-export function mergeOverlappingOfficeWork<T extends CalendarAppointment>(appointments: readonly T[]): T[] {
+export function mergeOverlappingOfficeAppointments<T extends CalendarAppointment>(
+  appointments: readonly T[],
+): T[] {
   const officeWorks = appointments.filter((a) => a.eventType === OFFICE_WORK_EVENT_TYPE);
   if (officeWorks.length === 0) return [...appointments];
   const others = appointments.filter((a) => a.eventType !== OFFICE_WORK_EVENT_TYPE);
@@ -131,7 +136,7 @@ export function buildRowDataFromAppointments(
   appointments: readonly CalendarAppointment[],
 ): AttendanceRowData {
   const row: AttendanceRowData = Object.fromEntries(CALENDAR_COLUMNS.map((column) => [column, '']));
-  const merged = mergeOverlappingOfficeWork(appointments);
+  const merged = mergeOverlappingOfficeAppointments(appointments);
   const officeWorks = merged.filter(isOfficeWorkAppointment);
   const visits = merged.filter((a) => !isOfficeWorkAppointment(a));
 

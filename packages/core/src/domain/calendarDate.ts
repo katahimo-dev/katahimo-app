@@ -4,6 +4,7 @@
  * 出勤簿・勤怠はすべてJSTの暦日で扱う(GAS版はスクリプトのタイムゾーン Asia/Tokyo の
  * new Date() を前提にしていた)。サーバーのローカルタイムゾーンに依存しないよう、
  * 暦日の計算はすべてUTCの日付演算で行い、「今日」だけをJSTに換算して求める。
+ * 'YYYY-MM-DD' の妥当性判定は domain/schedule/jstDate.ts の isValidBusinessDate を使う。
  */
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -23,12 +24,6 @@ function toUtcDate(businessDate: string): Date {
 
 function formatUtcDate(date: Date): string {
   return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
-}
-
-/** 実在する暦日の 'YYYY-MM-DD' か(2026-02-30 のような日付は false)。 */
-export function isValidBusinessDate(value: string): boolean {
-  if (!BUSINESS_DATE_PATTERN.test(value)) return false;
-  return formatUtcDate(toUtcDate(value)) === value;
 }
 
 /** 'YYYY-MM'(月は01〜12)か。 */

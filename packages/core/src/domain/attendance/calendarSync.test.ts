@@ -5,7 +5,7 @@ import {
   buildRowDataFromAppointments,
   type CalendarAppointment,
   isOfficeWorkAppointment,
-  mergeOverlappingOfficeWork,
+  mergeOverlappingOfficeAppointments,
   timeRangesOverlap,
 } from './calendarSync';
 
@@ -37,9 +37,9 @@ describe('isOfficeWorkAppointment / appointmentDurationMinutes', () => {
   });
 });
 
-describe('mergeOverlappingOfficeWork', () => {
+describe('mergeOverlappingOfficeAppointments', () => {
   it('時間の重なる事務作業を1件にまとめ、開始時刻順に並べる', () => {
-    const merged = mergeOverlappingOfficeWork([
+    const merged = mergeOverlappingOfficeAppointments([
       office('B', '10:30', '11:30'),
       visit('佐藤様', '09:00', '10:00'),
       office('A', '10:00', '11:00'),
@@ -54,8 +54,11 @@ describe('mergeOverlappingOfficeWork', () => {
   });
 
   it('まとめ済みの予定に再適用しても変わらない', () => {
-    const once = mergeOverlappingOfficeWork([office('A', '10:00', '11:00'), office('B', '10:30', '12:00')]);
-    expect(mergeOverlappingOfficeWork(once)).toEqual(once);
+    const once = mergeOverlappingOfficeAppointments([
+      office('A', '10:00', '11:00'),
+      office('B', '10:30', '12:00'),
+    ]);
+    expect(mergeOverlappingOfficeAppointments(once)).toEqual(once);
   });
 });
 

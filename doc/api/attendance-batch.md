@@ -61,8 +61,10 @@ GAS版 `getWeeklyScheduleForStaff`。出勤簿の記録を週間表示用のイ�
 
 ## カレンダー → 出勤簿
 
-予定は `SchedulePort.getScheduleWithRoute(staffName, date, forceRefresh=true)` から毎回最新を取る
-(出勤簿は正式な記録のためキャッシュを使わない。GAS版 `refreshAttendanceForStaffOnDate` と同じ)。
+予定は `SchedulePort.getScheduleWithRoute(staffName, date, false, { tenantId, fresh: true })` から毎回最新を取る
+(出勤簿は正式な記録のため共有キャッシュを読み書きせず、読めないカレンダーがあれば部分的な結果ではなく
+`502 upstream_unavailable` にする。GAS版 `refreshAttendanceForStaffOnDate` と同じ規則)。予定の実装
+(`SCHEDULE_PROVIDER` = google / gas_bridge / noop)は `doc/api/schedule-route.md` を参照。
 変換と非破壊マージは `packages/core/src/domain/attendance/calendarSync.ts`(GAS版
 `buildTimesheetRowDataFromAppointments_` / `mergeOverlappingOfficeWork` / `buildCalendarSyncPlan_` を移植し、
 `gasParity.test.ts` でGAS版のコードそのものと出力一致を確認している)。**月ロックは掛からない**(GAS版と同じ)。
@@ -101,7 +103,7 @@ GAS版 `refreshAttendanceForStaffOnDate`。ボディ `{ date, staffId }`。「�
 
 GAS版 `forceImportCsv`。ボディ `{ force?: boolean }`(既定 `true`=取込済みの版でも取り込み直す)。
 取込処理は下記 `csv-import` ジョブと同じ(`packages/ingestion/src/customerCsvImport/`)。操作した管理者のIDと名前を
-`app_logs` に残す。レスポンス `{ status, message, fileName, version, stats, dataVersion }`、`status` は
+`app_logs` に残す(管理者以外は `403`、`customer_csv.import.access_denied` をWARNログ)。レスポンス `{ status, message, fileName, version, stats, dataVersion }`、`status` は
 `imported` / `up_to_date` / `no_files` / `not_configured`(200)、`review_required`(409)、`failed`(502)。
 
 GAS版は顧客シートを丸ごと書き換えていたが、こちらは RESERVA 顧客IDでの差分適用で、CSVから消えた顧客が既存の
@@ -123,6 +125,7 @@ GAS版 `checkDataVersion`。レスポンス `{ dataVersion: '12' }`(顧客CSVを
 | 常駐 | `pnpm --filter @katahimo/worker start` | outbox ミラーのポーリング(Cloud Run サービス、最小インスタンス1) | — |
 | ジョブ | `pnpm job:nightly-calendar-sync` | GAS版 `autoSyncTodayScheduleForAllStaff`: 利用中の全テナントの在籍スタッフの当日分をカレンダーから出勤簿へ反映。スタッフごとに失敗を記録して続行し、テナントごとのまとめを INFO ログ。冪等 | `0 22 * * *`(`CRON_TZ=Asia/Tokyo`) |
 | ジョブ | `pnpm job:csv-import` | GAS版 `checkAndImportLatestCsv`: 各テナントの取込元の最新CSVが未取込なら取り込む | `0 3 * * *`(`CRON_TZ=Asia/Tokyo`) |
+| ジョブ | `pnpm --filter @katahimo/worker job:sync-busy-blocks` | スタッフのGoogleカレンダーの free/busy を `staff_busy_blocks` に同期(将来のマッチング用、doc/10。GAS版に相当機能なし)。期間は今日から `BUSY_BLOCK_SYNC_DAYS` 日 | 既定では登録しない(使う場合は例: `0 * * * *`) |
 | 確認用 | `pnpm --filter @katahimo/worker outbox:once` | outbox を1回だけ処理して終了 | — |
 
 - ジョブは Cloud Run Jobs として同じイメージの別コマンドで動かす(`tsx src/entrypoints/<job>.ts`)。
@@ -144,7 +147,9 @@ ERROR(`mirror.job_failed`)を残す。`processing` のまま10分以上更新さ
 
 | 変数 | 使う側 | 内容 |
 | --- | --- | --- |
-| `GAS_BRIDGE_URL` / `GAS_BRIDGE_SECRET` | API・ワーカー | GAS版 Web App(Bridge.js)。未設定なら予定は常に空、ミラー送信は何もしない |
+| `SCHEDULE_PROVIDER` ほか `GOOGLE_MAPS_API_KEY` / `GOOGLE_APPLICATION_CREDENTIALS` / `GOOGLE_CALENDAR_IDS` / `GOOGLE_CALENDAR_IMPERSONATE` | API・ワーカー | 予定・ルート計算の実装(doc/api/schedule-route.md)。夜間反映のワーカーもAPIと同じ設定にする |
+| `GAS_BRIDGE_URL` / `GAS_BRIDGE_SECRET` | API・ワーカー | GAS版 Web App(Bridge.js)。ミラー書き込み先(未設定ならミラー送信は何もしない)、`SCHEDULE_PROVIDER=gas_bridge` の予定取得元 |
+| `BUSY_BLOCK_SYNC_DAYS` | ワーカー | `job:sync-busy-blocks` の同期期間(日、既定28) |
 | `MIRROR_TO_GOOGLE_SHEETS` | API | `true`/`1` のときだけ outbox に積む(以前は `'false'` も真になっていた不具合を修正) |
 | `CUSTOMER_CSV_DRIVE_FOLDERS` | API・ワーカー | `{"テナントslug":"DriveフォルダID"}`。サービスアカウント(ADC / `GOOGLE_APPLICATION_CREDENTIALS`)に閲覧共有する。`Kokyaku_YYYYMMDDHHmm_N.csv` のうちファイル名の日時が最新のものを取り込む |
 | `CUSTOMER_CSV_LOCAL_DIR` | API・ワーカー | ローカル開発用。`<dir>/<テナントslug>/` を取込元にする(Drive設定が無い場合のみ) |
