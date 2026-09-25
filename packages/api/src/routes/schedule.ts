@@ -3,6 +3,7 @@ import { businessDateSchema } from '@katahimo/shared';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { Container } from '../container';
+import { enforceStaffQuota } from '../http/quota';
 import { requestMeta } from '../http/requestMeta';
 import { apiError } from '../http/responses';
 import type { SessionEnv } from '../session';
@@ -28,6 +29,15 @@ export function createScheduleRoutes(container: Container) {
     const request = parseScheduleRequest(c);
     if (!request.ok) return request.response;
     const forceRefresh = c.req.query('forceRefresh') === '1';
+    if (forceRefresh) {
+      const limited = await enforceStaffQuota(
+        c,
+        container,
+        container.rateLimits.scheduleForceRefreshStaff,
+        'ルートの再計算の回数が上限に達しました。しばらく待ってから再度お試しください。',
+      );
+      if (limited) return limited;
+    }
     return c.json(await getScheduleWithRouteForStaff(container, { ...request.data, forceRefresh }));
   });
 

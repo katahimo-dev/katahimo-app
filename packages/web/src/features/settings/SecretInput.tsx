@@ -1,3 +1,4 @@
+import { SECRET_MASK_CHAR } from '@katahimo/shared';
 import { useVisibilityToggle } from '../../ui/useVisibilityToggle';
 import type { AdminSettingsLoadStatus } from './useAdminSettingsForm';
 
@@ -8,7 +9,14 @@ export function loadingPlaceholder(status: AdminSettingsLoadStatus): string {
   return '';
 }
 
-/** APIキー・Webhook URLの入力欄(ふだんは伏せ字、「表示」で見える。GAS版 toggleGeminiApiKeyVisibility)。 */
+/**
+ * APIキー・Webhook URLの入力欄(ふだんは伏せ字、「表示」で見える。GAS版 toggleGeminiApiKeyVisibility)。
+ *
+ * GAS版と違い、サーバーは保存済みの値を平文では返さず伏せ字(末尾4文字等だけ残した値)を返すため、
+ * 「表示」を押しても見えるのは伏せ字になる(意図した違い)。伏せ字のまま保存すると変更なしとして扱われる。
+ * 伏せ字の一部だけを書き換えると保存を拒否されるため、伏せ字の入った欄にフォーカスしたら全体を選択し、
+ * 入力で丸ごと置き換わるようにする。
+ */
 export function SecretInput({
   id,
   value,
@@ -29,6 +37,9 @@ export function SecretInput({
         autoComplete="off"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onFocus={(e) => {
+          if (e.currentTarget.value.includes(SECRET_MASK_CHAR)) e.currentTarget.select();
+        }}
         placeholder={loadingPlaceholder(status)}
         disabled={status !== 'loaded'}
         className="flex-1 p-3 border border-gray-300 rounded-xl text-base focus:ring-2 focus:ring-blue-500"

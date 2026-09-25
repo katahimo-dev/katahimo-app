@@ -16,3 +16,11 @@ allowBuilds:
   # esbuild は @esbuild/win32-x64 等のプラットフォーム別パッケージが optionalDependencies として
   # 入るため、postinstall を実行しなくても動作する。実行不要であることを明示する。
   esbuild: false
+
+# 推移的依存の脆弱性対策(pnpm audit --prod)。直接の依存元(googleapis / google-auth-library の gaxios)が
+# まだ修正版を要求していないため、修正版に固定する。依存元を更新して不要になったら削除する。
+overrides:
+  # GHSA: qs の arrayLimit/深さ制限の回避(googleapis-common 経由)
+  'qs@<6.16.0': ^6.16.0
+  # GHSA: uuid v3/v5/v6 のバッファ境界チェック不足(gaxios 経由。v4 しか使わないが修正版に揃える)
+  'uuid@<11.1.1': ^11.1.1

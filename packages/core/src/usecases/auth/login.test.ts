@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { computeLegacyHash } from '../../domain';
+import { DEFAULT_RATE_LIMIT_POLICY } from '../rateLimits';
 import { changePassword } from './changePassword';
 import { login } from './login';
 import { authenticateSession, logout, resolveSession } from './session';
@@ -92,6 +93,70 @@ describe('login', () => {
     expect(await loginAs('new@example.com', '')).toEqual({ ok: false, reason: 'invalid_credentials' });
     expect(ctx.appLog.entries.at(-1)?.details?.reason).toBe('password_not_set');
   });
+
+  it('照合するハッシュが無い場合(未知のテナント・未登録メール)もダミーのargon2照合で時間をかける', async () => {
+    await loginAs('nobody@example.com');
+    await loginAs('hanako@example.com', 'correct-horse', 'no-such-tenant');
+    expect(ctx.passwordHasher.dummyVerifications).toBe(2);
+    await loginAs('hanako@example.com', 'wrong');
+    expect(ctx.passwordHasher.dummyVerifications).toBe(2);
+  });
+
+  it(`アカウント単位で${DEFAULT_RATE_LIMIT_POLICY.loginFailureAccount.limit}回失敗すると15分ロックし、正しいパスワードでも拒否する`, async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.loginFailureAccount.limit;
+    for (let i = 0; i < limit; i++) {
+      expect(await loginAs('hanako@example.com', 'wrong')).toEqual({
+        ok: false,
+        reason: 'invalid_credentials',
+      });
+    }
+    expect(ctx.appLog.byAction('auth.login.lockout_started')).toHaveLength(1);
+    expect(await loginAs('hanako@example.com')).toMatchObject({ ok: false, reason: 'locked' });
+    // 大文字・空白の違いでもロックを回避できない
+    expect(await loginAs(' HANAKO@example.com ')).toMatchObject({ ok: false, reason: 'locked' });
+    expect(ctx.appLog.byAction('auth.login.locked').at(-1)).toMatchObject({
+      level: 'SECURITY',
+      details: { scope: 'account' },
+    });
+    ctx.clock.now = new Date(ctx.clock.now.getTime() + 15 * 60 * 1000);
+    expect((await loginAs('hanako@example.com')).ok).toBe(true);
+  });
+
+  it('存在しないアカウントも同じように数えてロックする(ロックの有無からアカウントの有無が分からない)', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.loginFailureAccount.limit;
+    for (let i = 0; i < limit; i++) await loginAs('nobody@example.com');
+    expect(await loginAs('nobody@example.com')).toMatchObject({ ok: false, reason: 'locked' });
+  });
+
+  it('成功するとアカウント単位の失敗回数は戻る', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.loginFailureAccount.limit;
+    for (let i = 0; i < limit - 1; i++) await loginAs('hanako@example.com', 'wrong');
+    expect((await loginAs('hanako@example.com')).ok).toBe(true);
+    for (let i = 0; i < limit - 1; i++) await loginAs('hanako@example.com', 'wrong');
+    expect((await loginAs('hanako@example.com')).ok).toBe(true);
+  });
+
+  it('送信元IP単位でも失敗を数え、多数のアカウントへの総当たりをロックする', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.loginFailureIp.limit;
+    const fromIp = (email: string, password: string, ip: string) =>
+      login(ctx.deps, { tenantSlug: 'test-tenant', email, password, meta: { ip } });
+    for (let i = 0; i < limit; i++) await fromIp(`user${i}@example.com`, 'guess', '198.51.100.9');
+    expect(await fromIp('hanako@example.com', 'correct-horse', '198.51.100.9')).toMatchObject({
+      ok: false,
+      reason: 'locked',
+    });
+    expect((await fromIp('hanako@example.com', 'correct-horse', '198.51.100.10')).ok).toBe(true);
+  });
+
+  it('停止中(suspended)のテナントは、パスワードが正しくてもログインできない', async () => {
+    ctx.tenants.setStatusForTest(ctx.tenantId, 'suspended');
+    expect(await loginAs('hanako@example.com')).toEqual({ ok: false, reason: 'tenant_suspended' });
+    expect(await loginAs('hanako@example.com', 'wrong')).toEqual({
+      ok: false,
+      reason: 'invalid_credentials',
+    });
+    expect(ctx.sessions.rows).toHaveLength(0);
+  });
 });
 
 describe('GAS版レガシーパスワードハッシュからの移行ログイン', () => {
@@ -174,6 +239,28 @@ describe('authenticateSession / logout', () => {
     ctx.clock.now = new Date(ctx.clock.now.getTime() + 8 * DAY);
     expect(await authenticateSession(ctx.deps, cookie)).toEqual({ ok: false, reason: 'expired' });
     expect(ctx.sessions.rows).toHaveLength(0);
+  });
+
+  it('延長を続けても、ログインから30日を過ぎたセッションは無効にする(絶対的な有効期間)', async () => {
+    for (let day = 1; day <= 29; day++) {
+      ctx.clock.now = new Date(ctx.clock.now.getTime() + DAY);
+      const session = await resolveSession(ctx.deps, cookie);
+      expect(session).not.toBeNull();
+      // 延長後の期限もログインから30日を超えない
+      expect(session?.expiresAt.getTime()).toBeLessThanOrEqual(
+        new Date('2026-09-25T03:00:00Z').getTime() + 30 * DAY,
+      );
+    }
+    ctx.clock.now = new Date(new Date('2026-09-25T03:00:00Z').getTime() + 30 * DAY);
+    expect(await authenticateSession(ctx.deps, cookie)).toEqual({ ok: false, reason: 'expired' });
+    expect(ctx.sessions.rows).toHaveLength(0);
+  });
+
+  it('テナントが停止されたら既存のセッションも使えない', async () => {
+    ctx.tenants.setStatusForTest(ctx.tenantId, 'suspended');
+    expect(await authenticateSession(ctx.deps, cookie)).toEqual({ ok: false, reason: 'tenant_suspended' });
+    ctx.tenants.setStatusForTest(ctx.tenantId, 'active');
+    expect(await resolveSession(ctx.deps, cookie)).not.toBeNull();
   });
 
   it('毎回退職日を確認し、退職済みになったら無効にする', async () => {

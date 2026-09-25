@@ -1,7 +1,7 @@
+import { ENCRYPTION_PURPOSES } from '@katahimo/core/domain';
 import type {
   AppLogPort,
   CustomerCsvSourcePort,
-  MailerPort,
   MapsPort,
   MirrorPort,
   NotifierPort,
@@ -10,7 +10,12 @@ import type {
   SchedulePort,
   StoragePort,
 } from '@katahimo/core/ports';
-import { createScheduleDirectory } from '@katahimo/core/usecases';
+import type { RateLimitPolicy } from '@katahimo/core/usecases';
+import {
+  createScheduleDirectory,
+  DEFAULT_RATE_LIMIT_POLICY,
+  withRateLimitCounts,
+} from '@katahimo/core/usecases';
 import type { Database } from '@katahimo/db';
 import {
   DrizzleAccidentReportRepository,
@@ -24,6 +29,7 @@ import {
   DrizzleFamilyMemberRepository,
   DrizzleOutboxRepository,
   DrizzlePasswordResetCodeRepository,
+  DrizzleRateLimiter,
   DrizzleReceiptRepository,
   DrizzleSessionRepository,
   DrizzleStaffRepository,
@@ -33,7 +39,6 @@ import {
 } from '@katahimo/db/repositories';
 import {
   ConsoleAuditLogPort,
-  ConsoleMailerPort,
   createCustomerCsvSource,
   createKeyManagementPort,
   createScheduleServices,
@@ -46,11 +51,11 @@ import {
   NoopMirrorPort,
   NoopReportAiPort,
   type ScheduleProvider,
-  SmtpMailerPort,
   WebhookNotifierPort,
 } from '@katahimo/integrations';
 import { argon2PasswordHasher } from './authAdapters';
 import type { Env } from './env';
+import { deriveSecret } from './secrets';
 
 /** ルートハンドラに配る依存一式。usecases(@katahimo/core)にそのまま渡す形。 */
 export interface Container {
@@ -71,10 +76,16 @@ export interface Container {
   passwordHasher: typeof argon2PasswordHasher;
   storage: StoragePort;
   notifier: NotifierPort;
-  /** パスワード再設定メール。SMTP_HOST設定時はSMTP、未設定(開発)時は標準出力。 */
-  mailer: MailerPort;
-  /** 再設定コードのHMAC鍵(SESSION_SECRETを流用する)。 */
+  /**
+   * パスワード再設定メールの送信ジョブ(kind='password_reset_mail')を積むoutbox。送信はワーカーが行う
+   * (MIRROR_TO_GOOGLE_SHEETS の設定にかかわらず常に積む)。
+   */
+  mailOutbox: MirrorPort;
+  /** 再設定コードのHMAC鍵(SESSION_SECRETからHKDFで導出した専用の鍵)。 */
   resetCodeSecret: string;
+  /** ログイン・パスワード再設定・AI生成等の回数制限(rate_limit_buckets、インスタンス間で共有)。 */
+  rateLimiter: DrizzleRateLimiter;
+  rateLimits: RateLimitPolicy;
   /** テナントがapp_settingsに独自キーを設定していない場合のフォールバック(.env設定 or Noop)。 */
   reportAi: ReportAiPort;
   /** テナント固有のGemini APIキー/モデルで都度ReportAiPortを組み立てるためのファクトリ。 */
@@ -105,14 +116,16 @@ export interface Container {
   };
 }
 
-function createMailer(env: Env): MailerPort {
-  if (!env.SMTP_HOST) return new ConsoleMailerPort();
-  return new SmtpMailerPort({
-    host: env.SMTP_HOST,
-    port: env.SMTP_PORT,
-    user: env.SMTP_USER,
-    pass: env.SMTP_PASS,
-    from: env.SMTP_FROM,
+/** 環境変数 RATE_LIMIT_* で回数だけを差し替えた規則一式。 */
+function rateLimitPolicyOf(env: Env): RateLimitPolicy {
+  return withRateLimitCounts(DEFAULT_RATE_LIMIT_POLICY, {
+    loginFailureAccount: env.RATE_LIMIT_LOGIN_FAILURES_PER_ACCOUNT,
+    loginFailureIp: env.RATE_LIMIT_LOGIN_FAILURES_PER_IP,
+    passwordResetRequestAccount: env.RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT,
+    passwordResetRequestIp: env.RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_IP,
+    aiGenerateStaff: env.RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY,
+    receiptOcrStaff: env.RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY,
+    scheduleForceRefreshStaff: env.RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR,
   });
 }
 
@@ -158,12 +171,22 @@ export function createContainer(env: Env, db: Database): Container {
         const settings = await appSettings.find(tenantId);
         const encrypted =
           channel === 'report' ? settings?.gchatReportWebhookUrl : settings?.gchatReceiptWebhookUrl;
-        if (encrypted) return crypto.decrypt(tenantId, encrypted);
+        if (encrypted) {
+          return crypto.decrypt(
+            tenantId,
+            encrypted,
+            channel === 'report'
+              ? ENCRYPTION_PURPOSES.gchatReportWebhookUrl
+              : ENCRYPTION_PURPOSES.gchatReceiptWebhookUrl,
+          );
+        }
         return channel === 'report' ? env.GCHAT_REPORT_WEBHOOK_URL : env.GCHAT_RECEIPT_WEBHOOK_URL;
       },
     }),
-    mailer: createMailer(env),
-    resetCodeSecret: env.SESSION_SECRET,
+    mailOutbox: new DrizzleOutboxRepository(db),
+    resetCodeSecret: deriveSecret(env.SESSION_SECRET, 'katahimo/password-reset-code/v1'),
+    rateLimiter: new DrizzleRateLimiter(db, deriveSecret(env.SESSION_SECRET, 'katahimo/rate-limit-key/v1')),
+    rateLimits: rateLimitPolicyOf(env),
     reportAi: env.GEMINI_API_KEY
       ? new GeminiAiPort({
           apiKey: env.GEMINI_API_KEY,

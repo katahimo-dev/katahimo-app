@@ -1,15 +1,23 @@
 import type { AppLogPort } from '../../ports/appLog';
-import type { MailerPort } from '../../ports/mailer';
+import type { CryptoPort } from '../../ports/crypto';
+import type { MirrorPort } from '../../ports/mirror';
 import type { PasswordResetCodeRepositoryPort } from '../../ports/passwordResetCodes';
+import type { RateLimiterPort } from '../../ports/rateLimiter';
 import type {
   SessionRepositoryPort,
   StaffRepositoryPort,
   TenantRepositoryPort,
 } from '../../ports/repositories';
+import type { RateLimitPolicy } from '../rateLimits';
 
 export interface PasswordHasherPort {
   hash(password: string): Promise<string>;
   verify(hash: string, password: string): Promise<boolean>;
+  /**
+   * 照合相手のハッシュが無いとき(テナント・アカウントが無い、パスワード未設定)に、verifyと同じだけ
+   * 時間をかけて空振りする。応答時間の差からアカウントの有無を推測されないようにするため。
+   */
+  verifyDummy(password: string): Promise<void>;
 }
 
 /** スタッフ登録(registerStaff/importLegacyStaff)に必要な最小限の依存。 */
@@ -31,17 +39,27 @@ export interface AuthDeps extends StaffRegistrationDeps {
   now?: () => Date;
 }
 
-/** ログイン・セッション検証・パスワード変更。アプリログへの記録を伴う。 */
+/** セッション検証・パスワード変更。アプリログへの記録を伴う。 */
 export interface AuthWithLogDeps extends AuthDeps {
   appLog: AppLogPort;
 }
 
-export interface PasswordResetDeps extends AuthWithLogDeps {
+/** ログイン。失敗回数によるアカウント・送信元IP単位の一時ロックを伴う。 */
+export interface LoginDeps extends AuthWithLogDeps {
+  rateLimiter: RateLimiterPort;
+  rateLimits: RateLimitPolicy;
+}
+
+export interface PasswordResetDeps extends LoginDeps {
   passwordResetCodes: PasswordResetCodeRepositoryPort;
-  mailer: MailerPort;
+  /** 送信待ちのコードの暗号化。 */
+  crypto: CryptoPort;
+  /** 再設定メールの送信ジョブ(kind='password_reset_mail')を積むoutbox。送信はワーカーが行う。 */
+  mailOutbox: MirrorPort;
   /**
-   * 再設定コードのハッシュ(HMAC)に使うサーバー側の秘密値。6桁のコードは総当たりが容易なため、
-   * DBが漏れてもこの値が無ければハッシュからコードを逆算できないようにする。
+   * 再設定コードのハッシュ(HMAC)に使うサーバー側の秘密値(SESSION_SECRETからHKDFで導出した専用の鍵)。
+   * 6桁のコードは総当たりが容易なため、DBが漏れてもこの値が無ければハッシュからコードを逆算できない
+   * ようにする。
    */
   resetCodeSecret: string;
 }

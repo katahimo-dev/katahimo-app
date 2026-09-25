@@ -3,8 +3,9 @@
 --
 --   psql "host=127.0.0.1 port=5432 user=postgres dbname=katahimo" -f infra/cloudsql/01_bootstrap.sql
 --
--- マイグレーション(Cloud Run Job migrate)より前に実行すること。0001 のマイグレーションが
--- katahimo_app の権限を調整する(app_logs の UPDATE を外す)ため、ロールと既定権限が先に要る。
+-- マイグレーション(Cloud Run Job migrate)より前に実行すること。0001・0003 のマイグレーションが
+-- katahimo_app の権限を調整する(app_logs の UPDATE/DELETE、tenants・tenant_keys の UPDATE/DELETE を外す)ため、
+-- ロールと既定権限が先に要る。
 -- 何度実行してもよい。
 
 \set ON_ERROR_STOP on

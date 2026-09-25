@@ -14,13 +14,14 @@ export async function listAvailableGeminiModels(apiKey: string): Promise<GeminiM
   let pageCount = 0;
 
   do {
-    let url = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=100&key=${encodeURIComponent(apiKey)}`;
+    let url = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=100';
     if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
 
-    const response = await fetch(url);
+    // APIキーはURLに載せずヘッダーで送る。失敗時の応答本文はエラーに含めない(アプリログに残るため)。
+    const response = await fetch(url, { headers: { 'x-goog-api-key': apiKey } });
     if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`モデル一覧の取得に失敗しました(${response.status}): ${body.slice(0, 300)}`);
+      await response.body?.cancel();
+      throw new Error(`モデル一覧の取得に失敗しました(HTTP ${response.status})`);
     }
 
     const json = (await response.json()) as {

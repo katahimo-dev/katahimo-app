@@ -1,5 +1,5 @@
-import { normalizeStaffName, splitJapaneseFullName } from '../domain';
-import type { CryptoPort } from '../ports/crypto';
+import { normalizeStaffName, ENCRYPTION_PURPOSES as P, splitJapaneseFullName } from '../domain';
+import type { CryptoPort, EncryptionPurpose } from '../ports/crypto';
 import type {
   CustomerPatchInput,
   CustomerRecord,
@@ -21,18 +21,20 @@ async function encryptIfPresent(
   crypto: CryptoPort,
   tenantId: string,
   value: string | undefined | null,
+  purpose: EncryptionPurpose,
 ): Promise<EncryptedField | null> {
   if (!value) return null;
-  return crypto.encrypt(tenantId, value);
+  return crypto.encrypt(tenantId, value, purpose);
 }
 
 async function decryptIfPresent(
   crypto: CryptoPort,
   tenantId: string,
   value: EncryptedField | null,
+  purpose: EncryptionPurpose,
 ): Promise<string | null> {
   if (!value) return null;
-  return crypto.decrypt(tenantId, value);
+  return crypto.decrypt(tenantId, value, purpose);
 }
 
 export interface FamilyMemberInput {
@@ -102,12 +104,17 @@ async function buildCustomerRecordFields(
     benefitMemberIdEnc,
     latLngEnc,
   ] = await Promise.all([
-    encryptIfPresent(deps.crypto, tenantId, input.emergencyContact),
-    encryptIfPresent(deps.crypto, tenantId, input.emergencyContactRelation),
-    encryptIfPresent(deps.crypto, tenantId, input.evacuationSite),
-    encryptIfPresent(deps.crypto, tenantId, input.memo),
-    encryptIfPresent(deps.crypto, tenantId, input.benefitMemberId),
-    encryptIfPresent(deps.crypto, tenantId, input.latLng),
+    encryptIfPresent(deps.crypto, tenantId, input.emergencyContact, P.customerEmergencyContact),
+    encryptIfPresent(
+      deps.crypto,
+      tenantId,
+      input.emergencyContactRelation,
+      P.customerEmergencyContactRelation,
+    ),
+    encryptIfPresent(deps.crypto, tenantId, input.evacuationSite, P.customerEvacuationSite),
+    encryptIfPresent(deps.crypto, tenantId, input.memo, P.customerMemo),
+    encryptIfPresent(deps.crypto, tenantId, input.benefitMemberId, P.customerBenefitMemberId),
+    encryptIfPresent(deps.crypto, tenantId, input.latLng, P.customerLatLng),
   ]);
 
   return {
@@ -156,10 +163,10 @@ async function buildFamilyMemberInputs(
     members.map(async (m) => ({
       tenantId,
       customerId,
-      name: await deps.crypto.encrypt(tenantId, m.name),
-      dob: await encryptIfPresent(deps.crypto, tenantId, m.dob),
-      info: await encryptIfPresent(deps.crypto, tenantId, m.info),
-      allergy: await encryptIfPresent(deps.crypto, tenantId, m.allergy),
+      name: await deps.crypto.encrypt(tenantId, m.name, P.familyMemberName),
+      dob: await encryptIfPresent(deps.crypto, tenantId, m.dob, P.familyMemberDob),
+      info: await encryptIfPresent(deps.crypto, tenantId, m.info, P.familyMemberInfo),
+      allergy: await encryptIfPresent(deps.crypto, tenantId, m.allergy, P.familyMemberAllergy),
     })),
   );
 }
@@ -307,10 +314,10 @@ async function decryptFamilyMember(
 ): Promise<FamilyMemberView> {
   return {
     id: row.id,
-    name: await crypto.decrypt(tenantId, row.name),
-    dob: await decryptIfPresent(crypto, tenantId, row.dob),
-    info: await decryptIfPresent(crypto, tenantId, row.info),
-    allergy: await decryptIfPresent(crypto, tenantId, row.allergy),
+    name: await crypto.decrypt(tenantId, row.name, P.familyMemberName),
+    dob: await decryptIfPresent(crypto, tenantId, row.dob, P.familyMemberDob),
+    info: await decryptIfPresent(crypto, tenantId, row.info, P.familyMemberInfo),
+    allergy: await decryptIfPresent(crypto, tenantId, row.allergy, P.familyMemberAllergy),
   };
 }
 
@@ -334,12 +341,12 @@ export async function getCustomerDetail(
     latLng,
     familyMembers,
   ] = await Promise.all([
-    decryptIfPresent(deps.crypto, tenantId, row.emergencyContact),
-    decryptIfPresent(deps.crypto, tenantId, row.emergencyContactRelation),
-    decryptIfPresent(deps.crypto, tenantId, row.evacuationSite),
-    decryptIfPresent(deps.crypto, tenantId, row.memo),
-    decryptIfPresent(deps.crypto, tenantId, row.benefitMemberId),
-    decryptIfPresent(deps.crypto, tenantId, row.latLng),
+    decryptIfPresent(deps.crypto, tenantId, row.emergencyContact, P.customerEmergencyContact),
+    decryptIfPresent(deps.crypto, tenantId, row.emergencyContactRelation, P.customerEmergencyContactRelation),
+    decryptIfPresent(deps.crypto, tenantId, row.evacuationSite, P.customerEvacuationSite),
+    decryptIfPresent(deps.crypto, tenantId, row.memo, P.customerMemo),
+    decryptIfPresent(deps.crypto, tenantId, row.benefitMemberId, P.customerBenefitMemberId),
+    decryptIfPresent(deps.crypto, tenantId, row.latLng, P.customerLatLng),
     Promise.all(familyRows.map((f) => decryptFamilyMember(deps.crypto, tenantId, f))),
   ]);
 

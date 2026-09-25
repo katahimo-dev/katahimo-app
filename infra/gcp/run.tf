@@ -24,15 +24,18 @@ locals {
   api_env = merge(local.common_env, { for k, v in {
     DB_POOL_MAX             = tostring(var.api_db_pool_max)
     MIRROR_TO_GOOGLE_SHEETS = tostring(var.mirror_to_google_sheets)
-    SMTP_HOST               = var.smtp.host
-    SMTP_PORT               = tostring(var.smtp.port)
-    SMTP_USER               = var.smtp.user
-    SMTP_FROM               = var.smtp.from
     GEMINI_MODEL_REPORT     = var.gemini_models.report
     GEMINI_MODEL_OCR        = var.gemini_models.ocr
   } : k => v if v != "" })
 
-  worker_env = merge(local.common_env, { DB_POOL_MAX = "3" })
+  # パスワード再設定メールは outbox 経由でワーカーが送る(API は応答時間からアカウントの有無が分からないよう送らない)
+  worker_env = merge(local.common_env, { for k, v in {
+    DB_POOL_MAX = "3"
+    SMTP_HOST   = var.smtp.host
+    SMTP_PORT   = tostring(var.smtp.port)
+    SMTP_USER   = var.smtp.user
+    SMTP_FROM   = var.smtp.from
+  } : k => v if v != "" })
 
   # 環境変数名 = シークレット名(secrets.tf)。optional のものは var.optional_secrets にあるときだけ渡す。
   api_secret_env = merge(
@@ -42,7 +45,6 @@ locals {
       LOCAL_DEV_MASTER_KEY = "blind-index-key"
     },
     { for k, v in {
-      SMTP_PASS           = "smtp-pass"
       GOOGLE_MAPS_API_KEY = "google-maps-api-key"
       GEMINI_API_KEY      = "gemini-api-key"
       LEGACY_AUTH_SALT    = "legacy-auth-salt"
@@ -52,6 +54,7 @@ locals {
   worker_secret_env = merge(
     { DATABASE_URL = "database-url" },
     { for k, v in {
+      SMTP_PASS           = "smtp-pass"
       GOOGLE_MAPS_API_KEY = "google-maps-api-key"
       GAS_BRIDGE_SECRET   = "gas-bridge-secret"
     } : k => v if contains(var.optional_secrets, v) },

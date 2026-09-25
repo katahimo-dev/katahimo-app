@@ -7,6 +7,11 @@ import { decodeSessionCookie, hashSessionToken } from './sessionCookie';
 
 /** 残りがこの日数を切ったセッションは7日に延長する(GAS版checkSessionと同じ)。 */
 const SESSION_RENEW_THRESHOLD_MS = 6 * 24 * 60 * 60 * 1000;
+/**
+ * ローリング延長しても、ログインからこの期間を過ぎたセッションは無効にする(GAS版には無い上限)。
+ * 盗まれたCookieを使い続けられる期間を限るため。
+ */
+export const SESSION_ABSOLUTE_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface ResolvedSession {
   tenantId: string;
@@ -20,7 +25,14 @@ export interface ResolvedSession {
   renewed: boolean;
 }
 
-export type SessionFailureReason = 'malformed' | 'unknown_token' | 'expired' | 'staff_not_found' | 'retired';
+export type SessionFailureReason =
+  | 'malformed'
+  | 'unknown_token'
+  | 'expired'
+  | 'lifetime_exceeded'
+  | 'tenant_suspended'
+  | 'staff_not_found'
+  | 'retired';
 
 export type SessionCheckResult =
   | { ok: true; session: ResolvedSession }
@@ -41,8 +53,10 @@ export interface AuthenticateSessionOptions {
  * クライアント指定のスタッフ名/IDを一切信用せず、サーバー側でCookieだけから本人を特定する。
  *
  * - 退職日を毎回確認し、退職済みならそのスタッフの全セッションを削除する。
- * - 期限切れのセッション行はその場で削除する。
- * - 残り6日を切ったら7日に延長する(ローリング延長。毎回は書き込まない)。
+ * - テナントが停止中('suspended')なら拒否する(セッション行は残し、再開すればそのまま使える)。
+ * - 期限切れのセッション行・ログインから30日を過ぎたセッション行はその場で削除する。
+ * - 残り6日を切ったら7日に延長する(ローリング延長。毎回は書き込まない)。延長後の期限はログインから
+ *   30日を超えない。
  */
 export async function authenticateSession(
   deps: AuthDeps & Partial<Pick<AuthWithLogDeps, 'appLog'>>,
@@ -75,6 +89,14 @@ export async function authenticateSession(
     await deps.sessions.delete(session.tenantId, session.id);
     return fail('expired', session.tenantId, session.staffId);
   }
+  const absoluteExpiry = session.createdAt.getTime() + SESSION_ABSOLUTE_LIFETIME_MS;
+  if (absoluteExpiry <= now.getTime()) {
+    await deps.sessions.delete(session.tenantId, session.id);
+    return fail('lifetime_exceeded', session.tenantId, session.staffId);
+  }
+
+  const tenant = await deps.tenants.findById(session.tenantId);
+  if (tenant?.status !== 'active') return fail('tenant_suspended', session.tenantId, session.staffId);
 
   const staff = await deps.staff.findById(session.tenantId, session.staffId);
   if (!staff) return fail('staff_not_found', session.tenantId);
@@ -86,8 +108,12 @@ export async function authenticateSession(
 
   let expiresAt = session.expiresAt;
   let renewed = false;
-  if (expiresAt.getTime() - now.getTime() < SESSION_RENEW_THRESHOLD_MS) {
-    expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
+  const renewedExpiry = Math.min(now.getTime() + SESSION_TTL_MS, absoluteExpiry);
+  if (
+    expiresAt.getTime() - now.getTime() < SESSION_RENEW_THRESHOLD_MS &&
+    renewedExpiry > expiresAt.getTime()
+  ) {
+    expiresAt = new Date(renewedExpiry);
     await deps.sessions.updateExpiry(session.tenantId, session.id, expiresAt);
     renewed = true;
   }

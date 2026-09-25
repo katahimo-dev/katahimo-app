@@ -1,9 +1,11 @@
 import type { KeyManagementPort, WrappedDek } from '@katahimo/core/ports';
+import { dekWrapAad, WRAPPED_DEK_PREFIX } from '../local-kms/dekWrapAad';
 
 /** CloudKmsPort が使う Cloud KMS の暗号化/復号(Base64 の入出力)。本番は cloudKmsApiClient.ts。 */
 export interface CloudKmsClient {
-  encrypt(keyName: string, plaintextBase64: string): Promise<string>;
-  decrypt(keyName: string, ciphertextBase64: string): Promise<string>;
+  /** aadBase64 は Cloud KMS の additionalAuthenticatedData(復号時にも同じ値が必要)。 */
+  encrypt(keyName: string, plaintextBase64: string, aadBase64: string): Promise<string>;
+  decrypt(keyName: string, ciphertextBase64: string, aadBase64: string): Promise<string>;
 }
 
 export interface CloudKmsPortOptions {
@@ -24,6 +26,9 @@ const KEY_NAME_PATTERN = /^projects\/[^/]+\/locations\/[^/]+\/keyRings\/[^/]+\/c
  * - DEK のアンラップ結果は LocalCryptoPort がプロセス内にキャッシュするため、KMS 呼び出しは
  *   インスタンス起動後のテナントごとの初回だけ。
  *
+ * - ラップにはテナントIDを追加認証データ(additionalAuthenticatedData)として結び付け、保存形式に `v2:` を
+ *   付ける(LocalKmsPort と同じ。あるテナントの wrapped_dek を別テナントの行にコピーしても復号できない)。
+ *
  * LocalKmsPort でラップ済みのDEKはこの実装では復号できない(暗号文の形式も鍵も違う)。本番は最初から
  * この実装を使うこと(途中で切り替える場合は、旧KEKでアンラップして再ラップする移行作業が別途必要)。
  */
@@ -38,15 +43,27 @@ export class CloudKmsPort implements KeyManagementPort {
     }
   }
 
-  async wrap(dek: Buffer): Promise<WrappedDek> {
-    const ciphertext = await this.options.client.encrypt(this.options.keyName, dek.toString('base64'));
-    return { ciphertext, kekVersion: this.currentKekVersion };
+  async wrap(dek: Buffer, tenantId: string): Promise<WrappedDek> {
+    const ciphertext = await this.options.client.encrypt(
+      this.options.keyName,
+      dek.toString('base64'),
+      dekWrapAad(tenantId).toString('base64'),
+    );
+    return { ciphertext: `${WRAPPED_DEK_PREFIX}${ciphertext}`, kekVersion: this.currentKekVersion };
   }
 
-  async unwrap(wrapped: WrappedDek): Promise<Buffer> {
+  async unwrap(wrapped: WrappedDek, tenantId: string): Promise<Buffer> {
     if (wrapped.kekVersion !== this.currentKekVersion) {
       throw new Error(`未対応のKEKバージョンです(kekVersion=${wrapped.kekVersion})`);
     }
-    return Buffer.from(await this.options.client.decrypt(this.options.keyName, wrapped.ciphertext), 'base64');
+    if (!wrapped.ciphertext.startsWith(WRAPPED_DEK_PREFIX)) {
+      throw new Error(`未対応の形式のラップ済みDEKです(tenantId=${tenantId})`);
+    }
+    const plaintext = await this.options.client.decrypt(
+      this.options.keyName,
+      wrapped.ciphertext.slice(WRAPPED_DEK_PREFIX.length),
+      dekWrapAad(tenantId).toString('base64'),
+    );
+    return Buffer.from(plaintext, 'base64');
   }
 }

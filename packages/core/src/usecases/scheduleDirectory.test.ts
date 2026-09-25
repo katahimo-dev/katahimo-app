@@ -19,7 +19,7 @@ describe('createScheduleDirectory', () => {
       address2: '神奈川県横浜市青葉区美しが丘1-1',
       address2StartDate: '2026-09-20',
       address2EndDate: '2026-09-30',
-      latLng: await crypto.encrypt(tenantId, '35.6074, 139.6687'),
+      latLng: await crypto.encrypt(tenantId, '35.6074, 139.6687', 'customers.lat_lng'),
     });
     await customers.create({
       tenantId,
@@ -34,7 +34,7 @@ describe('createScheduleDirectory', () => {
         id: 's1',
         name: '佐藤 美咲',
         homeAddress: '東京都世田谷区用賀4-1-1',
-        homeLatLng: await crypto.encrypt(tenantId, '35.6264,139.6336'),
+        homeLatLng: await crypto.encrypt(tenantId, '35.6264,139.6336', 'staff.home_lat_lng'),
         travelMode: null,
         calendarId: 'sato@cutest.biz',
         retirementDate: null,

@@ -35,9 +35,16 @@ export interface EncryptedValue {
   keyVersion: number;
 }
 
+/**
+ * 暗号文の用途(`テーブル.列` の形)。AES-GCMの追加認証データ(AAD)にテナントIDと一緒に含め、
+ * 暗号文を別のテナント・別の列にコピーしても復号できない(改ざんとして検出される)ようにする。
+ * 同じ列に書く値は、書き込み側と読み出し側で必ず同じ用途を渡すこと。
+ */
+export type EncryptionPurpose = `${string}.${string}`;
+
 export interface CryptoPort {
-  encrypt(tenantId: string, plaintext: string): Promise<EncryptedValue>;
-  decrypt(tenantId: string, value: EncryptedValue): Promise<string>;
+  encrypt(tenantId: string, plaintext: string, purpose: EncryptionPurpose): Promise<EncryptedValue>;
+  decrypt(tenantId: string, value: EncryptedValue, purpose: EncryptionPurpose): Promise<string>;
 }
 
 export interface BlindIndexPort {

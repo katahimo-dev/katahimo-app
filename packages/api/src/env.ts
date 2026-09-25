@@ -96,14 +96,6 @@ const envSchema = z.object({
   GCHAT_REPORT_WEBHOOK_URL: z.string().optional(),
   GCHAT_RECEIPT_WEBHOOK_URL: z.string().optional(),
 
-  // パスワード再設定コードのメール送信(GAS版MailApp.sendEmailの置き換え)。SMTP_HOSTが未設定の場合、
-  // 開発環境では送信せず内容を標準出力に出す(ConsoleMailerPort)。本番では設定必須。
-  SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.coerce.number().int().positive().default(587),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASS: z.string().optional(),
-  SMTP_FROM: z.string().default('保育日報 <noreply@localhost>'),
-
   // 領収書画像の保存先。local: LOCAL_RECEIPT_STORAGE_DIR(開発用) / gcs: GCS_BUCKET(本番は必須)。
   STORAGE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(STORAGE_PROVIDERS).default('local')),
   LOCAL_RECEIPT_STORAGE_DIR: z.string().default('./data/receipts'),
@@ -128,9 +120,54 @@ const envSchema = z.object({
       }
     }),
   CUSTOMER_CSV_LOCAL_DIR: z.string().optional(),
+
+  // ── 送信元IP(doc/api/auth-reports-settings.md「送信元IPの判定」) ──
+  // X-Forwarded-For の右から何番目を送信元IPとみなすか(信頼できるプロキシの段数)。Cloud Run に直接届く
+  // 構成は1(Google Front End が末尾に付け足した値)、外部ロードバランサを前に置く場合は2。0なら
+  // X-Forwarded-For を使わず接続元のアドレスを使う。未指定は本番1・それ以外0(開発はプロキシ無し)。
+  TRUSTED_PROXY_HOPS: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(5).optional()),
+
+  // ── レート制限の回数(packages/core/src/usecases/rateLimits.ts。未指定は既定値。窓の長さは固定) ──
+  // ログイン失敗: アカウント単位(15分・既定10回で15分ロック)/送信元IP単位(15分・既定50回で15分ロック)
+  RATE_LIMIT_LOGIN_FAILURES_PER_ACCOUNT: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().positive().optional(),
+  ),
+  RATE_LIMIT_LOGIN_FAILURES_PER_IP: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().positive().optional(),
+  ),
+  // パスワード再設定の発行要求(1時間): アカウント単位(既定5回)/送信元IP単位(既定20回)
+  RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().positive().optional(),
+  ),
+  RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_IP: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().positive().optional(),
+  ),
+  // AI生成(日報・事故報告)・領収書OCR: スタッフ単位の1日の上限(既定200回・300回)
+  RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().positive().optional(),
+  ),
+  RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().positive().optional(),
+  ),
+  // 予定のルート再計算(forceRefresh): スタッフ単位の1時間の上限(既定30回)
+  RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().positive().optional(),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;
+
+/** X-Forwarded-For の信頼する段数(未指定なら本番1・それ以外0)。 */
+export function trustedProxyHops(env: Pick<Env, 'NODE_ENV' | 'TRUSTED_PROXY_HOPS'>): number {
+  return env.TRUSTED_PROXY_HOPS ?? (env.NODE_ENV === 'production' ? 1 : 0);
+}
 
 /** 項目単体では表せない組み合わせの検証。 */
 function checkCombinations(env: Env): string[] {
@@ -140,9 +177,6 @@ function checkCombinations(env: Env): string[] {
     ...storageEnvProblems(env, isProduction),
     ...scheduleEnvProblems(env, isProduction),
   ];
-  if (isProduction && !env.SMTP_HOST) {
-    problems.push('  - SMTP_HOST: 本番ではパスワード再設定メールの送信にSMTP設定が必要です');
-  }
   if (isProduction && (env.SESSION_SECRET.length < 32 || env.SESSION_SECRET === 'change-me-in-production')) {
     problems.push('  - SESSION_SECRET: 本番は32文字以上のランダムな値にしてください(openssl rand -hex 32)');
   }

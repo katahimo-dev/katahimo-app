@@ -92,6 +92,7 @@ export interface NewSessionInput {
   staffId: string;
   tokenHash: string;
   expiresAt: Date;
+  createdAt: Date;
 }
 
 export interface SessionRecord {
@@ -99,6 +100,8 @@ export interface SessionRecord {
   tenantId: string;
   staffId: string;
   expiresAt: Date;
+  /** ログインした日時(延長しても変わらない。セッションの絶対的な有効期間の上限に使う)。 */
+  createdAt: Date;
 }
 
 export interface SessionRepositoryPort {
@@ -116,10 +119,14 @@ export interface SessionRepositoryPort {
   deleteAllForStaff(tenantId: string, staffId: string, exceptSessionId?: string): Promise<void>;
 }
 
+export type TenantStatus = 'active' | 'suspended';
+
 export interface TenantRecord {
   id: string;
   name: string;
   slug: string;
+  /** 'suspended' のテナントはログイン・セッション・パスワード再設定を受け付けない。 */
+  status: TenantStatus;
 }
 
 export interface NewTenantInput {
@@ -424,11 +431,14 @@ export interface TenantKeyRepositoryPort {
   find(tenantId: string): Promise<TenantKeyRecord | null>;
   /** 初回暗号化時、まだDEKが無いテナントのために新規作成する。 */
   create(tenantId: string, wrappedDek: string, kekVersion: number): Promise<TenantKeyRecord>;
-  /** KEKローテーション時、DEK自体は変えずラップだけ新KEKバージョンで更新する(軽量操作)。 */
+  /**
+   * KEKローテーション時、DEK自体は変えずラップだけ新KEKバージョンで更新する(軽量操作)。
+   * 運用作業のため所有者ロールの接続で呼ぶ(アプリロールは tenant_keys の UPDATE 権限を持たない。0003)。
+   */
   updateWrappedDek(tenantId: string, wrappedDek: string, kekVersion: number): Promise<void>;
   /**
    * テナント解約時の暗号学的削除。DEKのレコードそのものを破棄し、以後
-   * (バックアップに残った暗号文も含め)復号を永久に不可能にする。
+   * (バックアップに残った暗号文も含め)復号を永久に不可能にする。所有者ロールの接続で呼ぶ(同上)。
    */
   revoke(tenantId: string): Promise<void>;
 }

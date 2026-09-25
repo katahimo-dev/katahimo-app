@@ -28,7 +28,8 @@ export type AppLogLevel = (typeof APP_LOG_LEVELS)[number];
  *
  * 【RLS】他テーブルと異なり操作別にポリシーを分けている。
  * - SELECT/DELETE: 自テナントの行のみ(tenant_idがnullの行はアプリからは見えない。運用者がオーナー
- *   ロールで参照する)。DELETEは保存期間を過ぎた行の削除用。
+ *   ロールで参照する)。DELETEは保存期間を過ぎた行の削除用のポリシーだが、アプリロールのDELETE権限は
+ *   0003_app_role_privileges.sql でREVOKEしており、削除は運用者が所有者ロールで行う。
  * - INSERT: 自テナントの行、またはtenant_id=nullの行(ログイン前)。
  * - UPDATE: ポリシーを作らない(=RLSにより常に0行)うえ、マイグレーションでアプリロールのUPDATE
  *   権限自体をREVOKEしている(0001_custom_constraints.sql)。
