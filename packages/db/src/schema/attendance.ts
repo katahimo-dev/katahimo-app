@@ -219,9 +219,6 @@ export const attendancePeriods = pgTable(
     tenantRef('attendance_periods', 'locked_by', t, t.lockedBy, staff),
     check('attendance_periods_status_check', oneOf(t.status, ATTENDANCE_PERIOD_STATUSES)),
     check('attendance_periods_year_month_check', sql`${t.yearMonth} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
-    check(
-      'attendance_periods_locked_check',
-      sql`(${t.status} = 'locked') = (${t.lockedAt} is not null)`,
-    ),
+    check('attendance_periods_locked_check', sql`(${t.status} = 'locked') = (${t.lockedAt} is not null)`),
   ],
 ).enableRLS();

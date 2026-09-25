@@ -27,14 +27,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import {
-  constraintName,
-  createdAt,
-  idColumn,
-  oneOf,
-  tenantIdColumn,
-  updatedAt,
-} from './_columns';
+import { constraintName, createdAt, idColumn, oneOf, tenantIdColumn, updatedAt } from './_columns';
 import { tenantFk, tenantIsolation, tenantRef, tenantScoped } from './_helpers';
 import { bytea, daterange, tstzrange } from './_types';
 import { customers } from './customers';
@@ -84,9 +77,7 @@ export const staffAttributes = pgTable(
     attributeId: uuid().notNull(),
     level: smallint(),
     valueText: text(),
-    valid: daterange()
-      .notNull()
-      .default(sql`'(,)'::daterange`),
+    valid: daterange().notNull().default(sql`'(,)'::daterange`),
     verifiedAt: timestamp({ withTimezone: true }),
     verifiedBy: uuid(),
     evidenceFileId: uuid(),
@@ -122,19 +113,9 @@ export const customerRequiredAttributes = pgTable(
   (t) => [
     ...tenantScoped('customer_required_attributes', t),
     tenantRef('customer_required_attributes', 'customer_id', t, t.customerId, customers, 'cascade'),
-    tenantRef(
-      'customer_required_attributes',
-      'attribute_id',
-      t,
-      t.attributeId,
-      attributeDefinitions,
-    ),
+    tenantRef('customer_required_attributes', 'attribute_id', t, t.attributeId, attributeDefinitions),
     unique(
-      constraintName(
-        'customer_required_attributes',
-        ['tenant_id', 'customer_id', 'attribute_id'],
-        'key',
-      ),
+      constraintName('customer_required_attributes', ['tenant_id', 'customer_id', 'attribute_id'], 'key'),
     ).on(t.tenantId, t.customerId, t.attributeId),
     check('customer_required_attributes_min_level_check', sql`${t.minLevel} >= 0`),
   ],
@@ -164,9 +145,11 @@ export const customerStaffAffinities = pgTable(
     tenantRef('customer_staff_affinities', 'customer_id', t, t.customerId, customers, 'cascade'),
     tenantRef('customer_staff_affinities', 'staff_id', t, t.staffId, staff, 'cascade'),
     tenantRef('customer_staff_affinities', 'updated_by', t, t.updatedBy, staff),
-    unique(
-      constraintName('customer_staff_affinities', ['tenant_id', 'customer_id', 'staff_id'], 'key'),
-    ).on(t.tenantId, t.customerId, t.staffId),
+    unique(constraintName('customer_staff_affinities', ['tenant_id', 'customer_id', 'staff_id'], 'key')).on(
+      t.tenantId,
+      t.customerId,
+      t.staffId,
+    ),
     index('customer_staff_affinities_tenant_id_staff_id_idx').on(t.tenantId, t.staffId),
     check('customer_staff_affinities_score_check', sql`${t.score} between -2 and 2`),
     check('customer_staff_affinities_source_check', oneOf(t.source, AFFINITY_SOURCES)),
@@ -311,7 +294,10 @@ export const serviceAreas = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [...tenantScoped('service_areas', t), unique('service_areas_tenant_id_name_key').on(t.tenantId, t.name)],
+  (t) => [
+    ...tenantScoped('service_areas', t),
+    unique('service_areas_tenant_id_name_key').on(t.tenantId, t.name),
+  ],
 ).enableRLS();
 
 export const staffServiceAreas = pgTable(
@@ -405,11 +391,7 @@ export const matchingRunCandidates = pgTable(
     tenantRef('matching_run_candidates', 'reservation_id', t, t.reservationId, reservations, 'cascade'),
     tenantRef('matching_run_candidates', 'staff_id', t, t.staffId, staff, 'cascade'),
     unique(
-      constraintName(
-        'matching_run_candidates',
-        ['tenant_id', 'run_id', 'reservation_id', 'staff_id'],
-        'key',
-      ),
+      constraintName('matching_run_candidates', ['tenant_id', 'run_id', 'reservation_id', 'staff_id'], 'key'),
     ).on(t.tenantId, t.runId, t.reservationId, t.staffId),
     index('matching_run_candidates_created_at_idx').on(t.createdAt),
     check('matching_run_candidates_rank_check', sql`${t.rank} >= 1`),

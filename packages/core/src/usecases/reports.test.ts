@@ -1,238 +1,153 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { registerStaff } from './auth';
-import { createCustomer } from './customers';
-import type { ReportDeps, SaveDailyReportInput } from './reports';
-import { saveAccidentReport, saveDailyReport, sendVisitCompleteNotification } from './reports';
+import type { SaveDailyReportInput } from './reports';
 import {
-  FakeAccidentReportRepository,
-  FakeAppLogPort,
-  FakeCryptoPort,
-  FakeCustomerRepository,
-  FakeDailyReportRepository,
-  FakeFamilyMemberRepository,
-  FakeNotifierPort,
-  FakeOutboxRepository,
-  FakePasswordHasherPort,
-  FakeStaffRepository,
-} from './testDoubles';
+  getCustomerHistory,
+  saveAccidentReport,
+  saveDailyReport,
+  sendVisitCompleteNotification,
+} from './reports';
+import type { Actor } from './requestMeta';
+import type { TestContext } from './testContext';
+import { createTestContext } from './testContext';
+import { fakePlaintext } from './testDoubles';
 
-describe('日報/事故報告の保存', () => {
-  const tenantId = 'tenant-1';
-  let deps: ReportDeps;
-  let notifier: FakeNotifierPort;
-  let appLog: FakeAppLogPort;
-  let hanakoId: string;
-  let jiroId: string;
-  let adminId: string;
+describe('保育日報・事故報告', () => {
+  let ctx: TestContext;
+  let staff: Actor;
+  let other: Actor;
+  let admin: Actor;
   let customerId: string;
+  let otherCustomerId: string;
 
-  const dailyInput = (overrides: Partial<SaveDailyReportInput> = {}): SaveDailyReportInput => ({
-    actor: { staffId: hanakoId, isAdmin: false },
+  const daily = (overrides: Partial<SaveDailyReportInput> = {}): SaveDailyReportInput => ({
     customerId,
+    reportDate: '2026-09-25',
     startTime: '09:00',
-    endTime: '10:00',
+    endTime: '12:00',
     inputText: 'メモ',
     internalText: '社内向け',
     customerText: '保護者向け',
-    riskRating: 4,
-    esRating: null,
+    riskRating: 1,
+    esRating: 4,
     ...overrides,
   });
 
   beforeEach(async () => {
-    const staff = new FakeStaffRepository();
-    const customers = new FakeCustomerRepository();
-    const crypto = new FakeCryptoPort();
-    notifier = new FakeNotifierPort();
-    appLog = new FakeAppLogPort();
-    const hasher = new FakePasswordHasherPort();
-    const reg = (name: string, email: string, isAdmin: boolean) =>
-      registerStaff({ staff, passwordHasher: hasher }, { tenantId, name, email, password: 'pw', isAdmin });
-    hanakoId = (await reg('佐藤 花子', 'hanako@example.com', false)).id;
-    jiroId = (await reg('鈴木 次郎', 'jiro@example.com', false)).id;
-    adminId = (await reg('管理者 太郎', 'admin@example.com', true)).id;
-    customerId = (
-      await createCustomer(
-        { customers, familyMembers: new FakeFamilyMemberRepository(), crypto },
-        {
-          tenantId,
-          name: '田中 一郎',
-        },
-      )
-    ).id;
-    deps = {
-      dailyReports: new FakeDailyReportRepository(),
-      accidentReports: new FakeAccidentReportRepository(),
-      customers,
+    ctx = createTestContext();
+    staff = (await ctx.addStaff('山田 太郎', 'taro@example.com')).actor;
+    other = (await ctx.addStaff('鈴木 次郎', 'jiro@example.com')).actor;
+    admin = (await ctx.addStaff('管理 者', 'admin@example.com', 'admin')).actor;
+    customerId = await ctx.addCustomer('佐藤 花子');
+    otherCustomerId = await ctx.addCustomer('田中 一郎');
+  });
+
+  it('本文を暗号化して保存し、ミラーを同じトランザクションで積み、保存後に通知する', async () => {
+    const saved = await saveDailyReport(ctx.deps, staff, daily());
+    const row = ctx.data().careRecords[0];
+    expect(JSON.parse(fakePlaintext(row?.bodyEnc ?? null) ?? '{}')).toMatchObject({ inputText: 'メモ' });
+    expect(row?.occurredAt.toISOString()).toBe('2026-09-25T00:00:00.000Z');
+    expect(row?.retainUntil).toBe('2031-09-24');
+    expect(ctx.data().outbox.map((m) => m.dedupeKey)).toEqual([`mirror.care_record:${saved.id}:1`]);
+    expect(ctx.notifier.notifications).toHaveLength(1);
+    expect(saved.rowVersion).toBe(1);
+  });
+
+  it('一般スタッフが他人の名義を指定しても本人の名義で保存する', async () => {
+    const saved = await saveDailyReport(ctx.deps, staff, daily({ requestedStaffId: other.staffId }));
+    expect(saved.staffId).toBe(staff.staffId);
+  });
+
+  it('管理者は他のスタッフの名義で保存できる', async () => {
+    const saved = await saveDailyReport(ctx.deps, admin, daily({ requestedStaffId: other.staffId }));
+    expect(saved.staffId).toBe(other.staffId);
+  });
+
+  it('一般スタッフは他人の報告を上書きできない(forbidden、SECURITY ログ)', async () => {
+    const saved = await saveDailyReport(ctx.deps, other, daily());
+    await expect(saveDailyReport(ctx.deps, staff, daily({ reportId: saved.id }))).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    expect(ctx.appLog.byAction('report.daily.save_denied')[0]?.level).toBe('SECURITY');
+  });
+
+  it('上書きで顧客・担当スタッフは変えられない(409 conflict)', async () => {
+    const saved = await saveDailyReport(ctx.deps, admin, daily({ requestedStaffId: other.staffId }));
+    await expect(
+      saveDailyReport(ctx.deps, admin, daily({ reportId: saved.id, customerId: otherCustomerId })),
+    ).rejects.toMatchObject({ code: 'conflict', reason: 'customer_mismatch' });
+    await expect(
+      saveDailyReport(ctx.deps, admin, daily({ reportId: saved.id, requestedStaffId: staff.staffId })),
+    ).rejects.toMatchObject({ code: 'conflict', reason: 'author_mismatch' });
+  });
+
+  it('上書きは版を確かめ(古い版なら 409)、変更前の本文を履歴に残し、ミラーを版ごとに積む', async () => {
+    const saved = await saveDailyReport(ctx.deps, staff, daily());
+    const updated = await saveDailyReport(
+      ctx.deps,
       staff,
-      crypto,
-      notifier,
-      mirror: new FakeOutboxRepository(),
-      appLog,
-    };
-  });
-
-  it('管理者以外が他スタッフの名義を指定しても、本人の日報として保存される', async () => {
-    const result = await saveDailyReport(deps, tenantId, dailyInput({ requestedStaffId: jiroId }));
-    expect(result.ok && result.report.staffId).toBe(hanakoId);
-    expect(appLog.entries.at(-1)).toMatchObject({
-      level: 'INFO',
-      action: 'report.daily.saved',
-      targetStaffId: null,
-    });
-  });
-
-  it('管理者以外は他スタッフの日報を上書きできない(GAS版の上書きの穴を塞ぐ)', async () => {
-    const jiroReport = await saveDailyReport(
-      deps,
-      tenantId,
-      dailyInput({ actor: { staffId: jiroId, isAdmin: false } }),
+      daily({ reportId: saved.id, rowVersion: 1, inputText: '修正' }),
     );
-    if (!jiroReport.ok) throw new Error('unreachable');
-
-    const result = await saveDailyReport(deps, tenantId, dailyInput({ reportId: jiroReport.report.id }));
-    expect(result).toEqual({ ok: false, reason: 'forbidden' });
-    expect(appLog.entries.at(-1)).toMatchObject({
-      level: 'SECURITY',
-      action: 'report.daily.save_denied',
-      actorStaffId: hanakoId,
-      targetStaffId: jiroId,
-    });
-    const stored = await deps.dailyReports.findById(tenantId, jiroReport.report.id);
-    expect(stored?.staffId).toBe(jiroId);
+    expect(updated.rowVersion).toBe(2);
+    expect(ctx.data().careRecordRevisions).toHaveLength(1);
+    await expect(
+      saveDailyReport(ctx.deps, staff, daily({ reportId: saved.id, rowVersion: 1, inputText: '古い画面' })),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    expect(ctx.data().outbox.map((m) => m.dedupeKey)).toEqual([
+      `mirror.care_record:${saved.id}:1`,
+      `mirror.care_record:${saved.id}:2`,
+    ]);
   });
 
-  it('本人は自分の日報を上書きできる', async () => {
-    const first = await saveDailyReport(deps, tenantId, dailyInput());
-    if (!first.ok) throw new Error('unreachable');
-    const second = await saveDailyReport(
-      deps,
-      tenantId,
-      dailyInput({ reportId: first.report.id, internalText: '修正' }),
-    );
-    expect(second.ok && second.report.id).toBe(first.report.id);
-    expect(second.ok && second.report.content.internalText).toBe('修正');
-  });
-
-  it('管理者は他スタッフの日報を上書きでき、担当者は元の担当者のまま(明示指定が無い場合)', async () => {
-    const jiroReport = await saveDailyReport(
-      deps,
-      tenantId,
-      dailyInput({ actor: { staffId: jiroId, isAdmin: false } }),
-    );
-    if (!jiroReport.ok) throw new Error('unreachable');
-    const result = await saveDailyReport(
-      deps,
-      tenantId,
-      dailyInput({ actor: { staffId: adminId, isAdmin: true }, reportId: jiroReport.report.id }),
-    );
-    expect(result.ok && result.report.staffId).toBe(jiroId);
-    expect(appLog.entries.at(-1)).toMatchObject({ actorStaffId: adminId, targetStaffId: jiroId });
-  });
-
-  it('管理者は他スタッフ名義で新規保存できる', async () => {
-    const result = await saveDailyReport(
-      deps,
-      tenantId,
-      dailyInput({ actor: { staffId: adminId, isAdmin: true }, requestedStaffId: jiroId }),
-    );
-    expect(result.ok && result.report.staffId).toBe(jiroId);
-    expect(notifier.notifications[0]?.text).toContain('担当: 鈴木 次郎');
-  });
-
-  it('存在しない日報IDの上書き・存在しない顧客は保存せずエラーにする', async () => {
-    expect(await saveDailyReport(deps, tenantId, dailyInput({ reportId: 'no-such' }))).toEqual({
-      ok: false,
-      reason: 'report_not_found',
-    });
-    expect(await saveDailyReport(deps, tenantId, dailyInput({ customerId: 'no-such' }))).toEqual({
-      ok: false,
-      reason: 'customer_not_found',
-    });
-    expect(notifier.notifications).toEqual([]);
-  });
-
-  it('上書き対象の報告が別のお客様のものなら保存しない(開き直す前の保存が遅れて届いた場合など)', async () => {
-    const first = await saveDailyReport(deps, tenantId, dailyInput());
-    if (!first.ok) throw new Error('unreachable');
-    const other = await createCustomer(
-      { customers: deps.customers, familyMembers: new FakeFamilyMemberRepository(), crypto: deps.crypto },
-      { tenantId, name: '山田 二郎' },
-    );
-    const result = await saveDailyReport(
-      deps,
-      tenantId,
-      dailyInput({ reportId: first.report.id, customerId: other.id, internalText: '別のお客様' }),
-    );
-    expect(result).toEqual({ ok: false, reason: 'customer_mismatch' });
-    const stored = await deps.dailyReports.findById(tenantId, first.report.id);
-    expect(stored?.customerId).toBe(customerId);
-    expect(appLog.entries.at(-1)).toMatchObject({
-      action: 'report.daily.save_denied',
-      details: { reason: 'customer_mismatch' },
-    });
-  });
-
-  it('事故報告も管理者以外は他スタッフの報告を上書きできない', async () => {
+  it('事故報告とヒヤリハットは上書きで切り替えられない', async () => {
     const base = {
       customerId,
-      reportType: 'ヒヤリハット',
-      targetName: '',
-      targetDob: '',
-      occurrenceTime: '',
-      location: '',
-      accidentContent: '',
-      situation: '',
-      immediateResponse: '',
-      parentCorrespondence: '',
-      diagnosisTreatment: '',
-      prevention: '',
-      inputText: '',
+      reportType: '事故報告',
+      targetName: '佐藤 一郎',
+      targetDob: '2022/4/1',
+      occurrenceTime: '10:00',
+      location: '公園',
+      accidentContent: '転倒',
+      situation: '走っていた',
+      immediateResponse: '冷やした',
+      parentCorrespondence: '報告済み',
+      diagnosisTreatment: 'なし',
+      prevention: '見守り',
+      inputText: 'メモ',
     };
-    const jiroReport = await saveAccidentReport(deps, tenantId, {
-      ...base,
-      actor: { staffId: jiroId, isAdmin: false },
-    });
-    if (!jiroReport.ok) throw new Error('unreachable');
-    expect(jiroReport.report.reportType).toBe('ヒヤリハット');
-    expect(notifier.notifications[0]?.text.startsWith('【ヒヤリハット】')).toBe(true);
-
-    const result = await saveAccidentReport(deps, tenantId, {
-      ...base,
-      actor: { staffId: hanakoId, isAdmin: false },
-      reportId: jiroReport.report.id,
-    });
-    expect(result).toEqual({ ok: false, reason: 'forbidden' });
+    const saved = await saveAccidentReport(ctx.deps, staff, base);
+    expect(saved.reportType).toBe('事故報告');
+    await expect(
+      saveAccidentReport(ctx.deps, staff, { ...base, reportId: saved.id, reportType: 'ヒヤリハット' }),
+    ).rejects.toMatchObject({ code: 'validation_failed', reason: 'record_type_mismatch' });
   });
 
-  it('Google Chat未設定・送信失敗はアプリログ(WARN/ERROR)に残し、保存自体は成功させる', async () => {
-    notifier.result = { status: 'not_configured' };
-    expect((await saveDailyReport(deps, tenantId, dailyInput())).ok).toBe(true);
-    expect(appLog.entries).toContainEqual(
-      expect.objectContaining({ level: 'WARN', action: 'notification.gchat.not_configured' }),
-    );
-
-    notifier.result = { status: 'failed', httpStatus: 500, error: 'Internal' };
-    expect((await saveDailyReport(deps, tenantId, dailyInput())).ok).toBe(true);
-    expect(appLog.entries).toContainEqual(
-      expect.objectContaining({ level: 'ERROR', action: 'notification.gchat.failed' }),
-    );
+  it('活動記録はキーセットで重複・抜け無くページングできる(同じ時刻の記録を含む)', async () => {
+    for (let i = 0; i < 7; i++) {
+      await saveDailyReport(ctx.deps, staff, daily({ reportDate: i < 3 ? '2026-09-20' : `2026-09-2${i}` }));
+    }
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await getCustomerHistory(ctx.deps, staff, customerId, cursor, 3);
+      seen.push(...page.items.map((i) => i.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    expect(seen).toHaveLength(7);
+    expect(new Set(seen).size).toBe(7);
+    await expect(getCustomerHistory(ctx.deps, staff, customerId, 'garbage', 3)).rejects.toMatchObject({
+      code: 'validation_failed',
+    });
   });
 
-  it('訪問完了通知は担当者名・顧客名をサーバー側で解決して送る', async () => {
-    await sendVisitCompleteNotification(deps, tenantId, {
-      staffId: hanakoId,
+  it('訪問完了の通知は DB の名前を使う', async () => {
+    await sendVisitCompleteNotification(ctx.deps, staff, {
       customerId,
-      visitDate: '2026-08-28',
+      visitDate: '2026-09-25',
       startTime: '09:00',
-      endTime: '11:00',
+      endTime: '12:00',
     });
-    expect(notifier.notifications).toEqual([
-      {
-        tenantId,
-        channel: 'report',
-        text: '【訪問完了】\n担当: 佐藤 花子\n顧客名: 田中 一郎\n訪問日時: 2026/08/28 09:00〜11:00',
-      },
-    ]);
+    expect(ctx.notifier.notifications[0]?.text).toBe(
+      '【訪問完了】\n担当: 山田 太郎\n顧客名: 佐藤 花子\n訪問日時: 2026/09/25 09:00〜12:00',
+    );
   });
 });

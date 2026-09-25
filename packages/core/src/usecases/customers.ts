@@ -1,278 +1,70 @@
-import { normalizeStaffName, ENCRYPTION_PURPOSES as P, splitJapaneseFullName } from '../domain';
-import type { CryptoPort, EncryptionPurpose } from '../ports/crypto';
+import {
+  addIsoDays,
+  formatBirthDate,
+  geoCellOf,
+  newId,
+  normalizeStaffName,
+  notFound,
+  ENCRYPTION_PURPOSES as P,
+} from '../domain';
+import type { CustomerSource } from '../domain/model';
+import type { AuditLogPort, CryptoPort } from '../ports/crypto';
 import type {
-  CustomerPatchInput,
-  CustomerRecord,
-  CustomerRepositoryPort,
-  EncryptedField,
-  FamilyMemberRecord,
-  FamilyMemberRepositoryPort,
-  NewCustomerInput,
-  NewFamilyMemberInput,
-} from '../ports/repositories';
+  CareRecipientRecord,
+  CustomerAddressRecord,
+  CustomerContactRecord,
+  CustomerSummary,
+} from '../ports/customers';
+import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
+import { DecryptSession, encryptOptional } from './cipher';
+import type { Actor } from './requestMeta';
 
 export interface CustomerDeps {
-  customers: CustomerRepositoryPort;
-  familyMembers: FamilyMemberRepositoryPort;
+  uow: UnitOfWorkPort;
   crypto: CryptoPort;
-}
-
-async function encryptIfPresent(
-  crypto: CryptoPort,
-  tenantId: string,
-  value: string | undefined | null,
-  purpose: EncryptionPurpose,
-): Promise<EncryptedField | null> {
-  if (!value) return null;
-  return crypto.encrypt(tenantId, value, purpose);
-}
-
-async function decryptIfPresent(
-  crypto: CryptoPort,
-  tenantId: string,
-  value: EncryptedField | null,
-  purpose: EncryptionPurpose,
-): Promise<string | null> {
-  if (!value) return null;
-  return crypto.decrypt(tenantId, value, purpose);
-}
-
-export interface FamilyMemberInput {
-  name: string;
-  dob?: string;
-  info?: string;
-  /** アレルギー(RESERVA取込時はextractAllergyでinfoから抽出したもの)。 */
-  allergy?: string;
-}
-
-/**
- * 顧客登録の入力。RESERVA CSVの全項目(パスワード列を除く)を受け付けられるよう、
- * CustomerProfileFieldsに対応する項目を全て任意項目として持つ。
- *
- * familyName/givenNameを明示的に渡した場合はそれを優先する(CSV取込のように、外部システムが
- * 既に姓・名を分割済みで渡してくる場合、氏名文字列からの再分割よりも確実なため)。
- * 省略した場合は`splitJapaneseFullName(name)`で分割する(手動登録・デモ投入用)。
- */
-export interface CreateCustomerInput {
-  tenantId: string;
-  name: string;
-  familyName?: string;
-  givenName?: string;
-  externalSource?: string;
-  externalId?: string;
-  familyNameKana?: string;
-  givenNameKana?: string;
-  email?: string;
-  phone?: string;
-  addressDetail?: string;
-  city?: string;
-  parkingArea?: string;
-  parkingDetail?: string;
-  emergencyContact?: string;
-  emergencyContactRelation?: string;
-  evacuationSite?: string;
-  memo?: string;
-  benefitMemberId?: string;
-  address2?: string;
-  address2StartDate?: string;
-  address2EndDate?: string;
-  latLng?: string;
-  memberType?: string;
-  memberStatus?: string;
-  paymentMethod?: string;
-  paymentStatus?: string;
-  gender?: string;
-  ageBracket?: string;
-  registeredAt?: Date;
-  externalLastUpdatedAt?: Date;
-  familyMembers?: FamilyMemberInput[];
-}
-
-async function buildCustomerRecordFields(
-  deps: CustomerDeps,
-  tenantId: string,
-  input: CreateCustomerInput,
-): Promise<NewCustomerInput> {
-  const familyName = input.familyName ?? splitJapaneseFullName(input.name).familyName;
-  const givenName = input.givenName ?? splitJapaneseFullName(input.name).givenName;
-
-  const [
-    emergencyContactEnc,
-    emergencyContactRelationEnc,
-    evacuationSiteEnc,
-    memoEnc,
-    benefitMemberIdEnc,
-    latLngEnc,
-  ] = await Promise.all([
-    encryptIfPresent(deps.crypto, tenantId, input.emergencyContact, P.customerEmergencyContact),
-    encryptIfPresent(
-      deps.crypto,
-      tenantId,
-      input.emergencyContactRelation,
-      P.customerEmergencyContactRelation,
-    ),
-    encryptIfPresent(deps.crypto, tenantId, input.evacuationSite, P.customerEvacuationSite),
-    encryptIfPresent(deps.crypto, tenantId, input.memo, P.customerMemo),
-    encryptIfPresent(deps.crypto, tenantId, input.benefitMemberId, P.customerBenefitMemberId),
-    encryptIfPresent(deps.crypto, tenantId, input.latLng, P.customerLatLng),
-  ]);
-
-  return {
-    tenantId,
-    externalSource: input.externalSource ?? null,
-    externalId: input.externalId ?? null,
-    name: input.name,
-    // normalizeStaffNameで正規化してから保存する(空白の表記ゆれがあっても検索が一致するように)。
-    familyName: normalizeStaffName(familyName),
-    givenName: normalizeStaffName(givenName),
-    familyNameKana: input.familyNameKana ?? null,
-    givenNameKana: input.givenNameKana ?? null,
-    email: input.email ?? null,
-    phone: input.phone ?? null,
-    addressDetail: input.addressDetail ?? null,
-    city: input.city ?? null,
-    parkingArea: input.parkingArea ?? null,
-    parkingDetail: input.parkingDetail ?? null,
-    emergencyContact: emergencyContactEnc,
-    emergencyContactRelation: emergencyContactRelationEnc,
-    evacuationSite: evacuationSiteEnc,
-    memo: memoEnc,
-    benefitMemberId: benefitMemberIdEnc,
-    address2: input.address2 ?? null,
-    address2StartDate: input.address2StartDate ?? null,
-    address2EndDate: input.address2EndDate ?? null,
-    latLng: latLngEnc,
-    memberType: input.memberType ?? null,
-    memberStatus: input.memberStatus ?? null,
-    paymentMethod: input.paymentMethod ?? null,
-    paymentStatus: input.paymentStatus ?? null,
-    gender: input.gender ?? null,
-    ageBracket: input.ageBracket ?? null,
-    registeredAt: input.registeredAt ?? null,
-    externalLastUpdatedAt: input.externalLastUpdatedAt ?? null,
-  };
-}
-
-async function buildFamilyMemberInputs(
-  deps: CustomerDeps,
-  tenantId: string,
-  customerId: string,
-  members: FamilyMemberInput[],
-): Promise<NewFamilyMemberInput[]> {
-  return Promise.all(
-    members.map(async (m) => ({
-      tenantId,
-      customerId,
-      name: await deps.crypto.encrypt(tenantId, m.name, P.familyMemberName),
-      dob: await encryptIfPresent(deps.crypto, tenantId, m.dob, P.familyMemberDob),
-      info: await encryptIfPresent(deps.crypto, tenantId, m.info, P.familyMemberInfo),
-      allergy: await encryptIfPresent(deps.crypto, tenantId, m.allergy, P.familyMemberAllergy),
-    })),
-  );
-}
-
-/**
- * 顧客を登録する。氏名は姓・名に分割して平文で別カラムに保存し、「苗字だけで検索」に対応する。
- * 世帯構成員(子ども等)を渡した場合はfamily_membersにも保存する
- * (packages/core/src/domain/legacyImport/parseFamilyInfo.tsの出力をそのまま渡せる形)。
- */
-export async function createCustomer(
-  deps: CustomerDeps,
-  input: CreateCustomerInput,
-): Promise<CustomerRecord> {
-  const record = await buildCustomerRecordFields(deps, input.tenantId, input);
-  const created = await deps.customers.create(record);
-
-  if (input.familyMembers && input.familyMembers.length > 0) {
-    const memberInputs = await buildFamilyMemberInputs(deps, input.tenantId, created.id, input.familyMembers);
-    await deps.familyMembers.createMany(memberInputs);
-  }
-
-  return created;
-}
-
-/**
- * 既存顧客を部分更新する。渡されたフィールドだけを上書きし、家族構成員は渡した場合のみ
- * 全件入れ替える(取込元の最新情報で置き換える想定のため)。
- */
-export async function updateCustomer(
-  deps: CustomerDeps,
-  tenantId: string,
-  customerId: string,
-  input: CreateCustomerInput,
-): Promise<CustomerRecord> {
-  const record = await buildCustomerRecordFields(deps, tenantId, input);
-  const patch: CustomerPatchInput = record;
-  const updated = await deps.customers.update(tenantId, customerId, patch);
-
-  if (input.familyMembers) {
-    const memberInputs = await buildFamilyMemberInputs(deps, tenantId, customerId, input.familyMembers);
-    await deps.familyMembers.replaceForCustomer(tenantId, customerId, memberInputs);
-  }
-
-  return updated;
-}
-
-export interface CustomerView {
-  id: string;
-  name: string;
-  phone: string | null;
-  city: string | null;
-}
-
-/**
- * 苗字(姓)の完全一致で顧客を検索する。GAS版・旧ブラインドインデックス方式と同じ「トークン単位の
- * 完全一致」の挙動を踏襲している。familyNameは平文カラムになったため技術的には前方一致(ILIKE)も
- * 実現可能だが、現時点でその要件は無いため変更していない。
- */
-export async function searchCustomersByFamilyName(
-  deps: CustomerDeps,
-  tenantId: string,
-  familyName: string,
-): Promise<CustomerView[]> {
-  // splitJapaneseFullName内の姓トークンと同じ正規化(NFKC + 空白除去)を検索入力にも適用する。
-  // ここがずれると、登録時と検索時で一致しなくなる。
-  const normalizedFamilyName = normalizeStaffName(familyName.normalize('NFKC'));
-  const rows = await deps.customers.findByFamilyName(tenantId, normalizedFamilyName);
-
-  return rows.map((row) => ({ id: row.id, name: row.name, phone: row.phone, city: row.city }));
+  audit?: AuditLogPort;
 }
 
 export interface CustomerListResult {
-  customers: CustomerView[];
-  /** 地区(市区町村)の重複無し・昇順一覧。「訪問先一覧」タブの地区絞り込みセレクトに使う。 */
+  customers: CustomerSummary[];
+  /** 地区(市区町村)の重複無し・昇順一覧。「訪問先一覧」タブの地区絞り込みに使う。 */
   cities: string[];
 }
 
 /**
- * 有効な顧客を全件、復号した状態で返す。GAS版Main.js fetchDataFromSheetが顧客DB全件を
- * 一度にクライアントへ返し、以後の名前の部分一致検索・地区絞り込み・並び替えは全てブラウザ側の
- * 処理(index.htmlのfilterCustomers())だったのと同じ設計にするための一覧取得。
- * (searchCustomersByFamilyNameの苗字完全一致検索とは別の用途で、
- * 「訪問先一覧」タブの既定表示・絞り込みにはこちらを使う。)
+ * アーカイブされていない顧客の一覧(GAS版 Main.js fetchDataFromSheet と同じく全件を返し、名前の部分一致・
+ * 地区の絞り込み・並び替えは画面で行う)。
  */
 export async function listCustomers(deps: CustomerDeps, tenantId: string): Promise<CustomerListResult> {
-  const rows = await deps.customers.listActive(tenantId);
-
-  const customerViews = rows.map((row) => ({ id: row.id, name: row.name, phone: row.phone, city: row.city }));
-
+  const customers = await deps.uow.run(tenantId, (r) => r.customers.listActiveSummaries());
   const cities = Array.from(
-    new Set(customerViews.map((c) => c.city).filter((c): c is string => Boolean(c))),
+    new Set(customers.map((c) => c.city).filter((c): c is string => Boolean(c))),
   ).sort((a, b) => a.localeCompare(b, 'ja'));
-
-  return { customers: customerViews, cities };
+  return { customers, cities };
 }
 
-export interface FamilyMemberView {
+/** 苗字(姓)の完全一致検索(NFKC・空白除去で揃えて比べる)。 */
+export function searchCustomersByFamilyName(
+  deps: CustomerDeps,
+  tenantId: string,
+  familyName: string,
+): Promise<CustomerSummary[]> {
+  const normalized = normalizeStaffName(familyName.normalize('NFKC'));
+  return deps.uow.run(tenantId, (r) => r.customers.findByFamilyName(normalized));
+}
+
+export interface CareRecipientView {
   id: string;
   name: string;
+  /** 'YYYY/M/D'(GAS版の生年月日の表記)。 */
   dob: string | null;
+  /** 配慮事項・付帯情報(自由記述)。 */
   info: string | null;
-  /** nullの場合、UIは「アレルギー: なし」と表示する(GAS版showCustomerDetailと同じ)。 */
+  /** null の場合、画面は「アレルギー: なし」と出す(GAS版 showCustomerDetail と同じ)。 */
   allergy: string | null;
 }
 
-/** 顧客の全項目(RESERVA CSV由来の全フィールド)を復号した詳細ビュー。 */
+/** 顧客の詳細(RESERVA の顧客CSVの列の並びの画面。@katahimo/shared の customerDetailViewSchema と同じ形)。 */
 export interface CustomerDetailView {
   id: string;
   externalSource: string | null;
@@ -303,93 +95,441 @@ export interface CustomerDetailView {
   ageBracket: string | null;
   registeredAt: Date | null;
   externalLastUpdatedAt: Date | null;
-  deactivatedAt: Date | null;
-  familyMembers: FamilyMemberView[];
+  archivedAt: Date | null;
+  familyMembers: CareRecipientView[];
 }
 
-async function decryptFamilyMember(
-  crypto: CryptoPort,
-  tenantId: string,
-  row: FamilyMemberRecord,
-): Promise<FamilyMemberView> {
-  return {
-    id: row.id,
-    name: await crypto.decrypt(tenantId, row.name, P.familyMemberName),
-    dob: await decryptIfPresent(crypto, tenantId, row.dob, P.familyMemberDob),
-    info: await decryptIfPresent(crypto, tenantId, row.info, P.familyMemberInfo),
-    allergy: await decryptIfPresent(crypto, tenantId, row.allergy, P.familyMemberAllergy),
-  };
+function homeOf(addresses: CustomerAddressRecord[]): CustomerAddressRecord | undefined {
+  return addresses.find((a) => a.kind === 'home' && a.isPrimary) ?? addresses.find((a) => a.kind === 'home');
 }
 
-/** 顧客1件の全項目を復号し、世帯構成員一覧とあわせて返す(詳細画面用)。 */
+/**
+ * 顧客1件の全項目(子ども・アレルギー・緊急連絡先を含む)を復号して返す(読み出しは1トランザクション、
+ * 復号の監査は1件)。無ければ not_found。
+ */
 export async function getCustomerDetail(
   deps: CustomerDeps,
-  tenantId: string,
+  actor: Actor,
   customerId: string,
-): Promise<CustomerDetailView | null> {
-  const row = await deps.customers.findById(tenantId, customerId);
-  if (!row) return null;
+): Promise<CustomerDetailView> {
+  const loaded = await deps.uow.run(actor.tenantId, async (r) => {
+    const customer = await r.customers.findById(customerId);
+    if (!customer) return null;
+    const [source, addresses, contacts, recipients] = await Promise.all([
+      r.customerSourceRecords.findByCustomerId(customerId),
+      r.customerAddresses.listByCustomer(customerId),
+      r.customerContacts.listByCustomer(customerId),
+      r.careRecipients.listByCustomer(customerId),
+    ]);
+    return { customer, source, addresses, contacts, recipients };
+  });
+  if (!loaded) throw notFound('顧客が見つかりません');
+  const { customer, source, addresses, contacts, recipients } = loaded;
+  const d = new DecryptSession(deps.crypto, actor.tenantId);
+  const home = homeOf(addresses);
+  const secondary = addresses.find((a) => a.kind === 'secondary');
+  const emergency = contacts.find((c) => c.isEmergency);
+  const attr = (key: string) => source?.attributes[key] ?? null;
 
-  const familyRows = await deps.familyMembers.listByCustomerId(tenantId, customerId);
-
-  const [
-    emergencyContact,
-    emergencyContactRelation,
-    evacuationSite,
-    memo,
-    benefitMemberId,
-    latLng,
-    familyMembers,
-  ] = await Promise.all([
-    decryptIfPresent(deps.crypto, tenantId, row.emergencyContact, P.customerEmergencyContact),
-    decryptIfPresent(deps.crypto, tenantId, row.emergencyContactRelation, P.customerEmergencyContactRelation),
-    decryptIfPresent(deps.crypto, tenantId, row.evacuationSite, P.customerEvacuationSite),
-    decryptIfPresent(deps.crypto, tenantId, row.memo, P.customerMemo),
-    decryptIfPresent(deps.crypto, tenantId, row.benefitMemberId, P.customerBenefitMemberId),
-    decryptIfPresent(deps.crypto, tenantId, row.latLng, P.customerLatLng),
-    Promise.all(familyRows.map((f) => decryptFamilyMember(deps.crypto, tenantId, f))),
-  ]);
-
-  return {
-    id: row.id,
-    externalSource: row.externalSource,
-    externalId: row.externalId,
-    name: row.name,
-    familyNameKana: row.familyNameKana,
-    givenNameKana: row.givenNameKana,
-    email: row.email,
-    phone: row.phone,
-    addressDetail: row.addressDetail,
-    city: row.city,
-    parkingArea: row.parkingArea,
-    parkingDetail: row.parkingDetail,
-    emergencyContact,
-    emergencyContactRelation,
-    evacuationSite,
-    memo,
-    benefitMemberId,
-    address2: row.address2,
-    address2StartDate: row.address2StartDate,
-    address2EndDate: row.address2EndDate,
-    latLng,
-    memberType: row.memberType,
-    memberStatus: row.memberStatus,
-    paymentMethod: row.paymentMethod,
-    paymentStatus: row.paymentStatus,
-    gender: row.gender,
-    ageBracket: row.ageBracket,
-    registeredAt: row.registeredAt,
-    externalLastUpdatedAt: row.externalLastUpdatedAt,
-    deactivatedAt: row.deactivatedAt,
-    familyMembers,
+  const view: CustomerDetailView = {
+    id: customer.id,
+    externalSource: source?.source ?? null,
+    externalId: source?.externalId ?? null,
+    name: customer.displayName,
+    familyNameKana: customer.familyNameKana,
+    givenNameKana: customer.givenNameKana,
+    email: customer.email,
+    phone: customer.phone,
+    addressDetail: home?.addressLine ?? null,
+    city: home?.city ?? null,
+    parkingArea: home?.parkingArea ?? null,
+    parkingDetail: home?.parkingDetail ?? null,
+    emergencyContact: emergency
+      ? await d.optional(P.customerContactPhone, emergency.id, emergency.phoneEnc)
+      : null,
+    emergencyContactRelation: emergency?.relation ?? null,
+    evacuationSite: await d.optional(P.customerEvacuationSite, customer.id, customer.evacuationSiteEnc),
+    memo: await d.optional(P.customerMemo, customer.id, customer.memoEnc),
+    benefitMemberId: await d.optional(P.customerBenefitMemberId, customer.id, customer.benefitMemberIdEnc),
+    address2: secondary?.addressLine ?? null,
+    address2StartDate: secondary?.valid.start ?? null,
+    address2EndDate: secondary?.valid.end ? addIsoDays(secondary.valid.end, -1) : null,
+    latLng: home ? await d.optional(P.customerAddressGeo, home.id, home.geoEnc) : null,
+    memberType: attr('member_type'),
+    memberStatus: attr('member_status'),
+    paymentMethod: attr('payment_method'),
+    paymentStatus: attr('payment_status'),
+    gender: attr('gender'),
+    ageBracket: attr('age_bracket'),
+    registeredAt: source?.externalRegisteredAt ?? null,
+    externalLastUpdatedAt: source?.externalUpdatedAt ?? null,
+    archivedAt: customer.archivedAt,
+    familyMembers: await Promise.all(
+      recipients.map(async (c) => ({
+        id: c.id,
+        name: c.name,
+        dob: formatBirthDate(c.birthDate),
+        info: await d.optional(P.careRecipientNeeds, c.id, c.needsEnc),
+        allergy: await d.optional(P.careRecipientAllergy, c.id, c.allergyEnc),
+      })),
+    ),
   };
+  d.flush(deps.audit, 'customer.detail', actor.staffId);
+  return view;
 }
 
-/** 取込元に存在しなくなった顧客をソフトデリートする(物理削除はしない)。 */
-export async function deactivateCustomer(
-  deps: CustomerDeps,
-  tenantId: string,
+// ─────────────────────────────────────────────────────────────
+// 取込元のデータで顧客を揃える(RESERVA の顧客CSV等。差分で適用し、ID を保つ)
+// ─────────────────────────────────────────────────────────────
+
+export interface CustomerSnapshotAddress {
+  addressLine: string;
+  prefecture?: string | null;
+  city?: string | null;
+  parkingArea?: string | null;
+  parkingDetail?: string | null;
+  /** 'lat,lng'(暗号化して保存し、粗い区画だけを平文にする)。 */
+  latLng?: string | null;
+}
+
+export interface CustomerSnapshotRecipient {
+  name: string;
+  /** 'YYYY-MM-DD'。 */
+  birthDate: string | null;
+  needs?: string | null;
+  allergy?: string | null;
+}
+
+/** 取込元の1顧客分(取込元の形式を知らない形)。 */
+export interface CustomerSnapshot {
+  source: CustomerSource;
+  externalId: string;
+  displayName: string;
+  familyName: string;
+  givenName: string;
+  familyNameKana?: string | null;
+  givenNameKana?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  memo?: string | null;
+  benefitMemberId?: string | null;
+  evacuationSite?: string | null;
+  /** 取込元固有の分類値(会員種別・会費の支払方法等。個人を特定しない値だけ)。 */
+  attributes: Record<string, string>;
+  externalRegisteredAt?: Date | null;
+  externalUpdatedAt?: Date | null;
+  home: CustomerSnapshotAddress | null;
+  /** 期間限定の住所(GAS版の住所2)。validFrom / validTo は両端を含む 'YYYY-MM-DD'。 */
+  secondary: (CustomerSnapshotAddress & { validFrom: string | null; validTo: string | null }) | null;
+  emergencyContact: { relation?: string | null; phone?: string | null } | null;
+  recipients: CustomerSnapshotRecipient[];
+}
+
+export type SnapshotOutcome = 'created' | 'updated' | 'unchanged';
+
+interface ApplyContext {
+  crypto: CryptoPort;
+  runId: string | null;
+}
+
+function same(a: unknown, b: unknown): boolean {
+  return (a ?? null) === (b ?? null);
+}
+
+/** 暗号化列を比べる(平文で比べ、変わっていれば新しい暗号文)。 */
+async function encryptedDiff(
+  ctx: ApplyContext,
+  r: TenantRepositories,
+  purpose: (typeof P)[keyof typeof P],
+  rowId: string,
+  current: Uint8Array | null,
+  next: string | null | undefined,
+): Promise<{ changed: boolean; value: Uint8Array | null }> {
+  const currentText = current
+    ? await ctx.crypto.decrypt({ tenantId: r.tenantId, purpose, rowId }, current)
+    : null;
+  if (same(currentText, next || null)) return { changed: false, value: current };
+  return { changed: true, value: await encryptOptional(ctx.crypto, r.tenantId, purpose, rowId, next) };
+}
+
+async function syncAddress(
+  ctx: ApplyContext,
+  r: TenantRepositories,
   customerId: string,
-): Promise<void> {
-  await deps.customers.deactivate(tenantId, customerId);
+  kind: 'home' | 'secondary',
+  existing: CustomerAddressRecord | undefined,
+  next: (CustomerSnapshotAddress & { validFrom?: string | null; validTo?: string | null }) | null,
+): Promise<boolean> {
+  if (!next?.addressLine) {
+    if (!existing) return false;
+    await r.customerAddresses.delete(existing.id);
+    return true;
+  }
+  const id = existing?.id ?? newId();
+  const geo = await encryptedDiff(ctx, r, P.customerAddressGeo, id, existing?.geoEnc ?? null, next.latLng);
+  const valid = {
+    start: next.validFrom ?? null,
+    end: next.validTo ? addIsoDays(next.validTo, 1) : null,
+  };
+  const fields = {
+    kind,
+    postalCode: null,
+    prefecture: next.prefecture ?? null,
+    city: next.city ?? null,
+    addressLine: next.addressLine,
+    building: null,
+    parkingArea: next.parkingArea ?? null,
+    parkingDetail: next.parkingDetail ?? null,
+    geoEnc: geo.value,
+    geoCell: geoCellOf(next.latLng),
+    valid,
+    isPrimary: kind === 'home',
+  };
+  if (!existing) {
+    await r.customerAddresses.insert({ id, customerId, ...fields });
+    return true;
+  }
+  const changed =
+    geo.changed ||
+    !same(existing.prefecture, fields.prefecture) ||
+    !same(existing.city, fields.city) ||
+    existing.addressLine !== fields.addressLine ||
+    !same(existing.parkingArea, fields.parkingArea) ||
+    !same(existing.parkingDetail, fields.parkingDetail) ||
+    !same(existing.valid.start, valid.start) ||
+    !same(existing.valid.end, valid.end);
+  if (changed) await r.customerAddresses.update(id, fields);
+  return changed;
+}
+
+async function syncEmergencyContact(
+  ctx: ApplyContext,
+  r: TenantRepositories,
+  customerId: string,
+  existing: CustomerContactRecord | undefined,
+  next: CustomerSnapshot['emergencyContact'],
+): Promise<boolean> {
+  if (!next?.phone && !next?.relation) {
+    if (!existing) return false;
+    await r.customerContacts.delete(existing.id);
+    return true;
+  }
+  const id = existing?.id ?? newId();
+  const phone = await encryptedDiff(
+    ctx,
+    r,
+    P.customerContactPhone,
+    id,
+    existing?.phoneEnc ?? null,
+    next.phone,
+  );
+  if (!existing) {
+    await r.customerContacts.insert({
+      id,
+      customerId,
+      relation: next.relation ?? null,
+      nameEnc: null,
+      phoneEnc: phone.value,
+      notesEnc: null,
+      isEmergency: true,
+      sortOrder: 0,
+    });
+    return true;
+  }
+  const changed = phone.changed || !same(existing.relation, next.relation);
+  if (changed)
+    await r.customerContacts.update(id, { relation: next.relation ?? null, phoneEnc: phone.value });
+  return changed;
+}
+
+/**
+ * 子どもを差分で揃える: 氏名(空白を除いた表記)で突き合わせ、変わった項目だけを書き、取込元から消えた子どもは
+ * archived_at を付ける(ID を保つ。消して作り直さない)。同じ名前が複数いる場合は並び順で対応づける。
+ */
+async function syncRecipients(
+  ctx: ApplyContext,
+  r: TenantRepositories,
+  customerId: string,
+  next: CustomerSnapshotRecipient[],
+  now: Date,
+): Promise<boolean> {
+  const existing = await r.careRecipients.listByCustomer(customerId, { includeArchived: true });
+  const pool = new Map<string, CareRecipientRecord[]>();
+  for (const e of existing) {
+    const key = normalizeStaffName(e.name);
+    pool.set(key, [...(pool.get(key) ?? []), e]);
+  }
+  let changed = false;
+  const kept = new Set<string>();
+  for (const [index, recipient] of next.entries()) {
+    const match = pool.get(normalizeStaffName(recipient.name))?.shift();
+    const id = match?.id ?? newId();
+    kept.add(id);
+    const allergy = await encryptedDiff(
+      ctx,
+      r,
+      P.careRecipientAllergy,
+      id,
+      match?.allergyEnc ?? null,
+      recipient.allergy,
+    );
+    const needs = await encryptedDiff(
+      ctx,
+      r,
+      P.careRecipientNeeds,
+      id,
+      match?.needsEnc ?? null,
+      recipient.needs,
+    );
+    if (!match) {
+      await r.careRecipients.insert({
+        id,
+        customerId,
+        name: recipient.name,
+        nameKana: null,
+        birthDate: recipient.birthDate,
+        sex: null,
+        allergyEnc: allergy.value,
+        needsEnc: needs.value,
+        sortOrder: index,
+      });
+      changed = true;
+      continue;
+    }
+    if (
+      allergy.changed ||
+      needs.changed ||
+      match.name !== recipient.name ||
+      !same(match.birthDate, recipient.birthDate) ||
+      match.sortOrder !== index ||
+      match.archivedAt !== null
+    ) {
+      await r.careRecipients.update(id, {
+        name: recipient.name,
+        birthDate: recipient.birthDate,
+        allergyEnc: allergy.value,
+        needsEnc: needs.value,
+        sortOrder: index,
+        archivedAt: null,
+      });
+      changed = true;
+    }
+  }
+  for (const e of existing) {
+    if (!kept.has(e.id) && e.archivedAt === null) {
+      await r.careRecipients.update(e.id, { archivedAt: now });
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
+ * 取込元の1顧客分を DB に揃える(UoW のトランザクションの中で呼ぶ)。取込元の ID(source, external_id)で
+ * 突き合わせ、無ければ作り、あれば変わった項目だけを書く。アーカイブ済みの顧客が取込元に戻ったら戻す。
+ */
+export async function applyCustomerSnapshot(
+  ctx: ApplyContext,
+  r: TenantRepositories,
+  snapshot: CustomerSnapshot,
+  now: Date,
+): Promise<SnapshotOutcome> {
+  const linked = await r.customerSourceRecords.findByExternalId(snapshot.source, snapshot.externalId);
+  const current = linked ? await r.customers.findById(linked.customerId) : null;
+  const customerId = current?.id ?? newId();
+  const encrypted = {
+    memo: await encryptedDiff(ctx, r, P.customerMemo, customerId, current?.memoEnc ?? null, snapshot.memo),
+    benefit: await encryptedDiff(
+      ctx,
+      r,
+      P.customerBenefitMemberId,
+      customerId,
+      current?.benefitMemberIdEnc ?? null,
+      snapshot.benefitMemberId,
+    ),
+    evacuation: await encryptedDiff(
+      ctx,
+      r,
+      P.customerEvacuationSite,
+      customerId,
+      current?.evacuationSiteEnc ?? null,
+      snapshot.evacuationSite,
+    ),
+  };
+  const fields = {
+    displayName: snapshot.displayName,
+    familyName: normalizeStaffName(snapshot.familyName),
+    givenName: normalizeStaffName(snapshot.givenName),
+    familyNameKana: snapshot.familyNameKana ?? null,
+    givenNameKana: snapshot.givenNameKana ?? null,
+    email: snapshot.email ?? null,
+    phone: snapshot.phone ?? null,
+    memoEnc: encrypted.memo.value,
+    benefitMemberIdEnc: encrypted.benefit.value,
+    evacuationSiteEnc: encrypted.evacuation.value,
+  };
+
+  let changed = false;
+  if (!current) {
+    await r.customers.create({ id: customerId, ...fields });
+    changed = true;
+  } else {
+    const customerChanged =
+      encrypted.memo.changed ||
+      encrypted.benefit.changed ||
+      encrypted.evacuation.changed ||
+      (
+        [
+          'displayName',
+          'familyName',
+          'givenName',
+          'familyNameKana',
+          'givenNameKana',
+          'email',
+          'phone',
+        ] as const
+      ).some((k) => !same(current[k], fields[k]));
+    if (customerChanged) await r.customers.update(customerId, fields);
+    if (current.archivedAt) await r.customers.unarchive(customerId);
+    changed = customerChanged || current.archivedAt !== null;
+  }
+
+  await r.customerSourceRecords.upsert({
+    id: linked?.id ?? newId(),
+    customerId,
+    source: snapshot.source,
+    externalId: snapshot.externalId,
+    attributes: snapshot.attributes,
+    externalRegisteredAt: snapshot.externalRegisteredAt ?? null,
+    externalUpdatedAt: snapshot.externalUpdatedAt ?? null,
+    lastImportRunId: ctx.runId,
+  });
+  const sourceChanged =
+    !linked ||
+    JSON.stringify(linked.attributes) !== JSON.stringify(snapshot.attributes) ||
+    linked.externalUpdatedAt?.getTime() !== (snapshot.externalUpdatedAt ?? null)?.getTime();
+
+  const addresses = current ? await r.customerAddresses.listByCustomer(customerId) : [];
+  const contacts = current ? await r.customerContacts.listByCustomer(customerId) : [];
+  const results = [
+    await syncAddress(ctx, r, customerId, 'home', homeOf(addresses), snapshot.home),
+    await syncAddress(
+      ctx,
+      r,
+      customerId,
+      'secondary',
+      addresses.find((a) => a.kind === 'secondary'),
+      snapshot.secondary,
+    ),
+    await syncEmergencyContact(
+      ctx,
+      r,
+      customerId,
+      contacts.find((c) => c.isEmergency),
+      snapshot.emergencyContact,
+    ),
+    await syncRecipients(ctx, r, customerId, snapshot.recipients, now),
+  ];
+  if (!current) return 'created';
+  return changed || sourceChanged || results.some(Boolean) ? 'updated' : 'unchanged';
 }

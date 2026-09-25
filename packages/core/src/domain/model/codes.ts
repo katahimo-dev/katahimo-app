@@ -24,7 +24,11 @@ export const DATA_KEY_STATES = ['active', 'decrypt_only', 'destroyed'] as const;
 export type DataKeyState = (typeof DATA_KEY_STATES)[number];
 
 /** テナントの秘密値(tenant_secrets.name)。 */
-export const TENANT_SECRET_NAMES = ['gemini_api_key', 'gchat_report_webhook', 'gchat_receipt_webhook'] as const;
+export const TENANT_SECRET_NAMES = [
+  'gemini_api_key',
+  'gchat_report_webhook',
+  'gchat_receipt_webhook',
+] as const;
 export type TenantSecretName = (typeof TENANT_SECRET_NAMES)[number];
 
 export const IMPORT_SOURCES = ['reserva_csv', 'staff_master_csv'] as const;

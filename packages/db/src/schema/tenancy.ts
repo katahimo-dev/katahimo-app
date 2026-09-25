@@ -22,14 +22,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import {
-  constraintName,
-  createdAt,
-  idColumn,
-  oneOf,
-  tenantIdColumn,
-  updatedAt,
-} from './_columns';
+import { constraintName, createdAt, idColumn, oneOf, tenantIdColumn, updatedAt } from './_columns';
 import { tenantFk, tenantIsolation, tenantRef, tenantScoped } from './_helpers';
 import { bytea } from './_types';
 import { staff } from './staff';
@@ -78,10 +71,7 @@ export const tenantDataKeys = pgTable(
     uniqueIndex('tenant_data_keys_tenant_id_active_key').on(t.tenantId).where(sql`state = 'active'`),
     check('tenant_data_keys_state_check', oneOf(t.state, DATA_KEY_STATES)),
     check('tenant_data_keys_version_check', sql`${t.version} between 1 and 65535`),
-    check(
-      'tenant_data_keys_wrapped_dek_check',
-      sql`(${t.state} = 'destroyed') = (${t.wrappedDek} is null)`,
-    ),
+    check('tenant_data_keys_wrapped_dek_check', sql`(${t.state} = 'destroyed') = (${t.wrappedDek} is null)`),
   ],
 ).enableRLS();
 
@@ -161,10 +151,7 @@ export const importRuns = pgTable(
     ),
     check('import_runs_source_check', oneOf(t.source, IMPORT_SOURCES)),
     check('import_runs_status_check', oneOf(t.status, IMPORT_RUN_STATUSES)),
-    check(
-      'import_runs_finished_at_check',
-      sql`(${t.status} = 'running') = (${t.finishedAt} is null)`,
-    ),
+    check('import_runs_finished_at_check', sql`(${t.status} = 'running') = (${t.finishedAt} is null)`),
   ],
 ).enableRLS();
 

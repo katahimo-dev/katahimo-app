@@ -1,139 +1,153 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { CustomerDeps } from './customers';
+import type { CustomerSnapshot } from './customers';
 import {
-  createCustomer,
-  deactivateCustomer,
+  applyCustomerSnapshot,
   getCustomerDetail,
   listCustomers,
   searchCustomersByFamilyName,
-  updateCustomer,
 } from './customers';
-import { FakeCryptoPort, FakeCustomerRepository, FakeFamilyMemberRepository } from './testDoubles';
+import type { TestContext } from './testContext';
+import { createTestContext } from './testContext';
+import { fakePlaintext } from './testDoubles';
 
-describe('createCustomer / searchCustomersByFamilyName', () => {
-  let deps: CustomerDeps;
-  const tenantId = 'tenant-1';
+function snapshot(overrides: Partial<CustomerSnapshot> = {}): CustomerSnapshot {
+  return {
+    source: 'reserva',
+    externalId: 'R-001',
+    displayName: '佐藤 花子',
+    familyName: '佐藤',
+    givenName: '花子',
+    phone: '090-1111-2222',
+    memo: '玄関は裏口',
+    attributes: { member_type: '一般' },
+    home: { addressLine: '渋谷1-2-3', city: '渋谷区', latLng: '35.66,139.70' },
+    secondary: null,
+    emergencyContact: { relation: '父', phone: '090-9999-0000' },
+    recipients: [
+      { name: '佐藤 一郎', birthDate: '2022-04-01', allergy: '卵' },
+      { name: '佐藤 二郎', birthDate: '2024-01-15', allergy: null },
+    ],
+    ...overrides,
+  };
+}
+
+describe('applyCustomerSnapshot(取込の差分適用)', () => {
+  let ctx: TestContext;
+  const apply = (s: CustomerSnapshot) =>
+    ctx.uow.run(ctx.tenantId, (r) =>
+      applyCustomerSnapshot({ crypto: ctx.crypto, runId: null }, r, s, ctx.clock.now),
+    );
 
   beforeEach(() => {
-    deps = {
-      customers: new FakeCustomerRepository(),
-      familyMembers: new FakeFamilyMemberRepository(),
-      crypto: new FakeCryptoPort(),
-    };
+    ctx = createTestContext();
   });
 
-  it('登録した顧客を苗字の完全一致で検索できる(登録時と検索時の正規化が一致する)', async () => {
-    await createCustomer(deps, { tenantId, name: '佐藤 花子', phone: '090-1111-2222', city: '渋谷区' });
-    await createCustomer(deps, { tenantId, name: '佐藤 次郎', phone: '090-3333-4444', city: '新宿区' });
-    await createCustomer(deps, { tenantId, name: '鈴木 三郎' });
-
-    const result = await searchCustomersByFamilyName(deps, tenantId, '佐藤');
-    expect(result.map((c) => c.name).sort()).toEqual(['佐藤 次郎', '佐藤 花子']);
+  it('初回は作成し、同じ内容の再取込は unchanged(何も書かない)', async () => {
+    expect(await apply(snapshot())).toBe('created');
+    const before = structuredClone(ctx.data());
+    expect(await apply(snapshot())).toBe('unchanged');
+    expect(ctx.data().customers[0]?.rowVersion).toBe(before.customers[0]?.rowVersion);
+    expect(ctx.data().recipients.map((r) => r.id)).toEqual(before.recipients.map((r) => r.id));
   });
 
-  it('全角スペース区切りで登録した氏名も、検索側の入力(前後空白付き)と正しく一致する', async () => {
-    await createCustomer(deps, { tenantId, name: '佐藤　花子' });
-
-    const result = await searchCustomersByFamilyName(deps, tenantId, '  佐藤  ');
-    expect(result).toHaveLength(1);
-    expect(result[0]?.name).toBe('佐藤　花子');
+  it('個人情報の列は暗号化して保存し、行IDを AAD に使う', async () => {
+    await apply(snapshot());
+    const customer = ctx.data().customers[0];
+    expect(fakePlaintext(customer?.memoEnc ?? null)).toBe('玄関は裏口');
+    expect(Buffer.from(customer?.memoEnc ?? []).toString()).toContain(customer?.id);
   });
 
-  it('一致する苗字が無ければ空配列を返す', async () => {
-    await createCustomer(deps, { tenantId, name: '佐藤 花子' });
-    expect(await searchCustomersByFamilyName(deps, tenantId, '田中')).toEqual([]);
+  it('変わった子どもだけを更新し、ID を保つ。取込元から消えた子どもはアーカイブする', async () => {
+    await apply(snapshot());
+    const [ichiro, jiro] = ctx.data().recipients;
+    expect(
+      await apply(
+        snapshot({ recipients: [{ name: '佐藤 一郎', birthDate: '2022-04-01', allergy: '卵・小麦' }] }),
+      ),
+    ).toBe('updated');
+    const after = ctx.data().recipients;
+    expect(after.find((r) => r.id === ichiro?.id)?.archivedAt).toBeNull();
+    expect(fakePlaintext(after.find((r) => r.id === ichiro?.id)?.allergyEnc ?? null)).toBe('卵・小麦');
+    expect(after.find((r) => r.id === jiro?.id)?.archivedAt).toEqual(ctx.clock.now);
   });
 
-  it('電話・市区町村は復号された値で返る', async () => {
-    await createCustomer(deps, { tenantId, name: '佐藤 花子', phone: '090-1111-2222', city: '渋谷区' });
-    const [result] = await searchCustomersByFamilyName(deps, tenantId, '佐藤');
-    expect(result?.phone).toBe('090-1111-2222');
-    expect(result?.city).toBe('渋谷区');
+  it('アーカイブ済みの顧客が取込元に戻ったら戻す', async () => {
+    await apply(snapshot());
+    const id = ctx.data().customers[0]?.id ?? '';
+    await ctx.uow.run(ctx.tenantId, (r) => r.customers.archive(id, 'import_missing', ctx.clock.now));
+    expect(await apply(snapshot())).toBe('updated');
+    expect(ctx.data().customers[0]?.archivedAt).toBeNull();
   });
+});
 
-  it('他テナントの同姓顧客はヒットしない(テナント分離)', async () => {
-    await createCustomer(deps, { tenantId: 'tenant-2', name: '佐藤 一郎' });
-    expect(await searchCustomersByFamilyName(deps, tenantId, '佐藤')).toEqual([]);
-  });
+describe('顧客の一覧・検索・詳細', () => {
+  let ctx: TestContext;
 
-  it('世帯構成員(子ども等)を登録すると、詳細取得で復号された状態で返る', async () => {
-    const created = await createCustomer(deps, {
-      tenantId,
-      name: '佐藤 花子',
-      externalSource: 'reserva',
-      externalId: 'cust-001',
-      email: 'hanako@example.com',
-      memo: '第一子アレルギー注意',
-      familyMembers: [
-        { name: '佐藤 太郎', dob: '2019/1/19', info: '保育園児 卵アレルギー', allergy: '卵' },
-        { name: '佐藤 次子', dob: '2021/6/20', info: '' },
-      ],
+  beforeEach(async () => {
+    ctx = createTestContext();
+    await ctx.uow.run(ctx.tenantId, async (r) => {
+      await applyCustomerSnapshot({ crypto: ctx.crypto, runId: null }, r, snapshot(), ctx.clock.now);
+      await applyCustomerSnapshot(
+        { crypto: ctx.crypto, runId: null },
+        r,
+        snapshot({
+          externalId: 'R-002',
+          displayName: '鈴木 三郎',
+          familyName: '鈴木',
+          givenName: '三郎',
+          home: { addressLine: '新宿1-1', city: '新宿区' },
+          recipients: [],
+        }),
+        ctx.clock.now,
+      );
     });
+  });
 
-    const detail = await getCustomerDetail(deps, tenantId, created.id);
-    expect(detail?.email).toBe('hanako@example.com');
-    expect(detail?.memo).toBe('第一子アレルギー注意');
-    expect(detail?.externalSource).toBe('reserva');
-    expect(detail?.externalId).toBe('cust-001');
-    expect(detail?.familyMembers).toEqual([
-      {
-        id: expect.any(String),
-        name: '佐藤 太郎',
-        dob: '2019/1/19',
-        info: '保育園児 卵アレルギー',
-        allergy: '卵',
-      },
-      { id: expect.any(String), name: '佐藤 次子', dob: '2021/6/20', info: null, allergy: null },
+  it('一覧と地区の一覧を返す', async () => {
+    const result = await listCustomers(ctx.deps, ctx.tenantId);
+    expect(result.customers.map((c) => c.displayName).sort()).toEqual(['佐藤 花子', '鈴木 三郎']);
+    expect([...result.cities].sort()).toEqual(['新宿区', '渋谷区'].sort());
+  });
+
+  it('苗字の完全一致(前後の空白・全角は正規化)で検索できる', async () => {
+    expect(
+      (await searchCustomersByFamilyName(ctx.deps, ctx.tenantId, ' 佐藤 ')).map((c) => c.displayName),
+    ).toEqual(['佐藤 花子']);
+    expect(await searchCustomersByFamilyName(ctx.deps, ctx.tenantId, '田中')).toEqual([]);
+  });
+
+  it('詳細は子ども・アレルギー・緊急連絡先を復号して返し、復号の監査は1件にまとめる', async () => {
+    const { actor } = await ctx.addStaff('山田 太郎', 'taro@example.com');
+    const id = ctx.data().customers.find((c) => c.displayName === '佐藤 花子')?.id ?? '';
+    const detail = await getCustomerDetail(ctx.deps, actor, id);
+    expect(detail).toMatchObject({
+      name: '佐藤 花子',
+      externalId: 'R-001',
+      memo: '玄関は裏口',
+      emergencyContact: '090-9999-0000',
+      emergencyContactRelation: '父',
+      latLng: '35.66,139.70',
+      memberType: '一般',
+      archivedAt: null,
+    });
+    expect(detail.familyMembers).toEqual([
+      expect.objectContaining({ name: '佐藤 一郎', dob: '2022/4/1', allergy: '卵' }),
+      expect.objectContaining({ name: '佐藤 二郎', dob: '2024/1/15', allergy: null }),
+    ]);
+    expect(ctx.audit.entries).toEqual([
+      expect.objectContaining({
+        tenantId: ctx.tenantId,
+        operation: 'customer.detail',
+        actorStaffId: actor.staffId,
+      }),
     ]);
   });
 
-  it('updateCustomerでfamilyMembersを渡すと全件入れ替わる', async () => {
-    const created = await createCustomer(deps, {
-      tenantId,
-      name: '佐藤 花子',
-      familyMembers: [{ name: '佐藤 太郎', dob: '2019/1/19' }],
-    });
-
-    await updateCustomer(deps, tenantId, created.id, {
-      tenantId,
-      name: '佐藤 花子',
-      familyMembers: [
-        { name: '佐藤 太郎', dob: '2019/1/19' },
-        { name: '佐藤 三郎', dob: '2023/4/1' },
-      ],
-    });
-
-    const detail = await getCustomerDetail(deps, tenantId, created.id);
-    expect(detail?.familyMembers.map((f) => f.name).sort()).toEqual(['佐藤 三郎', '佐藤 太郎']);
-  });
-
-  it('deactivateCustomerでソフトデリートされ、listActiveExternalIdsから外れる', async () => {
-    const created = await createCustomer(deps, {
-      tenantId,
-      name: '佐藤 花子',
-      externalSource: 'reserva',
-      externalId: 'cust-001',
-    });
-
-    expect(await deps.customers.listActiveExternalIds(tenantId, 'reserva')).toEqual(['cust-001']);
-
-    await deactivateCustomer(deps, tenantId, created.id);
-
-    expect(await deps.customers.listActiveExternalIds(tenantId, 'reserva')).toEqual([]);
-    const detail = await getCustomerDetail(deps, tenantId, created.id);
-    expect(detail?.deactivatedAt).not.toBeNull();
-  });
-
-  it('listCustomersは有効な顧客全件を復号して返し、地区の重複無し・五十音順一覧も返す', async () => {
-    const deactivated = await createCustomer(deps, { tenantId, name: '田中 一郎', city: '港区' });
-    await createCustomer(deps, { tenantId, name: '佐藤 花子', city: '渋谷区' });
-    await createCustomer(deps, { tenantId, name: '鈴木 三郎', city: '渋谷区' });
-    await createCustomer(deps, { tenantId, name: '高橋 四郎' });
-    await deactivateCustomer(deps, tenantId, deactivated.id);
-
-    const result = await listCustomers(deps, tenantId);
-
-    expect(result.customers.map((c) => c.name).sort()).toEqual(['佐藤 花子', '鈴木 三郎', '高橋 四郎']);
-    expect(result.cities).toEqual(['渋谷区']);
+  it('他テナントの顧客は見えない(not_found)', async () => {
+    const other = ctx.db.addTenant({ slug: 'other' });
+    const id = ctx.data().customers[0]?.id ?? '';
+    await expect(
+      getCustomerDetail(ctx.deps, { tenantId: other.id, staffId: 'x', role: 'admin' }, id),
+    ).rejects.toMatchObject({ code: 'not_found' });
   });
 });

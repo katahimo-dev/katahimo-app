@@ -16,7 +16,9 @@ const OWNER_ROLE = 'katahimo_owner';
 
 const url = process.env.MIGRATION_DATABASE_URL;
 if (!url) {
-  console.error('MIGRATION_DATABASE_URL が設定されていません(.env.example を参照。DATABASE_URL は使いません)');
+  console.error(
+    'MIGRATION_DATABASE_URL が設定されていません(.env.example を参照。DATABASE_URL は使いません)',
+  );
   process.exit(1);
 }
 

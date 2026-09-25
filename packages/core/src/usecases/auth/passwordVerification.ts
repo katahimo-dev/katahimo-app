@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { computeLegacyHash } from '../../domain';
-import type { StaffRecord } from '../../ports/repositories';
+import type { StaffCredentials } from '../../ports/staff';
 import type { AuthDeps } from './deps';
 
 export type PasswordCheck = 'matched' | 'matched_legacy' | 'mismatch';
@@ -13,24 +13,24 @@ function constantTimeEquals(a: string, b: string): boolean {
 }
 
 /**
- * スタッフのパスワードを検証する。argon2idを優先し、まだargon2id化していない(GAS版から移行した)
- * スタッフはレガシーハッシュ(sha256(password + AUTH_SALT))でも検証する。
- * argon2idのハッシュが無いスタッフでも、ダミーの照合でargon2idと同じだけ時間をかける
- * (応答時間から移行前・パスワード未設定のアカウントを見分けられないようにする)。
+ * パスワードを検証する。argon2id を優先し、まだ移行していない(GAS版から来た)スタッフはレガシーハッシュ
+ * (sha256(password + AUTH_SALT))でも検証する。argon2id のハッシュが無くても同じだけ時間をかける。
  */
 export async function checkStaffPassword(
   deps: Pick<AuthDeps, 'passwordHasher' | 'legacyAuthSalt'>,
-  staff: Pick<StaffRecord, 'passwordHash' | 'legacyPasswordHash'>,
+  credentials: StaffCredentials | null,
   password: string,
 ): Promise<PasswordCheck> {
   if (!password) return 'mismatch';
-  if (staff.passwordHash) {
-    if (await deps.passwordHasher.verify(staff.passwordHash, password)) return 'matched';
+  if (credentials?.passwordHash) {
+    if (await deps.passwordHasher.verify(credentials.passwordHash, password)) return 'matched';
   } else {
     await deps.passwordHasher.verifyDummy(password);
   }
-  if (staff.legacyPasswordHash && deps.legacyAuthSalt) {
-    if (constantTimeEquals(computeLegacyHash(password, deps.legacyAuthSalt), staff.legacyPasswordHash)) {
+  if (credentials?.legacyPasswordHash && deps.legacyAuthSalt) {
+    if (
+      constantTimeEquals(computeLegacyHash(password, deps.legacyAuthSalt), credentials.legacyPasswordHash)
+    ) {
       return 'matched_legacy';
     }
   }

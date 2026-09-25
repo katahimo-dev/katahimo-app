@@ -44,10 +44,7 @@ export const outboxMessages = pgTable(
     check('outbox_messages_topic_check', oneOf(t.topic, OUTBOX_TOPICS)),
     check('outbox_messages_status_check', oneOf(t.status, OUTBOX_STATUSES)),
     check('outbox_messages_attempts_check', sql`${t.attempts} >= 0 and ${t.maxAttempts} >= 1`),
-    check(
-      'outbox_messages_lock_check',
-      sql`(${t.status} = 'processing') = (${t.lockedUntil} is not null)`,
-    ),
+    check('outbox_messages_lock_check', sql`(${t.status} = 'processing') = (${t.lockedUntil} is not null)`),
   ],
 ).enableRLS();
 
@@ -81,4 +78,3 @@ export const entityChanges = pgTable(
     check('entity_changes_change_source_check', oneOf(t.changeSource, CHANGE_SOURCES)),
   ],
 ).enableRLS();
-

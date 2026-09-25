@@ -5,7 +5,6 @@ import {
   check,
   date,
   index,
-
   jsonb,
   pgTable,
   primaryKey,
@@ -128,9 +127,7 @@ export const customerAddresses = pgTable(
     parkingDetail: text(),
     geoEnc: bytea(),
     geoCell: text(),
-    valid: daterange()
-      .notNull()
-      .default(sql`'(,)'::daterange`),
+    valid: daterange().notNull().default(sql`'(,)'::daterange`),
     isPrimary: boolean().notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -215,9 +212,7 @@ export const customerRecurringSlots = pgTable(
     weekday: smallint().notNull(),
     startTime: time().notNull(),
     endTime: time().notNull(),
-    valid: daterange()
-      .notNull()
-      .default(sql`'(,)'::daterange`),
+    valid: daterange().notNull().default(sql`'(,)'::daterange`),
     serviceItemId: uuid(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -252,4 +247,3 @@ export const customerPreferences = pgTable(
     check('customer_preferences_preferred_staff_gender_check', oneOf(t.preferredStaffGender, GENDERS)),
   ],
 ).enableRLS();
-

@@ -24,11 +24,7 @@ export function constraintName(table: string, columns: readonly string[], suffix
 }
 
 /** 主キー。アプリが UUIDv7 を採番する(暗号化の AAD に行IDを含めるため INSERT 前に決める)。DB の既定値は予備。 */
-export const idColumn = () =>
-  uuid()
-    .notNull()
-    .$defaultFn(newId)
-    .default(sql`gen_random_uuid()`);
+export const idColumn = () => uuid().notNull().$defaultFn(newId).default(sql`gen_random_uuid()`);
 
 export const tenantIdColumn = () => uuid().notNull();
 

@@ -1,7 +1,8 @@
 import type { PasswordPolicyViolation } from '@katahimo/shared';
 import { checkPasswordPolicy } from '@katahimo/shared';
 import type { RequestMeta } from '../requestMeta';
-import type { AuthWithLogDeps } from './deps';
+import { currentTime } from '../requestMeta';
+import type { AuthDeps } from './deps';
 import { checkStaffPassword } from './passwordVerification';
 
 export interface ChangePasswordInput {
@@ -20,12 +21,12 @@ export type ChangePasswordResult =
   | { ok: false; reason: 'weak_password'; violation: PasswordPolicyViolation };
 
 /**
- * ログイン中スタッフ自身のパスワード変更。GAS版Auth.js changePasswordに対応。
- * 現在のパスワードはargon2id・レガシーハッシュのどちらでも検証し、新パスワードは常にargon2idで
- * 保存する。変更後は操作中のセッション以外を全て失効させる(他の端末に残ったログインを切るため)。
+ * ログイン中のスタッフ自身のパスワード変更(GAS版 Auth.js changePassword)。現在のパスワードは argon2id・
+ * レガシーハッシュのどちらでも確かめ、新しいパスワードは argon2id で保存する。変更後は操作中のセッション以外を
+ * 全て失効させる(他の端末に残ったログインを切る)。
  */
 export async function changePassword(
-  deps: AuthWithLogDeps,
+  deps: AuthDeps,
   input: ChangePasswordInput,
 ): Promise<ChangePasswordResult> {
   const logFailure = (reason: string) =>
@@ -43,30 +44,28 @@ export async function changePassword(
     await logFailure(`weak_password:${violation}`);
     return { ok: false, reason: 'weak_password', violation };
   }
-
-  const staff = await deps.staff.findById(input.tenantId, input.staffId);
-  if (!staff) {
+  const credentials = await deps.uow.run(input.tenantId, async (r) =>
+    (await r.staff.findById(input.staffId)) ? r.staff.getCredentials(input.staffId) : null,
+  );
+  if (!credentials) {
     await logFailure('staff_not_found');
     return { ok: false, reason: 'invalid_session' };
   }
-
-  if ((await checkStaffPassword(deps, staff, input.currentPassword)) === 'mismatch') {
+  if ((await checkStaffPassword(deps, credentials, input.currentPassword)) === 'mismatch') {
     await logFailure('incorrect_current_password');
     return { ok: false, reason: 'incorrect_current_password' };
   }
-
-  await deps.staff.updatePasswordHash(
-    input.tenantId,
-    staff.id,
-    await deps.passwordHasher.hash(input.newPassword),
-  );
-  await deps.sessions.deleteAllForStaff(input.tenantId, staff.id, input.sessionId);
-
+  const passwordHash = await deps.passwordHasher.hash(input.newPassword);
+  const now = currentTime(deps);
+  await deps.uow.run(input.tenantId, async (r) => {
+    await r.staff.setPasswordHash(input.staffId, passwordHash);
+    await r.sessions.revokeAllForStaff(input.staffId, now, input.sessionId);
+  });
   await deps.appLog.write({
     tenantId: input.tenantId,
     level: 'SECURITY',
     action: 'auth.password_change.succeeded',
-    actorStaffId: staff.id,
+    actorStaffId: input.staffId,
     ...input.meta,
   });
   return { ok: true };

@@ -1,8 +1,4 @@
-import {
-  BUSINESS_TYPES,
-  TENANT_LIFECYCLE_EVENTS,
-  TENANT_STATUSES,
-} from '@katahimo/core/domain';
+import { BUSINESS_TYPES, TENANT_LIFECYCLE_EVENTS, TENANT_STATUSES } from '@katahimo/core/domain';
 import { sql } from 'drizzle-orm';
 import {
   boolean,
@@ -55,9 +51,11 @@ export const planFeatures = platform.table(
   },
   (t) => [
     primaryKey({ name: 'plan_features_pkey', columns: [t.planId, t.featureKey] }),
-    foreignKey({ name: 'plan_features_plan_id_fkey', columns: [t.planId], foreignColumns: [plans.id] }).onDelete(
-      'cascade',
-    ),
+    foreignKey({
+      name: 'plan_features_plan_id_fkey',
+      columns: [t.planId],
+      foreignColumns: [plans.id],
+    }).onDelete('cascade'),
   ],
 );
 

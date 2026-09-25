@@ -116,10 +116,12 @@ ALTER TABLE "customer_addresses" ADD CONSTRAINT "customer_addresses_tenant_id_cu
 ALTER TABLE "reservation_assignments" ADD CONSTRAINT "reservation_assignments_tenant_id_staff_id_period_excl"
   EXCLUDE USING gist ("tenant_id" WITH =, "staff_id" WITH =, "period" WITH &&)
   WHERE ("status" IN ('proposed', 'confirmed'));--> statement-breakpoint
--- 同じスタッフの訪問の実績の時間帯は重ならない(取消・開始か終了が未入力の訪問は対象外)
+-- 同じスタッフの訪問の実績の時間帯は重ならない(取消・開始か終了が未入力の訪問は対象外)。1日分の書き込みの途中
+-- (時刻の入れ替え等)で一時的に重なっても良いよう、コミット時に確かめる(DEFERRABLE INITIALLY DEFERRED)
 ALTER TABLE "visits" ADD CONSTRAINT "visits_tenant_id_staff_id_actual_period_excl"
   EXCLUDE USING gist ("tenant_id" WITH =, "staff_id" WITH =, "actual_period" WITH &&)
-  WHERE ("status" <> 'cancelled' AND NOT lower_inf("actual_period") AND NOT upper_inf("actual_period"));--> statement-breakpoint
+  WHERE ("status" <> 'cancelled' AND NOT lower_inf("actual_period") AND NOT upper_inf("actual_period"))
+  DEFERRABLE INITIALLY DEFERRED;--> statement-breakpoint
 -- 週次の勤務可能枠: 同じ曜日で有効期間が重なる枠の時間帯は重ならない(時刻は基準日 2000-01-01 に載せて比べる)
 ALTER TABLE "staff_weekly_availability" ADD CONSTRAINT "staff_weekly_availability_tenant_id_staff_id_weekday_excl"
   EXCLUDE USING gist (

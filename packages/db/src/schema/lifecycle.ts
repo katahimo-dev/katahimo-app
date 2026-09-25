@@ -7,7 +7,17 @@ import {
   RETENTION_TARGETS,
 } from '@katahimo/core/domain';
 import { sql } from 'drizzle-orm';
-import { boolean, check, date, integer, pgTable, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  check,
+  date,
+  integer,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { createdAt, idColumn, oneOf, tenantIdColumn, updatedAt } from './_columns';
 import { tenantFk, tenantIsolation, tenantRef, tenantScoped } from './_helpers';
 import { bytea } from './_types';

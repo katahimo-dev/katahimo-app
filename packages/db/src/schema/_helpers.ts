@@ -9,7 +9,12 @@ import { tenants } from './platform';
 export const TENANT_MATCHES: SQL = sql`tenant_id = app_current_tenant()`;
 
 export const tenantIsolation = () =>
-  pgPolicy('tenant_isolation', { as: 'permissive', for: 'all', using: TENANT_MATCHES, withCheck: TENANT_MATCHES });
+  pgPolicy('tenant_isolation', {
+    as: 'permissive',
+    for: 'all',
+    using: TENANT_MATCHES,
+    withCheck: TENANT_MATCHES,
+  });
 
 /** (tenant_id, id) の主キー。 */
 export function tenantPk(table: string, t: { tenantId: AnyPgColumn; id: AnyPgColumn }) {
@@ -51,4 +56,3 @@ export function tenantRef(
 export function tenantScoped(table: string, t: { tenantId: AnyPgColumn; id: AnyPgColumn }) {
   return [tenantPk(table, t), tenantFk(table, t), tenantIsolation()] as const;
 }
-

@@ -30,10 +30,11 @@ export interface DateRange {
   end: string | null;
 }
 
+/** 開始と終了が同じ時刻の範囲は `[a,a]`(半開区間では空になり保存できないため、その1点を含む閉区間にする)。 */
 export function formatTstzRange(range: TimeRange): string {
   const s = range.start ? range.start.toISOString() : '';
   const e = range.end ? range.end.toISOString() : '';
-  return `[${s},${e})`;
+  return s !== '' && s === e ? `[${s},${e}]` : `[${s},${e})`;
 }
 
 export function formatDateRange(range: DateRange): string {

@@ -17,15 +17,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import {
-  constraintName,
-  createdAt,
-  idColumn,
-  oneOf,
-  rowVersion,
-  tenantIdColumn,
-  updatedAt,
-} from './_columns';
+import { createdAt, idColumn, oneOf, rowVersion, tenantIdColumn, updatedAt } from './_columns';
 import { tenantFk, tenantIsolation, tenantRef, tenantScoped } from './_helpers';
 import { bytea, daterange } from './_types';
 
@@ -209,10 +201,6 @@ export const passwordResetCodes = pgTable(
       .on(t.tenantId, t.staffId)
       .where(sql`used_at is null`),
     index('password_reset_codes_expires_at_idx').on(t.expiresAt),
-    check(
-      'password_reset_codes_attempt_count_check',
-      sql`${t.attemptCount} between 0 and ${t.maxAttempts}`,
-    ),
+    check('password_reset_codes_attempt_count_check', sql`${t.attemptCount} between 0 and ${t.maxAttempts}`),
   ],
 ).enableRLS();
-

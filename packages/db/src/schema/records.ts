@@ -119,9 +119,11 @@ export const careRecordRevisions = pgTable(
   (t) => [
     ...tenantScoped('care_record_revisions', t),
     tenantRef('care_record_revisions', 'care_record_id', t, t.careRecordId, careRecords, 'cascade'),
-    unique(
-      constraintName('care_record_revisions', ['tenant_id', 'care_record_id', 'revision_no'], 'key'),
-    ).on(t.tenantId, t.careRecordId, t.revisionNo),
+    unique(constraintName('care_record_revisions', ['tenant_id', 'care_record_id', 'revision_no'], 'key')).on(
+      t.tenantId,
+      t.careRecordId,
+      t.revisionNo,
+    ),
   ],
 ).enableRLS();
 

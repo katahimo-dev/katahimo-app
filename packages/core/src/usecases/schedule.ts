@@ -1,17 +1,23 @@
+import { DomainError } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
-import type { StaffRepositoryPort } from '../ports/repositories';
-import type { ScheduleLightResult, SchedulePort, ScheduleWithRouteResult } from '../ports/schedule';
+import type {
+  ScheduleLightResult,
+  SchedulePort,
+  ScheduleTarget,
+  ScheduleWithRouteResult,
+} from '../ports/schedule';
+import type { UnitOfWorkPort } from '../ports/unitOfWork';
 import type { RequestMeta } from './requestMeta';
 
 export interface ScheduleDeps {
   schedule: SchedulePort;
-  staff: StaffRepositoryPort;
+  uow: UnitOfWorkPort;
   appLog: AppLogPort;
 }
 
 /**
- * 予定閲覧の要求。targetStaffId は呼び出し側(routes/schedule.ts の resolveScheduleTargetStaffId)で
- * 「管理者以外は本人に強制」を済ませた値を渡すこと(CLAUDE.mdのセキュリティパターン)。
+ * 予定閲覧の要求。targetStaffId は呼び出し側(API の resolveTargetStaffId)で「他人を扱えないロールは本人」を
+ * 済ませた値を渡すこと(CLAUDE.md の admin-vs-self)。
  */
 export interface ScheduleViewRequest {
   tenantId: string;
@@ -44,8 +50,8 @@ export async function getScheduleForStaff(
   deps: ScheduleDeps,
   request: ScheduleViewRequest,
 ): Promise<ScheduleLightResult> {
-  return runLogged(deps, 'schedule.view', request, async (staffName) => {
-    const result = await deps.schedule.getSchedule(staffName, request.date, { tenantId: request.tenantId });
+  return runLogged(deps, 'schedule.view', request, async (target) => {
+    const result = await deps.schedule.getSchedule(target, request.date, { tenantId: request.tenantId });
     return { result, logSuccess: false };
   });
 }
@@ -58,8 +64,8 @@ export async function getScheduleWithRouteForStaff(
   deps: ScheduleDeps,
   request: ScheduleRouteViewRequest,
 ): Promise<ScheduleWithRouteResult> {
-  return runLogged(deps, 'schedule.route', request, async (staffName) => {
-    const result = await deps.schedule.getScheduleWithRoute(staffName, request.date, request.forceRefresh, {
+  return runLogged(deps, 'schedule.route', request, async (target) => {
+    const result = await deps.schedule.getScheduleWithRoute(target, request.date, request.forceRefresh, {
       tenantId: request.tenantId,
     });
     return { result, logSuccess: true, details: { forceRefresh: request.forceRefresh } };
@@ -75,8 +81,8 @@ export async function getFreshScheduleWithRouteForStaff(
   deps: ScheduleDeps,
   request: FreshScheduleRouteRequest,
 ): Promise<ScheduleWithRouteResult> {
-  return runLogged(deps, 'schedule.route_fresh', request, async (staffName) => {
-    const result = await deps.schedule.getScheduleWithRoute(staffName, request.date, false, {
+  return runLogged(deps, 'schedule.route_fresh', request, async (target) => {
+    const result = await deps.schedule.getScheduleWithRoute(target, request.date, false, {
       tenantId: request.tenantId,
       fresh: true,
     });
@@ -97,9 +103,10 @@ interface LoggedOutcome<T> {
 }
 
 /**
- * スタッフID→氏名の解決(SchedulePortはGAS版と同じく氏名で突き合わせる)と、ログ規約の適用:
+ * 対象スタッフの解決(SchedulePort は staffId で対象を決め、氏名はカレンダーの予定の文字列の突き合わせに使う)と、
+ * ログ規約の適用:
  * 失敗(success:false)はWARN、例外はERRORで常に記録し、成功は logSuccess のときだけINFOで記録する。
- * 管理者が他スタッフの予定を扱った場合は targetStaffId も残す。例外は success:false の結果に変換する。
+ * 他スタッフの予定を扱った場合は targetStaffId も残す。例外は upstream_unavailable(502)にする。
  */
 async function runLogged<T extends ScheduleLightResult | ScheduleWithRouteResult>(
   deps: ScheduleDeps,
@@ -111,7 +118,7 @@ async function runLogged<T extends ScheduleLightResult | ScheduleWithRouteResult
     date: string;
     meta?: RequestMeta;
   },
-  run: (staffName: string) => Promise<LoggedOutcome<T>>,
+  run: (target: ScheduleTarget) => Promise<LoggedOutcome<T>>,
 ): Promise<T | FailedResult> {
   const log = (level: 'INFO' | 'WARN' | 'ERROR', suffix: string, details: Record<string, unknown>) =>
     deps.appLog.write({
@@ -125,12 +132,15 @@ async function runLogged<T extends ScheduleLightResult | ScheduleWithRouteResult
     });
 
   try {
-    const staffRecord = await deps.staff.findById(request.tenantId, request.targetStaffId);
+    const staffRecord = await deps.uow.run(request.tenantId, (r) => r.staff.findById(request.targetStaffId));
     if (!staffRecord) {
       await log('WARN', 'failed', { reason: 'staff_not_found' });
       return failed('スタッフが見つかりません');
     }
-    const { result, logSuccess, details } = await run(staffRecord.name);
+    const { result, logSuccess, details } = await run({
+      staffId: staffRecord.id,
+      staffName: staffRecord.displayName,
+    });
     if (!result.success) {
       await log('WARN', 'failed', { message: result.message ?? '不明なエラー' });
     } else if (logSuccess) {
@@ -138,8 +148,17 @@ async function runLogged<T extends ScheduleLightResult | ScheduleWithRouteResult
     }
     return result;
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    await log('ERROR', 'error', { message });
-    return failed(message);
+    if (e instanceof DomainError) throw e;
+    // 外部サービス(カレンダー・地図)の失敗の詳細はログにだけ残し、画面には一般的な文言を返す(502)
+    await log('ERROR', 'error', { message: e instanceof Error ? e.message : String(e) });
+    throw new DomainError(
+      'upstream_unavailable',
+      UPSTREAM_FAILURE_MESSAGE,
+      undefined,
+      'schedule_upstream_failed',
+    );
   }
 }
+
+export const UPSTREAM_FAILURE_MESSAGE =
+  '予定を取得できませんでした。しばらくしてから、もう一度お試しください。';

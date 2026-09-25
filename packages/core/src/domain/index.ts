@@ -1,6 +1,7 @@
 export * from './attendance';
 export * from './calendarDate';
 export * from './customerCsv';
+export * from './customers';
 export * from './errors';
 export * from './geo';
 export * from './ids';

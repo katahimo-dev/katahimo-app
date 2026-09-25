@@ -1,3 +1,5 @@
+import type { TravelModeCode } from '../domain/model';
+
 /**
  * 地理計算のポート。
  *
@@ -12,7 +14,7 @@ export interface LatLng {
 }
 
 /** 移動手段。値は staff.travel_mode 列と同じ。GAS版は全員 'car'(DRIVING)固定だった。 */
-export type TravelMode = 'car' | 'bicycle' | 'transit' | 'walk';
+export type TravelMode = TravelModeCode;
 
 export const DEFAULT_TRAVEL_MODE: TravelMode = 'car';
 

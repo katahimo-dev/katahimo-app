@@ -2,24 +2,24 @@ import {
   type AttendanceDayDerived,
   type AttendanceMonthlyTotals,
   type AttendanceRowData,
+  compactRowData,
   computeDayDerived,
   computeMonthlyTotals,
-  type ReceiptAmountEntry,
+  datesOfMonth,
+  firstDayOfMonth,
+  invalid,
+  isValidYearMonth,
+  lastDayOfMonth,
+  projectDay,
   type ReceiptTotals,
   summarizeReceiptAmounts,
-} from '../../domain/attendance';
-import { datesOfMonth, isValidYearMonth, jstBusinessDate } from '../../domain/calendarDate';
-import { ENCRYPTION_PURPOSES } from '../../domain/pii';
-import {
-  type AttendanceActor,
-  type AttendanceTarget,
-  loadAttendanceTarget,
-  logCrossStaffRead,
-  writeActorLog,
-} from './access';
-import type { AttendanceMonthDeps } from './deps';
-import { AttendanceError } from './errors';
-import { readRowData } from './records';
+  zonedBusinessDate,
+  zonedDayRange,
+} from '../../domain';
+import type { Actor } from '../requestMeta';
+import { loadAttendanceTarget, logCrossStaffRead } from './access';
+import type { AttendanceDeps } from './deps';
+import { toSheetDay } from './records';
 
 export interface AttendanceMonthDayView {
   businessDate: string;
@@ -37,71 +37,57 @@ export interface AttendanceMonthView {
   receipts: ReceiptTotals;
 }
 
+/**
+ * 月の出勤簿(全日)・合計・領収書の日別/月合計。領収書の金額は平文の整数(円)のため復号しない。日の境界は
+ * テナントのタイムゾーン。
+ */
 export async function getAttendanceMonth(
-  deps: AttendanceMonthDeps,
-  actor: AttendanceActor,
+  deps: AttendanceDeps,
+  actor: Actor,
   targetStaffId: string,
   yearMonth: string,
 ): Promise<AttendanceMonthView> {
-  if (!isValidYearMonth(yearMonth)) {
-    throw new AttendanceError('invalid_request', '年月の指定が不正です(YYYY-MM形式で指定してください)。');
-  }
-  const target = await loadAttendanceTarget(deps, actor, targetStaffId);
-
-  const records = await deps.attendanceDays.listByStaffAndMonth(actor.tenantId, target.staffId, yearMonth);
-  const rowDataByDate = new Map<string, AttendanceRowData>();
-  for (const record of records) {
-    rowDataByDate.set(record.businessDate, await readRowData(deps, actor.tenantId, record));
-  }
-
-  const days = datesOfMonth(yearMonth).map((businessDate) => {
-    const rowData = rowDataByDate.get(businessDate) ?? {};
-    return { businessDate, rowData, derived: computeDayDerived(rowData) };
-  });
-
-  const receipts = await summarizeMonthReceipts(deps, actor, target, yearMonth);
-  await logCrossStaffRead(deps, actor, target, 'attendance.month.view', { yearMonth });
-
-  return {
-    yearMonth,
-    staffId: target.staffId,
-    staffName: target.staffName,
-    days,
-    totals: computeMonthlyTotals(days),
-    receipts,
-  };
-}
-
-/**
- * 領収書の金額を日別・月合計で集計する。参考表示のため、復号できない領収書は集計から外すだけで
- * 月次まとめ自体は失敗させない(GAS版も失敗時は空集計で返していた)。
- */
-async function summarizeMonthReceipts(
-  deps: AttendanceMonthDeps,
-  actor: AttendanceActor,
-  target: AttendanceTarget,
-  yearMonth: string,
-): Promise<ReceiptTotals> {
-  const receipts = await deps.receipts.listByStaffAndMonth(actor.tenantId, target.staffId, yearMonth);
-  const entries: ReceiptAmountEntry[] = [];
-  let skipped = 0;
-  for (const receipt of receipts) {
-    if (!receipt.amount) continue;
-    try {
-      entries.push({
-        businessDate: jstBusinessDate(receipt.receiptTimestamp),
-        amount: await deps.crypto.decrypt(actor.tenantId, receipt.amount, ENCRYPTION_PURPOSES.receiptAmount),
-      });
-    } catch {
-      skipped++;
+  if (!isValidYearMonth(yearMonth)) throw invalid('年月の指定が不正です(YYYY-MM形式で指定してください)。');
+  const from = firstDayOfMonth(yearMonth);
+  const to = lastDayOfMonth(yearMonth);
+  const { target, view } = await deps.uow.run(actor.tenantId, async (r) => {
+    const target = await loadAttendanceTarget(r, actor, targetStaffId);
+    const timeZone = (await r.tenant()).timezone;
+    const records = await r.attendance.loadRange(target.staffId, from, to);
+    const rowDataByDate = new Map<string, AttendanceRowData>();
+    for (const rows of records) {
+      const sheet = await toSheetDay(deps.crypto, r.tenantId, timeZone, rows);
+      rowDataByDate.set(rows.businessDate, compactRowData(projectDay(sheet).rowData));
     }
-  }
-  if (skipped > 0) {
-    await writeActorLog(deps, actor, target, {
-      level: 'WARN',
-      action: 'attendance.month.receipt_decrypt_failed',
-      details: { yearMonth, skipped },
+    const days = datesOfMonth(yearMonth).map((businessDate) => {
+      const rowData = rowDataByDate.get(businessDate) ?? {};
+      return { businessDate, rowData, derived: computeDayDerived(rowData) };
     });
-  }
-  return summarizeReceiptAmounts(entries);
+    const receipts = await r.receipts.listByStaffAndPeriod(
+      target.staffId,
+      zonedDayRange(from, timeZone).from,
+      zonedDayRange(to, timeZone).to,
+    );
+    const receiptTotals = summarizeReceiptAmounts(
+      receipts
+        .filter((rc) => rc.amountYen !== null)
+        .map((rc) => ({
+          businessDate: zonedBusinessDate(rc.receiptedAt, timeZone),
+          amount: String(rc.amountYen),
+        })),
+    );
+    return {
+      target,
+      view: {
+        yearMonth,
+        staffId: target.staffId,
+        staffName: target.staffName,
+        days,
+        totals: computeMonthlyTotals(days),
+        receipts: receiptTotals,
+      },
+    };
+  });
+  await logCrossStaffRead(deps.appLog, actor, target, 'attendance.month.view', { yearMonth });
+  return view;
 }

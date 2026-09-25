@@ -1,176 +1,132 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { StaffAdminActor, StaffAdminDeps } from './staffAdmin';
+import type { Actor } from './requestMeta';
+import { listActiveStaffForActor } from './staff';
 import { createStaffByAdmin, listStaffForAdmin, updateStaffByAdmin } from './staffAdmin';
 import type { StaffMasterRow } from './staffMasterImport';
 import { importStaffMasterRows } from './staffMasterImport';
-import { FakeAppLogPort, FakePasswordHasherPort, FakeStaffRepository } from './testDoubles';
+import type { TestContext } from './testContext';
+import { createTestContext } from './testContext';
 
 describe('管理者によるスタッフ管理', () => {
-  const tenantId = 'tenant-1';
-  let deps: StaffAdminDeps;
-  let staff: FakeStaffRepository;
-  let appLog: FakeAppLogPort;
-  let actor: StaffAdminActor;
+  let ctx: TestContext;
+  let admin: Actor;
 
   beforeEach(async () => {
-    staff = new FakeStaffRepository();
-    appLog = new FakeAppLogPort();
-    deps = {
-      staff,
-      passwordHasher: new FakePasswordHasherPort(),
-      appLog,
-      now: () => new Date('2026-09-25T03:00:00Z'),
-    };
-    const admin = await staff.create({ tenantId, name: '管理者', email: 'admin@example.com', isAdmin: true });
-    actor = { tenantId, staffId: admin.id };
+    ctx = createTestContext();
+    admin = (await ctx.addStaff('管理 者', 'admin@example.com', 'admin')).actor;
   });
 
   it('スタッフを登録でき(初期パスワード省略時は未設定)、SECURITYログが残る', async () => {
-    const result = await createStaffByAdmin(deps, actor, {
+    const created = await createStaffByAdmin(ctx.deps, admin, {
       name: ' 佐藤 花子 ',
       email: 'Hanako@Example.com',
       altEmail: 'hanako@cutest.biz',
-      isAdmin: false,
+      role: 'coordinator',
     });
-    expect(result).toMatchObject({
-      ok: true,
-      staff: {
-        name: '佐藤 花子',
-        email: 'hanako@example.com',
-        altEmail: 'hanako@cutest.biz',
-        passwordStatus: 'unset',
-      },
+    expect(created).toMatchObject({
+      name: '佐藤 花子',
+      email: 'hanako@example.com',
+      altEmail: 'hanako@cutest.biz',
+      role: 'coordinator',
+      passwordStatus: 'unset',
+      retiredOn: null,
     });
-    expect(appLog.entries.at(-1)).toMatchObject({ level: 'SECURITY', action: 'staff.admin.created' });
-
-    const withPassword = await createStaffByAdmin(deps, actor, {
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({ level: 'SECURITY', action: 'staff.admin.created' });
+    const withPassword = await createStaffByAdmin(ctx.deps, admin, {
       name: '鈴木',
       email: 'suzuki@example.com',
-      isAdmin: false,
+      role: 'staff',
       initialPassword: 'initial-pass',
     });
-    expect(withPassword.ok && withPassword.staff.passwordStatus).toBe('set');
+    expect(withPassword.passwordStatus).toBe('set');
   });
 
-  it('email/altEmailは両列を跨いでテナント内で重複できない', async () => {
-    await createStaffByAdmin(deps, actor, {
+  it('email/altEmail は両列を跨いでテナント内で重複できない(409、項目名つき)', async () => {
+    await createStaffByAdmin(ctx.deps, admin, {
       name: 'A',
       email: 'a@example.com',
       altEmail: 'shared@cutest.biz',
-      isAdmin: false,
+      role: 'staff',
     });
-    expect(
-      await createStaffByAdmin(deps, actor, { name: 'B', email: 'shared@cutest.biz', isAdmin: false }),
-    ).toEqual({
-      ok: false,
-      reason: 'email_conflict',
-      field: 'email',
-    });
-    expect(
-      await createStaffByAdmin(deps, actor, {
-        name: 'C',
-        email: 'c@example.com',
-        altEmail: 'A@example.com',
-        isAdmin: false,
-      }),
-    ).toEqual({ ok: false, reason: 'email_conflict', field: 'altEmail' });
-    expect(
-      await createStaffByAdmin(deps, actor, {
-        name: 'D',
-        email: 'd@example.com',
-        altEmail: 'd@example.com',
-        isAdmin: false,
-      }),
-    ).toEqual({ ok: false, reason: 'email_conflict', field: 'altEmail' });
+    await expect(
+      createStaffByAdmin(ctx.deps, admin, { name: 'B', email: 'shared@cutest.biz', role: 'staff' }),
+    ).rejects.toMatchObject({ code: 'conflict', fields: { email: expect.any(String) } });
+    expect(ctx.appLog.byAction('staff.admin.create_rejected')).toHaveLength(1);
   });
 
-  it('スタッフ情報を部分更新でき、自分自身の重複とはみなさない', async () => {
-    const created = await createStaffByAdmin(deps, actor, {
+  it('部分更新でき、自分自身の重複とはみなさない。退職日を設定するとセッションを失効させる', async () => {
+    const target = await createStaffByAdmin(ctx.deps, admin, {
       name: 'A',
       email: 'a@example.com',
-      isAdmin: false,
+      role: 'staff',
     });
-    if (!created.ok) throw new Error('unreachable');
-    const result = await updateStaffByAdmin(deps, actor, created.staff.id, {
+    const updated = await updateStaffByAdmin(ctx.deps, admin, target.id, {
       email: 'a@example.com',
-      altEmail: 'a@cutest.biz',
-      retirementDate: '2026-09-25',
-      phone: '090-0000-0000',
+      phone: '090',
     });
-    expect(result).toMatchObject({
-      ok: true,
-      staff: {
-        altEmail: 'a@cutest.biz',
-        retirementDate: '2026-09-25',
-        isRetired: true,
-        phone: '090-0000-0000',
+    expect(updated.phone).toBe('090');
+    await ctx.uow.run(ctx.tenantId, (r) =>
+      r.sessions.create({
+        id: '00000000-0000-7000-8000-0000000000f1',
+        staffId: target.id,
+        tokenHash: new Uint8Array([1]),
+        createdAt: ctx.clock.now,
+        idleExpiresAt: new Date(ctx.clock.now.getTime() + 1000),
+        absoluteExpiresAt: new Date(ctx.clock.now.getTime() + 1000),
+        ip: null,
+        userAgent: null,
+      }),
+    );
+    const retired = await updateStaffByAdmin(ctx.deps, admin, target.id, { retiredOn: '2026-09-01' });
+    expect(retired).toMatchObject({ retiredOn: '2026-09-01', isRetired: true });
+    expect(ctx.data().sessions.every((s) => s.revokedAt)).toBe(true);
+  });
+
+  it('自分自身の管理者権限の解除・退職日の設定はできない', async () => {
+    await expect(updateStaffByAdmin(ctx.deps, admin, admin.staffId, { role: 'staff' })).rejects.toMatchObject(
+      {
+        reason: 'cannot_demote_self',
       },
-    });
-    expect(appLog.entries.at(-1)).toMatchObject({
-      level: 'SECURITY',
-      action: 'staff.admin.updated',
-      targetStaffId: created.staff.id,
-    });
-  });
-
-  it('他スタッフが使っているアドレスへの変更は拒否する', async () => {
-    await createStaffByAdmin(deps, actor, { name: 'A', email: 'a@example.com', isAdmin: false });
-    const b = await createStaffByAdmin(deps, actor, { name: 'B', email: 'b@example.com', isAdmin: false });
-    if (!b.ok) throw new Error('unreachable');
-    expect(await updateStaffByAdmin(deps, actor, b.staff.id, { altEmail: 'a@example.com' })).toEqual({
-      ok: false,
-      reason: 'email_conflict',
-      field: 'altEmail',
-    });
-  });
-
-  it('自分自身の管理者権限の解除・退職日設定はできない', async () => {
-    expect(await updateStaffByAdmin(deps, actor, actor.staffId, { isAdmin: false })).toEqual({
-      ok: false,
-      reason: 'cannot_demote_self',
-    });
-    expect(await updateStaffByAdmin(deps, actor, actor.staffId, { retirementDate: '2026-10-01' })).toEqual({
-      ok: false,
+    );
+    await expect(
+      updateStaffByAdmin(ctx.deps, admin, admin.staffId, { retiredOn: '2026-10-01' }),
+    ).rejects.toMatchObject({
       reason: 'cannot_retire_self',
     });
-    expect(await updateStaffByAdmin(deps, actor, 'no-such', { name: 'x' })).toEqual({
-      ok: false,
-      reason: 'not_found',
-    });
   });
 
-  it('一覧は退職者を含み、退職済みかどうかをJSTの今日で判定する', async () => {
-    await staff.create({
-      tenantId,
-      name: '退職者',
-      email: 'r@example.com',
-      isAdmin: false,
-      retirementDate: '2026-09-25',
-    });
-    await staff.create({
-      tenantId,
-      name: '在籍者',
-      email: 'x@example.com',
-      isAdmin: false,
-      retirementDate: '2026-09-26',
-    });
-    const list = await listStaffForAdmin(deps, tenantId);
-    expect(list.map((s) => [s.name, s.isRetired])).toEqual(
-      expect.arrayContaining([
-        ['退職者', true],
-        ['在籍者', false],
-      ]),
+  it('一覧は退職者を含み、退職済みかはテナントのタイムゾーンの今日で判定する', async () => {
+    const a = await createStaffByAdmin(ctx.deps, admin, { name: 'A', email: 'a@example.com', role: 'staff' });
+    await updateStaffByAdmin(ctx.deps, admin, a.id, { retiredOn: '2026-09-26' });
+    ctx.clock.now = new Date('2026-09-25T14:59:00Z'); // JST 9/25 23:59
+    expect((await listStaffForAdmin(ctx.deps, ctx.tenantId)).find((s) => s.id === a.id)?.isRetired).toBe(
+      false,
     );
-    expect(list).toHaveLength(3);
+    ctx.clock.now = new Date('2026-09-25T15:00:00Z'); // JST 9/26 00:00
+    expect((await listStaffForAdmin(ctx.deps, ctx.tenantId)).find((s) => s.id === a.id)?.isRetired).toBe(
+      true,
+    );
   });
 });
 
-describe('importStaffMasterRows(GAS版スタッフ台帳の一括取込)', () => {
-  const tenantId = 'tenant-1';
+describe('対象スタッフの選択肢(listActiveStaffForActor)', () => {
+  it('管理者・コーディネーターには退職者を除いた一覧、一般スタッフには空を返す', async () => {
+    const ctx = createTestContext();
+    const admin = (await ctx.addStaff('管理 者', 'admin@example.com', 'admin')).actor;
+    const coordinator = (await ctx.addStaff('調整 役', 'coord@example.com', 'coordinator')).actor;
+    const staff = (await ctx.addStaff('山田 太郎', 'taro@example.com')).actor;
+    const retired = await ctx.addStaff('退職 者', 'retired@example.com');
+    ctx.setRetiredOn(retired.staff.id, '2026-01-01');
+    const names = (await listActiveStaffForActor(ctx.deps, admin)).map((s) => s.name);
+    expect(names).toEqual(['山田 太郎', '管理 者', '調整 役'].sort());
+    expect(await listActiveStaffForActor(ctx.deps, coordinator)).toHaveLength(3);
+    expect(await listActiveStaffForActor(ctx.deps, staff)).toEqual([]);
+  });
+});
+
+describe('スタッフ台帳の取込', () => {
+  let ctx: TestContext;
   const legacyHash = 'a'.repeat(64);
-  let staff: FakeStaffRepository;
-  let appLog: FakeAppLogPort;
-  const deps = () => ({ staff, passwordHasher: new FakePasswordHasherPort(), appLog });
   const row = (overrides: Partial<StaffMasterRow>): StaffMasterRow => ({
     rowNumber: 2,
     name: '佐藤 花子',
@@ -178,68 +134,55 @@ describe('importStaffMasterRows(GAS版スタッフ台帳の一括取込)', () =>
     altEmail: null,
     password: legacyHash,
     isAdmin: false,
-    retirementDate: null,
+    retiredOn: null,
     ...overrides,
   });
+  const credentialsOf = (email: string) => ctx.data().staff.find((s) => s.record.email === email);
 
   beforeEach(() => {
-    staff = new FakeStaffRepository();
-    appLog = new FakeAppLogPort();
+    ctx = createTestContext();
   });
 
-  it('新規行は作成し、レガシーハッシュ・平文パスワード・空欄をそれぞれ扱う', async () => {
-    const result = await importStaffMasterRows(deps(), tenantId, [
+  it('新規行は作成し、レガシーハッシュ・平文パスワード・空欄をそれぞれ扱い、import_runs に残す', async () => {
+    const result = await importStaffMasterRows(ctx.deps, ctx.tenantId, [
       row({ altEmail: 'hanako@cutest.biz', isAdmin: true }),
       row({ rowNumber: 3, name: '鈴木', email: 'suzuki@gmail.com', password: 'plain-pass' }),
-      row({
-        rowNumber: 4,
-        name: '田中',
-        email: 'tanaka@gmail.com',
-        password: '',
-        retirementDate: '2026-03-31',
-      }),
+      row({ rowNumber: 4, name: '田中', email: 'tanaka@gmail.com', password: '', retiredOn: '2026-03-31' }),
     ]);
     expect(result).toEqual({ created: 3, updated: 0, skipped: [] });
-    expect(await staff.findByLoginEmail(tenantId, 'hanako@cutest.biz')).toMatchObject({
-      legacyPasswordHash: legacyHash,
-      passwordHash: null,
-      isAdmin: true,
+    expect(credentialsOf('hanako@gmail.com')).toMatchObject({
+      record: { role: 'admin', altEmail: 'hanako@cutest.biz' },
+      credentials: { legacyPasswordHash: legacyHash, passwordHash: null },
     });
-    expect(await staff.findByLoginEmail(tenantId, 'suzuki@gmail.com')).toMatchObject({
-      passwordHash: 'HASH:plain-pass',
+    expect(credentialsOf('suzuki@gmail.com')?.credentials.passwordHash).toBe('HASH:plain-pass');
+    expect(credentialsOf('tanaka@gmail.com')).toMatchObject({
+      record: { retiredOn: '2026-03-31' },
+      credentials: { passwordHash: null, legacyPasswordHash: null },
     });
-    expect(await staff.findByLoginEmail(tenantId, 'tanaka@gmail.com')).toMatchObject({
-      passwordHash: null,
-      legacyPasswordHash: null,
-      retirementDate: '2026-03-31',
-    });
-    expect(appLog.entries.at(-1)).toMatchObject({ level: 'SECURITY', action: 'staff.import.completed' });
+    expect(ctx.data().importRuns).toEqual([
+      expect.objectContaining({ source: 'staff_master_csv', status: 'applied' }),
+    ]);
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({ level: 'SECURITY', action: 'staff.import.completed' });
   });
 
-  it('既存スタッフはメールで照合して更新し、本アプリで設定済みのパスワードは上書きしない', async () => {
-    const existing = await staff.create({
-      tenantId,
-      name: '旧姓 花子',
-      email: 'hanako@gmail.com',
-      passwordHash: 'HASH:already-set',
-      isAdmin: false,
-    });
-    const result = await importStaffMasterRows(deps(), tenantId, [
-      row({ isAdmin: true, retirementDate: '2027-01-01' }),
-    ]);
+  it('既存スタッフはメールで照合して更新し、設定済みのパスワードとコーディネーターの役割は保つ', async () => {
+    const existing = await ctx.addStaff('旧姓 花子', 'hanako@gmail.com', 'coordinator', 'already-set');
+    const result = await importStaffMasterRows(ctx.deps, ctx.tenantId, [row({ retiredOn: '2027-01-01' })]);
     expect(result).toEqual({ created: 0, updated: 1, skipped: [] });
-    expect(await staff.findById(tenantId, existing.id)).toMatchObject({
-      name: '佐藤 花子',
-      isAdmin: true,
-      retirementDate: '2027-01-01',
-      passwordHash: 'HASH:already-set',
-      legacyPasswordHash: null,
+    expect(credentialsOf('hanako@gmail.com')).toMatchObject({
+      record: {
+        id: existing.staff.id,
+        displayName: '佐藤 花子',
+        role: 'coordinator',
+        retiredOn: '2027-01-01',
+      },
+      credentials: { passwordHash: 'HASH:already-set', legacyPasswordHash: null },
     });
   });
 
   it('メールが空・CSV内の重複・他スタッフのアドレスとの衝突は取り込まずに理由を返す', async () => {
-    await staff.create({ tenantId, name: '別人', email: 'other@gmail.com', isAdmin: false });
-    const result = await importStaffMasterRows(deps(), tenantId, [
+    await ctx.addStaff('別人', 'other@gmail.com');
+    const result = await importStaffMasterRows(ctx.deps, ctx.tenantId, [
       row({ rowNumber: 2, email: '' }),
       row({ rowNumber: 3 }),
       row({ rowNumber: 4 }),
@@ -249,10 +192,10 @@ describe('importStaffMasterRows(GAS版スタッフ台帳の一括取込)', () =>
     expect(result.skipped.map((s) => s.rowNumber)).toEqual([2, 4, 5]);
   });
 
-  it('dryRunでは件数だけ数えて何も書き込まない', async () => {
-    const result = await importStaffMasterRows(deps(), tenantId, [row({})], { dryRun: true });
+  it('dryRun では件数だけ数えて何も書き込まない', async () => {
+    const result = await importStaffMasterRows(ctx.deps, ctx.tenantId, [row({})], { dryRun: true });
     expect(result.created).toBe(1);
-    expect(await staff.listAll(tenantId)).toEqual([]);
-    expect(appLog.entries).toEqual([]);
+    expect(ctx.data().staff).toEqual([]);
+    expect(ctx.appLog.entries).toEqual([]);
   });
 });

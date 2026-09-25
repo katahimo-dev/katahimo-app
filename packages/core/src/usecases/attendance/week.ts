@@ -1,51 +1,47 @@
-import { buildScheduleEventsFromRowData, type ScheduleEvent } from '../../domain/attendance';
-import { countDaysInclusive } from '../../domain/calendarDate';
-import { isValidBusinessDate } from '../../domain/schedule/jstDate';
-import { type AttendanceActor, loadAttendanceTarget, logCrossStaffRead } from './access';
+import {
+  buildScheduleEventsFromRowData,
+  countDaysInclusive,
+  invalid,
+  isValidBusinessDate,
+  projectDay,
+  type ScheduleEvent,
+} from '../../domain';
+import type { Actor } from '../requestMeta';
+import { loadAttendanceTarget, logCrossStaffRead } from './access';
 import type { AttendanceDeps } from './deps';
-import { AttendanceError } from './errors';
-import { readRowData } from './records';
+import { toSheetDay } from './records';
 
 /** 1リクエストで取得できる日数の上限(GAS版 PAST_SCHEDULE_WEEK_MAX_DAYS)。 */
 export const ATTENDANCE_EVENTS_MAX_DAYS = 31;
 
 /**
- * 指定期間(両端含む)の出勤簿の記録を、週間予定UI用のイベント配列にする(GAS版 getWeeklyScheduleForStaff)。
- * Googleカレンダーではなく出勤簿の記録内容を表示する閲覧専用のビュー。日付順・枠順に並ぶ。
+ * 指定期間(両端含む)の出勤簿の記録を、週間予定の画面用のイベントにする(GAS版 getWeeklyScheduleForStaff)。
+ * Googleカレンダーではなく出勤簿の記録をそのまま表示する閲覧専用のビュー。日付順・枠順に並ぶ。
  */
 export async function getAttendanceScheduleEvents(
   deps: AttendanceDeps,
-  actor: AttendanceActor,
+  actor: Actor,
   targetStaffId: string,
   startDate: string,
   endDate: string,
 ): Promise<ScheduleEvent[]> {
   if (!isValidBusinessDate(startDate) || !isValidBusinessDate(endDate) || endDate < startDate) {
-    throw new AttendanceError('invalid_request', '日付範囲が不正です。');
+    throw invalid('日付範囲が不正です。');
   }
   if (countDaysInclusive(startDate, endDate) > ATTENDANCE_EVENTS_MAX_DAYS) {
-    throw new AttendanceError(
-      'invalid_request',
-      `一度に取得できる日数の上限(${ATTENDANCE_EVENTS_MAX_DAYS}日)を超えています。`,
-    );
+    throw invalid(`一度に取得できる日数の上限(${ATTENDANCE_EVENTS_MAX_DAYS}日)を超えています。`);
   }
-  const target = await loadAttendanceTarget(deps, actor, targetStaffId);
-
-  const records = await deps.attendanceDays.listByStaffAndDateRange(
-    actor.tenantId,
-    target.staffId,
-    startDate,
-    endDate,
-  );
-  const sorted = [...records].sort((a, b) => a.businessDate.localeCompare(b.businessDate));
-  const events: ScheduleEvent[] = [];
-  for (const record of sorted) {
-    events.push(
-      ...buildScheduleEventsFromRowData(record.businessDate, await readRowData(deps, actor.tenantId, record)),
-    );
-  }
-
-  await logCrossStaffRead(deps, actor, target, 'attendance.week.view', {
+  const { target, events } = await deps.uow.run(actor.tenantId, async (r) => {
+    const target = await loadAttendanceTarget(r, actor, targetStaffId);
+    const timeZone = (await r.tenant()).timezone;
+    const events: ScheduleEvent[] = [];
+    for (const rows of await r.attendance.loadRange(target.staffId, startDate, endDate)) {
+      const sheet = await toSheetDay(deps.crypto, r.tenantId, timeZone, rows);
+      events.push(...buildScheduleEventsFromRowData(rows.businessDate, projectDay(sheet).rowData));
+    }
+    return { target, events };
+  });
+  await logCrossStaffRead(deps.appLog, actor, target, 'attendance.week.view', {
     startDate,
     endDate,
     eventCount: events.length,

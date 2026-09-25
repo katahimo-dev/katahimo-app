@@ -1,28 +1,16 @@
 import type { AppLogPort } from '../../ports/appLog';
-import type { AttendanceDayRepositoryPort } from '../../ports/attendanceDays';
-import type { CryptoPort } from '../../ports/crypto';
-import type { MirrorPort } from '../../ports/mirror';
-import type {
-  ReceiptRepositoryPort,
-  StaffRepositoryPort,
-  TenantRepositoryPort,
-} from '../../ports/repositories';
+import type { AuditLogPort, CryptoPort } from '../../ports/crypto';
 import type { SchedulePort } from '../../ports/schedule';
+import type { TenantDirectoryPort } from '../../ports/tenants';
+import type { UnitOfWorkPort } from '../../ports/unitOfWork';
+import type { Clock } from '../requestMeta';
 
-/** 勤怠(出勤簿)系usecaseの共通の依存。 */
-export interface AttendanceDeps {
-  attendanceDays: AttendanceDayRepositoryPort;
-  staff: StaffRepositoryPort;
+/** 勤怠(出勤簿)の usecase の依存。 */
+export interface AttendanceDeps extends Clock {
+  uow: UnitOfWorkPort;
   crypto: CryptoPort;
-  /** 出勤簿スプレッドシート等へのミラー要求をoutboxに積む。 */
-  mirror: MirrorPort;
   appLog: AppLogPort;
-  /** 「今日」の基準(月ロック・夜間バッチの対象日)。省略時は現在時刻。テストで固定するために注入できる。 */
-  now?: () => Date;
-}
-
-export interface AttendanceMonthDeps extends AttendanceDeps {
-  receipts: ReceiptRepositoryPort;
+  audit?: AuditLogPort;
 }
 
 export interface CalendarSyncDeps extends AttendanceDeps {
@@ -30,5 +18,5 @@ export interface CalendarSyncDeps extends AttendanceDeps {
 }
 
 export interface NightlyCalendarSyncDeps extends CalendarSyncDeps {
-  tenants: TenantRepositoryPort;
+  tenants: TenantDirectoryPort;
 }
