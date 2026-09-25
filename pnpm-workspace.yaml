@@ -1,5 +1,7 @@
 packages:
   - 'packages/*'
+  # 開発用ツール(GAS版との見た目の比較ハーネス等)
+  - 'tools/*'
 
 # pnpm v10以降は依存パッケージのpostinstallを既定でブロックする(サプライチェーン対策)。
 # 実行を許可/明示的に拒否するパッケージを allowBuilds で宣言する。

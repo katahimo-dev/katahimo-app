@@ -1,0 +1,23 @@
+{
+  "name": "@katahimo/gas-preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "GAS版の画面と新アプリの画面を同じデータで撮影して見比べるためのハーネス",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "serve": "tsx src/serve.ts",
+    "shoot": "NODE_USE_ENV_PROXY=1 NODE_NO_WARNINGS=1 tsx src/shoot.ts"
+  },
+  "dependencies": {
+    "@katahimo/shared": "workspace:*",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "playwright-core": "1.56.1",
+    "postcss": "^8.5.26",
+    "tailwindcss": "3.4.17",
+    "tsx": "^4.19.2"
+  }
+}
