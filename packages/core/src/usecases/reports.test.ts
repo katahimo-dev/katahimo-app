@@ -152,6 +152,27 @@ describe('日報/事故報告の保存', () => {
     expect(notifier.notifications).toEqual([]);
   });
 
+  it('上書き対象の報告が別のお客様のものなら保存しない(開き直す前の保存が遅れて届いた場合など)', async () => {
+    const first = await saveDailyReport(deps, tenantId, dailyInput());
+    if (!first.ok) throw new Error('unreachable');
+    const other = await createCustomer(
+      { customers: deps.customers, familyMembers: new FakeFamilyMemberRepository(), crypto: deps.crypto },
+      { tenantId, name: '山田 二郎' },
+    );
+    const result = await saveDailyReport(
+      deps,
+      tenantId,
+      dailyInput({ reportId: first.report.id, customerId: other.id, internalText: '別のお客様' }),
+    );
+    expect(result).toEqual({ ok: false, reason: 'customer_mismatch' });
+    const stored = await deps.dailyReports.findById(tenantId, first.report.id);
+    expect(stored?.customerId).toBe(customerId);
+    expect(appLog.entries.at(-1)).toMatchObject({
+      action: 'report.daily.save_denied',
+      details: { reason: 'customer_mismatch' },
+    });
+  });
+
   it('事故報告も管理者以外は他スタッフの報告を上書きできない', async () => {
     const base = {
       customerId,

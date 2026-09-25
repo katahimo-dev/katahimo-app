@@ -18,14 +18,30 @@ export class ApiRequestError extends Error {
   readonly status: number;
   readonly code: ApiError['code'];
   readonly fields: Record<string, string> | undefined;
+  /** 回数の上限(429 rate_limited)のとき、もう一度使えるまでの秒数(Retry-After)。 */
+  readonly retryAfterSeconds: number | null;
 
-  constructor(status: number, body: ApiError) {
+  constructor(status: number, body: ApiError, retryAfterSeconds: number | null = null) {
     super(body.message);
     this.name = 'ApiRequestError';
     this.status = status;
     this.code = body.code;
     this.fields = body.fields;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+/** Retry-After(秒数)を読む。日時の形・無いときは null */
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) return null;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : null;
+}
+
+/** 「あと約15分」「あと約3時間」(回数の上限のお知らせに添える) */
+export function formatRetryAfter(seconds: number): string {
+  const minutes = Math.ceil(seconds / 60);
+  return minutes < 120 ? `あと約${minutes}分` : `あと約${Math.ceil(minutes / 60)}時間`;
 }
 
 export class NetworkError extends Error {
@@ -38,9 +54,17 @@ export class NetworkError extends Error {
   }
 }
 
-/** 画面に出す文言。サーバーが理由を返したらその理由、それ以外はGAS版と同じ通信失敗の文言。 */
+/**
+ * 画面に出す文言。サーバーが理由を返したらその理由、それ以外はGAS版と同じ通信失敗の文言。
+ * 回数の上限(429)で、もう一度使えるまでの時間が分かるときは「（あと約15分）」を添える。
+ */
 export function userMessageOf(error: unknown): string {
-  if (error instanceof ApiRequestError) return error.message;
+  if (error instanceof ApiRequestError) {
+    if (error.code === 'rate_limited' && error.retryAfterSeconds !== null) {
+      return `${error.message}（${formatRetryAfter(error.retryAfterSeconds)}）`;
+    }
+    return error.message;
+  }
   return NETWORK_ERROR_MESSAGE;
 }
 
@@ -107,7 +131,11 @@ async function request<S extends z.ZodTypeAny>(
     // 理由の無い失敗・想定外の失敗(code=internal)は通信失敗と同じ扱いにする。
     if (parsedError.success && parsedError.data.code !== 'internal') {
       if (res.status === 401 && !options.skipAuthHandler) unauthenticatedListener?.();
-      throw new ApiRequestError(res.status, parsedError.data);
+      throw new ApiRequestError(
+        res.status,
+        parsedError.data,
+        parseRetryAfter(res.headers.get('Retry-After')),
+      );
     }
     throw new NetworkError(`${method} ${url} が ${res.status} を返しました`, res.status);
   }

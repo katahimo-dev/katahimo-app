@@ -1,5 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { useFadeTransition } from '../modal';
+import { Modal } from '../modal';
 
 /**
  * GAS版 #confirmationModal(「前に保存した日報を、今の内容に書きかえますか？」)と同じ見た目の
@@ -47,10 +47,10 @@ export function ConfirmModalProvider({ children }: { children: ReactNode }) {
   useEffect(() => () => pendingRef.current?.resolve(false), []);
 
   return (
-    <ConfirmModalContext.Provider value={confirm}>
+    <ConfirmModalContext value={confirm}>
       {children}
       <ConfirmModalView open={open} options={pending?.options ?? null} onSettle={settle} />
-    </ConfirmModalContext.Provider>
+    </ConfirmModalContext>
   );
 }
 
@@ -63,43 +63,44 @@ function ConfirmModalView({
   options: ConfirmModalOptions | null;
   onSettle: (ok: boolean) => void;
 }) {
-  const { mounted, shown } = useFadeTransition(open);
-  if (!mounted || !options) return null;
+  if (!options) return null;
   return (
-    <div
+    <Modal
+      open={open}
       role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="confirmModalTitle"
-      className={`fixed inset-0 bg-black bg-opacity-50 z-[70] flex items-center justify-center p-4 transition-opacity duration-300${
-        shown ? '' : ' opacity-0'
-      }`}
+      labelledBy="confirmModalTitle"
+      // Escape は「キャンセル」と同じ
+      onClose={() => onSettle(false)}
+      className="fixed inset-0 bg-black bg-opacity-50 z-[70] flex items-center justify-center p-4 transition-opacity duration-300"
     >
-      <div
-        className={`bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 transform ${
-          shown ? 'scale-100' : 'scale-95'
-        } transition-transform duration-300`}
-      >
-        <h3 id="confirmModalTitle" className="font-bold text-lg text-gray-800 mb-2">
-          {options.title}
-        </h3>
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={() => onSettle(false)}
-            className="flex-1 min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl transition-colors"
-          >
-            {options.cancelLabel ?? 'キャンセル'}
-          </button>
-          <button
-            type="button"
-            onClick={() => onSettle(true)}
-            className="flex-1 min-h-12 py-3 bg-blue-600 text-white text-base font-bold rounded-xl transition-colors"
-          >
-            {options.confirmLabel}
-          </button>
+      {({ shown }) => (
+        <div
+          className={`bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 transform ${
+            shown ? 'scale-100' : 'scale-95'
+          } transition-transform duration-300`}
+        >
+          <h3 id="confirmModalTitle" className="font-bold text-lg text-gray-800 mb-2">
+            {options.title}
+          </h3>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => onSettle(false)}
+              className="flex-1 min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl transition-colors"
+            >
+              {options.cancelLabel ?? 'キャンセル'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onSettle(true)}
+              className="flex-1 min-h-12 py-3 bg-blue-600 text-white text-base font-bold rounded-xl transition-colors"
+            >
+              {options.confirmLabel}
+            </button>
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+    </Modal>
   );
 }
 

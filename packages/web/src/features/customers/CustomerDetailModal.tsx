@@ -2,7 +2,7 @@ import type { CustomerListItem } from '@katahimo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { customerQueryKeys, customersApi } from '../../api/customers';
 import { NETWORK_ERROR_MESSAGE } from '../../lib/messages';
-import { FadeModal, ModalFooter, ModalHeader } from '../../ui/modal';
+import { Modal, ModalFooter, ModalHeader } from '../../ui/modal';
 import { ErrorState, Loading } from '../../ui/StatusViews';
 import { MapPinIcon } from '../schedule/MapPinIcon';
 import { buildDetailRows, buildFamilyRows, type DetailAction, type DetailRow } from './customerDetailRows';
@@ -30,8 +30,9 @@ export function CustomerDetailModal({
   const detail = detailQuery.data;
 
   return (
-    <FadeModal
+    <Modal
       open={open}
+      onClose={onClose}
       labelledBy="customerDetailTitle"
       className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4 transition-opacity"
     >
@@ -92,7 +93,7 @@ export function CustomerDetailModal({
           </button>
         </ModalFooter>
       </div>
-    </FadeModal>
+    </Modal>
   );
 }
 

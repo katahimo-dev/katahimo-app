@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addDaysTo,
   autoEndTime,
   buildReceiptTimestamp,
   formatDateHeading,
@@ -9,7 +8,6 @@ import {
   isNextDateDisabled,
   parseClock,
   shiftReportDate,
-  toLocalDateString,
 } from './dateTime';
 
 describe('autoEndTime(GAS版 autoSetEndTime)', () => {
@@ -29,13 +27,6 @@ describe('日付の表示', () => {
   it('日付送りの真ん中は半角かっこ、1行表示は全角かっこ', () => {
     expect(formatDateHeading('2026-09-25')).toBe('2026年9月25日(金)');
     expect(formatDateShort('2026-09-03')).toBe('9月3日（木）');
-  });
-  it('端末の暦日を YYYY-MM-DD にする', () => {
-    expect(toLocalDateString(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05');
-  });
-  it('月・年をまたいで日付を動かせる', () => {
-    expect(addDaysTo('2026-03-01', -1)).toBe('2026-02-28');
-    expect(addDaysTo('2026-12-31', 1)).toBe('2027-01-01');
   });
 });
 

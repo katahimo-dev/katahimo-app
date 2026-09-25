@@ -1,4 +1,5 @@
 import type { CustomerDetailView, FamilyMemberView } from '@katahimo/shared';
+import { jstDateString, jstHHmm } from '../../lib/date';
 import { mapsLatLngSearchUrl, mapsSearchUrl } from '../../lib/mapsUrl';
 
 /**
@@ -35,9 +36,7 @@ function jstDateTime(value: string | null): string {
   if (!value) return '';
   const t = new Date(value);
   if (Number.isNaN(t.getTime())) return value;
-  const jst = new Date(t.getTime() + 9 * 60 * 60 * 1000);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${jst.getUTCFullYear()}/${p(jst.getUTCMonth() + 1)}/${p(jst.getUTCDate())} ${p(jst.getUTCHours())}:${p(jst.getUTCMinutes())}`;
+  return `${jstDateString(t).replaceAll('-', '/')} ${jstHHmm(t)}`;
 }
 
 /** 氏名を姓・名に分ける(取り込み時に「姓 名」をつなげているため、最初の空白で分ける)。 */

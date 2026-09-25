@@ -47,10 +47,10 @@ export function ReportModalProvider({ children }: { children: ReactNode }) {
   }, [api]);
 
   return (
-    <ReportModalContext.Provider value={api}>
+    <ReportModalContext value={api}>
       {children}
       <ReportModal session={session} open={open} onClose={() => setOpen(false)} />
-    </ReportModalContext.Provider>
+    </ReportModalContext>
   );
 }
 

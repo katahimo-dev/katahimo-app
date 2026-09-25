@@ -33,7 +33,13 @@ export interface ReportDeps {
   appLog: AppLogPort;
 }
 
-export type SaveReportFailure = 'report_not_found' | 'forbidden' | 'staff_not_found' | 'customer_not_found';
+export type SaveReportFailure =
+  | 'report_not_found'
+  | 'forbidden'
+  | 'staff_not_found'
+  | 'customer_not_found'
+  /** 上書き対象の報告が、送られてきたお客様のものではない(開き直す前の保存が遅れて届いた等) */
+  | 'customer_mismatch';
 
 export type SaveReportResult<T> = { ok: true; report: T } | { ok: false; reason: SaveReportFailure };
 
@@ -64,11 +70,16 @@ async function resolveReportTarget(
   deps: ReportDeps,
   tenantId: string,
   input: SaveReportCommon,
-  existingStaffId: string | null,
+  existing: { staffId: string; customerId: string } | null,
 ): Promise<{ ok: true; target: ReportTarget } | { ok: false; reason: SaveReportFailure }> {
   const { actor } = input;
+  const existingStaffId = existing?.staffId ?? null;
   if (existingStaffId !== null && !actor.isAdmin && existingStaffId !== actor.staffId) {
     return { ok: false, reason: 'forbidden' };
+  }
+  // 上書きは同じお客様の報告に限る(別のお客様の報告IDで上書きすると、その報告の中身が入れ替わってしまう)
+  if (existing && existing.customerId !== input.customerId) {
+    return { ok: false, reason: 'customer_mismatch' };
   }
   const staffId = actor.isAdmin
     ? input.requestedStaffId?.trim() || existingStaffId || actor.staffId
@@ -157,7 +168,7 @@ export async function saveDailyReport(
     await logReportDenied(deps, tenantId, 'daily', input, 'report_not_found', null);
     return { ok: false, reason: 'report_not_found' };
   }
-  const resolved = await resolveReportTarget(deps, tenantId, input, existing?.staffId ?? null);
+  const resolved = await resolveReportTarget(deps, tenantId, input, existing);
   if (!resolved.ok) {
     await logReportDenied(deps, tenantId, 'daily', input, resolved.reason, existing?.staffId ?? null);
     return resolved;
@@ -263,7 +274,7 @@ export async function saveAccidentReport(
     await logReportDenied(deps, tenantId, 'accident', input, 'report_not_found', null);
     return { ok: false, reason: 'report_not_found' };
   }
-  const resolved = await resolveReportTarget(deps, tenantId, input, existing?.staffId ?? null);
+  const resolved = await resolveReportTarget(deps, tenantId, input, existing);
   if (!resolved.ok) {
     await logReportDenied(deps, tenantId, 'accident', input, resolved.reason, existing?.staffId ?? null);
     return resolved;

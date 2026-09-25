@@ -15,9 +15,16 @@ export function ModeTabs({
   onSwitch: (mode: ReportMode) => void;
 }) {
   return (
-    <div className={cx('flex border-b border-gray-200', hidden && 'hidden')} id="modalTabs">
+    <div
+      className={cx('flex border-b border-gray-200', hidden && 'hidden')}
+      id="modalTabs"
+      role="tablist"
+      aria-label="報告の種類"
+    >
       <button
         type="button"
+        role="tab"
+        aria-selected={mode === 'daily'}
         onClick={() => onSwitch('daily')}
         id="tabDaily"
         className={cx(
@@ -30,6 +37,8 @@ export function ModeTabs({
       </button>
       <button
         type="button"
+        role="tab"
+        aria-selected={mode === 'accident'}
         onClick={() => onSwitch('accident')}
         id="tabAccident"
         className={cx(

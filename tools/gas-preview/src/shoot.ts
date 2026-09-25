@@ -11,28 +11,34 @@ import { OUT_DIR } from './paths';
 import { allShots } from './shots';
 import type { GasMockConfig, Shot, Target } from './shots/types';
 import { installWebMock } from './webMock';
+import { ensureWebServer } from './webServer';
 
 /**
  * GAS版と新アプリを同じ場面で撮影し、out/ に並べた画像を作る。
  *
- *   pnpm --filter @katahimo/gas-preview shoot                 # 全場面
+ *   pnpm --filter @katahimo/gas-preview shoot                 # 全場面(新アプリの Vite もこのコマンドが起動する)
  *   pnpm --filter @katahimo/gas-preview shoot -- --only settings   # 名前に settings を含む場面だけ
  *   pnpm --filter @katahimo/gas-preview shoot -- --list       # 場面の一覧
  *
- * 新アプリは Vite の開発サーバー(既定 http://127.0.0.1:5173)を先に起動しておく。
+ * 新アプリは、--web-url(または環境変数 KATAHIMO_WEB_URL)を指定しなければ Vite の開発サーバーを
+ * このプロセスの中で起動して使う。指定したときは、そのURLで動いているサーバーを使う。
  * --web-mode mock(既定): /api/** を webMock.ts のモックで返す(APIサーバー不要・GAS版と同じデータ)。
  * --web-mode live: 実際のAPI(Vite経由)にログインして撮る(KATAHIMO_LIVE_EMAIL / KATAHIMO_LIVE_PASSWORD、
  *                  既定は開発用seedの admin@example.com / admin1234)。データはDBの内容になる。
+ *
+ * 違う画素の割合が --max-diff(既定 0.05%)を越えた場面・撮れなかった場面が1つでもあれば、最後に一覧を出して
+ * 終了コード1で終わる。--concurrency で同時に撮る場面の数を変えられる(既定 2)。
  */
-// pnpm 11 は `pnpm … shoot -- --only x` の `--` もそのまま渡す。parseArgs は `--` 以降をオプションとして
-// 読まないため取り除く
 const { values } = parseArgs({
   args: process.argv.slice(2).filter((a) => a !== '--'),
   options: {
     only: { type: 'string' },
     target: { type: 'string', default: 'both' },
     'web-mode': { type: 'string', default: 'mock' },
-    'web-url': { type: 'string', default: process.env.KATAHIMO_WEB_URL ?? 'http://127.0.0.1:5173' },
+    'web-url': { type: 'string', default: process.env.KATAHIMO_WEB_URL },
+    'api-url': { type: 'string', default: process.env.WEB_API_PROXY_TARGET ?? 'http://localhost:8080' },
+    'max-diff': { type: 'string', default: '0.05' },
+    concurrency: { type: 'string', default: '2' },
     'gas-port': { type: 'string', default: process.env.GAS_PREVIEW_PORT ?? '5180' },
     width: { type: 'string', default: '390' },
     height: { type: 'string', default: '844' },
@@ -42,7 +48,8 @@ const { values } = parseArgs({
 });
 
 const VIEWPORT = { width: Number(values.width), height: Number(values.height) };
-const WEB_URL = String(values['web-url']).replace(/\/$/, '');
+const MAX_DIFF = Number(values['max-diff']);
+const CONCURRENCY = Math.max(1, Number(values.concurrency) || 1);
 const WEB_MODE = values['web-mode'] === 'live' ? 'live' : 'mock';
 const targets: Target[] =
   values.target === 'gas' ? ['gas'] : values.target === 'web' ? ['web'] : ['gas', 'web'];
@@ -70,11 +77,21 @@ async function hide(page: Page, selectors: string[] | undefined) {
   await page.addStyleTag({ content: `${selectors.join(',')} { visibility: hidden !important; }` });
 }
 
+/**
+ * 通信・フォント・画面の動き(フェードなどのCSSの移り変わり)が落ち着くまで待つ。
+ * 読み込み中のくるくる(無限にくり返す動き)は待たない。
+ */
 async function settle(page: Page) {
   await page.waitForLoadState('networkidle').catch(() => undefined);
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
-  await page.waitForTimeout(300);
+  await page.waitForFunction(ANIMATIONS_FINISHED_SCRIPT, undefined, { timeout: 3000 }).catch(() => undefined);
 }
+
+// tsx(esbuild)は関数に __name を差し込むため、ブラウザで動かす処理は文字列で渡す
+const ANIMATIONS_FINISHED_SCRIPT = `document.getAnimations().every((a) => {
+  const iterations = a.effect && a.effect.getTiming ? a.effect.getTiming().iterations : 1;
+  return iterations === Infinity || a.playState !== 'running';
+})`;
 
 async function shootGas(browser: Browser, gasUrl: string, shot: Shot, file: string) {
   const context = await newContext(browser);
@@ -111,18 +128,20 @@ async function shootGas(browser: Browser, gasUrl: string, shot: Shot, file: stri
   await page.screenshot({
     path: file,
     fullPage: shot.fullPage,
+    // 読み込み中のくるくるなど、くり返す動きは初めの形で止めて撮る(撮る瞬間の角度で差分が出ないように)
+    animations: 'disabled',
     mask: (shot.gas?.mask ?? []).map((s) => page.locator(s)),
   });
   await context.close();
 }
 
-async function shootWeb(browser: Browser, shot: Shot, file: string) {
+async function shootWeb(browser: Browser, webUrl: string, shot: Shot, file: string) {
   const context = await newContext(browser);
   if (WEB_MODE === 'mock') {
     const user = shot.login === 'none' ? null : shot.login === 'staff' ? (STAFF[1] ?? null) : ADMIN;
     await installWebMock(context, { user, today: DEFAULT_TODAY }, shot.web?.mock);
   } else if (shot.login !== 'none') {
-    const res = await context.request.post(`${WEB_URL}/api/auth/login`, {
+    const res = await context.request.post(`${webUrl}/api/auth/login`, {
       data: {
         tenantSlug: process.env.KATAHIMO_LIVE_TENANT ?? TENANT.slug,
         email: process.env.KATAHIMO_LIVE_EMAIL ?? 'admin@example.com',
@@ -143,7 +162,7 @@ async function shootWeb(browser: Browser, shot: Shot, file: string) {
   );
   page.on('dialog', (d) => void d.accept());
   await page.clock.setFixedTime(new Date(DEFAULT_NOW_ISO));
-  await page.goto(`${WEB_URL}/`);
+  await page.goto(`${webUrl}/`);
   await settle(page);
   await (shot.web?.run ?? shot.run)?.(page, 'web');
   await settle(page);
@@ -151,6 +170,8 @@ async function shootWeb(browser: Browser, shot: Shot, file: string) {
   await page.screenshot({
     path: file,
     fullPage: shot.fullPage,
+    // 読み込み中のくるくるなど、くり返す動きは初めの形で止めて撮る(撮る瞬間の角度で差分が出ないように)
+    animations: 'disabled',
     mask: (shot.web?.mask ?? []).map((s) => page.locator(s)),
   });
   await context.close();
@@ -219,6 +240,76 @@ const DIFF_SCRIPT = `(async () => {
   return (differ / (w * h)) * 100;
 })()`;
 
+interface ShotResult {
+  name: string;
+  /** 違う画素の割合(%)。片方だけ撮ったときは null */
+  diff: number | null;
+  error?: string;
+}
+
+async function shootOne(
+  browser: Browser,
+  gasUrl: string | null,
+  webUrl: string | null,
+  shot: Shot,
+): Promise<ShotResult> {
+  const gasFile = resolve(OUT_DIR, `${shot.name}.gas.png`);
+  const webFile = resolve(OUT_DIR, `${shot.name}.web.png`);
+  const doGas = gasUrl !== null && shot.gas?.enabled !== false;
+  const doWeb = webUrl !== null && shot.web?.enabled !== false;
+  try {
+    if (doGas && gasUrl) await shootGas(browser, gasUrl, shot, gasFile);
+    if (doWeb && webUrl) await shootWeb(browser, webUrl, shot, webFile);
+    if (doGas && doWeb) {
+      const outFile = resolve(OUT_DIR, `${shot.name}.png`);
+      const diff = await compose(browser, shot, gasFile, webFile, outFile);
+      const mark = diff > MAX_DIFF ? '✘' : '✔';
+      console.log(`${mark} ${shot.name.padEnd(30)} 差分 ${diff.toFixed(2).padStart(6)}%  ${outFile}`);
+      return { name: shot.name, diff };
+    }
+    console.log(`✔ ${shot.name}: ${doGas ? gasFile : webFile}`);
+    return { name: shot.name, diff: null };
+  } catch (e) {
+    const error = e instanceof Error ? (e.message.split('\n')[0] ?? e.message) : String(e);
+    console.log(`✘ ${shot.name.padEnd(30)} 撮れませんでした: ${error}`);
+    return { name: shot.name, diff: null, error };
+  }
+}
+
+/** 場面を CONCURRENCY 個ずつ並行して撮る(結果は場面の順に返す) */
+async function shootAll(
+  browser: Browser,
+  gasUrl: string | null,
+  webUrl: string | null,
+  shots: Shot[],
+): Promise<ShotResult[]> {
+  const results: ShotResult[] = new Array(shots.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < shots.length) {
+      const index = next++;
+      results[index] = await shootOne(browser, gasUrl, webUrl, shots[index] as Shot);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, shots.length) }, worker));
+  return results;
+}
+
+function printSummary(results: ShotResult[]): boolean {
+  const failed = results.filter((r) => r.error);
+  const over = results.filter((r) => !r.error && r.diff !== null && r.diff > MAX_DIFF);
+  const compared = results.filter((r) => r.diff !== null);
+  const worst = [...compared].sort((a, b) => (b.diff ?? 0) - (a.diff ?? 0))[0];
+  console.log('');
+  console.log(
+    `${results.length} 場面: 撮れなかった ${failed.length} / 差分が ${MAX_DIFF}% を越えた ${over.length}` +
+      (worst ? `(いちばん大きい差分: ${worst.name} ${worst.diff?.toFixed(2)}%)` : ''),
+  );
+  for (const r of failed) console.log(`  ✘ ${r.name}: ${r.error}`);
+  for (const r of over) console.log(`  ✘ ${r.name}: 差分 ${r.diff?.toFixed(2)}%`);
+  return failed.length === 0 && over.length === 0;
+}
+
 async function main() {
   const only = values.only ? new RegExp(values.only) : null;
   const shots = allShots.filter((s) => !only || only.test(s.name));
@@ -230,39 +321,24 @@ async function main() {
 
   mkdirSync(OUT_DIR, { recursive: true });
   const gasServer = targets.includes('gas') ? await startGasServer(Number(values['gas-port'])) : null;
-  if (targets.includes('web')) {
-    const reachable = await fetch(WEB_URL).then(
-      (r) => r.ok,
-      () => false,
-    );
-    if (!reachable) {
-      throw new Error(
-        `新アプリ(${WEB_URL})に届きません。先に pnpm --filter @katahimo/web dev を起動してください`,
-      );
-    }
-  }
+  const webServer = targets.includes('web')
+    ? await ensureWebServer({
+        existingUrl: values['web-url'] ?? null,
+        apiProxyTarget: WEB_MODE === 'live' ? String(values['api-url']) : undefined,
+      })
+    : null;
 
   const browser = await launchChromium();
+  let ok = false;
   try {
-    for (const shot of shots) {
-      const gasFile = resolve(OUT_DIR, `${shot.name}.gas.png`);
-      const webFile = resolve(OUT_DIR, `${shot.name}.web.png`);
-      const doGas = gasServer && shot.gas?.enabled !== false;
-      const doWeb = targets.includes('web') && shot.web?.enabled !== false;
-      if (doGas && gasServer) await shootGas(browser, gasServer.url, shot, gasFile);
-      if (doWeb) await shootWeb(browser, shot, webFile);
-      if (doGas && doWeb) {
-        const outFile = resolve(OUT_DIR, `${shot.name}.png`);
-        const diff = await compose(browser, shot, gasFile, webFile, outFile);
-        console.log(`✔ ${shot.name.padEnd(30)} 差分 ${diff.toFixed(2).padStart(6)}%  ${outFile}`);
-      } else {
-        console.log(`✔ ${shot.name}: ${doGas ? gasFile : webFile}`);
-      }
-    }
+    const results = await shootAll(browser, gasServer?.url ?? null, webServer?.url ?? null, shots);
+    ok = printSummary(results);
   } finally {
     await browser.close();
     gasServer?.server.close();
+    await webServer?.close();
   }
+  if (!ok) process.exitCode = 1;
 }
 
 await main();

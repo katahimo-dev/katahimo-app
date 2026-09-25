@@ -1,4 +1,5 @@
 import type { Page } from 'playwright-core';
+import { ADMIN, TENANT } from '../fixtures';
 import type { WebMockOverrides } from '../webMock';
 
 /**
@@ -46,3 +47,11 @@ export interface Shot {
 
 /** 見えている要素だけに絞る(GAS版は閉じたダイアログもDOMに残っているため)。 */
 export const visible = { visible: true } as const;
+
+/**
+ * localStorage のキー。GAS版はキー名そのまま、新アプリはログインしている人ごとのキー
+ * (packages/web/src/lib/storage.ts の userStorageKey: `<キー名>@<法人ID>/<スタッフID>`)。
+ */
+export function userStorageKey(target: Target, key: string, staffId: string = ADMIN.id): string {
+  return target === 'gas' ? key : `${key}@${TENANT.id}/${staffId}`;
+}

@@ -1,9 +1,11 @@
 /**
  * 週間予定の日付・時刻の計算(GAS版 calYmd_ / calGetWeekStart_ / calTimeToMinutes_ /
- * calComputeHourRange_ / calSummarizeDayEvents_ など)。GAS版と同じく端末の時計(日本時間)で数える。
+ * calComputeHourRange_ / calSummarizeDayEvents_ など)。業務日は日本時間(lib/date.ts)で数える
+ * (GAS版は端末の時計で数えていたが、日本以外の時刻帯の端末でも日付がずれないように)。
  */
+import { addDaysYmd, jstHHmm, WEEKDAY_LABELS, weekdayOfYmd, ymdParts } from '../../../lib/date';
 
-export const DAY_OF_WEEK_LABELS = ['日', '月', '火', '水', '木', '金', '土'] as const;
+export const DAY_OF_WEEK_LABELS = WEEKDAY_LABELS;
 
 /** 予定の種類(API は訪問・事務作業の2種類。GAS版の予定タブと同じくイベントも見た目だけ用意する)。 */
 export type CalendarEventType = 'CUSTOMER APPOINTMENT' | 'OFFICE WORK' | 'EVENT';
@@ -19,28 +21,11 @@ export interface CalendarEvent {
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
-/** Date → 'YYYY-MM-DD'(端末の時計) */
-export function toYmd(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
-/** 'YYYY-MM-DD' → その日の0時の Date(端末の時計) */
-export function fromYmd(ymd: string): Date {
-  const [y, m, d] = ymd.split('-').map(Number) as [number, number, number];
-  return new Date(y, m - 1, d);
-}
-
-export function addDaysYmd(ymd: string, days: number): string {
-  const d = fromYmd(ymd);
-  d.setDate(d.getDate() + days);
-  return toYmd(d);
-}
+export { addDaysYmd, todayJst } from '../../../lib/date';
 
 /** その日を含む週の日曜日(GAS版 calGetWeekStart_) */
 export function weekStartOf(ymd: string): string {
-  const d = fromYmd(ymd);
-  d.setDate(d.getDate() - d.getDay());
-  return toYmd(d);
+  return addDaysYmd(ymd, -weekdayOfYmd(ymd));
 }
 
 /** 週の7日('YYYY-MM-DD')。 */
@@ -49,25 +34,24 @@ export function weekDates(weekStart: string): string[] {
 }
 
 export function dayOfMonth(ymd: string): number {
-  return fromYmd(ymd).getDate();
+  return ymdParts(ymd).day;
 }
 
 export function dayOfWeekLabel(ymd: string): string {
-  return DAY_OF_WEEK_LABELS[fromYmd(ymd).getDay()] as string;
+  return DAY_OF_WEEK_LABELS[weekdayOfYmd(ymd)] as string;
 }
 
 /** 「8月31日〜9月6日」(GAS版 loadWeekEvents の #calWeekLabel) */
 export function weekRangeLabel(weekStart: string): string {
-  const start = fromYmd(weekStart);
-  const end = fromYmd(addDaysYmd(weekStart, 6));
-  return `${start.getMonth() + 1}月${start.getDate()}日〜${end.getMonth() + 1}月${end.getDate()}日`;
+  const start = ymdParts(weekStart);
+  const end = ymdParts(addDaysYmd(weekStart, 6));
+  return `${start.month}月${start.day}日〜${end.month}月${end.day}日`;
 }
 
-/** 読み込んだ時刻「10:05 時点」(GAS版 formatCalWeekUpdatedAt_ / formatAttendanceMonthlyUpdatedAt_) */
+/** 読み込んだ時刻「10:05 時点」(日本時間。GAS版 formatCalWeekUpdatedAt_ / formatAttendanceMonthlyUpdatedAt_) */
 export function updatedAtLabel(ts: number | null | undefined): string {
   if (!ts) return '';
-  const t = new Date(ts);
-  return `${pad2(t.getHours())}:${pad2(t.getMinutes())} 時点`;
+  return `${jstHHmm(ts)} 時点`;
 }
 
 /** 'HH:MM' → 0時からの分。形が違えば null(GAS版 calTimeToMinutes_) */

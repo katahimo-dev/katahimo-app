@@ -1,8 +1,7 @@
 import type { CustomerDetailView } from '@katahimo/shared';
 import { describe, expect, it } from 'vitest';
-import { createMemoryStorage } from '../../lib/memoryStorage.test-helper';
 import { buildDetailRows, buildFamilyRows, parseLatLng } from './customerDetailRows';
-import { filterCustomers, readRecentCustomerIds } from './customerFilter';
+import { filterCustomers } from './customerFilter';
 import { historyBadge, ratingStars, splitHistoryTimestamp } from './historyFormat';
 
 const customers = [
@@ -38,17 +37,6 @@ describe('filterCustomers', () => {
     const copy = [...customers];
     filterCustomers(customers, { search: '', city: '' }, ['d']);
     expect(customers).toEqual(copy);
-  });
-});
-
-describe('readRecentCustomerIds', () => {
-  it('recent_customers を読む。壊れていたら空', () => {
-    expect(readRecentCustomerIds(createMemoryStorage({ recent_customers: '["a","b",3]' }))).toEqual([
-      'a',
-      'b',
-    ]);
-    expect(readRecentCustomerIds(createMemoryStorage({ recent_customers: '{' }))).toEqual([]);
-    expect(readRecentCustomerIds(createMemoryStorage())).toEqual([]);
   });
 });
 

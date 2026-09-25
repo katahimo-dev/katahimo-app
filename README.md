@@ -193,8 +193,8 @@ pnpm worker                          # outbox ポーラー(ミラーを使うと
 | `pnpm job:csv-import` | 各テナントの最新の顧客CSVが未取込なら取り込む(本番は 03:00 JST。ローカルは `CUSTOMER_CSV_LOCAL_DIR=<dir>` の `<dir>/<テナントslug>/Kokyaku_YYYYMMDDHHmm_N.csv`) |
 | `pnpm --filter @katahimo/worker job:sync-busy-blocks` | スタッフのカレンダーの free/busy を同期(将来のマッチング用) |
 | `pnpm --filter @katahimo/worker outbox:once` | outbox を1回だけ処理して終わる |
-| `pnpm --filter @katahimo/gas-preview shoot [-- --only <正規表現>]` | GAS版との見比べ(web 開発サーバーを起動しておく) |
-| `pnpm --filter @katahimo/gas-preview e2e [-- --web-url …]` | 実際のAPI・DBでの通し確認(API と web を起動しておく) |
+| `pnpm --filter @katahimo/gas-preview shoot [-- --only <正規表現>]` | GAS版との見比べ(web 開発サーバーはこのコマンドが起動する。差分が 0.05% を越えたら終了コード1) |
+| `pnpm --filter @katahimo/gas-preview e2e [-- --web-url …]` | 実際のAPI・DBでの通し確認(API が動いていなければ起動し、web 開発サーバーも起動する) |
 
 ## CI とブランチ保護
 
@@ -203,7 +203,7 @@ GitHub Actions(`.github/workflows/`):
 | ワークフロー | 契機 | 内容 |
 | --- | --- | --- |
 | `ci.yml` の `check` | PR・main への push | `pnpm install --frozen-lockfile` → lint → 型検査 → PostgreSQL 17(本番の Cloud SQL と同じメジャー)に `infra/initdb` でロールを作って `pnpm db:migrate` → `pnpm db:generate` で差分が出ないこと(スキーマを変えてマイグレーションを作り忘れていないか)→ `pnpm test` → `pnpm build` |
-| `ci.yml` の `preview` | `check` の成功後 | GAS版との見比べ(`shoot`、モック)と通し確認(`e2e`、実際の API・DB)。撮影結果は成果物 `gas-preview-out`。**当面は失敗してもワークフローを失敗にしない**(ハーネスの作り替え中のため) |
+| `ci.yml` の `preview` | `check` の成功後 | GAS版との見比べ(`shoot`、モック)と通し確認(`e2e`、実際の API・DB)。撮影結果は成果物 `gas-preview-out`。差分が 0.05% を越えた場面・撮れなかった場面、失敗した手順があれば失敗する |
 | `infra.yml` | `infra/gcp/**` の変更 | `terraform fmt -check` / `init -backend=false -lockfile=readonly` / `validate`(GCP には接続しない) |
 
 依存の更新は Dependabot(`.github/dependabot.yml`: npm は minor / patch をまとめて週1回、Docker のベースイメージ・

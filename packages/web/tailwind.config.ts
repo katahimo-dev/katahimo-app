@@ -7,7 +7,8 @@ import type { Config } from 'tailwindcss';
  * フォントやルートの文字サイズなど、GAS版が<style>で独自に書いていた部分は src/styles/index.css にある。
  */
 export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  // この設定ファイルからの相対パス(Vite をどのフォルダから起動しても同じファイルを見る)
+  content: { relative: true, files: ['./index.html', './src/**/*.{ts,tsx}'] },
   theme: {
     extend: {},
   },

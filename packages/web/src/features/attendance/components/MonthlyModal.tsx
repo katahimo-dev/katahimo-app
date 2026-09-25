@@ -1,15 +1,14 @@
 import type { AttendanceMonth } from '@katahimo/shared';
 import { useState } from 'react';
 import { userMessageOf } from '../../../api/client';
-import { ModalFooter, ModalHeader } from '../../../ui/modal';
+import { Modal, ModalFooter, ModalHeader } from '../../../ui/modal';
 import { EmptyState } from '../../../ui/StatusViews';
 import { showToast } from '../../../ui/toast';
 import { useAttendanceInvalidation, useAttendanceMonth } from '../hooks/attendanceQueries';
 import type { SlotKey, SlotValues } from '../model/dayRecord';
 import { formatKmJa, formatMinutesJa, formatYen } from '../model/format';
 import { buildMonthlyDayCards, type MonthlyDayCard, receiptRows } from '../model/monthly';
-import { dayOfWeekLabel, toYmd, updatedAtLabel } from '../model/week';
-import { Dialog } from './Dialog';
+import { dayOfWeekLabel, todayJst, updatedAtLabel } from '../model/week';
 import { LoadingBlock } from './LoadingBlock';
 
 /**
@@ -43,7 +42,7 @@ export function MonthlyModal({
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
-      const ym = monthInput || toYmd(new Date()).slice(0, 7);
+      const ym = monthInput || todayJst().slice(0, 7);
       setMonthInput(ym);
       setRequestedMonth(ym);
     }
@@ -67,7 +66,9 @@ export function MonthlyModal({
   };
 
   return (
-    <Dialog
+    <Modal
+      transition="none"
+      onClose={onClose}
       open={open}
       labelledBy="attendanceMonthlyTitle"
       className="fixed inset-0 bg-black bg-opacity-50 z-[110] flex items-center justify-center p-4"
@@ -129,7 +130,7 @@ export function MonthlyModal({
           </button>
         </ModalFooter>
       </div>
-    </Dialog>
+    </Modal>
   );
 }
 

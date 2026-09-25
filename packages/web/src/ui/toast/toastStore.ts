@@ -10,11 +10,20 @@
  * React の外(APIクライアント等)からも呼べるよう、モジュール単位の小さなストアにしている。
  * 画面側は `<Toast />` が useSyncExternalStore で購読する。
  */
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
 export interface ToastState {
   message: string;
   isError: boolean;
   visible: boolean;
   closeButtonVisible: boolean;
+  /** 出すたびに増える番号(同じ文言を続けて出したときも、読み上げに気づいてもらえるように) */
+  seq: number;
+  /** お知らせの中のボタン(例: 新しい版の「更新する」)。あるときは自動では消さない */
+  action: ToastAction | null;
 }
 
 export const TOAST_AUTO_HIDE_MS = 4000;
@@ -34,7 +43,14 @@ const defaultTimers: TimerApi = {
 
 export function createToastStore(timers: TimerApi = defaultTimers) {
   // GAS版の初期状態(非表示・灰色)と同じ
-  let state: ToastState = { message: '', isError: false, visible: false, closeButtonVisible: false };
+  let state: ToastState = {
+    message: '',
+    isError: false,
+    visible: false,
+    closeButtonVisible: false,
+    seq: 0,
+    action: null,
+  };
   let hideTimer: unknown = null;
   const listeners = new Set<Listener>();
 
@@ -58,10 +74,10 @@ export function createToastStore(timers: TimerApi = defaultTimers) {
         listeners.delete(listener);
       };
     },
-    show(message: string, isError = false) {
+    show(message: string, isError = false, action: ToastAction | null = null) {
       clearHideTimer();
-      set({ message, isError, visible: true, closeButtonVisible: isError });
-      if (!isError) {
+      set({ message, isError, visible: true, closeButtonVisible: isError, seq: state.seq + 1, action });
+      if (!isError && !action) {
         hideTimer = timers.setTimeout(() => {
           hideTimer = null;
           set({ ...state, visible: false, closeButtonVisible: false });
@@ -83,6 +99,11 @@ export const toastStore = createToastStore();
 /** GAS版 showToast(message, isError) と同じ呼び方。 */
 export function showToast(message: string, isError = false) {
   toastStore.show(message, isError);
+}
+
+/** ボタンつきのお知らせ(押すか「閉じる」まで消えない)。GAS版には無い(新しい版のお知らせに使う)。 */
+export function showActionToast(message: string, action: ToastAction) {
+  toastStore.show(message, false, action);
 }
 
 /** GAS版 hideToast() と同じ。 */

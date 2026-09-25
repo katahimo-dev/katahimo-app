@@ -40,7 +40,7 @@ export function TextSizeProvider({ children }: { children: ReactNode }) {
     () => ({ textSize, setTextSize, cycleTextSize }),
     [textSize, setTextSize, cycleTextSize],
   );
-  return <TextSizeContext.Provider value={value}>{children}</TextSizeContext.Provider>;
+  return <TextSizeContext value={value}>{children}</TextSizeContext>;
 }
 
 export function useTextSize(): TextSizeContextValue {

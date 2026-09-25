@@ -35,7 +35,7 @@ export function HomeTabsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(() => ({ activeTab, visitedTabs, switchTab }), [activeTab, visitedTabs, switchTab]);
-  return <HomeTabsContext.Provider value={value}>{children}</HomeTabsContext.Provider>;
+  return <HomeTabsContext value={value}>{children}</HomeTabsContext>;
 }
 
 export function useHomeTabs(): HomeTabsContextValue {

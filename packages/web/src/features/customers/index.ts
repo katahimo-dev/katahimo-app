@@ -1,3 +1,3 @@
 export { CustomersTab } from './CustomersTab';
-export { setCustomerSearch, useCustomerSearch } from './customerSearchStore';
+export { CustomerSearchProvider, useCustomerSearch, useSetCustomerSearch } from './customerSearchStore';
 export { useCustomerList } from './useCustomerList';

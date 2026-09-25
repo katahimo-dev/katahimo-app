@@ -1,5 +1,5 @@
 import type { Page } from 'playwright-core';
-import { DEFAULT_TODAY } from '../dates';
+import { DEFAULT_NOW_ISO, DEFAULT_TODAY } from '../dates';
 import { ADMIN, DATA_VERSION, routeAppointments, STAFF } from '../fixtures';
 import { type Shot, type Target, visible } from './types';
 
@@ -57,8 +57,9 @@ async function loadFromBrowserCache(page: Page, target: Target) {
   const res = target === 'gas' ? routeWithName(name) : webRouteWithName(name);
   await page.evaluate(
     ({ key, value }) => localStorage.setItem(key, value),
-    // 1時間前に調べた結果(「09:00 時点」)
-    { key, value: JSON.stringify({ res, ts: Date.now() - 60 * 60 * 1000 }) },
+    // 1時間前に調べた結果(「09:00 時点」)。撮影の時計(10:00)から数える(Node の本当の時刻で作ると、GAS版と
+    // 新アプリを撮る間に分が変わったとき「HH:MM 時点」がずれる)
+    { key, value: JSON.stringify({ res, ts: Date.parse(DEFAULT_NOW_ISO) - 60 * 60 * 1000 }) },
   );
   await button(page, '☀️ 今日').click();
   await wait(page);
@@ -199,7 +200,7 @@ export const scheduleShots: Shot[] = [
         await button(page, '✏️ この訪問の日報を書く').click();
         await page.getByText('お客様の情報を読み込んでいます…').waitFor({ timeout: 2000 });
       },
-      hide: ['[role="status"]'],
+      hide: ['#toast'],
     },
     gas: {
       mock: { delays: { getData: 'never' }, overrides: { checkDataVersion: '' } },

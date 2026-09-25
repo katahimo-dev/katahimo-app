@@ -9,7 +9,7 @@ interface ResetVerifyModalProps {
   onSubmit: () => void;
 }
 
-/** GAS版 #resetVerifyModal と同じ見た目。 */
+/** GAS版 #resetVerifyModal と同じ見た目(中身は <form>。Enter でも送れる)。 */
 export function ResetVerifyModal({
   code,
   onCodeChange,
@@ -22,7 +22,14 @@ export function ResetVerifyModal({
 }: ResetVerifyModalProps) {
   return (
     <div className="fixed inset-0 bg-gray-900 z-[60] flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm space-y-4">
+      <form
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit();
+        }}
+        className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm space-y-4"
+      >
         <h3 className="text-xl font-bold text-gray-800">メールに届いた番号を入力</h3>
         <p className="text-base text-gray-600">
           メールに届いた6けたの番号と、新しいパスワードを入力してください。
@@ -64,15 +71,14 @@ export function ResetVerifyModal({
             キャンセル
           </button>
           <button
-            type="button"
-            onClick={onSubmit}
+            type="submit"
             disabled={submitting}
             className="flex-1 min-h-12 py-3 bg-green-600 text-white text-base font-bold rounded-xl"
           >
             {submitting ? '設定中...' : 'このパスワードにする'}
           </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }

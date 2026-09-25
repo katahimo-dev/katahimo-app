@@ -17,6 +17,8 @@ describe('toastStore(GAS版 showToast / hideToast)', () => {
       isError: false,
       visible: true,
       closeButtonVisible: false,
+      seq: 1,
+      action: null,
     });
     vi.advanceTimersByTime(TOAST_AUTO_HIDE_MS - 1);
     expect(store.getState().visible).toBe(true);
@@ -34,6 +36,8 @@ describe('toastStore(GAS版 showToast / hideToast)', () => {
       isError: true,
       visible: true,
       closeButtonVisible: true,
+      seq: 1,
+      action: null,
     });
     store.hide();
     expect(store.getState()).toMatchObject({ visible: false, closeButtonVisible: false });
@@ -68,5 +72,20 @@ describe('toastStore(GAS版 showToast / hideToast)', () => {
     unsubscribe();
     store.show('b');
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('同じ文言を続けて出しても番号が変わる(読み上げが繰り返されるように)', () => {
+    const store = createToastStore();
+    store.show('保存しました');
+    store.show('保存しました');
+    expect(store.getState().seq).toBe(2);
+  });
+
+  it('ボタンつきのお知らせは自動では消さない', () => {
+    const store = createToastStore();
+    const run = vi.fn();
+    store.show('新しい版があります', false, { label: '更新する', run });
+    vi.advanceTimersByTime(60_000);
+    expect(store.getState()).toMatchObject({ visible: true, action: { label: '更新する' } });
   });
 });

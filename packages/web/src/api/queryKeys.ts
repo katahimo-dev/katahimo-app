@@ -9,6 +9,8 @@
 export const queryKeys = {
   session: ['auth', 'me'] as const,
   uiConfig: ['ui-config'] as const,
+  /** 顧客データの版数(customers の下に置かない。読み直しの対象にならないように) */
+  dataVersion: ['system', 'data-version'] as const,
   activeStaff: ['staff', 'active'] as const,
   customers: {
     all: ['customers'] as const,

@@ -4,6 +4,8 @@ import {
   readStorage,
   removeStorage,
   STORAGE_KEYS,
+  type UserStorageScope,
+  userStorageKey,
   writeStorage,
 } from '../../../lib/storage';
 import { formatClock, parseClock } from './dateTime';
@@ -11,8 +13,8 @@ import type { ReportFormState, ReportMode } from './reportForm';
 
 /**
  * 保存していない日報の退避(GAS版 saveReportDraftSnapshot / applyPendingReportDraft_ /
- * restoreReportDraftIfAny)。入力が変わるたびに localStorage の `pending_report_draft` に書き、
- * 保存に成功したら消す。形はGAS版と同じ(GAS版で書きかけたものもそのまま読める)。
+ * restoreReportDraftIfAny)。入力が変わるたびに localStorage の `pending_report_draft@<法人>/<スタッフ>`
+ * (ログインしている人ごと)に書き、保存に成功したら消す。中身の形はGAS版と同じ。
  */
 const accidentDraftSchema = z.object({
   occurrenceTime: z.string().optional(),
@@ -74,17 +76,26 @@ export function buildDraftSnapshot(
   };
 }
 
-export function writePendingDraft(draft: PendingReportDraft, storage?: KeyValueStorage | null) {
-  writeStorage(STORAGE_KEYS.pendingReportDraft, JSON.stringify(draft), storage);
+const draftKey = (scope: UserStorageScope) => userStorageKey(STORAGE_KEYS.pendingReportDraft, scope);
+
+export function writePendingDraft(
+  draft: PendingReportDraft,
+  scope: UserStorageScope,
+  storage?: KeyValueStorage | null,
+) {
+  writeStorage(draftKey(scope), JSON.stringify(draft), storage);
 }
 
-export function clearPendingDraft(storage?: KeyValueStorage | null) {
-  removeStorage(STORAGE_KEYS.pendingReportDraft, storage);
+export function clearPendingDraft(scope: UserStorageScope, storage?: KeyValueStorage | null) {
+  removeStorage(draftKey(scope), storage);
 }
 
 /** 退避してある内容を読む。壊れていたら消して null(GAS版と同じ) */
-export function readPendingDraft(storage?: KeyValueStorage | null): PendingReportDraft | null {
-  const raw = readStorage(STORAGE_KEYS.pendingReportDraft, storage);
+export function readPendingDraft(
+  scope: UserStorageScope,
+  storage?: KeyValueStorage | null,
+): PendingReportDraft | null {
+  const raw = readStorage(draftKey(scope), storage);
   if (!raw) return null;
   try {
     const parsed = pendingReportDraftSchema.safeParse(JSON.parse(raw));
@@ -92,7 +103,7 @@ export function readPendingDraft(storage?: KeyValueStorage | null): PendingRepor
   } catch {
     // 下で消す
   }
-  clearPendingDraft(storage);
+  clearPendingDraft(scope, storage);
   return null;
 }
 

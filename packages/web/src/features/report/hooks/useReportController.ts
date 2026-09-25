@@ -5,19 +5,19 @@ import { ApiRequestError, isUnauthenticated } from '../../../api/client';
 import { customerQueryKeys, customersApi } from '../../../api/customers';
 import { reportsApi } from '../../../api/reports';
 import { useUiConfig } from '../../../app/uiConfig/useUiConfig';
-import { readStorage, STORAGE_KEYS, writeStorage } from '../../../lib/storage';
+import { jstHHmm, todayJst } from '../../../lib/date';
+import { pushRecentCustomer } from '../../../lib/recentCustomers';
+import {
+  readStorage,
+  STORAGE_KEYS,
+  type UserStorageScope,
+  userStorageKey,
+  writeStorage,
+} from '../../../lib/storage';
 import { confirmNative, useConfirmModal } from '../../../ui/confirm';
 import { showErrorToast, showToast } from '../../../ui/toast';
 import { useSession } from '../../auth';
-import {
-  buildReceiptTimestamp,
-  type ClockTime,
-  formatClock,
-  formatNowHHmm,
-  shiftReportDate,
-  toLocalDateString,
-} from '../model/dateTime';
-import { pushRecentCustomer } from '../model/recentCustomers';
+import { buildReceiptTimestamp, type ClockTime, formatClock, shiftReportDate } from '../model/dateTime';
 import {
   applyDraftToForm,
   buildDraftSnapshot,
@@ -61,12 +61,13 @@ export interface HintContent {
   body: { kind: 'text'; text: string } | { kind: 'assessment'; type: RatingType };
 }
 
-const today = () => toLocalDateString(new Date());
+/** 今日(業務日はJST) */
+const today = () => todayJst();
 
-function lastStartTime(): ClockTime {
+function lastStartTime(scope: UserStorageScope): ClockTime {
   return {
-    hour: readStorage(STORAGE_KEYS.lastStartHour) || '09',
-    minute: readStorage(STORAGE_KEYS.lastStartMinute) || '00',
+    hour: readStorage(userStorageKey(STORAGE_KEYS.lastStartHour, scope)) || '09',
+    minute: readStorage(userStorageKey(STORAGE_KEYS.lastStartMinute, scope)) || '00',
   };
 }
 
@@ -75,15 +76,27 @@ function lastStartTime(): ClockTime {
  * ダイアログを開くたび(session.nonce が変わるたび)に入力を初めの状態に戻し、書きかけがあれば戻す。
  */
 export function useReportController(session: ReportSession | null) {
-  const { user } = useSession();
+  const { user, storageScope } = useSession();
   const confirm = useConfirmModal();
   const { data: uiConfig } = useUiConfig();
 
   // GAS版はページを開いたときに 09:00〜11:00・今日で始まる(お客様の指定なしの領収書はこの値を使う)
-  const [form, dispatch] = useReducer(reportFormReducer, undefined, () =>
+  const [initialForm] = useState(() =>
     createInitialForm({ today: today(), lastStart: { hour: '09', minute: '00' }, lastAccidentTime: '' }),
   );
-  const receipts = useReceipts();
+  const [form, dispatch] = useReducer(reportFormReducer, initialForm);
+  /**
+   * いちばん新しい入力の状態。変える操作はすべて apply() を通し、reducer で次の状態をその場で計算して
+   * ここにも入れる(await のあとや、書きかけの退避で、描画を待たずに最新の値を読めるように)。
+   */
+  const formRef = useRef(initialForm);
+  const apply = useCallback((action: ReportFormAction) => {
+    formRef.current = reportFormReducer(formRef.current, action);
+    dispatch(action);
+  }, []);
+  const receipts = useReceipts(storageScope);
+  const writeLastAccidentTime = (value: string) =>
+    writeStorage(userStorageKey(STORAGE_KEYS.lastAccidentTime, storageScope), value);
   const [generatingSince, setGeneratingSince] = useState<number | null>(null);
   const [savingSince, setSavingSince] = useState<number | null>(null);
   const [visitComplete, setVisitComplete] = useState<VisitCompleteState>({ status: 'idle' });
@@ -91,14 +104,11 @@ export function useReportController(session: ReportSession | null) {
   const [hint, setHint] = useState<HintContent | null>(null);
   const [hintOpen, setHintOpen] = useState(false);
   const [scrollRequest, setScrollRequest] = useState<{ target: ScrollTarget; seq: number } | null>(null);
-  const [snapshotRequest, setSnapshotRequest] = useState<{ mode: ReportMode; seq: number } | null>(null);
 
   const warningsRef = useRef<HTMLDivElement>(null);
   const accidentResultRef = useRef<HTMLDivElement>(null);
   const scrollRefs = useMemo(() => ({ warnings: warningsRef, accidentResult: accidentResultRef }), []);
 
-  const formRef = useRef(form);
-  formRef.current = form;
   const nonce = session?.nonce ?? 0;
   const nonceRef = useRef(nonce);
   const generatingRef = useRef<number | null>(null);
@@ -124,7 +134,9 @@ export function useReportController(session: ReportSession | null) {
         }
       : null;
   const customerRef = useRef(customer);
-  customerRef.current = customer;
+  useLayoutEffect(() => {
+    customerRef.current = customer;
+  });
 
   // ── 開くたびに初めの状態に戻す(GAS版 openModal / openStandaloneReceiptModal) ──
   // biome-ignore lint/correctness/useExhaustiveDependencies: 開き直したとき(nonce が変わったとき)だけ戻す
@@ -141,13 +153,13 @@ export function useReportController(session: ReportSession | null) {
     setVisitComplete({ status: 'idle' });
     let initial = createInitialForm({
       today: today(),
-      lastStart: lastStartTime(),
-      lastAccidentTime: readStorage(STORAGE_KEYS.lastAccidentTime) || '',
+      lastStart: lastStartTime(storageScope),
+      lastAccidentTime: readStorage(userStorageKey(STORAGE_KEYS.lastAccidentTime, storageScope)) || '',
     });
     // 保存していない入力が残っていれば、どのお客様を開いたときでもまず戻して見せる(GAS版と同じ)
-    const draft = readPendingDraft();
+    const draft = readPendingDraft(storageScope);
     if (draft) initial = applyDraftToForm(initial, draft);
-    dispatch({ type: 'reset', state: initial });
+    apply({ type: 'reset', state: initial });
     if (draft) showToast(draftRestoredMessage(draft), true);
   }, [nonce]);
 
@@ -157,36 +169,36 @@ export function useReportController(session: ReportSession | null) {
     if (session?.kind !== 'customer' || !detail || familyInitNonceRef.current === session.nonce) return;
     familyInitNonceRef.current = session.nonce;
     const first = detail.familyMembers[0];
-    dispatch({
+    apply({
       type: 'selectFamily',
       index: first ? '0' : '',
       member: first ? { name: first.name, dob: first.dob ?? '' } : null,
     });
-  }, [session, detail]);
+  }, [session, detail, apply]);
 
   // ── 書きかけの退避(GAS版 markDirty → saveReportDraftSnapshot) ──
-  useEffect(() => {
-    if (!snapshotRequest) return;
-    const target = customerRef.current;
-    if (!target) return;
-    writePendingDraft(buildDraftSnapshot(formRef.current, target, snapshotRequest.mode, Date.now()));
-  }, [snapshotRequest]);
-  const requestSnapshot = useCallback((mode: ReportMode) => {
-    setSnapshotRequest((prev) => ({ mode, seq: (prev?.seq ?? 0) + 1 }));
-  }, []);
+  /** いまの入力(apply 済みの最新の状態)を退避する */
+  const saveSnapshot = useCallback(
+    (mode: ReportMode) => {
+      const target = customerRef.current;
+      if (!target) return;
+      writePendingDraft(buildDraftSnapshot(formRef.current, target, mode, Date.now()), storageScope);
+    },
+    [storageScope],
+  );
 
   /** 入力欄が変わった(保存ボタンを「保存する」に戻し、書きかけを退避する) */
   const markEdited = useCallback(() => {
-    dispatch({ type: 'markDirty' });
-    requestSnapshot(formRef.current.mode);
-  }, [requestSnapshot]);
+    apply({ type: 'markDirty' });
+    saveSnapshot(formRef.current.mode);
+  }, [apply, saveSnapshot]);
 
   const edit = useCallback(
     (action: ReportFormAction) => {
-      dispatch(action);
+      apply(action);
       markEdited();
     },
-    [markEdited],
+    [apply, markEdited],
   );
 
   // ── スクロール ──
@@ -203,15 +215,15 @@ export function useReportController(session: ReportSession | null) {
 
   // ── 入力の操作 ──
   const actions = {
-    switchMode: (mode: ReportMode) => dispatch({ type: 'switchMode', mode }),
-    toggleDateTimeEditor: () => dispatch({ type: 'toggleDateTimeEditor' }),
+    switchMode: (mode: ReportMode) => apply({ type: 'switchMode', mode }),
+    toggleDateTimeEditor: () => apply({ type: 'toggleDateTimeEditor' }),
     changeDate: (offset: number) => {
       const next = shiftReportDate(formRef.current.reportDate, offset, today());
-      if (next) dispatch({ type: 'setDate', date: next });
+      if (next) apply({ type: 'setDate', date: next });
     },
     setStart: (start: ClockTime) => {
-      writeStorage(STORAGE_KEYS.lastStartHour, start.hour);
-      writeStorage(STORAGE_KEYS.lastStartMinute, start.minute);
+      writeStorage(userStorageKey(STORAGE_KEYS.lastStartHour, storageScope), start.hour);
+      writeStorage(userStorageKey(STORAGE_KEYS.lastStartMinute, storageScope), start.minute);
       edit({ type: 'setStart', start });
     },
     setEnd: (end: ClockTime) => edit({ type: 'setEnd', end }),
@@ -220,7 +232,7 @@ export function useReportController(session: ReportSession | null) {
     setDailyText: (field: 'internalText' | 'customerText', value: string) =>
       edit({ type: 'setDailyText', field, value }),
     setAccidentField: (field: keyof AccidentFields, value: string) => {
-      if (field === 'occurrenceTime') writeStorage(STORAGE_KEYS.lastAccidentTime, value);
+      if (field === 'occurrenceTime') writeLastAccidentTime(value);
       edit({ type: 'setAccidentField', field, value });
     },
     setAccidentType: (accidentType: AccidentType) => edit({ type: 'setAccidentType', accidentType }),
@@ -228,7 +240,7 @@ export function useReportController(session: ReportSession | null) {
       const member = index === '' ? null : (customerRef.current?.family[Number(index)] ?? null);
       edit({ type: 'selectFamily', index, member });
     },
-    setRating: (rating: RatingType, score: number) => dispatch({ type: 'setRating', rating, score }),
+    setRating: (rating: RatingType, score: number) => apply({ type: 'setRating', rating, score }),
     setUnregisteredName: (name: string) => {
       setUnregisteredName(name);
       markEdited();
@@ -302,8 +314,8 @@ export function useReportController(session: ReportSession | null) {
         flushSync(finish);
         if (requestNonce !== nonceRef.current) return;
         if (isDailyDraftApiError(draft.warnings)) {
-          dispatch({ type: 'showWarnings', message: draft.internal || '不明なエラーが発生しました' });
-          requestSnapshot('daily');
+          apply({ type: 'showWarnings', message: draft.internal || '不明なエラーが発生しました' });
+          saveSnapshot('daily');
           scrollTo('warnings');
           return;
         }
@@ -311,18 +323,18 @@ export function useReportController(session: ReportSession | null) {
         if (warnings !== null) {
           // GAS版は結果欄を出す前に、足りない情報の知らせまでスクロールしていた。同じ位置で止まるよう、
           // 先に知らせだけを出して(すぐ描画して)スクロールしてから結果を入れる。
-          flushSync(() => dispatch({ type: 'showWarnings', message: warnings }));
+          flushSync(() => apply({ type: 'showWarnings', message: warnings }));
           warningsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
         // 足りない情報が無いときはスクロールしない(GAS版は結果欄を出す前に結果欄へのスクロールを
         // 呼んでいたため、実際には動いていなかった。同じ見え方にする)
-        dispatch({
+        apply({
           type: 'dailyGenerated',
           internal: draft.internal,
           customer: appendStaffSurname(draft.customer, user.name),
           warnings,
         });
-        requestSnapshot('daily');
+        saveSnapshot('daily');
       } else {
         const { draft } = await reportsApi.generateAccident({
           text: f.memo,
@@ -333,12 +345,12 @@ export function useReportController(session: ReportSession | null) {
         flushSync(finish);
         if (requestNonce !== nonceRef.current) return;
         if ('error' in draft) {
-          requestSnapshot('accident');
+          saveSnapshot('accident');
           showToast(draft.error, true);
           return;
         }
-        writeStorage(STORAGE_KEYS.lastAccidentTime, draft.occurrenceTime || '');
-        dispatch({
+        writeLastAccidentTime(draft.occurrenceTime || '');
+        apply({
           type: 'accidentGenerated',
           draft: {
             occurrenceTime: draft.occurrenceTime || '',
@@ -352,7 +364,7 @@ export function useReportController(session: ReportSession | null) {
           },
         });
         scrollTo('accidentResult');
-        requestSnapshot('accident');
+        saveSnapshot('accident');
       }
     } catch (e) {
       if (requestNonce === nonceRef.current) showErrorToast(e);
@@ -373,6 +385,7 @@ export function useReportController(session: ReportSession | null) {
     const f = formRef.current;
     const mode = f.mode;
     const startedAt = Date.now();
+    const requestNonce = nonceRef.current;
     savingRef.current = startedAt;
     setSavingSince(startedAt);
     const finish = () => {
@@ -425,11 +438,14 @@ export function useReportController(session: ReportSession | null) {
         message = `${f.accidentType}を保存しました`;
         savedId = res.report.id;
       }
-      dispatch({ type: 'saved', mode, reportId: savedId });
-      // 保存できたので、書きかけの退避は要らない
-      clearPendingDraft();
-      pushRecentCustomer(target.id);
+      pushRecentCustomer(target.id, storageScope);
       showToast(message);
+      // 待つ間にダイアログを開き直していたら(別のお客様かもしれない)、いまの入力の「保存しました」・
+      // 上書き用の報告ID・書きかけの退避には触らない(次の保存が前のお客様の報告を上書きしないように)
+      if (requestNonce !== nonceRef.current) return;
+      apply({ type: 'saved', mode, reportId: savedId });
+      // 保存できたので、書きかけの退避は要らない
+      clearPendingDraft(storageScope);
     } catch (e) {
       showErrorToast(e);
     } finally {
@@ -461,6 +477,7 @@ export function useReportController(session: ReportSession | null) {
       return;
     }
     const f = formRef.current;
+    const requestNonce = nonceRef.current;
     setVisitComplete({ status: 'sending' });
     try {
       await reportsApi.visitComplete({
@@ -469,10 +486,10 @@ export function useReportController(session: ReportSession | null) {
         startTime: formatClock(f.start),
         endTime: formatClock(f.end),
       });
-      setVisitComplete({ status: 'sent', at: formatNowHHmm(new Date()) });
+      if (requestNonce === nonceRef.current) setVisitComplete({ status: 'sent', at: jstHHmm() });
       showToast('訪問終わりました、と事務局に知らせました');
     } catch (e) {
-      setVisitComplete({ status: 'idle' });
+      if (requestNonce === nonceRef.current) setVisitComplete({ status: 'idle' });
       if (e instanceof ApiRequestError && !isUnauthenticated(e)) {
         showToast('お知らせを送れませんでした。電波を確認して、もう一度押してください', true);
       } else {

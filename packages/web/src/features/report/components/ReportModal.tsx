@@ -1,4 +1,4 @@
-import { useFadeTransition } from '../../../ui/modal';
+import { Modal } from '../../../ui/modal';
 import { useReportController } from '../hooks/useReportController';
 import { useVoiceInput } from '../hooks/useVoiceInput';
 import {
@@ -39,8 +39,7 @@ export function ReportModal({
   onClose: () => void;
 }) {
   const c = useReportController(session);
-  const { mounted, shown } = useFadeTransition(open);
-  const voice = useVoiceInput(c.actions.appendMemo);
+  const voice = useVoiceInput(c.actions.appendMemo, open, session?.nonce);
 
   const f = c.form;
   const standalone = session?.kind === 'standalone';
@@ -49,113 +48,116 @@ export function ReportModal({
 
   return (
     <>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modalCustomerName"
+      <Modal
+        open={open}
+        keepMounted
         id="reportModal"
-        className={cx(
-          'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center transition-opacity',
-          !mounted && 'hidden',
-          !shown && 'opacity-0',
-        )}
+        labelledBy="modalCustomerName"
+        onClose={onClose}
+        className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center transition-opacity"
       >
-        <div
-          className={cx(
-            'bg-white w-full max-w-md h-[90vh] sm:h-auto sm:max-h-[85vh] sm:rounded-2xl rounded-t-2xl shadow-2xl flex flex-col transform transition-transform',
-            !shown && 'translate-y-full',
-          )}
-        >
-          <ReportHeader
-            title={standalone ? STANDALONE_TITLE : (c.customer?.name ?? '')}
-            subtitle={standalone ? STANDALONE_SUBTITLE : (c.customer?.address ?? '')}
-            showUnregisteredName={standalone}
-            unregisteredName={c.unregisteredName}
-            onUnregisteredNameChange={c.actions.setUnregisteredName}
-            onClose={onClose}
-          />
+        {({ shown }) => (
+          <div
+            className={cx(
+              'bg-white w-full max-w-md h-[90vh] sm:h-auto sm:max-h-[85vh] sm:rounded-2xl rounded-t-2xl shadow-2xl flex flex-col transform transition-transform',
+              !shown && 'translate-y-full',
+            )}
+          >
+            <ReportHeader
+              title={standalone ? STANDALONE_TITLE : (c.customer?.name ?? '')}
+              subtitle={standalone ? STANDALONE_SUBTITLE : (c.customer?.address ?? '')}
+              showUnregisteredName={standalone}
+              unregisteredName={c.unregisteredName}
+              onUnregisteredNameChange={c.actions.setUnregisteredName}
+              onClose={onClose}
+            />
 
-          <ModeTabs mode={f.mode} hidden={standalone} onSwitch={c.actions.switchMode} />
+            <ModeTabs mode={f.mode} hidden={standalone} onSwitch={c.actions.switchMode} />
 
-          <div className="p-4 pb-6 overflow-y-auto flex-grow space-y-4">
-            <DateTimeSection
-              form={f}
-              today={c.today}
+            <div className="p-4 pb-6 overflow-y-auto flex-grow space-y-4">
+              <DateTimeSection
+                form={f}
+                today={c.today}
+                hidden={standalone}
+                onToggleEditor={c.actions.toggleDateTimeEditor}
+                onChangeDate={c.actions.changeDate}
+                onStartChange={c.actions.setStart}
+                onEndChange={c.actions.setEnd}
+              />
+
+              <FamilySelector
+                hidden={standalone || isDaily}
+                family={c.customer?.family ?? []}
+                value={f.familyIndex}
+                today={c.today}
+                onSelect={c.actions.selectFamily}
+              />
+
+              <MemoSection
+                hidden={standalone}
+                mode={f.mode}
+                memo={f.memo}
+                placeholder={placeholder}
+                accidentType={f.accidentType}
+                listening={voice.listening}
+                warnings={f.warnings}
+                warningsRef={c.scrollRefs.warnings}
+                onMemoChange={c.actions.setMemo}
+                onAccidentTypeChange={c.actions.setAccidentType}
+                onOpenHint={c.openWritingHint}
+                onToggleVoice={voice.toggle}
+              />
+
+              <DailyResult
+                shown={!standalone && isDaily && f.dailyResultShown}
+                internalText={f.internalText}
+                customerText={f.customerText}
+                onChange={c.actions.setDailyText}
+              />
+
+              <AccidentDraft
+                shown={!standalone && !isDaily && f.accidentResultShown}
+                values={f.accident}
+                containerRef={c.scrollRefs.accidentResult}
+                onChange={c.actions.setAccidentField}
+              />
+
+              <AssessmentSection
+                hidden={standalone || !isDaily}
+                ratings={f.ratings}
+                assessments={c.uiConfig?.assessments}
+                onRate={c.actions.setRating}
+                onShowHint={c.openAssessmentHint}
+              />
+
+              <ReceiptSection
+                hidden={!standalone && !isDaily}
+                receipts={c.receipts}
+                onSend={c.sendReceipts}
+                onEdited={c.actions.markEdited}
+              />
+
+              <VisitCompleteButton
+                hidden={standalone}
+                state={c.visitComplete}
+                onClick={c.sendVisitComplete}
+              />
+            </div>
+
+            <ReportFooter
               hidden={standalone}
-              onToggleEditor={c.actions.toggleDateTimeEditor}
-              onChangeDate={c.actions.changeDate}
-              onStartChange={c.actions.setStart}
-              onEndChange={c.actions.setEnd}
+              generateLabel={generateButtonLabel(f)}
+              hasResult={hasGeneratedResult(f)}
+              generatingSince={c.generatingSince}
+              saveShown={isSaveButtonShown(f)}
+              savedAndClean={isSavedAndClean(f)}
+              savingSince={c.savingSince}
+              onGenerate={c.generate}
+              onSave={c.save}
             />
-
-            <FamilySelector
-              hidden={standalone || isDaily}
-              family={c.customer?.family ?? []}
-              value={f.familyIndex}
-              today={new Date()}
-              onSelect={c.actions.selectFamily}
-            />
-
-            <MemoSection
-              hidden={standalone}
-              mode={f.mode}
-              memo={f.memo}
-              placeholder={placeholder}
-              accidentType={f.accidentType}
-              listening={voice.listening}
-              warnings={f.warnings}
-              warningsRef={c.scrollRefs.warnings}
-              onMemoChange={c.actions.setMemo}
-              onAccidentTypeChange={c.actions.setAccidentType}
-              onOpenHint={c.openWritingHint}
-              onToggleVoice={voice.toggle}
-            />
-
-            <DailyResult
-              shown={!standalone && isDaily && f.dailyResultShown}
-              internalText={f.internalText}
-              customerText={f.customerText}
-              onChange={c.actions.setDailyText}
-            />
-
-            <AccidentDraft
-              shown={!standalone && !isDaily && f.accidentResultShown}
-              values={f.accident}
-              containerRef={c.scrollRefs.accidentResult}
-              onChange={c.actions.setAccidentField}
-            />
-
-            <AssessmentSection
-              hidden={standalone || !isDaily}
-              ratings={f.ratings}
-              assessments={c.uiConfig?.assessments}
-              onRate={c.actions.setRating}
-              onShowHint={c.openAssessmentHint}
-            />
-
-            <ReceiptSection
-              hidden={!standalone && !isDaily}
-              receipts={c.receipts}
-              onSend={c.sendReceipts}
-              onEdited={c.actions.markEdited}
-            />
-
-            <VisitCompleteButton hidden={standalone} state={c.visitComplete} onClick={c.sendVisitComplete} />
           </div>
-
-          <ReportFooter
-            hidden={standalone}
-            generateLabel={generateButtonLabel(f)}
-            hasResult={hasGeneratedResult(f)}
-            generatingSince={c.generatingSince}
-            saveShown={isSaveButtonShown(f)}
-            savedAndClean={isSavedAndClean(f)}
-            savingSince={c.savingSince}
-            onGenerate={c.generate}
-            onSave={c.save}
-          />
-        </div>
-      </div>
+        )}
+      </Modal>
 
       <HintModal
         open={c.hintOpen}

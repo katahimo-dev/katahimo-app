@@ -3,7 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { createMemoryStorage } from '../../lib/memoryStorage.test-helper';
 import { eventTypeBorderClass, eventTypeIcon, formatEventTypeLabel, isCustomerEventType } from './eventTypes';
 import { findCustomerByScheduleName } from './findCustomerByScheduleName';
-import { ROUTE_CACHE_TTL_MS, readCachedRoute, routeCacheKey, writeCachedRoute } from './routeCache';
+import {
+  pruneCachedRoutes,
+  ROUTE_CACHE_TTL_MS,
+  readCachedRoute,
+  routeCacheKey,
+  writeCachedRoute,
+} from './routeCache';
 import { formatRouteFetchedAt, scheduleDateFor } from './scheduleDate';
 import { itemsFromPlainSchedule, itemsFromRouteSchedule, toRouteLeg } from './scheduleItems';
 
@@ -160,6 +166,26 @@ describe('routeCache', () => {
     expect(readCachedRoute('s', 'd', 0, storage)).toBeNull();
     const storage2 = createMemoryStorage({ [routeCacheKey('s', 'd')]: JSON.stringify({ res }) });
     expect(readCachedRoute('s', 'd', 0, storage2)).toBeNull();
+    // 契約と形が違う値も使わない
+    const storage3 = createMemoryStorage({
+      [routeCacheKey('s', 'd')]: JSON.stringify({ res: { success: 'yes' }, ts: 0 }),
+    });
+    expect(readCachedRoute('s', 'd', 0, storage3)).toBeNull();
+  });
+
+  it('書くときに期限切れ・壊れたルートのキャッシュを消す(ほかのキーには触らない)', () => {
+    const storage = createMemoryStorage({
+      [routeCacheKey('s', '2026-09-20')]: JSON.stringify({ res, ts: 0 }),
+      [routeCacheKey('s', '2026-09-21')]: '{broken',
+      app_text_size: 'large',
+    });
+    const now = ROUTE_CACHE_TTL_MS + 1;
+    writeCachedRoute('s', '2026-09-25', res, now, storage);
+    expect(Object.keys(storage.snapshot()).sort()).toEqual(
+      ['app_text_size', routeCacheKey('s', '2026-09-25')].sort(),
+    );
+    pruneCachedRoutes(now, storage);
+    expect(readCachedRoute('s', '2026-09-25', now, storage)?.ts).toBe(now);
   });
 });
 
