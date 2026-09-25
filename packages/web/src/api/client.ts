@@ -1,0 +1,139 @@
+import { type ApiError, apiErrorSchema } from '@katahimo/shared';
+import type { z } from 'zod';
+import { NETWORK_ERROR_MESSAGE } from '../lib/messages';
+
+/**
+ * APIを呼ぶ共通の入口。応答は必ず @katahimo/shared のzodスキーマで検証してから返す
+ * (サーバーとの食い違いを画面の奥で気づくのではなく、ここで気づけるようにするため)。
+ *
+ * エラーは2種類に分ける(GAS版の withSuccessHandler / withFailureHandler の区別に相当):
+ * - `ApiRequestError`: サーバーが理由(apiErrorSchema)を返した(GAS版で success:false と message が返った場合)。
+ *   画面にはサーバーの message をそのまま出す。
+ * - `NetworkError`: 通信失敗・理由の無いエラー・応答の形が違う(GAS版の withFailureHandler)。
+ *   画面には「うまくいきませんでした。電波を確認して、もう一度押してください」を出す。
+ * どちらも `userMessageOf(error)` で画面に出す文言が得られる。
+ */
+
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code: ApiError['code'];
+  readonly fields: Record<string, string> | undefined;
+
+  constructor(status: number, body: ApiError) {
+    super(body.message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+    this.code = body.code;
+    this.fields = body.fields;
+  }
+}
+
+export class NetworkError extends Error {
+  readonly status: number | null;
+
+  constructor(detail: string, status: number | null = null) {
+    super(detail);
+    this.name = 'NetworkError';
+    this.status = status;
+  }
+}
+
+/** 画面に出す文言。サーバーが理由を返したらその理由、それ以外はGAS版と同じ通信失敗の文言。 */
+export function userMessageOf(error: unknown): string {
+  if (error instanceof ApiRequestError) return error.message;
+  return NETWORK_ERROR_MESSAGE;
+}
+
+export function isUnauthenticated(error: unknown): boolean {
+  return error instanceof ApiRequestError && error.status === 401;
+}
+
+type UnauthenticatedListener = () => void;
+let unauthenticatedListener: UnauthenticatedListener | null = null;
+
+/**
+ * ログイン中にセッションが切れた(401)ときに呼ばれる処理を登録する(features/auth が登録する)。
+ * ログイン・パスワード再設定など、未ログインで呼ぶAPIでは呼ばれない(`skipAuthHandler`)。
+ */
+export function setUnauthenticatedListener(listener: UnauthenticatedListener | null) {
+  unauthenticatedListener = listener;
+}
+
+export interface RequestOptions {
+  signal?: AbortSignal;
+  /** 401でもセッション切れ扱いにしない(ログイン画面から呼ぶAPI用) */
+  skipAuthHandler?: boolean;
+}
+
+type Query = Record<string, string | number | boolean | null | undefined>;
+
+function buildUrl(path: string, query?: Query): string {
+  if (!query) return path;
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null || value === '') continue;
+    params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
+async function request<S extends z.ZodTypeAny>(
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+  url: string,
+  schema: S,
+  body: unknown,
+  options: RequestOptions = {},
+): Promise<z.output<S>> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      credentials: 'include',
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: options.signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e;
+    throw new NetworkError(e instanceof Error ? e.message : String(e));
+  }
+
+  const json: unknown = await res.json().catch(() => undefined);
+
+  if (!res.ok) {
+    const parsedError = apiErrorSchema.safeParse(json);
+    // サーバーが理由(message)を付けて返したものは、5xx(外部サービスの失敗等)でもその理由を出す。
+    // 理由の無い失敗・想定外の失敗(code=internal)は通信失敗と同じ扱いにする。
+    if (parsedError.success && parsedError.data.code !== 'internal') {
+      if (res.status === 401 && !options.skipAuthHandler) unauthenticatedListener?.();
+      throw new ApiRequestError(res.status, parsedError.data);
+    }
+    throw new NetworkError(`${method} ${url} が ${res.status} を返しました`, res.status);
+  }
+
+  const parsed = schema.safeParse(json);
+  if (!parsed.success) {
+    console.error(`${method} ${url} の応答が契約と一致しません`, parsed.error.issues);
+    throw new NetworkError(`${method} ${url} の応答が契約と一致しません`, res.status);
+  }
+  return parsed.data;
+}
+
+export const api = {
+  get<S extends z.ZodTypeAny>(path: string, schema: S, query?: Query, options?: RequestOptions) {
+    return request('GET', buildUrl(path, query), schema, undefined, options);
+  },
+  post<S extends z.ZodTypeAny>(path: string, schema: S, body: unknown = {}, options?: RequestOptions) {
+    return request('POST', path, schema, body, options);
+  },
+  put<S extends z.ZodTypeAny>(path: string, schema: S, body: unknown = {}, options?: RequestOptions) {
+    return request('PUT', path, schema, body, options);
+  },
+  patch<S extends z.ZodTypeAny>(path: string, schema: S, body: unknown = {}, options?: RequestOptions) {
+    return request('PATCH', path, schema, body, options);
+  },
+  delete<S extends z.ZodTypeAny>(path: string, schema: S, options?: RequestOptions) {
+    return request('DELETE', path, schema, undefined, options);
+  },
+};

@@ -1,0 +1,1 @@
+export { AttendanceTab } from './AttendanceTab';

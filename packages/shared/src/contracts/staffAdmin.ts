@@ -63,3 +63,14 @@ export type UpdateStaffRequest = z.infer<typeof updateStaffRequestSchema>;
 /** POST/PATCH のレスポンス。 */
 export const adminStaffResponseSchema = z.object({ staff: adminStaffViewSchema });
 export type AdminStaffResponse = z.infer<typeof adminStaffResponseSchema>;
+
+// ── GET /api/staff ───────────────────────────────────────────
+
+/**
+ * 管理者用「表示するスタッフ」の選択肢(退職者を除く、氏名順)。
+ * 管理者以外が呼ぶと空配列(GAS版 getActiveStaffNamesForAdmin と同じ)。
+ */
+export const activeStaffSchema = z.object({ id: idSchema, name: z.string() });
+export type ActiveStaff = z.infer<typeof activeStaffSchema>;
+export const activeStaffListResponseSchema = z.object({ staff: z.array(activeStaffSchema) });
+export type ActiveStaffListResponse = z.infer<typeof activeStaffListResponseSchema>;

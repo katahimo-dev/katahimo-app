@@ -1,28 +1,17 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './App';
-import { applyTextSize, getStoredTextSize } from './settings/textSize';
+import { App } from './app/App';
+import { applyTextSizeToDocument, readStoredTextSize } from './lib/textSize';
+import './styles/index.css';
 
-applyTextSize(getStoredTextSize());
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      // 現場はモバイル回線のため、再フォーカスのたびの再取得は行わない
-      refetchOnWindowFocus: false,
-      staleTime: 60_000,
-    },
-  },
-});
+// 描画前に文字の大きさを反映する(GAS版 window.onload の applyTextSize と同じ。古い保存値もここで正規化される)
+applyTextSizeToDocument(readStoredTextSize());
 
 const root = document.getElementById('root');
 if (!root) throw new Error('#root が見つかりません');
 
 createRoot(root).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
+    <App />
   </StrictMode>,
 );
