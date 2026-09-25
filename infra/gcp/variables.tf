@@ -32,7 +32,7 @@ variable "sql_instance_name" {
 }
 
 variable "sql_database_version" {
-  description = "PostgreSQL のメジャーバージョン(ローカル開発は 16〜18。Cloud SQL で選べる最新の安定版にする)"
+  description = "PostgreSQL のメジャーバージョン。CI(.github/workflows/ci.yml)と infra/docker-compose.yml も同じメジャーにする(ローカルに直接入れる場合は 16 以上)"
   type        = string
   default     = "POSTGRES_17"
 }
@@ -158,4 +158,52 @@ variable "scheduler_paused" {
   EOT
   type        = bool
   default     = true
+}
+
+# ── 監視・予算(monitoring.tf) ──────────────────────────────────
+variable "alert_emails" {
+  description = "アラート・予算通知を送るメールアドレス。空ならアラートは作るが通知先なし(コンソールでのみ見える)"
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for e in var.alert_emails : can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", e))])
+    error_message = "alert_emails にはメールアドレスを指定してください。"
+  }
+}
+
+variable "alert_api_5xx_threshold" {
+  description = "API の 5xx 応答が 5 分間にこの件数を超えたらアラート(利用者が少ないため割合ではなく件数で見る)"
+  type        = number
+  default     = 5
+}
+
+variable "alert_sql_connections_threshold" {
+  description = "Cloud SQL の接続数(num_backends)がこれを超えたらアラート。max_connections(db-g1-small は 50 程度、要確認)の 8 割を目安にする"
+  type        = number
+  default     = 40
+}
+
+variable "uptime_check_host" {
+  description = "外形監視(/api/health)の対象ホスト。空なら Cloud Run の既定 URL(*.run.app)。独自ドメインにしたらそのホスト名"
+  type        = string
+  default     = ""
+}
+
+variable "billing_account_id" {
+  description = "予算アラートを作る請求先アカウントID(XXXXXX-XXXXXX-XXXXXX)。空なら予算を作らない"
+  type        = string
+  default     = ""
+}
+
+variable "budget_amount" {
+  description = "月の予算額(budget_currency_code の単位)。50% / 90% / 100%(実績)と 100%(予測)で通知する"
+  type        = number
+  default     = 30000
+}
+
+variable "budget_currency_code" {
+  description = "予算の通貨。請求先アカウントの通貨と同じにする必要がある"
+  type        = string
+  default     = "JPY"
 }

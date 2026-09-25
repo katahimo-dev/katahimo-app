@@ -8,10 +8,22 @@
 #            docker run katahimo-worker dist/nightly-calendar-sync.js [YYYY-MM-DD]
 # 手順と構成は doc/11_GCPデプロイ手順.md。
 
-ARG NODE_IMAGE=node:22-bookworm-slim
+# ── ベースイメージ ────────────────────────────────────────────
+# 再現できるビルドのためダイジェストで固定する(タグは読む人のための目印)。ダイジェストの更新は
+# Dependabot(.github/dependabot.yml の docker)が週1回 PR にする。Node のメジャー更新は手で行う。
+# ビルド・実行とも同じイメージを使い、ここ1か所だけを書き換えればよいようにする。
+#
+# PID 1 について: tini 等の init は入れない。api / worker とも SIGTERM を自分で処理して終了し
+# (packages/api/src/server.ts・packages/worker/src/main.ts)、子プロセスも作らないため、ゾンビの回収も要らない。
+# Cloud Run は停止時にコンテナの PID 1 へ SIGTERM を送る。手元の docker run で Ctrl+C(SIGINT)を効かせたい
+# ときは `docker run --init` を使う(PID 1 の node は SIGINT の既定動作を行わないため)。
+#
+# HEALTHCHECK も書かない: Cloud Run は Dockerfile の HEALTHCHECK を使わず、infra/gcp/run.tf の
+# startup_probe / liveness_probe(api は /api/health、worker は TCP)で確認する。
+FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS base
 
 # ── pnpm の入ったビルド用ベース ──────────────────────────────────
-FROM ${NODE_IMAGE} AS pnpm
+FROM base AS pnpm
 # package.json の packageManager と同じ版
 ARG PNPM_VERSION=11.23.0
 ENV CI=true
@@ -50,7 +62,7 @@ RUN pnpm install --prod --frozen-lockfile --config.node-linker=hoisted \
     --filter '@katahimo/worker...' --filter '@katahimo/db...'
 
 # ── 実行用ベース(pnpm・ソースを含まない。root 所有の読み取り専用ファイルを node ユーザーで実行) ──
-FROM ${NODE_IMAGE} AS runtime
+FROM base AS runtime
 ENV NODE_ENV=production \
     NODE_OPTIONS=--enable-source-maps
 WORKDIR /app

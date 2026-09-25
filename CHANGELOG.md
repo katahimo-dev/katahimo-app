@@ -1,5 +1,22 @@
 # 更新履歴 (katahimo-app)
 
+## [Ver. 0.1.1] - 2026-09-25
+
+CI と運用の土台を整えた(アプリの動作は変わらない)。
+
+- **CI(GitHub Actions)**: PR・main で lint・型検査・PostgreSQL 17 へのマイグレーション・スキーマとマイグレーションの
+  差分チェック(`pnpm db:generate` で差分が出たら失敗)・テスト・ビルドを行う `ci.yml`。続けて GAS版との見比べと
+  通し確認(当面は失敗しても全体を失敗にしない)。Terraform の fmt / validate の `infra.yml`。GAS版サブモジュールは
+  `SUBMODULE_TOKEN` で取得し、無い場合は警告を出して一致テストをスキップする(サブモジュールが無いと出勤簿の
+  一致テストがスキップではなく読み込みエラーになっていたのを直した)。
+- **リポジトリの設定**: Dependabot(npm・Docker・GitHub Actions・Terraform)、CODEOWNERS、PR テンプレート、
+  `.editorconfig`、推奨のブランチ保護(README「CI とブランチ保護」)。pnpm は `engineStrict`(Node 22 未満で
+  install を失敗させる)、Biome は 2.5.10 に固定。
+- **本番の構成**: Dockerfile のベースイメージをダイジェストで固定。Terraform に監視(API の 5xx・ジョブの失敗・
+  Cloud SQL の CPU/ディスク/接続数・`/api/health` の外形監視、通知先はメール)と予算アラートを追加し、
+  プロバイダーのロックファイルをコミットした(`doc/11` 5章)。ローカルの Docker の PostgreSQL を本番と同じ 17 にした
+  (ボリューム名が `katahimo-pgdata-17` に変わるため、Docker で DB を使っていた場合はマイグレーション・seed をやり直す)。
+
 ## [Ver. 0.1.0] - 2026-09-25
 
 GAS版 `gas-childcare-visit-app` の作り直しの一区切り。画面・サーバー処理ともGAS版の機能をひととおり移し終え、
