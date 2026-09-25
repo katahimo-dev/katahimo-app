@@ -35,6 +35,12 @@ export const STORAGE_KEYS = {
   lastAccidentTime: 'last_acc_time',
   /** 領収書の重複登録チェック用(接頭辞。後ろにスタッフ単位の識別子が付く)。GAS版と同じ。 */
   receiptLocalKeyPrefix: 'GAS_RECEIPT_KEYS_V1_',
+  /**
+   * 予定タブのルートつき予定の2時間キャッシュ(接頭辞。後ろに `<スタッフID>_<YYYY-MM-DD>`)。
+   * GAS版 GAS_SCHEDULE_ROUTE_V2_<スタッフ名>_<日付> と同じ役割だが、スタッフを名前ではなくIDで
+   * 区別するため別のキー名にしている(予定・お客様の担当が使う)。
+   */
+  scheduleRouteCachePrefix: 'katahimo_schedule_route_v1_',
   /** 出勤簿タブの週間予定の2時間キャッシュ(接頭辞。後ろに `<スタッフ>_<週の日曜>`)。GAS版と同じ(出勤簿タブ担当が使う)。 */
   pastScheduleWeekCachePrefix: 'pastSchedWeek_',
   /** 今月のまとめの2時間キャッシュ(接頭辞。後ろに `<スタッフ>_<YYYY-MM>`)。GAS版と同じ(出勤簿タブ担当が使う)。 */
