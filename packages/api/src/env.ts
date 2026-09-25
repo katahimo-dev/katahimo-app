@@ -52,6 +52,14 @@ const envSchema = z.object({
   GCHAT_REPORT_WEBHOOK_URL: z.string().optional(),
   GCHAT_RECEIPT_WEBHOOK_URL: z.string().optional(),
 
+  // パスワード再設定コードのメール送信(GAS版MailApp.sendEmailの置き換え)。SMTP_HOSTが未設定の場合、
+  // 開発環境では送信せず内容を標準出力に出す(ConsoleMailerPort)。本番では設定必須。
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().default('保育日報 <noreply@localhost>'),
+
   // 領収書画像の保存先(ローカル開発用ファイルシステムパス)。本番はGCS(Phase 5)に置き換える。
   LOCAL_RECEIPT_STORAGE_DIR: z.string().default('./data/receipts'),
 
@@ -62,11 +70,22 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
+/** 項目単体では表せない組み合わせの検証。 */
+function checkCombinations(env: Env): string[] {
+  const problems: string[] = [];
+  if (env.NODE_ENV === 'production' && !env.SMTP_HOST) {
+    problems.push('  - SMTP_HOST: 本番ではパスワード再設定メールの送信にSMTP設定が必要です');
+  }
+  return problems;
+}
+
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const parsed = envSchema.safeParse(source);
   if (!parsed.success) {
     const detail = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(`環境変数の設定に問題があります:\n${detail}`);
   }
+  const problems = checkCombinations(parsed.data);
+  if (problems.length > 0) throw new Error(`環境変数の設定に問題があります:\n${problems.join('\n')}`);
   return parsed.data;
 }

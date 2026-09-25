@@ -48,8 +48,13 @@ export interface AccidentReportMirrorPayload {
 }
 
 export interface ReceiptMirrorPayload {
+  /** 本アプリの領収書ID(GAS側で行を追跡したい場合用。Bridge.jsは現状参照しない)。 */
+  receiptId: string;
+  /** 1回のアップロード操作の束(単票・移行データは空文字)。 */
+  uploadBatchId: string;
   staffName: string;
   customerId: string;
+  /** 顧客マスタの氏名。「お客様の指定なし」の領収書はスタッフが入力した氏名(未入力なら空文字)。 */
   customerName: string;
   /** 'yyyy/MM/dd HH:mm:ss'(JST)。OCR取得日時 or 登録時刻(GAS版processReceiptImagesと同じ)。 */
   receiptTimestampJst: string;

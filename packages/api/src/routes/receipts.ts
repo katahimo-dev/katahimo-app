@@ -1,58 +1,58 @@
-import { extractReceiptAmount, uploadReceipts } from '@katahimo/core';
-import { formatJstDateTime } from '@katahimo/core/domain';
+import { extractReceiptAmount, resolveReceiptFallbackTimestamp, uploadReceipts } from '@katahimo/core';
+import { uploadReceiptsRequestSchema } from '@katahimo/shared';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import type { Container } from '../container';
-import { getAuthenticatedSession, resolveReportTargetStaffId } from '../session';
+import { requestMeta } from '../http/requestMeta';
+import { apiError, parseJsonBody } from '../http/responses';
+import type { SessionEnv } from '../session';
+import { requireSession } from '../session';
+
+const ocrRequestSchema = z.object({ image: z.string().min(1, 'image が必要です') });
 
 export function createReceiptRoutes(container: Container) {
-  const app = new Hono();
+  const app = new Hono<SessionEnv>();
 
-  /** 領収書画像1枚から金額・店舗名・日時をOCR抽出する。GAS版extractAmountFromImage相当。 */
-  app.post('/ocr', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-
-    const body = await c.req.json().catch(() => null);
-    if (typeof body?.image !== 'string' || !body.image) {
-      return c.json({ code: 'validation_failed', message: 'image が必要です' }, 400);
-    }
-
-    const result = await extractReceiptAmount(container, session.tenantId, body.image);
+  /** 領収書画像1枚から金額・店舗名・日時をOCR抽出する。GAS版extractAmountFromImage。 */
+  app.post('/ocr', requireSession(container), async (c) => {
+    const body = await parseJsonBody(c, ocrRequestSchema);
+    if (!body.ok) return body.response;
+    const result = await extractReceiptAmount(container, c.get('session'), body.data.image);
     return c.json({ result });
   });
 
-  /** 領収書画像をアップロードする。GAS版uploadReceiptsOnly相当。 */
-  app.post('/', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-
-    const body = await c.req.json().catch(() => null);
-    if (!Array.isArray(body?.images) || body.images.length === 0) {
-      return c.json({ success: false, message: '領収書画像がありません。' });
-    }
-
-    const staffId = resolveReportTargetStaffId(session, body.staffId);
-    const images = body.images
-      .filter((img: unknown): img is Record<string, unknown> => typeof img === 'object' && img !== null)
-      .map((img: Record<string, unknown>) => ({
-        data: typeof img.data === 'string' ? img.data : '',
-        amount: typeof img.amount === 'string' || typeof img.amount === 'number' ? img.amount : null,
-        storeName: typeof img.storeName === 'string' ? img.storeName : null,
-        receiptDate: typeof img.receiptDate === 'string' ? img.receiptDate : null,
-      }))
-      .filter((img: { data: string }) => img.data);
+  /**
+   * 領収書画像をアップロードする。GAS版uploadReceiptsOnly(日報画面からの送信と、
+   * 「お客様の指定なし」で開く単独の領収書画面(openStandaloneReceiptModal)の両方)。
+   */
+  app.post('/', requireSession(container, 'receipt.upload'), async (c) => {
+    const session = c.get('session');
+    const body = await parseJsonBody(c, uploadReceiptsRequestSchema);
+    if (!body.ok) return body.response;
+    const { data } = body;
 
     const result = await uploadReceipts(container, session.tenantId, {
-      staffId,
-      customerId: typeof body.customerId === 'string' && body.customerId ? body.customerId : null,
-      images,
-      fallbackTimestamp:
-        typeof body.receiptTimestamp === 'string' && body.receiptTimestamp
-          ? body.receiptTimestamp
-          : formatJstDateTime(new Date()),
-      handoffText: typeof body.handoffText === 'string' ? body.handoffText : '',
+      actor: { staffId: session.staffId, isAdmin: session.isAdmin },
+      requestedStaffId: data.staffId,
+      customerId: data.customerId ?? null,
+      customerNameText: data.customerNameText,
+      images: data.images,
+      fallbackTimestamp: resolveReceiptFallbackTimestamp(data, new Date()),
+      handoffText: data.handoffText,
+      meta: requestMeta(c),
     });
-    return c.json(result);
+    if (!result.ok) {
+      if (result.reason === 'no_images')
+        return apiError(c, 400, 'validation_failed', '領収書画像がありません。');
+      return apiError(
+        c,
+        404,
+        'not_found',
+        result.reason === 'customer_not_found' ? '顧客が見つかりません' : 'スタッフが見つかりません',
+      );
+    }
+    const { ok: _ok, ...summary } = result;
+    return c.json({ success: true as const, ...summary });
   });
 
   return app;

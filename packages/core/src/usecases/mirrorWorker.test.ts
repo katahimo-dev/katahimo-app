@@ -13,6 +13,7 @@ import type { ReportDeps } from './reports';
 import { saveAccidentReport, saveDailyReport } from './reports';
 import {
   FakeAccidentReportRepository,
+  FakeAppLogPort,
   FakeAttendanceDayRepository,
   FakeCryptoPort,
   FakeCustomerRepository,
@@ -80,10 +81,11 @@ describe('runOutboxBatch / processOutboxJob', () => {
       crypto,
       notifier: new FakeNotifierPort(),
       mirror: outbox,
+      appLog: new FakeAppLogPort(),
     };
 
     const saved = await saveDailyReport(reportDeps, tenantId, {
-      staffId,
+      actor: { staffId, isAdmin: false },
       customerId,
       startTime: '09:00',
       endTime: '10:00',
@@ -111,7 +113,7 @@ describe('runOutboxBatch / processOutboxJob', () => {
     expect(result).toEqual({ processed: 1, failed: 0 });
     expect(sender.dailyReports).toEqual([
       {
-        reportId: saved.id,
+        reportId: saved.ok ? saved.report.id : '',
         timestampJst: expect.any(String),
         startTime: '09:00',
         endTime: '10:00',
@@ -137,10 +139,12 @@ describe('runOutboxBatch / processOutboxJob', () => {
       crypto,
       notifier: new FakeNotifierPort(),
       mirror: outbox,
+      appLog: new FakeAppLogPort(),
     };
 
     const saved = await saveAccidentReport(reportDeps, tenantId, {
-      staffId,
+      actor: { staffId, isAdmin: false },
+      reportType: '事故報告',
       customerId,
       targetName: '田中 太郎',
       targetDob: '2020/01/01',
@@ -172,7 +176,7 @@ describe('runOutboxBatch / processOutboxJob', () => {
     expect(result).toEqual({ processed: 1, failed: 0 });
     expect(sender.accidentReports).toHaveLength(1);
     expect(sender.accidentReports[0]).toMatchObject({
-      reportId: saved.id,
+      reportId: saved.ok ? saved.report.id : '',
       staffName: '佐藤 花子',
       customerName: '田中 一郎',
       targetName: '田中 太郎',
@@ -196,10 +200,11 @@ describe('runOutboxBatch / processOutboxJob', () => {
       storage,
       notifier: new FakeNotifierPort(),
       mirror: outbox,
+      appLog: new FakeAppLogPort(),
     };
 
     await uploadReceipts(receiptDeps, tenantId, {
-      staffId,
+      actor: { staffId, isAdmin: false },
       customerId,
       images: [
         {
@@ -209,6 +214,7 @@ describe('runOutboxBatch / processOutboxJob', () => {
         },
       ],
       fallbackTimestamp: '2026/08/30 10:00:00',
+      handoffText: '',
     });
 
     const workerDeps: MirrorWorkerDeps = {

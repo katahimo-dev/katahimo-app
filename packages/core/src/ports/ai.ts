@@ -19,6 +19,11 @@ export interface GenerateDailyReportInput {
   text: string;
   start?: string;
   end?: string;
+  /**
+   * プロンプトテンプレート({anonymizedText}/{timeInfo}を含む)。テナントが管理画面で上書きしていれば
+   * その本文、無ければ @katahimo/shared の既定値(usecases/reportAi.tsが解決して渡す)。
+   */
+  promptTemplate: string;
 }
 
 export interface DailyReportDraft {
@@ -31,6 +36,8 @@ export interface GenerateAccidentReportInput {
   text: string;
   start?: string;
   end?: string;
+  /** GenerateDailyReportInput.promptTemplateと同じ。 */
+  promptTemplate: string;
 }
 
 export interface AccidentReportDraft {

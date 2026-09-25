@@ -7,7 +7,6 @@ import type {
   ReceiptOcrResult,
   ReportAiPort,
 } from '@katahimo/core/ports';
-import { GENERATE_ACCIDENT_REPORT_PROMPT, GENERATE_DAILY_REPORT_PROMPT } from './prompts';
 
 const DEFAULT_MODEL_REPORT = 'gemini-2.5-flash';
 const DEFAULT_MODEL_OCR = 'gemini-2.5-flash-lite';
@@ -143,10 +142,9 @@ export class GeminiAiPort implements ReportAiPort {
 
   async generateDailyReport(input: GenerateDailyReportInput): Promise<DailyReportDraft> {
     const timeInfo = input.start && input.end ? `${input.start}〜${input.end}` : '時間指定なし';
-    const prompt = GENERATE_DAILY_REPORT_PROMPT.replace('{anonymizedText}', input.text).replace(
-      '{timeInfo}',
-      timeInfo,
-    );
+    const prompt = input.promptTemplate
+      .replace('{anonymizedText}', input.text)
+      .replace('{timeInfo}', timeInfo);
 
     const schema = {
       type: 'OBJECT',
@@ -177,10 +175,9 @@ export class GeminiAiPort implements ReportAiPort {
   ): Promise<AccidentReportDraft | AccidentReportDraftError> {
     const timeInfo =
       input.start && input.end ? `${input.start}〜${input.end}` : input.start || '時間指定なし';
-    const prompt = GENERATE_ACCIDENT_REPORT_PROMPT.replace('{anonymizedText}', input.text).replace(
-      '{timeInfo}',
-      timeInfo,
-    );
+    const prompt = input.promptTemplate
+      .replace('{anonymizedText}', input.text)
+      .replace('{timeInfo}', timeInfo);
 
     const schema = {
       type: 'OBJECT',

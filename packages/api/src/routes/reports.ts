@@ -1,3 +1,4 @@
+import type { SaveReportFailure } from '@katahimo/core';
 import {
   generateAccidentReportDraft,
   generateDailyReportDraft,
@@ -6,162 +7,128 @@ import {
   saveDailyReport,
   sendVisitCompleteNotification,
 } from '@katahimo/core';
+import {
+  businessDateSchema,
+  idSchema,
+  saveAccidentReportRequestSchema,
+  saveDailyReportRequestSchema,
+} from '@katahimo/shared';
+import type { Context } from 'hono';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import type { Container } from '../container';
-import { getAuthenticatedSession, resolveReportTargetStaffId } from '../session';
+import { requestMeta } from '../http/requestMeta';
+import { apiError, parseJsonBody } from '../http/responses';
+import type { SessionEnv } from '../session';
+import { requireSession, resolveReportTargetStaffId } from '../session';
 
 const HISTORY_LIMIT = 5;
 
+const generateRequestSchema = z.object({
+  text: z.string().trim().min(1, 'text が必要です'),
+  start: z.string().optional(),
+  end: z.string().optional(),
+});
+
+const visitCompleteRequestSchema = z.object({
+  staffId: idSchema.optional(),
+  customerId: idSchema,
+  visitDate: businessDateSchema,
+  startTime: z.string(),
+  endTime: z.string(),
+});
+
+function saveFailure(c: Context, reason: SaveReportFailure) {
+  switch (reason) {
+    case 'forbidden':
+      return apiError(c, 403, 'forbidden', '他のスタッフの報告は修正できません');
+    case 'report_not_found':
+      return apiError(c, 404, 'not_found', '修正対象の報告が見つかりません');
+    case 'customer_not_found':
+      return apiError(c, 404, 'not_found', '顧客が見つかりません');
+    case 'staff_not_found':
+      return apiError(c, 404, 'not_found', 'スタッフが見つかりません');
+  }
+}
+
 export function createReportRoutes(container: Container) {
-  const app = new Hono();
+  const app = new Hono<SessionEnv>();
 
-  /** 保育日報の下書きをAI生成する(GAS版generateReportWithWarnings相当)。 */
-  app.post('/daily/generate', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-
-    const body = await c.req.json().catch(() => null);
-    if (typeof body?.text !== 'string' || !body.text.trim()) {
-      return c.json({ code: 'validation_failed', message: 'text が必要です' }, 400);
-    }
-
-    const draft = await generateDailyReportDraft(container, session.tenantId, {
-      text: body.text,
-      start: typeof body.start === 'string' ? body.start : undefined,
-      end: typeof body.end === 'string' ? body.end : undefined,
-    });
+  /** 保育日報の下書きをAI生成する(GAS版generateReportWithWarnings)。 */
+  app.post('/daily/generate', requireSession(container), async (c) => {
+    const session = c.get('session');
+    const body = await parseJsonBody(c, generateRequestSchema);
+    if (!body.ok) return body.response;
+    const draft = await generateDailyReportDraft(container, session, body.data);
     return c.json({ draft });
   });
 
-  /** 事故報告/ヒヤリハットの下書きをAI生成する(GAS版generateAccidentReport相当)。 */
-  app.post('/accident/generate', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-
-    const body = await c.req.json().catch(() => null);
-    if (typeof body?.text !== 'string' || !body.text.trim()) {
-      return c.json({ code: 'validation_failed', message: 'text が必要です' }, 400);
-    }
-
-    const draft = await generateAccidentReportDraft(container, session.tenantId, {
-      text: body.text,
-      start: typeof body.start === 'string' ? body.start : undefined,
-      end: typeof body.end === 'string' ? body.end : undefined,
-    });
+  /** 事故報告/ヒヤリハットの下書きをAI生成する(GAS版generateAccidentReport)。 */
+  app.post('/accident/generate', requireSession(container), async (c) => {
+    const session = c.get('session');
+    const body = await parseJsonBody(c, generateRequestSchema);
+    if (!body.ok) return body.response;
+    const draft = await generateAccidentReportDraft(container, session, body.data);
     return c.json({ draft });
   });
 
-  /** 保育日報を保存する。GAS版Main.js saveReportに対応。 */
-  app.post('/daily', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-
-    const body = await c.req.json().catch(() => null);
-    if (typeof body?.customerId !== 'string' || !body.customerId) {
-      return c.json({ code: 'validation_failed', message: 'customerId が必要です' }, 400);
-    }
-
-    const staffId = resolveReportTargetStaffId(session, body.staffId);
-    try {
-      const report = await saveDailyReport(container, session.tenantId, {
-        reportId: typeof body.reportId === 'string' ? body.reportId : undefined,
-        staffId,
-        customerId: body.customerId,
-        reportDate: typeof body.reportDate === 'string' ? body.reportDate : undefined,
-        startTime: typeof body.startTime === 'string' ? body.startTime : '',
-        endTime: typeof body.endTime === 'string' ? body.endTime : '',
-        inputText: typeof body.inputText === 'string' ? body.inputText : '',
-        internalText: typeof body.internalText === 'string' ? body.internalText : '',
-        customerText: typeof body.customerText === 'string' ? body.customerText : '',
-        riskRating: typeof body.riskRating === 'number' ? body.riskRating : null,
-        esRating: typeof body.esRating === 'number' ? body.esRating : null,
-      });
-      return c.json({ success: true, report });
-    } catch (e) {
-      return c.json({ success: false, message: e instanceof Error ? e.message : String(e) }, 400);
-    }
+  /** 保育日報を保存する。GAS版Main.js saveReport。 */
+  app.post('/daily', requireSession(container, 'report.daily.save'), async (c) => {
+    const session = c.get('session');
+    const body = await parseJsonBody(c, saveDailyReportRequestSchema);
+    if (!body.ok) return body.response;
+    const { staffId, ...fields } = body.data;
+    const result = await saveDailyReport(container, session.tenantId, {
+      ...fields,
+      actor: { staffId: session.staffId, isAdmin: session.isAdmin },
+      requestedStaffId: staffId,
+      meta: requestMeta(c),
+    });
+    if (!result.ok) return saveFailure(c, result.reason);
+    return c.json({ success: true as const, message: '保存しました', report: result.report });
   });
 
-  /** 事故報告/ヒヤリハットを保存する。GAS版Main.js saveAccidentReportに対応。 */
-  app.post('/accident', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-
-    const body = await c.req.json().catch(() => null);
-    if (typeof body?.customerId !== 'string' || !body.customerId) {
-      return c.json({ code: 'validation_failed', message: 'customerId が必要です' }, 400);
-    }
-
-    const staffId = resolveReportTargetStaffId(session, body.staffId);
-    try {
-      const report = await saveAccidentReport(container, session.tenantId, {
-        reportId: typeof body.reportId === 'string' ? body.reportId : undefined,
-        staffId,
-        customerId: body.customerId,
-        reportType: typeof body.reportType === 'string' ? body.reportType : undefined,
-        targetName: typeof body.targetName === 'string' ? body.targetName : '',
-        targetDob: typeof body.targetDob === 'string' ? body.targetDob : '',
-        occurrenceTime: typeof body.occurrenceTime === 'string' ? body.occurrenceTime : '',
-        location: typeof body.location === 'string' ? body.location : '',
-        accidentContent: typeof body.accidentContent === 'string' ? body.accidentContent : '',
-        situation: typeof body.situation === 'string' ? body.situation : '',
-        immediateResponse: typeof body.immediateResponse === 'string' ? body.immediateResponse : '',
-        parentCorrespondence: typeof body.parentCorrespondence === 'string' ? body.parentCorrespondence : '',
-        diagnosisTreatment: typeof body.diagnosisTreatment === 'string' ? body.diagnosisTreatment : '',
-        prevention: typeof body.prevention === 'string' ? body.prevention : '',
-        inputText: typeof body.inputText === 'string' ? body.inputText : '',
-      });
-      return c.json({ success: true, report });
-    } catch (e) {
-      return c.json({ success: false, message: e instanceof Error ? e.message : String(e) }, 400);
-    }
+  /** 事故報告/ヒヤリハットを保存する。GAS版Main.js saveAccidentReport。 */
+  app.post('/accident', requireSession(container, 'report.accident.save'), async (c) => {
+    const session = c.get('session');
+    const body = await parseJsonBody(c, saveAccidentReportRequestSchema);
+    if (!body.ok) return body.response;
+    const { staffId, ...fields } = body.data;
+    const result = await saveAccidentReport(container, session.tenantId, {
+      ...fields,
+      actor: { staffId: session.staffId, isAdmin: session.isAdmin },
+      requestedStaffId: staffId,
+      meta: requestMeta(c),
+    });
+    if (!result.ok) return saveFailure(c, result.reason);
+    return c.json({ success: true as const, report: result.report });
   });
 
-  /** 「訪問完了」通知のみ送信する(DB書き込みなし)。GAS版sendVisitComplete相当。 */
-  app.post('/visit-complete', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-
-    const body = await c.req.json().catch(() => null);
-    if (
-      typeof body?.customerId !== 'string' ||
-      typeof body?.visitDate !== 'string' ||
-      typeof body?.startTime !== 'string' ||
-      typeof body?.endTime !== 'string'
-    ) {
-      return c.json({ success: false, message: 'customerId, visitDate, startTime, endTime が必要です' }, 400);
-    }
-
-    const staffId = resolveReportTargetStaffId(session, body.staffId);
-    try {
-      await sendVisitCompleteNotification(container, session.tenantId, {
-        staffId,
-        customerId: body.customerId,
-        visitDate: body.visitDate,
-        startTime: body.startTime,
-        endTime: body.endTime,
-      });
-      return c.json({ success: true });
-    } catch (e) {
-      return c.json({ success: false, message: e instanceof Error ? e.message : String(e) }, 400);
-    }
+  /** 「訪問完了」通知のみ送信する(DB書き込みなし)。GAS版sendVisitComplete。 */
+  app.post('/visit-complete', requireSession(container), async (c) => {
+    const session = c.get('session');
+    const body = await parseJsonBody(c, visitCompleteRequestSchema);
+    if (!body.ok) return body.response;
+    const result = await sendVisitCompleteNotification(container, session.tenantId, {
+      ...body.data,
+      staffId: resolveReportTargetStaffId(session, body.data.staffId),
+    });
+    if (!result.ok) return apiError(c, 404, 'not_found', '顧客またはスタッフが見つかりません');
+    return c.json({ success: true as const });
   });
 
-  /** 顧客の活動記録(日報+事故報告)を新しい順に取得する。GAS版getCustomerReports相当。 */
-  app.get('/history', async (c) => {
-    const session = await getAuthenticatedSession(c, container);
-    if (!session) return c.json({ code: 'unauthenticated', message: '未ログインです' }, 401);
-
+  /** 顧客の活動記録(日報+事故報告)を新しい順に取得する。GAS版getCustomerReports。 */
+  app.get('/history', requireSession(container, 'report.history.view'), async (c) => {
+    const session = c.get('session');
     const customerId = c.req.query('customerId');
-    if (!customerId) {
-      return c.json({ code: 'validation_failed', message: 'customerId クエリパラメータが必要です' }, 400);
+    if (!customerId || !idSchema.safeParse(customerId).success) {
+      return apiError(c, 400, 'validation_failed', 'customerId クエリパラメータが必要です');
     }
     const beforeParam = c.req.query('before');
     const before = beforeParam ? new Date(beforeParam) : null;
     if (before && Number.isNaN(before.getTime())) {
-      return c.json({ code: 'validation_failed', message: 'before は有効なISO日時にしてください' }, 400);
+      return apiError(c, 400, 'validation_failed', 'before は有効なISO日時にしてください');
     }
-
     const items = await getCustomerHistory(container, session.tenantId, customerId, before, HISTORY_LIMIT);
     return c.json({ items });
   });
