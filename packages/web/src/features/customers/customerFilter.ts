@@ -1,5 +1,3 @@
-import { getBrowserStorage, type KeyValueStorage, readStorage, STORAGE_KEYS } from '../../lib/storage';
-
 /**
  * お客様一覧の絞り込みと並び順(GAS版 filterCustomers)。
  * - 地区: 完全一致。名前: 大文字小文字を区別しない部分一致。
@@ -34,16 +32,4 @@ export function filterCustomers<T extends { id: string; name: string; city: stri
     const rb = rankOf(b);
     return ra === rb ? 0 : ra - rb;
   });
-}
-
-/** 最近日報を書いたお客様のID(新しい順、最大50件。書きこむのは日報の保存処理)。壊れていたら空。 */
-export function readRecentCustomerIds(storage: KeyValueStorage | null = getBrowserStorage()): string[] {
-  const raw = readStorage(STORAGE_KEYS.recentCustomers, storage);
-  if (!raw) return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
-  } catch {
-    return [];
-  }
 }

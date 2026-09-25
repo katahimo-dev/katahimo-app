@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useAdminTargetStaff } from '../../../app/adminTargetStaff';
-import { ModalHeader } from '../../../ui/modal';
+import { Modal, ModalHeader } from '../../../ui/modal';
 import type { CalendarRangeSync } from '../hooks/useCalendarRangeSync';
 import { progressPercent, progressStatsText } from '../model/rangeSync';
-import { Dialog } from './Dialog';
 
 /**
  * 管理者用「まとめて取り込む日とスタッフを選ぶ」(GAS版 #calendarSyncModal)。
@@ -16,28 +15,22 @@ export function RangeSyncModal({
   onClose,
 }: {
   open: boolean;
-  /** 開いたときの始めの日・終わりの日(選んでいる日) */
+  /** 開いたときの始めの日・終わりの日(選んでいる日。開くたびに key を変えて作り直すこと) */
   defaultDate: string;
   sync: CalendarRangeSync;
   onClose: () => void;
 }) {
   const { staffList } = useAdminTargetStaff();
+  // 開くたびに日付を選んでいる日に戻す(GAS版 openCalendarSyncRangeModal)。開く側が key を変えて作り直す
   const [startDate, setStartDate] = useState(defaultDate);
   const [endDate, setEndDate] = useState(defaultDate);
-  const { resetIfIdle } = sync;
-
-  // 開くたびに日付を選んでいる日に戻し、取り込み中でなければ前回の進みぐあいを消す(GAS版 openCalendarSyncRangeModal)
-  useEffect(() => {
-    if (!open) return;
-    setStartDate(defaultDate);
-    setEndDate(defaultDate);
-    resetIfIdle();
-  }, [open, defaultDate, resetIfIdle]);
 
   const { progress } = sync;
 
   return (
-    <Dialog
+    <Modal
+      transition="none"
+      onClose={onClose}
       open={open}
       labelledBy="calendarSyncTitle"
       className="fixed inset-0 bg-black bg-opacity-50 z-[110] flex items-center justify-center p-4"
@@ -149,6 +142,6 @@ export function RangeSyncModal({
           </button>
         </div>
       </div>
-    </Dialog>
+    </Modal>
   );
 }

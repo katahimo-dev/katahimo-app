@@ -196,10 +196,13 @@ export const webHandlers: Record<string, WebHandler> = {
     body: {
       settings: {
         geminiApiKey: ADMIN_SETTINGS.geminiApiKey,
+        geminiApiKeySet: true,
         geminiReportModel: ADMIN_SETTINGS.reportModel,
         geminiOcrModel: ADMIN_SETTINGS.ocrModel,
         gchatReportWebhookUrl: ADMIN_SETTINGS.reportWebhookUrl,
+        gchatReportWebhookUrlSet: true,
         gchatReceiptWebhookUrl: ADMIN_SETTINGS.receiptWebhookUrl,
+        gchatReceiptWebhookUrlSet: true,
       },
     },
     schema: adminSettingsResponseSchema,

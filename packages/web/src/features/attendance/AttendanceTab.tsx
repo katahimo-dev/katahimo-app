@@ -1,11 +1,11 @@
 import type { CalendarSyncPreviewResponse } from '@katahimo/shared';
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { calendarSyncApi } from '../../api/calendarSync';
 import { userMessageOf } from '../../api/client';
 import { AdminTargetStaffSelect, useAdminTargetStaff } from '../../app/adminTargetStaff';
+import { runWhenIdle } from '../../lib/idle';
 import { ErrorState } from '../../ui/StatusViews';
 import { showErrorToast, showToast } from '../../ui/toast';
-import { CalendarSyncDiffModal } from './components/CalendarSyncDiffModal';
 import { DayGrid } from './components/DayGrid';
 import { DayHeaderRow } from './components/DayHeaderRow';
 import { DayStatus } from './components/DayStatus';
@@ -13,8 +13,6 @@ import { DayToolbar } from './components/DayToolbar';
 import { DetailPanel } from './components/DetailPanel';
 import { DAY_HOUR_HEIGHT, gridContainerHeight, WEEK_HOUR_HEIGHT } from './components/gridConstants';
 import { LoadingBlock } from './components/LoadingBlock';
-import { MonthlyModal } from './components/MonthlyModal';
-import { RangeSyncModal } from './components/RangeSyncModal';
 import { SlotModal } from './components/SlotModal';
 import { WeekGrid } from './components/WeekGrid';
 import { WeekList } from './components/WeekList';
@@ -30,7 +28,17 @@ import { useCalendarRangeSync } from './hooks/useCalendarRangeSync';
 import { useSwipeNav } from './hooks/useSwipeNav';
 import { type SlotKey, type SlotValues, slotDef, toDayRecord } from './model/dayRecord';
 import { sameAsCalendarMessage } from './model/diff';
-import { type CalendarEvent, computeHourRange, toYmd, updatedAtLabel } from './model/week';
+import { type CalendarEvent, computeHourRange, todayJst, updatedAtLabel } from './model/week';
+
+// あまり使わないダイアログは別のJSに分け、タブを開いて手が空いたときに先に読んでおく
+const loadMonthlyModal = () => import('./components/MonthlyModal');
+const loadRangeSyncModal = () => import('./components/RangeSyncModal');
+const loadCalendarSyncDiffModal = () => import('./components/CalendarSyncDiffModal');
+const MonthlyModal = lazy(() => loadMonthlyModal().then((m) => ({ default: m.MonthlyModal })));
+const RangeSyncModal = lazy(() => loadRangeSyncModal().then((m) => ({ default: m.RangeSyncModal })));
+const CalendarSyncDiffModal = lazy(() =>
+  loadCalendarSyncDiffModal().then((m) => ({ default: m.CalendarSyncDiffModal })),
+);
 
 /**
  * 「🕒 出勤簿」タブ(GAS版 #tabPastSchedule)と、その中のダイアログ(今月のまとめ・まとめて取り込む・
@@ -50,7 +58,7 @@ export function AttendanceTab() {
   const { isAdmin } = useAdminTargetStaff();
   const { staffId } = useAttendanceTarget();
   const nav = useCalendarNav();
-  const today = toYmd(new Date());
+  const today = todayJst();
   const isDay = nav.viewMode === 'day';
   const isWeekList = !isDay && nav.weekViewMode === 'list';
 
@@ -60,7 +68,11 @@ export function AttendanceTab() {
   const events = week.data?.events ?? [];
 
   const [monthlyOpen, setMonthlyOpen] = useState(false);
+  /** 今月のまとめは一度開いたら閉じても残す(月の欄の値がGAS版と同じく残る) */
+  const [monthlyMounted, setMonthlyMounted] = useState(false);
   const [rangeSyncOpen, setRangeSyncOpen] = useState(false);
+  /** 開くたびに増やして、まとめて取り込むダイアログを作り直す(日付を選んでいる日に戻す) */
+  const [rangeSyncKey, setRangeSyncKey] = useState(0);
   const [slotTarget, setSlotTarget] = useState<SlotTarget | null>(null);
   const [diff, setDiff] = useState<{
     preview: CalendarSyncPreviewResponse;
@@ -88,6 +100,27 @@ export function AttendanceTab() {
     if (week.error) showErrorToast(week.error);
   }, [week.error]);
 
+  useEffect(
+    () =>
+      runWhenIdle(() => {
+        void loadMonthlyModal();
+        void loadCalendarSyncDiffModal();
+        if (isAdmin) void loadRangeSyncModal();
+      }),
+    [isAdmin],
+  );
+
+  const openMonthly = () => {
+    setMonthlyMounted(true);
+    setMonthlyOpen(true);
+  };
+  /** 取り込み中でなければ前回の進みぐあいを消して開く(GAS版 openCalendarSyncRangeModal) */
+  const openRangeSync = () => {
+    rangeSync.resetIfIdle();
+    setRangeSyncKey((k) => k + 1);
+    setRangeSyncOpen(true);
+  };
+
   // 左右のスワイプで週送り(週表示)・日送り(1日表示)。GAS版 setupCalSwipeNav_
   const listRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -95,8 +128,13 @@ export function AttendanceTab() {
   useSwipeNav(listRef, onSwipe);
   useSwipeNav(gridRef, onSwipe);
 
-  const selectedDateRef = useRef(nav.selectedDate);
-  selectedDateRef.current = nav.selectedDate;
+  /** いま表示している日・スタッフ(待っている間に切り替えたら、前の結果は出さない) */
+  const currentRef = useRef({ date: nav.selectedDate, staffId });
+  useEffect(() => {
+    currentRef.current = { date: nav.selectedDate, staffId };
+  });
+  const isStillShowing = (date: string, requestStaffId: string | undefined) =>
+    currentRef.current.date === date && currentRef.current.staffId === requestStaffId;
 
   /** 予定を押したとき: その日の1日表示にしつつ、その予定の修正を開く(GAS版 openScheduleSlotForDate_) */
   const openSlot = (date: string, slotKey: SlotKey, prefill: SlotValues | null) => {
@@ -116,13 +154,14 @@ export function AttendanceTab() {
     setRefreshing(true);
     try {
       const res = await reloadDayAndWeek(date);
-      // 読めなかったとき(その場で表示済み)・待つ間に別の日へ移ったときはここで終わり
-      if (!res || selectedDateRef.current !== date) return;
+      // 読めなかったとき(その場で表示済み)・待つ間に別の日・別のスタッフへ移ったときはここで終わり
+      if (!res || !isStillShowing(date, requestStaffId)) return;
       if (!res.editable) {
         showToast('最新にしました');
         return;
       }
       const preview = await calendarSyncApi.preview({ date, staffId: requestStaffId });
+      if (!isStillShowing(date, requestStaffId)) return;
       if (!preview.hasChanges) {
         showToast(sameAsCalendarMessage(preview.appointmentCount));
         return;
@@ -159,7 +198,7 @@ export function AttendanceTab() {
       <div className="flex gap-3 mb-4">
         <button
           type="button"
-          onClick={() => setMonthlyOpen(true)}
+          onClick={openMonthly}
           className="flex-1 min-h-12 py-3 rounded-xl text-base font-bold bg-gray-200 text-gray-800 transition-colors"
         >
           📊 今月のまとめ
@@ -167,7 +206,7 @@ export function AttendanceTab() {
         {isAdmin ? (
           <button
             type="button"
-            onClick={() => setRangeSyncOpen(true)}
+            onClick={openRangeSync}
             className="flex-1 min-h-12 py-3 rounded-xl text-base font-bold bg-blue-600 text-white transition-colors"
           >
             📅 まとめて取り込む
@@ -280,26 +319,36 @@ export function AttendanceTab() {
         </>
       ) : null}
 
-      <MonthlyModal
-        open={monthlyOpen}
-        onClose={() => setMonthlyOpen(false)}
-        onOpenSlot={(date, slotKey, prefill) => openSlot(date, slotKey, prefill)}
-      />
-      {isAdmin ? (
-        <RangeSyncModal
-          open={rangeSyncOpen}
-          defaultDate={nav.selectedDate}
-          sync={rangeSync}
-          onClose={() => setRangeSyncOpen(false)}
-        />
+      {/* 分けて読むダイアログは、読み終わる前に別のダイアログを隠さないよう1つずつ Suspense で包む */}
+      {monthlyMounted ? (
+        <Suspense fallback={null}>
+          <MonthlyModal
+            open={monthlyOpen}
+            onClose={() => setMonthlyOpen(false)}
+            onOpenSlot={(date, slotKey, prefill) => openSlot(date, slotKey, prefill)}
+          />
+        </Suspense>
+      ) : null}
+      {isAdmin && rangeSyncKey > 0 ? (
+        <Suspense fallback={null}>
+          <RangeSyncModal
+            key={rangeSyncKey}
+            open={rangeSyncOpen}
+            defaultDate={nav.selectedDate}
+            sync={rangeSync}
+            onClose={() => setRangeSyncOpen(false)}
+          />
+        </Suspense>
       ) : null}
       {diff ? (
-        <CalendarSyncDiffModal
-          preview={diff.preview}
-          staffId={diff.staffId}
-          onClose={() => setDiff(null)}
-          onApplied={reloadAfterChange}
-        />
+        <Suspense fallback={null}>
+          <CalendarSyncDiffModal
+            preview={diff.preview}
+            staffId={diff.staffId}
+            onClose={() => setDiff(null)}
+            onApplied={reloadAfterChange}
+          />
+        </Suspense>
       ) : null}
       {slotTarget ? (
         <SlotModalForDate

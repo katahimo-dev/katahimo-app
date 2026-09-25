@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { authApi } from '../../api/auth';
 import { userMessageOf } from '../../api/client';
 import { alertNative } from '../../ui/confirm';
-import { FadeModal } from '../../ui/modal';
+import { Modal } from '../../ui/modal';
 
 /**
  * GAS版 #changePassModal(設定の「パスワード変更」から開く。設定より手前の z-[110])。
@@ -42,13 +42,21 @@ export function ChangePasswordModal({ open, onClose }: { open: boolean; onClose:
   };
 
   return (
-    <FadeModal
+    <Modal
       open={open}
+      onClose={onClose}
       keepMounted
       labelledBy="changePassTitle"
       className="fixed inset-0 bg-black bg-opacity-50 z-[110] flex items-center justify-center transition-opacity"
     >
-      <div className="bg-white w-full max-w-sm mx-4 rounded-xl shadow-xl flex flex-col transform transition-transform scale-95 p-6 space-y-4">
+      <form
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          void doChangePass();
+        }}
+        className="bg-white w-full max-w-sm mx-4 rounded-xl shadow-xl flex flex-col transform transition-transform scale-95 p-6 space-y-4"
+      >
         <h3 id="changePassTitle" className="font-bold text-gray-800 text-lg">
           パスワード変更
         </h3>
@@ -106,15 +114,14 @@ export function ChangePasswordModal({ open, onClose }: { open: boolean; onClose:
             キャンセル
           </button>
           <button
-            type="button"
-            onClick={doChangePass}
+            type="submit"
             disabled={submitting}
             className="flex-1 min-h-12 py-3 bg-blue-600 text-white text-base font-bold rounded-xl"
           >
             {submitting ? '処理中...' : '変更する'}
           </button>
         </div>
-      </div>
-    </FadeModal>
+      </form>
+    </Modal>
   );
 }

@@ -70,7 +70,7 @@ export function AdminTargetStaffProvider({ children }: { children: ReactNode }) 
     };
   }, [user, targetStaffId, staffQuery.data, staffQuery.isSuccess, setTargetStaffId, requestStaffList]);
 
-  return <AdminTargetStaffContext.Provider value={value}>{children}</AdminTargetStaffContext.Provider>;
+  return <AdminTargetStaffContext value={value}>{children}</AdminTargetStaffContext>;
 }
 
 export function useAdminTargetStaff(): AdminTargetStaffContextValue {

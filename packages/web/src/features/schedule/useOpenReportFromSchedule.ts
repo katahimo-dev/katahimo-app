@@ -2,7 +2,7 @@ import type { CustomerListItem } from '@katahimo/shared';
 import { useCallback, useRef } from 'react';
 import { useHomeTabs } from '../../app/homeTabs';
 import { showToast } from '../../ui/toast';
-import { setCustomerSearch, useCustomerList } from '../customers';
+import { useCustomerList, useSetCustomerSearch } from '../customers';
 import { useReportModal } from '../report';
 import { findCustomerByScheduleName } from './findCustomerByScheduleName';
 
@@ -19,6 +19,7 @@ export function useOpenReportFromSchedule(): (scheduleName: string) => void {
   const customersQuery = useCustomerList();
   const { openReport } = useReportModal();
   const { switchTab } = useHomeTabs();
+  const setCustomerSearch = useSetCustomerSearch();
   const pendingNameRef = useRef<string | null>(null);
 
   const customers = customersQuery.data?.customers;
@@ -36,7 +37,7 @@ export function useOpenReportFromSchedule(): (scheduleName: string) => void {
       setCustomerSearch(scheduleName);
       showToast('お客様一覧から選んでください');
     },
-    [openReport, switchTab],
+    [openReport, switchTab, setCustomerSearch],
   );
 
   return useCallback(

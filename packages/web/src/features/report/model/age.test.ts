@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { calculateAge, toFullWidthDigits } from './age';
 
 describe('calculateAge(GAS版: 数字は全角)', () => {
-  const today = new Date(2026, 8, 25); // 2026-09-25
+  const today = '2026-09-25';
 
   it('「（１歳２か月）」の形', () => {
     expect(calculateAge('2025/07/12', today)).toBe('（１歳２か月）');

@@ -1,7 +1,7 @@
 import { crc32, deflateSync } from 'node:zlib';
 import type { Page } from 'playwright-core';
 import { CUSTOMERS } from '../fixtures';
-import { type Shot, type Target, visible } from './types';
+import { type Shot, type Target, userStorageKey, visible } from './types';
 
 /**
  * 日報・事故報告・領収書のダイアログ(GAS版 #reportModal)の場面。
@@ -77,7 +77,8 @@ async function generate(page: Page) {
 }
 
 async function switchToAccident(page: Page) {
-  await button(page, '⚠️ 事故・ヒヤリ').click();
+  // 新アプリは「タブ」(role=tab)なので、どちらにもある id で押す
+  await page.locator('#tabAccident').filter(visible).click();
   await page.waitForTimeout(200);
 }
 
@@ -162,7 +163,7 @@ async function setStorageAndReload(page: Page, entries: Record<string, string>) 
 async function fakeSpeechRecognitionAndReload(page: Page) {
   // tsx(esbuild)は class に __name を差し込むため、ブラウザで動かす処理は文字列で渡す
   await page.addInitScript(`(() => {
-    class FakeRecognition { start() {} stop() {} }
+    class FakeRecognition { start() {} stop() {} abort() {} }
     window.SpeechRecognition = FakeRecognition;
     window.webkitSpeechRecognition = FakeRecognition;
   })()`);
@@ -619,7 +620,9 @@ export const reportShots: Shot[] = [
     title: '保存していない日報が残っていたとき(開き直すと自動で開いて戻す)',
     ...MODAL,
     run: async (page, target) => {
-      await setStorageAndReload(page, { pending_report_draft: pendingDraft(target) });
+      await setStorageAndReload(page, {
+        [userStorageKey(target, 'pending_report_draft')]: pendingDraft(target),
+      });
       await page.waitForTimeout(600);
     },
   },

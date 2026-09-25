@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { customerQueryKeys, customersApi } from '../../../api/customers';
 import { useHomeTabs } from '../../../app/homeTabs';
+import { useSession } from '../../auth';
 import { readPendingDraft } from '../model/reportDraft';
 import type { ReportTarget } from '../types';
 
@@ -12,8 +13,9 @@ import type { ReportTarget } from '../types';
  */
 export function usePendingDraftRestore(openReport: (target: ReportTarget) => void) {
   const { switchTab } = useHomeTabs();
+  const { storageScope } = useSession();
   // 開いた時点の書きかけだけを見る(あとから書きかけが増えても自動では開かない)
-  const [draftCustomerId] = useState(() => readPendingDraft()?.customerId ?? null);
+  const [draftCustomerId] = useState(() => readPendingDraft(storageScope)?.customerId ?? null);
   const attemptedRef = useRef(false);
 
   const { data } = useQuery({
@@ -27,10 +29,10 @@ export function usePendingDraftRestore(openReport: (target: ReportTarget) => voi
     if (attemptedRef.current || !draftCustomerId || !data) return;
     attemptedRef.current = true;
     // 読み込んでいるあいだに保存された(書きかけが消えた)ときは開かない
-    if (readPendingDraft()?.customerId !== draftCustomerId) return;
+    if (readPendingDraft(storageScope)?.customerId !== draftCustomerId) return;
     const customer = data.customers.find((c) => c.id === draftCustomerId);
     if (!customer) return;
     switchTab('visitors');
     openReport({ customerId: customer.id, customerName: customer.name });
-  }, [data, draftCustomerId, openReport, switchTab]);
+  }, [data, draftCustomerId, openReport, switchTab, storageScope]);
 }

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { readStorage, STORAGE_KEYS, writeStorage } from '../../../lib/storage';
-import { addDaysYmd, toYmd, weekStartOf } from '../model/week';
+import { addDaysYmd, todayJst, weekStartOf } from '../model/week';
 
 /**
  * 週間予定の表示の状態(GAS版 calWeekAnchorDate / calSelectedDate / calViewMode / calWeekViewMode)。
@@ -16,7 +16,7 @@ export function readWeekViewMode(): WeekViewMode {
 
 export function useCalendarNav() {
   const [state, setState] = useState(() => {
-    const today = toYmd(new Date());
+    const today = todayJst();
     return { weekStart: weekStartOf(today), selectedDate: today, viewMode: 'week' as ViewMode };
   });
   const [weekViewMode, setWeekViewMode] = useState<WeekViewMode>(readWeekViewMode);
@@ -28,7 +28,7 @@ export function useCalendarNav() {
 
   /** 今日へ(GAS版 jumpToTodayWeek) */
   const jumpToToday = useCallback(() => {
-    const today = toYmd(new Date());
+    const today = todayJst();
     setState({ weekStart: weekStartOf(today), selectedDate: today, viewMode: 'week' });
   }, []);
 
@@ -54,12 +54,10 @@ export function useCalendarNav() {
 
   /** 一覧/表の切り替え(GAS版 toggleCalWeekView) */
   const toggleWeekView = useCallback(() => {
-    setWeekViewMode((m) => {
-      const next: WeekViewMode = m === 'list' ? 'grid' : 'list';
-      writeStorage(STORAGE_KEYS.calWeekViewMode, next);
-      return next;
-    });
-  }, []);
+    const next: WeekViewMode = weekViewMode === 'list' ? 'grid' : 'list';
+    writeStorage(STORAGE_KEYS.calWeekViewMode, next);
+    setWeekViewMode(next);
+  }, [weekViewMode]);
 
   return {
     ...state,

@@ -1,6 +1,6 @@
 import type { Page } from 'playwright-core';
 import { CUSTOMERS, DATA_VERSION, reservaCustomerDetails } from '../fixtures';
-import { type Shot, type Target, visible } from './types';
+import { type Shot, type Target, userStorageKey, visible } from './types';
 
 /**
  * 「👪 お客様」タブと「お客様の情報」「これまでの記録」の場面(予定・お客様の担当)。
@@ -124,7 +124,10 @@ export const customerShots: Shot[] = [
     run: async (page, target) => {
       // 高橋 → 伊藤 の順に最近書いた
       const ids = [CUSTOMERS[2], CUSTOMERS[3]].map((c) => (target === 'gas' ? c?.id : c?.uuid));
-      await page.evaluate((v) => localStorage.setItem('recent_customers', v), JSON.stringify(ids));
+      await page.evaluate(({ key, value }) => localStorage.setItem(key, value), {
+        key: userStorageKey(target, 'recent_customers'),
+        value: JSON.stringify(ids),
+      });
       // 並び順は絞り込むたびに読み直す(GAS版 filterCustomers)ので、いったん探して戻す
       await search(page, 'x');
       await page.getByPlaceholder('お客様の名前で探す').filter(visible).fill('');

@@ -23,15 +23,15 @@ export const STORAGE_KEYS = {
   sessionHint: 'katahimo_session_hint',
   /** 出勤簿タブの週の表示('list' | 'grid')。GAS版と同じキー(出勤簿タブ担当が使う)。 */
   calWeekViewMode: 'cal_week_view_mode',
-  /** 最近開いたお客様。GAS版と同じキー(お客様タブ担当が使う)。 */
+  /** 最近開いたお客様。GAS版と同じキー名 + 使う人(userStorageKey)。 */
   recentCustomers: 'recent_customers',
-  /** 書きかけの日報の退避。GAS版と同じキー(日報担当が使う)。 */
+  /** 書きかけの日報の退避。GAS版と同じキー名 + 使う人(userStorageKey)。 */
   pendingReportDraft: 'pending_report_draft',
-  /** 日報の開始時刻(時)の前回値。GAS版と同じキー(日報担当が使う)。 */
+  /** 日報の開始時刻(時)の前回値。GAS版と同じキー名 + 使う人(userStorageKey)。 */
   lastStartHour: 'last_start_hour',
-  /** 日報の開始時刻(分)の前回値。GAS版と同じキー(日報担当が使う)。 */
+  /** 日報の開始時刻(分)の前回値。GAS版と同じキー名 + 使う人(userStorageKey)。 */
   lastStartMinute: 'last_start_minute',
-  /** 事故報告の発生時刻の前回値。GAS版と同じキー(日報担当が使う)。 */
+  /** 事故報告の発生時刻の前回値。GAS版と同じキー名 + 使う人(userStorageKey)。 */
   lastAccidentTime: 'last_acc_time',
   /** 領収書の重複登録チェック用(接頭辞。後ろにスタッフ単位の識別子が付く)。GAS版と同じ。 */
   receiptLocalKeyPrefix: 'GAS_RECEIPT_KEYS_V1_',
@@ -46,6 +46,30 @@ export const STORAGE_KEYS = {
   /** 今月のまとめの2時間キャッシュ(接頭辞。後ろに `<スタッフ>_<YYYY-MM>`)。GAS版と同じ(出勤簿タブ担当が使う)。 */
   attendanceMonthlyCachePrefix: 'attendanceMonthly_',
 } as const;
+
+/**
+ * ログインしている人ごとに分けて持つ値(ほかの人が同じ端末でログインしても見えないように)。
+ * 実際のキーは `userStorageKey(key, scope)` = `<キー名>@<法人ID>/<スタッフID>`。
+ * GAS版(1人1端末が前提)は分けていなかった。分ける前の(誰のものか分からない)値は読まずに消す。
+ */
+export const USER_SCOPED_KEYS = [
+  STORAGE_KEYS.recentCustomers,
+  STORAGE_KEYS.pendingReportDraft,
+  STORAGE_KEYS.lastStartHour,
+  STORAGE_KEYS.lastStartMinute,
+  STORAGE_KEYS.lastAccidentTime,
+] as const;
+export type UserScopedKey = (typeof USER_SCOPED_KEYS)[number];
+
+/** 誰の値か(ログイン中の法人・スタッフ。useSession().storageScope) */
+export interface UserStorageScope {
+  tenantId: string;
+  staffId: string;
+}
+
+export function userStorageKey(key: UserScopedKey, scope: UserStorageScope): string {
+  return `${key}@${scope.tenantId}/${scope.staffId}`;
+}
 
 /** getItem/setItem/removeItem だけを使う最小のStorage(テストで差し替えられるように)。 */
 export type KeyValueStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -109,4 +133,29 @@ export function removeStorageByPrefix(
   } catch {
     // 使用不可のときは何もしない
   }
+}
+
+/** その人の値(USER_SCOPED_KEYS)をすべて消す(ログアウトしたとき) */
+export function removeUserScopedData(
+  scope: UserStorageScope,
+  storage: KeyValueStorage | null = getBrowserStorage(),
+) {
+  for (const key of USER_SCOPED_KEYS) removeStorage(userStorageKey(key, scope), storage);
+}
+
+/** 人ごとに分ける前の(誰のものか分からない)値を消す(ログインしたとき) */
+export function removeUnscopedUserData(storage: KeyValueStorage | null = getBrowserStorage()) {
+  for (const key of USER_SCOPED_KEYS) removeStorage(key, storage);
+}
+
+/**
+ * この端末に置いている、画面の表示用の2時間キャッシュ(予定のルート・出勤簿の週間予定・今月のまとめ)を
+ * すべて消す(ログアウト・セッション切れのとき。次にログインした人に前の人の予定が見えないように)。
+ * 領収書の重複チェック用のキー(GAS_RECEIPT_KEYS_V1_<スタッフ名>)はスタッフごとに分かれていて、
+ * 重複の登録を防ぐためのものなので消さない。
+ */
+export function clearDeviceCaches() {
+  removeStorageByPrefix(STORAGE_KEYS.scheduleRouteCachePrefix);
+  removeStorageByPrefix(STORAGE_KEYS.pastScheduleWeekCachePrefix);
+  removeStorageByPrefix(STORAGE_KEYS.attendanceMonthlyCachePrefix);
 }

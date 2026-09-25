@@ -1,13 +1,15 @@
 import type { CustomerListItem } from '@katahimo/shared';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { readRecentCustomerIds } from '../../lib/recentCustomers';
 import { EmptyState, Loading } from '../../ui/StatusViews';
 import { showErrorToast } from '../../ui/toast';
+import { useSession } from '../auth';
 import { useReportModal } from '../report';
 import { CustomerCard } from './CustomerCard';
 import { CustomerDetailModal } from './CustomerDetailModal';
 import { CustomerFilters } from './CustomerFilters';
 import { CustomerHistoryModal } from './CustomerHistoryModal';
-import { filterCustomers, readRecentCustomerIds } from './customerFilter';
+import { filterCustomers } from './customerFilter';
 import { useCustomerSearch } from './customerSearchStore';
 import { useCustomerList } from './useCustomerList';
 import { useModalTarget } from './useModalTarget';
@@ -21,8 +23,15 @@ export function CustomersTab() {
   const [search, setSearch] = useCustomerSearch();
   const [city, setCity] = useState('');
   const { openReport, openStandaloneReceipt } = useReportModal();
+  const { storageScope } = useSession();
   const detail = useModalTarget<CustomerListItem>();
   const history = useModalTarget<CustomerListItem>();
+  const { open: openDetail } = detail;
+  const { open: openHistory } = history;
+  const writeReport = useCallback(
+    (customer: CustomerListItem) => openReport({ customerId: customer.id, customerName: customer.name }),
+    [openReport],
+  );
 
   // 読み込みに失敗したら赤いお知らせ(GAS版 onError)。一覧は読み込み中の表示のまま
   const { errorUpdateCount, error } = customersQuery;
@@ -32,9 +41,19 @@ export function CustomersTab() {
   }, [errorUpdateCount]);
 
   const data = customersQuery.data;
+  // 一覧の絞り込みは入力より後回しにする(お客様が多くても文字の入力が引っかからないように)
+  const deferredSearch = useDeferredValue(search);
   const filtered = useMemo(
-    () => (data ? filterCustomers(data.customers, { search, city }, readRecentCustomerIds()) : []),
-    [data, search, city],
+    // 最近のお客様は絞り込みを変えるたびに読み直す(GAS版 filterCustomers と同じ)
+    () =>
+      data
+        ? filterCustomers(
+            data.customers,
+            { search: deferredSearch, city },
+            readRecentCustomerIds(storageScope),
+          )
+        : [],
+    [data, deferredSearch, city, storageScope],
   );
 
   return (
@@ -63,15 +82,15 @@ export function CustomersTab() {
         {!data ? (
           <Loading />
         ) : filtered.length === 0 ? (
-          <CustomerEmptyState hasFilter={Boolean(search || city)} />
+          <CustomerEmptyState hasFilter={Boolean(deferredSearch || city)} />
         ) : (
           filtered.map((customer) => (
             <CustomerCard
               key={customer.id}
               customer={customer}
-              onWriteReport={() => openReport({ customerId: customer.id, customerName: customer.name })}
-              onShowDetail={() => detail.open(customer)}
-              onShowHistory={() => history.open(customer)}
+              onWriteReport={writeReport}
+              onShowDetail={openDetail}
+              onShowHistory={openHistory}
             />
           ))
         )}

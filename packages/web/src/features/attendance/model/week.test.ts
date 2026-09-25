@@ -49,7 +49,7 @@ describe('週の範囲・見出し', () => {
     expect(addDaysYmd('2026-09-20', -21)).toBe('2026-08-30');
   });
   it('「HH:MM 時点」(時刻が無ければ空)', () => {
-    expect(updatedAtLabel(new Date(2026, 8, 25, 9, 5).getTime())).toBe('09:05 時点');
+    expect(updatedAtLabel(Date.parse('2026-09-25T09:05:00+09:00'))).toBe('09:05 時点');
     expect(updatedAtLabel(null)).toBe('');
   });
 });

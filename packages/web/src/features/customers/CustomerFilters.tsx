@@ -22,6 +22,7 @@ export function CustomerFilters({
           <input
             type="text"
             id="searchInput"
+            aria-label="お客様の名前で探す"
             placeholder="お客様の名前で探す"
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}

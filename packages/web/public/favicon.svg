@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>保育日報アプリ</title>
+  <rect width="512" height="512" rx="112" fill="#2563eb"/>
+  <g transform="translate(256 262)">
+    <rect x="-128" y="-160" width="256" height="320" rx="28" fill="#ffffff"/>
+    <rect x="-56" y="-184" width="112" height="52" rx="20" fill="#bfdbfe"/>
+    <rect x="-88" y="-88" width="176" height="20" rx="10" fill="#93c5fd"/>
+    <rect x="-88" y="-36" width="176" height="20" rx="10" fill="#93c5fd"/>
+    <rect x="-88" y="16" width="120" height="20" rx="10" fill="#93c5fd"/>
+    <path d="M -34 104 l 34 -34 l 34 34 l -34 34 z" fill="#facc15"/>
+    <circle cx="60" cy="104" r="22" fill="#f87171"/>
+  </g>
+</svg>

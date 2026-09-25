@@ -1,5 +1,5 @@
 import type { UiConfigResponse } from '@katahimo/shared';
-import { FadeModal, ModalFooter, ModalHeader } from '../../../ui/modal';
+import { Modal, ModalFooter, ModalHeader } from '../../../ui/modal';
 import type { HintContent } from '../hooks/useReportController';
 
 /**
@@ -19,8 +19,9 @@ export function HintModal({
 }) {
   const definition = hint?.body.kind === 'assessment' ? assessments?.[hint.body.type] : undefined;
   return (
-    <FadeModal
+    <Modal
       open={open}
+      onClose={onClose}
       keepMounted
       labelledBy="hintModalTitle"
       className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center transition-opacity"
@@ -67,6 +68,6 @@ export function HintModal({
           </button>
         </ModalFooter>
       </div>
-    </FadeModal>
+    </Modal>
   );
 }

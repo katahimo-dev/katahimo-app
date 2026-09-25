@@ -48,6 +48,8 @@ function saveFailure(c: Context, reason: SaveReportFailure) {
       return apiError(c, 404, 'not_found', '修正対象の報告が見つかりません');
     case 'customer_not_found':
       return apiError(c, 404, 'not_found', '顧客が見つかりません');
+    case 'customer_mismatch':
+      return apiError(c, 409, 'conflict', '別のお客様の報告は上書きできません。画面を開きなおしてください');
     case 'staff_not_found':
       return apiError(c, 404, 'not_found', 'スタッフが見つかりません');
   }
