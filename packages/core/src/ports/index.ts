@@ -1,8 +1,10 @@
 export * from './ai';
 export * from './appLog';
 export * from './audit';
+export * from './cache';
 export * from './calendar';
 export * from './crypto';
+export * from './googleCalendar';
 export * from './kms';
 export * from './maps';
 export * from './mirror';
@@ -10,4 +12,6 @@ export * from './mirrorSender';
 export * from './notifier';
 export * from './repositories';
 export * from './schedule';
+export * from './scheduleDirectory';
+export * from './staffBusyBlocks';
 export * from './storage';

@@ -1,4 +1,7 @@
+import { SCHEDULE_PROVIDERS } from '@katahimo/integrations';
 import { z } from 'zod';
+
+const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
 
 /**
  * 環境変数の検証。起動時に一度だけ実行し、足りない設定は起動前に落とす。
@@ -31,14 +34,22 @@ const envSchema = z.object({
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
   GOOGLE_OAUTH_REDIRECT_URI: z.string().optional(),
 
+  // ── 予定・ルート計算(doc/api/schedule-route.md) ──
+  // google: Google Calendar API + Google Maps Platform を直接呼ぶ / gas_bridge: GAS版Web Appに委ねる /
+  // noop: 常に予定なし。未指定なら設定されている資格情報から選ぶ(selectScheduleProvider参照)。
+  SCHEDULE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(SCHEDULE_PROVIDERS).optional()),
+  // Geocoding API と Routes API を有効にしたAPIキー(SCHEDULE_PROVIDER=google で必須)。
   GOOGLE_MAPS_API_KEY: z.string().optional(),
+  // サービスアカウントキー(JSON)のパス。Cloud Run(Workload Identity)では不要。
+  GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
+  // staff.calendar_id 以外に読むカレンダー。カンマ区切りで `ID` または `ID=持ち主のスタッフ名`。
+  GOOGLE_CALENDAR_IDS: z.string().optional(),
+  // ドメイン全体の委任で成り代わるWorkspaceユーザー(未指定ならサービスアカウント自身として読む)。
+  GOOGLE_CALENDAR_IMPERSONATE: z.string().optional(),
 
-  // katahimo-app単体ではAPIキー不要のMapsサービス(Maps.newGeocoder/newDirectionFinder)を
-  // 直接呼べない(Apps Script実行環境の外からは使えないため)。稼働中のgas-childcare-visit-app
-  // のWeb Appデプロイを軽量なプロキシとして使うことで、Google Maps Platformの新規契約
-  // (APIキー・課金設定)を避けられる。GAS_BRIDGE_URLはそのWeb Appの/execエンドポイント、
-  // GAS_BRIDGE_SECRETはGAS側Bridge.jsのBRIDGE_API_SECRET(Script Properties)と同じ値。
-  // 未設定の場合はNoopMapsPort(常にnullを返す)にフォールバックする。
+  // 稼働中のgas-childcare-visit-appのWeb Appデプロイ(Bridge.js)。GAS_BRIDGE_URLはその/exec
+  // エンドポイント、GAS_BRIDGE_SECRETはGAS側Bridge.jsのBRIDGE_API_SECRET(Script Properties)と
+  // 同じ値。SCHEDULE_PROVIDER=gas_bridge の予定取得と、outboxミラー書き込みに使う。
   GAS_BRIDGE_URL: z.string().optional(),
   GAS_BRIDGE_SECRET: z.string().optional(),
 

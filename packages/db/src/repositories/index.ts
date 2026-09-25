@@ -14,5 +14,6 @@ export * from './sessionRepository';
 export * from './staffAvailabilityRepository';
 export * from './staffBusyBlockRepository';
 export * from './staffRepository';
+export * from './staffRouteProfileRepository';
 export * from './tenantKeyRepository';
 export * from './tenantRepository';

@@ -8,6 +8,7 @@ import type {
   SchedulePort,
   StoragePort,
 } from '@katahimo/core/ports';
+import { createScheduleDirectory } from '@katahimo/core/usecases';
 import type { Database } from '@katahimo/db';
 import {
   DrizzleAccidentReportRepository,
@@ -21,23 +22,23 @@ import {
   DrizzleReceiptRepository,
   DrizzleSessionRepository,
   DrizzleStaffRepository,
+  DrizzleStaffRouteProfileRepository,
   DrizzleTenantKeyRepository,
   DrizzleTenantRepository,
 } from '@katahimo/db/repositories';
 import {
   ConsoleAuditLogPort,
-  GasBridgeMapsPort,
-  GasBridgeSchedulePort,
+  createScheduleServices,
   GeminiAiPort,
+  InMemoryTtlCache,
   LocalBlindIndexPort,
   LocalCryptoPort,
   LocalFileStoragePort,
   LocalKmsPort,
   listAvailableGeminiModels,
-  NoopMapsPort,
   NoopMirrorPort,
   NoopReportAiPort,
-  NoopSchedulePort,
+  type ScheduleProvider,
   WebhookNotifierPort,
 } from '@katahimo/integrations';
 import { argon2PasswordHasher } from './authAdapters';
@@ -66,19 +67,14 @@ export interface Container {
   reportAiFactory: ReportAiPortFactory;
   /** 管理者設定画面の「最新モデル一覧を取得」用。保存前の入力中キーでも確認できるよう独立させている。 */
   listGeminiModels: typeof listAvailableGeminiModels;
-  /**
-   * ジオコーディング/ルート計算。GAS_BRIDGE_URL/GAS_BRIDGE_SECRETが設定されていれば
-   * gas-childcare-visit-appのWeb App(Bridge.js)をプロキシとして使い、未設定ならNoopMapsPort
-   * (常にnull)にフォールバックする。
-   */
+  /** ジオコーディング/ルート計算(SCHEDULE_PROVIDER に応じて Google Maps Platform / GASブリッジ / Noop)。 */
   maps: MapsPort;
   /**
-   * 「今日/明日の予定」閲覧。GAS_BRIDGE_URL/GAS_BRIDGE_SECRETが設定されていれば
-   * gas-childcare-visit-appのWeb App(Bridge.js、既存のカレンダー解析・ルート計算ロジックを
-   * そのまま使う)をプロキシとして使い、未設定ならNoopSchedulePort(常に予定なし)に
-   * フォールバックする。
+   * 「今日/明日の予定」。SCHEDULE_PROVIDER(未指定なら資格情報から自動選択)で GoogleSchedulePort /
+   * GasBridgeSchedulePort / NoopSchedulePort を切り替える(doc/api/schedule-route.md)。
    */
   schedule: SchedulePort;
+  scheduleProvider: ScheduleProvider;
   /**
    * 日報/事故報告/領収書/勤怠のミラー書き込み要求をoutboxに積む(Phase 5)。実際の送信
    * (GAS版スプレッドシート/Driveへの反映)はAPIサーバーではなくワーカー(packages/worker)が行う。
@@ -95,16 +91,26 @@ export function createContainer(env: Env, db: Database): Container {
   const tenantKeys = new DrizzleTenantKeyRepository(db);
   const crypto = new LocalCryptoPort(tenantKeys, kms, new ConsoleAuditLogPort());
   const appSettings = new DrizzleAppSettingsRepository(db);
-  const gasBridgeOptions =
-    env.GAS_BRIDGE_URL && env.GAS_BRIDGE_SECRET
-      ? { baseUrl: env.GAS_BRIDGE_URL, secret: env.GAS_BRIDGE_SECRET }
-      : null;
+  const customers = new DrizzleCustomerRepository(db);
+  const appLog = new DrizzleAppLogRepository(db);
+  const scheduleServices = createScheduleServices(env, {
+    directory: createScheduleDirectory({
+      customers,
+      staffRouteProfiles: new DrizzleStaffRouteProfileRepository(db),
+      crypto,
+    }),
+    appLog,
+    // ルート結果の共有キャッシュ(GAS版CacheService相当)。プロセス内のため Cloud Run の
+    // インスタンス間では共有されない。1件=1スタッフ×1日の結果。
+    routeCache: new InMemoryTtlCache({ maxEntries: 2000 }),
+  });
+  console.info(`予定・ルート計算の実装: ${scheduleServices.provider}`);
 
   return {
     tenants: new DrizzleTenantRepository(db),
     staff: new DrizzleStaffRepository(db),
     sessions: new DrizzleSessionRepository(db),
-    customers: new DrizzleCustomerRepository(db),
+    customers,
     familyMembers: new DrizzleFamilyMemberRepository(db),
     attendanceDays: new DrizzleAttendanceDayRepository(db),
     dailyReports: new DrizzleDailyReportRepository(db),
@@ -133,10 +139,11 @@ export function createContainer(env: Env, db: Database): Container {
       : new NoopReportAiPort(),
     reportAiFactory: { create: (opts) => new GeminiAiPort(opts) },
     listGeminiModels: listAvailableGeminiModels,
-    maps: gasBridgeOptions ? new GasBridgeMapsPort(gasBridgeOptions) : new NoopMapsPort(),
-    schedule: gasBridgeOptions ? new GasBridgeSchedulePort(gasBridgeOptions) : new NoopSchedulePort(),
+    maps: scheduleServices.maps,
+    schedule: scheduleServices.schedule,
+    scheduleProvider: scheduleServices.provider,
     mirror: env.MIRROR_TO_GOOGLE_SHEETS ? new DrizzleOutboxRepository(db) : new NoopMirrorPort(),
-    appLog: new DrizzleAppLogRepository(db),
+    appLog,
     legacyAuthSalt: env.LEGACY_AUTH_SALT,
   };
 }

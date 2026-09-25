@@ -6,5 +6,7 @@ export * from './receipts';
 export * from './reportAi';
 export * from './reports';
 export * from './schedule';
+export * from './scheduleDirectory';
 export * from './settings';
 export * from './staff';
+export * from './staffBusyBlocks';
