@@ -1,5 +1,6 @@
 export type { InstantRange } from './_rangeSql';
 export * from './accidentReportRepository';
+export * from './appLogRepository';
 export * from './appSettingsRepository';
 export * from './attendanceDayRepository';
 export * from './attributeRepository';
@@ -15,4 +16,3 @@ export * from './staffBusyBlockRepository';
 export * from './staffRepository';
 export * from './tenantKeyRepository';
 export * from './tenantRepository';
-export * from './appLogRepository';
