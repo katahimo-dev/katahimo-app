@@ -128,7 +128,9 @@ GAS版 `checkDataVersion`。レスポンス `{ dataVersion: '12' }`(顧客CSVを
 | ジョブ | `pnpm --filter @katahimo/worker job:sync-busy-blocks` | スタッフのGoogleカレンダーの free/busy を `staff_busy_blocks` に同期(将来のマッチング用、doc/10。GAS版に相当機能なし)。期間は今日から `BUSY_BLOCK_SYNC_DAYS` 日 | 既定では登録しない(使う場合は例: `0 * * * *`) |
 | 確認用 | `pnpm --filter @katahimo/worker outbox:once` | outbox を1回だけ処理して終了 | — |
 
-- ジョブは Cloud Run Jobs として同じイメージの別コマンドで動かす(`tsx src/entrypoints/<job>.ts`)。
+- ジョブは Cloud Run Jobs として同じ worker イメージの別コマンドで動かす(ビルド済みの
+  `node dist/<job>.js`。`<job>` は `nightly-calendar-sync` / `csv-import` / `sync-busy-blocks` / `outbox-once`。
+  構成は `Dockerfile` / `infra/gcp/run.tf`、手順は `doc/11_GCPデプロイ手順.md`)。
   失敗(反映に失敗したスタッフがいる・取込が `failed`/`review_required`)があると終了コード1になり、
   Cloud Run Jobs の再試行・アラートに乗る。ログは1行JSON(Cloud Logging の構造化ログ)。
 - 取りこぼした日の流し直し: `pnpm job:nightly-calendar-sync -- 2026-09-24`。
@@ -156,6 +158,7 @@ ERROR(`mirror.job_failed`)を残す。`processing` のまま10分以上更新さ
 | `OUTBOX_POLL_INTERVAL_MS` / `OUTBOX_BATCH_SIZE` | ワーカー | 既定 5000 / 10 |
 | `OUTBOX_MAX_ATTEMPTS` / `OUTBOX_RETRY_BASE_DELAY_MS` / `OUTBOX_RETRY_MAX_DELAY_MS` | ワーカー | 既定 8 / 30000 / 3600000 |
 | `WORKER_IN_PROCESS_CRON` | ワーカー | `true` で常駐ワーカー内の定期実行を有効にする(ローカル用) |
+| `WORKER_HEALTH_PORT` | ワーカー | 常駐ワーカーをヘルスチェック用に待ち受けさせるポート(Cloud Run サービス用。未設定なら待ち受けない) |
 
 ## GAS側(Bridge.js)に必要な変更
 

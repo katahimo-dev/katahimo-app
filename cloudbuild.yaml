@@ -1,0 +1,113 @@
+# Cloud Build: イメージのビルド・push → マイグレーション(Cloud Run Job)→ デプロイ。
+# 前提: infra/gcp(Terraform)を deploy_workloads=true で apply 済み。手順は doc/11_GCPデプロイ手順.md。
+#
+# 実行SAは katahimo-deployer(infra/gcp/iam.tf)。GitHub トリガー(main への push)ならトリガーの
+# 「サービスアカウント」に指定し、手元から実行する場合は:
+#   gcloud builds submit --region=asia-northeast1 --config=cloudbuild.yaml \
+#     --gcs-source-staging-dir="gs://${PROJECT_ID}-katahimo-build/source" \
+#     --service-account="projects/${PROJECT_ID}/serviceAccounts/katahimo-deployer@${PROJECT_ID}.iam.gserviceaccount.com" \
+#     --substitutions=_TAG="$(git rev-parse --short HEAD)"
+#
+# マイグレーションは新しいイメージのデプロイ前に流す。そのため、マイグレーションは旧バージョンのアプリでも
+# 動く形(列の追加→アプリ更新→旧列の削除は次のリリース、の2段階)で書くこと。
+
+substitutions:
+  _REGION: asia-northeast1
+  _REGISTRY: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/katahimo
+  # イメージのタグ。トリガー実行ではコミットの短いSHA、手元からは --substitutions=_TAG=... で指定する
+  _TAG: ${SHORT_SHA}
+  # false ならビルドと push だけ行う(マイグレーション・デプロイをしない)
+  _DEPLOY: 'true'
+
+options:
+  # 既定以外のサービスアカウントで動かすビルドはログの出力先の指定が必須
+  logging: CLOUD_LOGGING_ONLY
+  # _REGISTRY の中で _REGION / PROJECT_ID を展開する
+  dynamicSubstitutions: true
+  # 使うステージだけをビルドする(マルチステージの --target)
+  env:
+    - DOCKER_BUILDKIT=1
+
+steps:
+  - id: build-api
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --target=api
+      - --tag=${_REGISTRY}/api:${_TAG}
+      - --tag=${_REGISTRY}/api:latest
+      - .
+    waitFor: ['-']
+
+  - id: build-worker
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --target=worker
+      - --tag=${_REGISTRY}/worker:${_TAG}
+      - --tag=${_REGISTRY}/worker:latest
+      - .
+    waitFor: ['-']
+
+  - id: push-api
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGISTRY}/api
+    waitFor: [build-api]
+
+  - id: push-worker
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGISTRY}/worker
+    waitFor: [build-worker]
+
+  # マイグレーション(失敗したらここで止まり、デプロイしない)。_DEPLOY=false ならイメージの push だけで終える
+  # (初回、Terraform で Cloud Run を作る前にイメージを用意するとき。doc/11 「3.7」)。
+  - id: migrate
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        [ "${_DEPLOY}" = true ] || { echo "_DEPLOY=${_DEPLOY}: デプロイしません"; exit 0; }
+        gcloud run jobs update katahimo-migrate --region=${_REGION} --image=${_REGISTRY}/worker:${_TAG}
+        gcloud run jobs execute katahimo-migrate --region=${_REGION} --wait
+    waitFor: [push-worker]
+
+  # 既存のサービス・ジョブのイメージだけを差し替える(services update は存在しないサービスを作らない。
+  # 設定は Terraform が管理する)
+  - id: deploy-api
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        [ "${_DEPLOY}" = true ] || exit 0
+        gcloud run services update katahimo-api --region=${_REGION} --image=${_REGISTRY}/api:${_TAG}
+    waitFor: [push-api, migrate]
+
+  - id: deploy-worker
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        [ "${_DEPLOY}" = true ] || exit 0
+        # outbox ポーラーは止めている場合がある(infra/gcp の outbox_poller_enabled=false)
+        if gcloud run services describe katahimo-worker --region=${_REGION} --format='value(name)' >/dev/null 2>&1; then
+          gcloud run services update katahimo-worker --region=${_REGION} --image=${_REGISTRY}/worker:${_TAG}
+        fi
+        for job in nightly-calendar-sync csv-import sync-busy-blocks; do
+          gcloud run jobs update "katahimo-$${job}" --region=${_REGION} --image=${_REGISTRY}/worker:${_TAG}
+        done
+    waitFor: [migrate]

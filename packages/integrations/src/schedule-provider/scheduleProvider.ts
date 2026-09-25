@@ -42,6 +42,17 @@ export function selectScheduleProvider(env: ScheduleProviderEnv): ScheduleProvid
   return 'noop';
 }
 
+/**
+ * 起動時の設定検証。本番は SCHEDULE_PROVIDER の明示を必須にする(Cloud Run は
+ * GOOGLE_APPLICATION_CREDENTIALS を使わないため、自動選択だと気づかないまま noop(常に予定なし)になる)。
+ */
+export function scheduleEnvProblems(env: ScheduleProviderEnv, isProduction: boolean): string[] {
+  if (isProduction && !env.SCHEDULE_PROVIDER) {
+    return ['  - SCHEDULE_PROVIDER: 本番は google / gas_bridge / noop のいずれかを明示してください'];
+  }
+  return [];
+}
+
 export interface ScheduleServiceDeps {
   directory: ScheduleDirectoryPort;
   appLog: AppLogPort;
