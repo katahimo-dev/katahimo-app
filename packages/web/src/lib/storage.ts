@@ -35,6 +35,10 @@ export const STORAGE_KEYS = {
   lastAccidentTime: 'last_acc_time',
   /** 領収書の重複登録チェック用(接頭辞。後ろにスタッフ単位の識別子が付く)。GAS版と同じ。 */
   receiptLocalKeyPrefix: 'GAS_RECEIPT_KEYS_V1_',
+  /** 出勤簿タブの週間予定の2時間キャッシュ(接頭辞。後ろに `<スタッフ>_<週の日曜>`)。GAS版と同じ(出勤簿タブ担当が使う)。 */
+  pastScheduleWeekCachePrefix: 'pastSchedWeek_',
+  /** 今月のまとめの2時間キャッシュ(接頭辞。後ろに `<スタッフ>_<YYYY-MM>`)。GAS版と同じ(出勤簿タブ担当が使う)。 */
+  attendanceMonthlyCachePrefix: 'attendanceMonthly_',
 } as const;
 
 /** getItem/setItem/removeItem だけを使う最小のStorage(テストで差し替えられるように)。 */
@@ -78,6 +82,24 @@ export function writeStorage(
 export function removeStorage(key: string, storage: KeyValueStorage | null = getBrowserStorage()) {
   try {
     storage?.removeItem(key);
+  } catch {
+    // 使用不可のときは何もしない
+  }
+}
+
+/** 接頭辞で始まるキーをまとめて消す(GAS版 invalidatePastScheduleWeekCache_ 等のキャッシュ破棄)。 */
+export function removeStorageByPrefix(
+  prefix: string,
+  storage: (KeyValueStorage & Pick<Storage, 'key' | 'length'>) | null = getBrowserStorage() as Storage | null,
+) {
+  try {
+    if (!storage) return;
+    const keys: string[] = [];
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (key?.startsWith(prefix)) keys.push(key);
+    }
+    for (const key of keys) storage.removeItem(key);
   } catch {
     // 使用不可のときは何もしない
   }
