@@ -1,8 +1,12 @@
 export * from './attendance';
 export * from './calendarDate';
 export * from './customerCsv';
+export * from './errors';
+export * from './geo';
+export * from './ids';
 export * from './legacyAuth';
 export * from './legacyImport';
+export * from './model';
 export * from './notifications';
 export * from './outbox';
 export * from './pii';
@@ -11,3 +15,4 @@ export * from './reports';
 export * from './schedule';
 export * from './staff';
 export * from './staffName';
+export * from './time';
