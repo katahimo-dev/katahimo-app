@@ -3,6 +3,11 @@ import {
   ASSESSMENT_DEFINITIONS,
   activeStaffListResponseSchema,
   adminSettingsResponseSchema,
+  attendanceDayResponseSchema,
+  attendanceMonthResponseSchema,
+  attendanceWeekResponseSchema,
+  calendarSyncApplyResponseSchema,
+  calendarSyncPreviewResponseSchema,
   changePasswordResponseSchema,
   customerDetailResponseSchema,
   customerHistoryResponseSchema,
@@ -23,28 +28,34 @@ import {
   scheduleWithRouteResponseSchema,
   sessionUserResponseSchema,
   uiConfigResponseSchema,
+  updateAttendanceDayResponseSchema,
   uploadReceiptsResponseSchema,
   visitCompleteResponseSchema,
 } from '@katahimo/shared';
 import type { BrowserContext, Route } from 'playwright-core';
 import type { ZodTypeAny } from 'zod';
-import { addDays } from './dates';
+import { addDays, daysInMonth } from './dates';
 import {
   ADMIN_SETTINGS,
   AVAILABLE_MODELS,
+  attendanceRow,
   CUSTOMERS,
+  calendarSyncChanges,
   customerReports,
   DATA_VERSION,
   type FixtureCustomer,
   type FixtureStaff,
   MOCK_PASSWORD,
+  monthReceipts,
   reportUuid,
   reservaCustomerDetails,
   routeAppointments,
   STAFF,
   TENANT,
+  WEATHER_OPTIONS,
 } from './fixtures';
 import { gasHandlers } from './gasMock';
+import { loadGasPureFunctions, type RowData } from './gasRuntime';
 
 /**
  * 新アプリ(packages/web)のAPIのモック。Playwright の route で /api/** を受け、fixtures.ts の
@@ -345,6 +356,9 @@ export const webHandlers: Record<string, WebHandler> = {
       schema: uploadReceiptsResponseSchema,
     };
   }),
+
+  // ── 出勤簿(下の attendanceWebHandlers) ──
+  ...attendanceWebHandlers(),
 };
 
 /** 予定のAPIの date が「今日」なら 0、「明日」なら 1(fixtures の routeAppointments の offset)。 */
@@ -471,4 +485,170 @@ export async function installWebMock(
       await route.fulfill({ status: result.status ?? 200, json: result.body });
     },
   );
+}
+
+// ── 出勤簿(出勤簿の担当)。GAS版モック(gasMock.ts)と同じ fixtures・同じGAS版の計算から作る ──
+
+/** 管理者が staffId を指定した場合だけその人、それ以外は本人(API resolveAttendanceTargetStaffId と同じ)。 */
+function attendanceTarget(req: WebMockRequest, user: FixtureStaff): FixtureStaff {
+  const requested = String(req.query.get('staffId') ?? req.body.staffId ?? '');
+  if (!user.isAdmin || !requested) return user;
+  return STAFF.find((s) => s.id === requested) ?? user;
+}
+
+/** 列の値を契約の形(文字列)にする */
+function toContractRow(row: RowData): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(row).map(([k, v]) => [k, v === null || v === undefined ? '' : String(v)]),
+  );
+}
+
+/** GAS版 computeDayDerived の値(null があれば '' にする) */
+function derivedOf(row: RowData) {
+  const derived = loadGasPureFunctions().computeDayDerived(row);
+  return Object.fromEntries(Object.entries(derived).map(([k, v]) => [k, v === null ? '' : v]));
+}
+
+/** 当月(今日が属する月)の1日〜末日だけ直せる */
+function attendanceEditableRange(today: string) {
+  const ym = today.slice(0, 7);
+  return { from: `${ym}-01`, to: `${ym}-${String(daysInMonth(ym)).padStart(2, '0')}` };
+}
+
+function attendanceDayBody(date: string, staff: FixtureStaff, today: string) {
+  const row = attendanceRow(date, today);
+  const range = attendanceEditableRange(today);
+  return {
+    businessDate: date,
+    staffId: staff.id,
+    staffName: staff.name,
+    found: true,
+    rowData: toContractRow(row),
+    derived: derivedOf(row),
+    changedFields: [],
+    editable: date >= range.from && date <= range.to,
+    editableFrom: range.from,
+    editableTo: range.to,
+    optionsI: WEATHER_OPTIONS,
+    optionsR: WEATHER_OPTIONS,
+  };
+}
+
+function attendanceWebHandlers(): Record<string, WebHandler> {
+  return {
+    'GET /api/attendance/week': withUser((req) => {
+      const start = String(req.query.get('start'));
+      const end = String(req.query.get('end'));
+      const gas = loadGasPureFunctions();
+      const events: unknown[] = [];
+      for (let d = start; d <= end; d = addDays(d, 1)) {
+        events.push(...gas.buildScheduleEventsFromRowData_(d, attendanceRow(d, req.state.today)));
+      }
+      return { body: { events }, schema: attendanceWeekResponseSchema };
+    }),
+    'GET /api/attendance/day': withUser((req, user) => ({
+      body: {
+        attendance: attendanceDayBody(
+          String(req.query.get('date')),
+          attendanceTarget(req, user),
+          req.state.today,
+        ),
+      },
+      schema: attendanceDayResponseSchema,
+    })),
+    'PUT /api/attendance/day': withUser((req, user) => {
+      const date = String(req.body.date);
+      const range = attendanceEditableRange(req.state.today);
+      if (date < range.from) {
+        return {
+          status: 400,
+          body: {
+            code: 'locked',
+            message: `修正期限切れです。当月(${range.from.slice(5).replace('-', '/')})より前の記録は変更できません。`,
+          },
+        };
+      }
+      const changedColumns = Object.keys((req.body.rowData as Record<string, unknown>) ?? {});
+      return {
+        body: {
+          attendance: attendanceDayBody(date, attendanceTarget(req, user), req.state.today),
+          changedCount: changedColumns.length,
+          changedColumns,
+          message: '修正しました。',
+        },
+        schema: updateAttendanceDayResponseSchema,
+      };
+    }),
+    'GET /api/attendance/month': withUser((req, user) => {
+      const ym = String(req.query.get('month'));
+      const staff = attendanceTarget(req, user);
+      const gas = loadGasPureFunctions();
+      const rows = Array.from({ length: daysInMonth(ym) }, (_, i) => {
+        const date = `${ym}-${String(i + 1).padStart(2, '0')}`;
+        return { date, row: attendanceRow(date, req.state.today) };
+      });
+      const totals = gas.computeMonthlyTotals(
+        rows.map(({ row }) => ({ rowData: row, derived: gas.computeDayDerived(row) })),
+      );
+      return {
+        body: {
+          month: {
+            yearMonth: ym,
+            staffId: staff.id,
+            staffName: staff.name,
+            days: rows.map(({ date, row }) => ({
+              businessDate: date,
+              rowData: toContractRow(row),
+              derived: derivedOf(row),
+            })),
+            totals,
+            receipts: monthReceipts(ym, req.state.today),
+          },
+        },
+        schema: attendanceMonthResponseSchema,
+      };
+    }),
+    'GET /api/attendance/day/calendar-sync/preview': withUser((req, user) => {
+      const date = String(req.query.get('date'));
+      const staff = attendanceTarget(req, user);
+      const changes = calendarSyncChanges(date, req.state.today).map((c) => ({
+        column: c.col,
+        label: c.label,
+        oldValue: c.oldValue,
+        newValue: c.newValue,
+      }));
+      return {
+        body: {
+          staffId: staff.id,
+          staffName: staff.name,
+          date,
+          appointmentCount: 4,
+          hasChanges: changes.length > 0,
+          changes,
+        },
+        schema: calendarSyncPreviewResponseSchema,
+      };
+    }),
+    'POST /api/attendance/day/calendar-sync': withUser((req, user) => {
+      const date = String(req.body.date);
+      const staff = attendanceTarget(req, user);
+      const changes = calendarSyncChanges(date, req.state.today).map((c) => ({
+        column: c.col,
+        label: c.label,
+        oldValue: c.oldValue,
+        newValue: c.newValue,
+      }));
+      return {
+        body: {
+          staffId: staff.id,
+          staffName: staff.name,
+          date,
+          appointmentCount: 3,
+          changedCount: changes.length,
+          changes,
+        },
+        schema: calendarSyncApplyResponseSchema,
+      };
+    }),
+  };
 }
