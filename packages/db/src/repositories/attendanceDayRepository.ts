@@ -1,8 +1,13 @@
-import type { AttendanceDayRecord, AttendanceDayRepositoryPort, EncryptedField } from '@katahimo/core/ports';
+import type {
+  AttendanceDayRecord,
+  AttendanceDayRepositoryPort,
+  EncryptedField,
+  SaveAttendanceDayInput,
+} from '@katahimo/core/ports';
 import { and, eq, gte, lt, lte } from 'drizzle-orm';
 import type { Database } from '../client';
 import { withTenant } from '../client';
-import { attendanceDays } from '../schema';
+import { attendanceDayChanges, attendanceDays } from '../schema';
 
 type AttendanceDayRow = typeof attendanceDays.$inferSelect;
 
@@ -13,19 +18,19 @@ function toRecord(row: AttendanceDayRow): AttendanceDayRecord {
     staffId: row.staffId,
     businessDate: row.businessDate,
     rowData: { ciphertext: row.rowDataCiphertext, keyVersion: row.rowDataKeyVersion },
+    changedFields: row.changedFields,
+    lastChangedByStaffId: row.lastChangedByStaffId,
   };
 }
 
-/** 'YYYY-MM' から、その月の [開始日, 翌月開始日) の範囲を返す(月末日数を気にせず済むように)。 */
+/** 'YYYY-MM' から、その月の [1日, 翌月1日) を返す。 */
 function monthRange(yearMonth: string): { start: string; nextMonthStart: string } {
-  const [yearStr, monthStr] = yearMonth.split('-');
-  const year = Number(yearStr);
-  const month = Number(monthStr);
-  const start = `${yearMonth}-01`;
-  const nextMonth = month === 12 ? 1 : month + 1;
-  const nextYear = month === 12 ? year + 1 : year;
-  const nextMonthStart = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
-  return { start, nextMonthStart };
+  const [year, month] = yearMonth.split('-').map(Number) as [number, number];
+  const next = month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 };
+  return {
+    start: `${yearMonth}-01`,
+    nextMonthStart: `${next.year}-${String(next.month).padStart(2, '0')}-01`,
+  };
 }
 
 export class DrizzleAttendanceDayRepository implements AttendanceDayRepositoryPort {
@@ -55,33 +60,68 @@ export class DrizzleAttendanceDayRepository implements AttendanceDayRepositoryPo
     });
   }
 
-  async upsert(
+  async save(input: SaveAttendanceDayInput): Promise<AttendanceDayRecord> {
+    return withTenant(this.db, input.tenantId, async (tx) => {
+      const values = {
+        rowDataCiphertext: input.rowData.ciphertext,
+        rowDataKeyVersion: input.rowData.keyVersion,
+        changedFields: input.changedFields,
+        lastChangedByStaffId: input.lastChangedByStaffId,
+      };
+      const rows = await tx
+        .insert(attendanceDays)
+        .values({
+          tenantId: input.tenantId,
+          staffId: input.staffId,
+          businessDate: input.businessDate,
+          ...values,
+        })
+        .onConflictDoUpdate({
+          target: [attendanceDays.tenantId, attendanceDays.staffId, attendanceDays.businessDate],
+          set: { ...values, updatedAt: new Date() },
+        })
+        .returning();
+      const row = rows[0];
+      if (!row) throw new Error('勤怠データの保存に失敗しました');
+
+      await tx.insert(attendanceDayChanges).values({
+        tenantId: input.tenantId,
+        attendanceDayId: row.id,
+        changedByStaffId: input.history.changedByStaffId,
+        changedFields: input.history.changedFields,
+        previousRowDataCiphertext: input.history.previousRowData?.ciphertext ?? null,
+        previousRowDataKeyVersion: input.history.previousRowData?.keyVersion ?? null,
+      });
+      return toRecord(row);
+    });
+  }
+
+  async findOrCreate(
     tenantId: string,
     staffId: string,
     businessDate: string,
-    rowData: EncryptedField,
+    emptyRowData: EncryptedField,
   ): Promise<AttendanceDayRecord> {
     return withTenant(this.db, tenantId, async (tx) => {
-      const rows = await tx
+      await tx
         .insert(attendanceDays)
         .values({
           tenantId,
           staffId,
           businessDate,
-          rowDataCiphertext: rowData.ciphertext,
-          rowDataKeyVersion: rowData.keyVersion,
+          rowDataCiphertext: emptyRowData.ciphertext,
+          rowDataKeyVersion: emptyRowData.keyVersion,
         })
-        .onConflictDoUpdate({
+        .onConflictDoNothing({
           target: [attendanceDays.tenantId, attendanceDays.staffId, attendanceDays.businessDate],
-          set: {
-            rowDataCiphertext: rowData.ciphertext,
-            rowDataKeyVersion: rowData.keyVersion,
-            updatedAt: new Date(),
-          },
-        })
-        .returning();
+        });
+      const rows = await tx
+        .select()
+        .from(attendanceDays)
+        .where(and(eq(attendanceDays.staffId, staffId), eq(attendanceDays.businessDate, businessDate)))
+        .limit(1);
       const row = rows[0];
-      if (!row) throw new Error('勤怠データの保存に失敗しました');
+      if (!row) throw new Error('勤怠データの作成に失敗しました');
       return toRecord(row);
     });
   }

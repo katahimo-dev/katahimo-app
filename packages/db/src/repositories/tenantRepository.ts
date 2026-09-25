@@ -14,6 +14,12 @@ export class DrizzleTenantRepository implements TenantRepositoryPort {
     return { id: row.id, name: row.name, slug: row.slug };
   }
 
+  async findById(id: string): Promise<TenantRecord | null> {
+    const rows = await this.db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
+    const row = rows[0];
+    return row ? { id: row.id, name: row.name, slug: row.slug } : null;
+  }
+
   async create(input: NewTenantInput): Promise<TenantRecord> {
     const rows = await this.db.insert(tenants).values({ name: input.name, slug: input.slug }).returning();
     const row = rows[0];
@@ -23,6 +29,11 @@ export class DrizzleTenantRepository implements TenantRepositoryPort {
 
   async listAll(): Promise<TenantRecord[]> {
     const rows = await this.db.select().from(tenants);
+    return rows.map((row) => ({ id: row.id, name: row.name, slug: row.slug }));
+  }
+
+  async listActive(): Promise<TenantRecord[]> {
+    const rows = await this.db.select().from(tenants).where(eq(tenants.status, 'active'));
     return rows.map((row) => ({ id: row.id, name: row.name, slug: row.slug }));
   }
 }

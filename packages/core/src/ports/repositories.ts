@@ -99,9 +99,12 @@ export interface NewTenantInput {
 
 export interface TenantRepositoryPort {
   findBySlug(slug: string): Promise<TenantRecord | null>;
+  findById(id: string): Promise<TenantRecord | null>;
   create(input: NewTenantInput): Promise<TenantRecord>;
   /** ミラーワーカー(packages/worker)がテナントごとにoutboxをポーリングするための全件取得。 */
   listAll(): Promise<TenantRecord[]>;
+  /** 利用中(status='active')のテナント。夜間バッチ・CSV自動取込の対象。 */
+  listActive(): Promise<TenantRecord[]>;
 }
 
 /**
@@ -221,46 +224,6 @@ export interface FamilyMemberRepositoryPort {
 }
 
 /**
- * 勤怠(出勤簿)1日分。rowDataは packages/core/src/domain/attendance/types.ts の
- * AttendanceRowData(入力列のみ)をJSON化して暗号化したもの。労働時間・残業・距離集計等の
- * 派生値は保存しない(常にrowDataから都度計算する。packages/db/src/schema/attendanceDays.ts参照)。
- */
-export interface AttendanceDayRecord {
-  id: string;
-  tenantId: string;
-  staffId: string;
-  /** 'YYYY-MM-DD' */
-  businessDate: string;
-  rowData: EncryptedField;
-}
-
-export interface AttendanceDayRepositoryPort {
-  findByStaffAndDate(
-    tenantId: string,
-    staffId: string,
-    businessDate: string,
-  ): Promise<AttendanceDayRecord | null>;
-  /** 指定日のrowDataを丸ごと置き換える(無ければ作成)。入力列だけを持つ設計のため部分更新の概念が無い。 */
-  upsert(
-    tenantId: string,
-    staffId: string,
-    businessDate: string,
-    rowData: EncryptedField,
-  ): Promise<AttendanceDayRecord>;
-  /** ミラーワーカー(packages/worker)がoutbox_jobs.targetIdから対象レコードを読み直すために使う。 */
-  findById(tenantId: string, id: string): Promise<AttendanceDayRecord | null>;
-  /** yearMonthは 'YYYY-MM'。月次集計(computeMonthlyTotals)の入力に使う。 */
-  listByStaffAndMonth(tenantId: string, staffId: string, yearMonth: string): Promise<AttendanceDayRecord[]>;
-  /** startDate〜endDateは両端とも 'YYYY-MM-DD' で含む。週間予定UI(Googleカレンダー風表示)の入力に使う。 */
-  listByStaffAndDateRange(
-    tenantId: string,
-    staffId: string,
-    startDate: string,
-    endDate: string,
-  ): Promise<AttendanceDayRecord[]>;
-}
-
-/**
  * 保育日報1件。contentは packages/core/src/domain/reports/types.ts の DailyReportContent(JSON)を
  * 暗号化したもの(開始/終了時刻・メモ・社内向け/保護者向けレポート本文をまとめて1本にする。
  * attendance_daysのrowDataと同じ設計)。
@@ -376,6 +339,11 @@ export interface ReceiptRepositoryPort {
    * 行だけを対象にする。
    */
   findExistingDedupeIndexes(tenantId: string, dedupeBlindIndexes: string[]): Promise<Set<string>>;
+  /**
+   * 指定スタッフの、領収書日時(receiptTimestamp)がJSTで指定月('YYYY-MM')に入る領収書。
+   * 勤怠の月次集計の領収書金額(GAS版 getReceiptsForMonth_)に使う。
+   */
+  listByStaffAndMonth(tenantId: string, staffId: string, yearMonth: string): Promise<ReceiptRecord[]>;
 }
 
 /**

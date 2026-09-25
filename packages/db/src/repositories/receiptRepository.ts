@@ -1,10 +1,11 @@
+import { jstMonthInstantRange } from '@katahimo/core/domain';
 import type {
   EncryptedField,
   NewReceiptInput,
   ReceiptRecord,
   ReceiptRepositoryPort,
 } from '@katahimo/core/ports';
-import { and, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, lt } from 'drizzle-orm';
 import type { Database } from '../client';
 import { withTenant } from '../client';
 import { receipts } from '../schema';
@@ -77,6 +78,23 @@ export class DrizzleReceiptRepository implements ReceiptRepositoryPort {
           and(isNotNull(receipts.dedupeBlindIndex), inArray(receipts.dedupeBlindIndex, dedupeBlindIndexes)),
         );
       return new Set(rows.map((r) => r.dedupeBlindIndex).filter((v): v is string => v !== null));
+    });
+  }
+
+  async listByStaffAndMonth(tenantId: string, staffId: string, yearMonth: string): Promise<ReceiptRecord[]> {
+    const { from, to } = jstMonthInstantRange(yearMonth);
+    return withTenant(this.db, tenantId, async (tx) => {
+      const rows = await tx
+        .select()
+        .from(receipts)
+        .where(
+          and(
+            eq(receipts.staffId, staffId),
+            gte(receipts.receiptTimestamp, from),
+            lt(receipts.receiptTimestamp, to),
+          ),
+        );
+      return rows.map(toRecord);
     });
   }
 }

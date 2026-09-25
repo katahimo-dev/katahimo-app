@@ -64,8 +64,24 @@ export interface AttendanceDayMirrorPayload {
   staffName: string;
   /** 'YYYY-MM-DD' */
   businessDate: string;
-  /** PAST_SCHEDULE_INPUT_COLUMNSの列記号(C/D/E等)をキーにした入力値。 */
+  /** 出勤簿の列記号(C/D/E等)をキーにした入力値。記録のある列だけを含む。 */
   values: Record<string, string>;
+  /**
+   * 自動転記後に手で変更された列(attendance_days.changed_fields)。GAS側はこの列のセル背景を
+   * #fce4e4 にする(GAS版 updatePastSchedule と同じ強調表示。doc/api/attendance-batch.md 参照)。
+   */
+  highlightColumns: string[];
+}
+
+/**
+ * 「勤怠集計」スプレッドシートの該当スタッフ・該当日の行の書き直し。行の中身(種別・移動時間・距離・
+ * ルートURL)はGAS側がカレンダーとMapsから計算し直すため、渡すのは対象だけ(Bridge.js の
+ * writeAttendanceAggregate の仕様)。
+ */
+export interface AttendanceAggregateMirrorPayload {
+  staffName: string;
+  /** 'YYYY-MM-DD' */
+  businessDate: string;
 }
 
 export interface MirrorSenderPort {
@@ -73,4 +89,5 @@ export interface MirrorSenderPort {
   sendAccidentReport(payload: AccidentReportMirrorPayload): Promise<void>;
   sendReceipt(payload: ReceiptMirrorPayload): Promise<void>;
   sendAttendanceDay(payload: AttendanceDayMirrorPayload): Promise<void>;
+  sendAttendanceAggregate(payload: AttendanceAggregateMirrorPayload): Promise<void>;
 }

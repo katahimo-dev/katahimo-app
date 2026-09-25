@@ -3,7 +3,11 @@ export interface GasBridgeOptions {
   baseUrl: string;
   /** GAS側Bridge.jsのBRIDGE_API_SECRET(Script Properties)と同じ値。 */
   secret: string;
+  /** 1リクエストのタイムアウト(ミリ秒)。Apps Scriptの実行時間上限(6分)より短くする。省略時は120秒。 */
+  timeoutMs?: number;
 }
+
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 /** Bridge.js(GAS版Web Appの?api=1エンドポイント)への共通クライアント。 */
 export class GasBridgeClient {
@@ -20,9 +24,32 @@ export class GasBridgeClient {
     return url.toString();
   }
 
+  /** HTTPエラー・JSON以外の応答(ログイン画面へのリダイレクト等)は、actionを添えた例外にする。 */
+  private async request<T>(action: string, url: string, init: RequestInit = {}): Promise<T> {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+      });
+    } catch (error) {
+      // URL(シークレットを含む)はメッセージに入れず、原因だけを残す。
+      const cause = error instanceof Error && error.cause instanceof Error ? `: ${error.cause.message}` : '';
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`GASブリッジに接続できませんでした(action=${action}): ${reason}${cause}`);
+    }
+    if (!res.ok) {
+      throw new Error(`GASブリッジがHTTP ${res.status} を返しました(action=${action})`);
+    }
+    try {
+      return (await res.json()) as T;
+    } catch {
+      throw new Error(`GASブリッジの応答がJSONではありません(action=${action})`);
+    }
+  }
+
   async fetchJson<T>(action: string, params: Record<string, string>): Promise<T> {
-    const res = await fetch(this.buildUrl(action, params));
-    return (await res.json()) as T;
+    return this.request<T>(action, this.buildUrl(action, params));
   }
 
   /**
@@ -31,11 +58,10 @@ export class GasBridgeClient {
    * secret/actionはGET側と同じくURLクエリに載せる(Bridge.js側のdoPost(e).parameterで読む)。
    */
   async postJson<T>(action: string, body: unknown): Promise<T> {
-    const res = await fetch(this.buildUrl(action, {}), {
+    return this.request<T>(action, this.buildUrl(action, {}), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    return (await res.json()) as T;
   }
 }

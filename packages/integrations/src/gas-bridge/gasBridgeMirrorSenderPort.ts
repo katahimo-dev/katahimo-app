@@ -1,5 +1,6 @@
 import type {
   AccidentReportMirrorPayload,
+  AttendanceAggregateMirrorPayload,
   AttendanceDayMirrorPayload,
   DailyReportMirrorPayload,
   MirrorSenderPort,
@@ -20,8 +21,9 @@ interface BridgeWriteResult {
  * 構造をそのまま知っている)に置き、こちらはペイロードを渡すだけにする。
  *
  * Bridge.js側の書き込みaction(writeDailyReport/writeAccidentReport/writeReceipt/
- * writeAttendanceDay)は、読み取り側のaction追加時と同じくデプロイ承認待ち
- * (CLAUDE.mdの運用ルール、doc/README参照)。
+ * writeAttendanceDay/writeAttendanceAggregate)の仕様は doc/api/attendance-batch.md を参照
+ * (writeAttendanceDay の highlightColumns 対応はGAS側の変更が必要)。
+ * 失敗(success=false・HTTPエラー・タイムアウト)は例外にし、outboxワーカーの再試行に任せる。
  */
 export class GasBridgeMirrorSenderPort implements MirrorSenderPort {
   private readonly client: GasBridgeClient;
@@ -52,6 +54,10 @@ export class GasBridgeMirrorSenderPort implements MirrorSenderPort {
   async sendAttendanceDay(payload: AttendanceDayMirrorPayload): Promise<void> {
     await this.post('writeAttendanceDay', payload);
   }
+
+  async sendAttendanceAggregate(payload: AttendanceAggregateMirrorPayload): Promise<void> {
+    await this.post('writeAttendanceAggregate', payload);
+  }
 }
 
 /** GAS_BRIDGE_URL/SECRET未設定時のフォールバック。何もせず成功扱いにする(ミラーはスキップ)。 */
@@ -60,4 +66,5 @@ export class NoopMirrorSenderPort implements MirrorSenderPort {
   async sendAccidentReport(): Promise<void> {}
   async sendReceipt(): Promise<void> {}
   async sendAttendanceDay(): Promise<void> {}
+  async sendAttendanceAggregate(): Promise<void> {}
 }

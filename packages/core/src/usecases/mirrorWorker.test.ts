@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { AttendanceDeps } from './attendance';
-import { saveAttendanceDay } from './attendance';
+import type { AttendanceActor, AttendanceDeps } from './attendance';
+import { updateAttendanceDay } from './attendance';
 import type { AuthDeps } from './auth';
 import { registerStaff } from './auth';
 import type { CustomerDeps } from './customers';
@@ -13,6 +13,7 @@ import type { ReportDeps } from './reports';
 import { saveAccidentReport, saveDailyReport } from './reports';
 import {
   FakeAccidentReportRepository,
+  FakeAppLogPort,
   FakeAttendanceDayRepository,
   FakeCryptoPort,
   FakeCustomerRepository,
@@ -70,6 +71,20 @@ describe('runOutboxBatch / processOutboxJob', () => {
     customerId = createdCustomer.id;
   });
 
+  const workerDeps = (attendanceDays = new FakeAttendanceDayRepository()): MirrorWorkerDeps => ({
+    outbox,
+    dailyReports: new FakeDailyReportRepository(),
+    accidentReports: new FakeAccidentReportRepository(),
+    receipts: new FakeReceiptRepository(),
+    attendanceDays,
+    staff,
+    customers,
+    crypto,
+    storage: new FakeStoragePort(),
+    sender,
+    appLog: new FakeAppLogPort(),
+  });
+
   it('日報を保存するとoutboxに積まれ、ワーカーがGAS側へ送るペイロードに変換される', async () => {
     const dailyReports = new FakeDailyReportRepository();
     const reportDeps: ReportDeps = {
@@ -105,10 +120,11 @@ describe('runOutboxBatch / processOutboxJob', () => {
       crypto,
       storage: new FakeStoragePort(),
       sender,
+      appLog: new FakeAppLogPort(),
     };
     const result = await runOutboxBatch(workerDeps, tenantId);
 
-    expect(result).toEqual({ processed: 1, failed: 0 });
+    expect(result).toEqual({ processed: 1, retried: 0, failed: 0 });
     expect(sender.dailyReports).toEqual([
       {
         reportId: saved.id,
@@ -166,10 +182,11 @@ describe('runOutboxBatch / processOutboxJob', () => {
       crypto,
       storage: new FakeStoragePort(),
       sender,
+      appLog: new FakeAppLogPort(),
     };
     const result = await runOutboxBatch(workerDeps, tenantId);
 
-    expect(result).toEqual({ processed: 1, failed: 0 });
+    expect(result).toEqual({ processed: 1, retried: 0, failed: 0 });
     expect(sender.accidentReports).toHaveLength(1);
     expect(sender.accidentReports[0]).toMatchObject({
       reportId: saved.id,
@@ -222,10 +239,11 @@ describe('runOutboxBatch / processOutboxJob', () => {
       crypto,
       storage,
       sender,
+      appLog: new FakeAppLogPort(),
     };
     const result = await runOutboxBatch(workerDeps, tenantId);
 
-    expect(result).toEqual({ processed: 1, failed: 0 });
+    expect(result).toEqual({ processed: 1, retried: 0, failed: 0 });
     expect(sender.receipts).toHaveLength(1);
     expect(sender.receipts[0]).toMatchObject({
       staffName: '佐藤 花子',
@@ -236,38 +254,144 @@ describe('runOutboxBatch / processOutboxJob', () => {
     });
   });
 
-  it('勤怠(出勤簿)を保存するとoutboxに積まれ、ワーカーが列記号をキーにした値に変換して送る', async () => {
+  it('勤怠(出勤簿)を修正するとoutboxに積まれ、ワーカーが列記号をキーにした値と強調表示する列を送る', async () => {
     const attendanceDays = new FakeAttendanceDayRepository();
-    const attendanceDeps: AttendanceDeps = { attendanceDays, crypto, mirror: outbox };
+    const attendanceDeps: AttendanceDeps = {
+      attendanceDays,
+      staff,
+      crypto,
+      mirror: outbox,
+      appLog: new FakeAppLogPort(),
+      now: () => new Date('2026-08-30T03:00:00Z'),
+    };
+    const actor: AttendanceActor = { tenantId, staffId, isAdmin: false };
 
-    await saveAttendanceDay(attendanceDeps, tenantId, staffId, '2026-08-30', {
+    await updateAttendanceDay(attendanceDeps, actor, staffId, '2026-08-30', {
       C: '訪問先A',
       D: '09:00',
       E: '10:00',
     });
 
-    const workerDeps: MirrorWorkerDeps = {
-      outbox,
-      dailyReports: new FakeDailyReportRepository(),
-      accidentReports: new FakeAccidentReportRepository(),
-      receipts: new FakeReceiptRepository(),
-      attendanceDays,
-      staff,
-      customers,
-      crypto,
-      storage: new FakeStoragePort(),
-      sender,
-    };
-    const result = await runOutboxBatch(workerDeps, tenantId);
+    const result = await runOutboxBatch(workerDeps(attendanceDays), tenantId);
 
-    expect(result).toEqual({ processed: 1, failed: 0 });
+    expect(result).toEqual({ processed: 1, retried: 0, failed: 0 });
     expect(sender.attendanceDays).toEqual([
       {
         staffName: '佐藤 花子',
         businessDate: '2026-08-30',
         values: { C: '訪問先A', D: '09:00', E: '10:00' },
+        highlightColumns: ['C', 'D', 'E'],
       },
     ]);
+  });
+
+  it('attendance_aggregate は対象スタッフ名と日付だけを送る(行の中身はGAS側がカレンダーから計算する)', async () => {
+    const attendanceDays = new FakeAttendanceDayRepository();
+    const day = await attendanceDays.findOrCreate(tenantId, staffId, '2026-08-30', {
+      ciphertext: 'ENC:{}',
+      keyVersion: 1,
+    });
+    await outbox.enqueue({
+      tenantId,
+      kind: 'attendance_aggregate',
+      targetId: day.id,
+      idempotencyKey: 'agg-1',
+    });
+
+    const result = await runOutboxBatch(workerDeps(attendanceDays), tenantId);
+
+    expect(result).toEqual({ processed: 1, retried: 0, failed: 0 });
+    expect(sender.attendanceAggregates).toEqual([{ staffName: '佐藤 花子', businessDate: '2026-08-30' }]);
+  });
+
+  describe('失敗時の再試行', () => {
+    const failingSender = (): FakeMirrorSenderPort => {
+      const failing = new FakeMirrorSenderPort();
+      failing.sendAttendanceAggregate = async () => {
+        throw new Error('Bridge書き込みに失敗しました');
+      };
+      return failing;
+    };
+
+    it('失敗したジョブは指数バックオフで再試行を予約し、上限回数で failed にして ERROR ログを残す', async () => {
+      const attendanceDays = new FakeAttendanceDayRepository();
+      const day = await attendanceDays.findOrCreate(tenantId, staffId, '2026-08-30', {
+        ciphertext: 'ENC:{}',
+        keyVersion: 1,
+      });
+      await outbox.enqueue({
+        tenantId,
+        kind: 'attendance_aggregate',
+        targetId: day.id,
+        idempotencyKey: 'agg-1',
+      });
+
+      let now = new Date('2026-08-30T00:00:00Z');
+      outbox.now = () => now;
+      const appLog = new FakeAppLogPort();
+      const deps: MirrorWorkerDeps = {
+        ...workerDeps(attendanceDays),
+        sender: failingSender(),
+        appLog,
+        now: () => now,
+        retryPolicy: { maxAttempts: 3, baseDelayMs: 60_000, maxDelayMs: 600_000 },
+      };
+
+      expect(await runOutboxBatch(deps, tenantId)).toEqual({ processed: 0, retried: 1, failed: 0 });
+      const job = () => outbox.listAllForTest()[0];
+      expect(job()).toMatchObject({
+        status: 'pending',
+        attempts: 1,
+        lastError: 'Bridge書き込みに失敗しました',
+      });
+      expect(job()?.nextAttemptAt).toEqual(new Date('2026-08-30T00:01:00Z'));
+
+      // バックオフ中は取得されない
+      expect(await runOutboxBatch(deps, tenantId)).toEqual({ processed: 0, retried: 0, failed: 0 });
+
+      now = new Date('2026-08-30T00:01:00Z');
+      expect(await runOutboxBatch(deps, tenantId)).toEqual({ processed: 0, retried: 1, failed: 0 });
+      expect(job()?.nextAttemptAt).toEqual(new Date('2026-08-30T00:03:00Z'));
+
+      now = new Date('2026-08-30T00:03:00Z');
+      expect(await runOutboxBatch(deps, tenantId)).toEqual({ processed: 0, retried: 0, failed: 1 });
+      expect(job()).toMatchObject({ status: 'failed', attempts: 3 });
+      expect(appLog.byAction('mirror.job_failed')).toEqual([
+        expect.objectContaining({
+          tenantId,
+          level: 'ERROR',
+          details: expect.objectContaining({ kind: 'attendance_aggregate', attempts: 3 }),
+        }),
+      ]);
+
+      // failed になったジョブは以後取得されない
+      now = new Date('2026-08-31T00:00:00Z');
+      expect(await runOutboxBatch(deps, tenantId)).toEqual({ processed: 0, retried: 0, failed: 0 });
+    });
+
+    it('再試行で成功すれば done になる', async () => {
+      const attendanceDays = new FakeAttendanceDayRepository();
+      const day = await attendanceDays.findOrCreate(tenantId, staffId, '2026-08-30', {
+        ciphertext: 'ENC:{}',
+        keyVersion: 1,
+      });
+      await outbox.enqueue({
+        tenantId,
+        kind: 'attendance_aggregate',
+        targetId: day.id,
+        idempotencyKey: 'agg-1',
+      });
+      let now = new Date('2026-08-30T00:00:00Z');
+      outbox.now = () => now;
+      const flaky = failingSender();
+      const deps: MirrorWorkerDeps = { ...workerDeps(attendanceDays), sender: flaky, now: () => now };
+
+      await runOutboxBatch(deps, tenantId);
+      flaky.sendAttendanceAggregate = async () => {};
+      now = new Date('2026-08-30T01:00:00Z');
+      expect(await runOutboxBatch(deps, tenantId)).toEqual({ processed: 1, retried: 0, failed: 0 });
+      expect(outbox.listAllForTest()[0]?.status).toBe('done');
+    });
   });
 
   it('対象レコードが既に無い場合は何もせず成功扱いにする', async () => {
@@ -289,10 +413,11 @@ describe('runOutboxBatch / processOutboxJob', () => {
       crypto,
       storage: new FakeStoragePort(),
       sender,
+      appLog: new FakeAppLogPort(),
     };
     const result = await runOutboxBatch(workerDeps, tenantId);
 
-    expect(result).toEqual({ processed: 1, failed: 0 });
+    expect(result).toEqual({ processed: 1, retried: 0, failed: 0 });
     expect(sender.dailyReports).toEqual([]);
   });
 });
