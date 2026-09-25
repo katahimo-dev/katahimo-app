@@ -11,10 +11,12 @@ import { and, asc, eq, gt, isNull, or, type SQL, sql } from 'drizzle-orm';
 import { staff, staffCalendars, staffCredentials, staffLoginEmails } from '../../schema';
 import { TenantBound } from './base';
 
+// 外側の列は表名つきで書く(drizzle は単一表の select では列を表名なしで出すため、副問い合わせの中では
+// staff_login_emails の列と取り違えうる)
 const primaryEmail = sql<string>`(select e.email from ${staffLoginEmails} e
-  where e.tenant_id = ${staff.tenantId} and e.staff_id = ${staff.id} and e.is_primary)`;
+  where e.tenant_id = "staff"."tenant_id" and e.staff_id = "staff"."id" and e.is_primary)`;
 const altEmail = sql<string | null>`(select e.email from ${staffLoginEmails} e
-  where e.tenant_id = ${staff.tenantId} and e.staff_id = ${staff.id} and not e.is_primary
+  where e.tenant_id = "staff"."tenant_id" and e.staff_id = "staff"."id" and not e.is_primary
   order by e.created_at, e.email limit 1)`;
 
 const staffColumns = {

@@ -50,6 +50,11 @@ describe('applyCustomerSnapshot(取込の差分適用)', () => {
     expect(ctx.data().recipients.map((r) => r.id)).toEqual(before.recipients.map((r) => r.id));
   });
 
+  it('属性のキーの順番が違うだけなら unchanged(jsonb はキーの順番を保たない)', async () => {
+    await apply(snapshot({ attributes: { member_type: '一般', gender: '女性' } }));
+    expect(await apply(snapshot({ attributes: { gender: '女性', member_type: '一般' } }))).toBe('unchanged');
+  });
+
   it('個人情報の列は暗号化して保存し、行IDを AAD に使う', async () => {
     await apply(snapshot());
     const customer = ctx.data().customers[0];

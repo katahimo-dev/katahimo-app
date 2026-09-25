@@ -59,7 +59,8 @@ describe('importLatestCustomerCsv(GAS版 checkAndImportLatestCsv)', () => {
       force: true,
       actor: { staffId: '00000000-0000-7000-8000-0000000000aa', name: '管理者 太郎' },
     });
-    expect(forced).toMatchObject({ status: 'imported', dataVersion: '2', stats: { created: 0 } });
+    expect(forced).toMatchObject({ status: 'imported', dataVersion: '1', stats: { created: 0 } });
+    // 内容が同じなら版数は上げない(画面・予定計算のキャッシュを無駄に読み直させない)
     expect(appLog.byAction('customer_csv.imported').at(-1)).toMatchObject({
       actorStaffId: '00000000-0000-7000-8000-0000000000aa',
       details: expect.objectContaining({ force: true, triggeredBy: '管理者 太郎' }),

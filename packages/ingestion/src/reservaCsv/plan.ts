@@ -88,7 +88,7 @@ export type ReservaImportOutcome =
 
 /**
  * 顧客CSVの行を1トランザクションで適用する: 差分の計算 → 作成・変わった項目だけの更新(ID を保つ)→
- * 消えた顧客のアーカイブ(reason = import_missing)→ 顧客データの版数を上げる(予定計算のキャッシュを作り直す)。
+ * 消えた顧客のアーカイブ(reason = import_missing)→ 変わっていれば顧客データの版数を上げる(予定計算のキャッシュを作り直す)。
  * 実行は import_runs に残す(安全装置で止めた場合も review_required として残す)。
  */
 export async function applyReservaImport(
@@ -136,7 +136,11 @@ export async function applyReservaImport(
         await r.customers.archive(customerId, 'import_missing', now);
         counts.archived++;
       }
-      const customerDataVersion = await r.settings.bumpCustomerDataVersion();
+      // 何も変わらなければ版数を上げない(画面・予定計算のキャッシュを無駄に読み直させない)
+      const changed = counts.created + counts.updated + counts.archived > 0;
+      const customerDataVersion = changed
+        ? await r.settings.bumpCustomerDataVersion()
+        : (await r.settings.get()).customerDataVersion;
       await r.importRuns.finish(runId, { status: 'applied', counts, message: null });
       return { status: 'applied' as const, runId, plan, ...counts, customerDataVersion };
     },

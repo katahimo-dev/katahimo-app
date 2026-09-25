@@ -44,8 +44,10 @@ const customerColumns = {
 };
 
 /** 一覧に出す市区町村: 主の住所(無ければ自宅)。 */
+// 外側の列は表名つきで書く(drizzle は単一表の select では列を表名なしで出すため、副問い合わせの中では
+// customer_addresses の列と取り違える)
 const primaryCity = sql<string | null>`(select a.city from ${customerAddresses} a
-  where a.tenant_id = ${customers.tenantId} and a.customer_id = ${customers.id}
+  where a.tenant_id = "customers"."tenant_id" and a.customer_id = "customers"."id"
   order by a.is_primary desc, (a.kind = 'home') desc, a.created_at limit 1)`;
 
 export class DrizzleCustomerRepository extends TenantBound implements CustomerRepository {

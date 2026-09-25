@@ -236,6 +236,13 @@ function same(a: unknown, b: unknown): boolean {
   return (a ?? null) === (b ?? null);
 }
 
+/** 属性(jsonb)を比べる。jsonb はキーの順番を保たないため、並べ替えてから比べる。 */
+function sameAttributes(a: Record<string, string>, b: Record<string, string>): boolean {
+  const sorted = (v: Record<string, string>) =>
+    JSON.stringify(Object.entries(v).sort(([x], [y]) => (x < y ? -1 : 1)));
+  return sorted(a) === sorted(b);
+}
+
 /** 暗号化列を比べる(平文で比べ、変わっていれば新しい暗号文)。 */
 async function encryptedDiff(
   ctx: ApplyContext,
@@ -506,7 +513,7 @@ export async function applyCustomerSnapshot(
   });
   const sourceChanged =
     !linked ||
-    JSON.stringify(linked.attributes) !== JSON.stringify(snapshot.attributes) ||
+    !sameAttributes(linked.attributes, snapshot.attributes) ||
     linked.externalUpdatedAt?.getTime() !== (snapshot.externalUpdatedAt ?? null)?.getTime();
 
   const addresses = current ? await r.customerAddresses.listByCustomer(customerId) : [];
