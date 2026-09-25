@@ -89,9 +89,8 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    # 見比べハーネス(tools/gas-preview)は差分が閾値を超えたら失敗する形・Vite の自前起動に作り替え中のため、
-    # 当面は失敗してもワークフロー全体は失敗にしない。安定したら continue-on-error を外して必須チェックに加える。
-    continue-on-error: true
+    # 見比べ(shoot)は差分が 0.05% を越えた場面・撮れなかった場面があれば、通し確認(e2e)は1手順でも失敗すれば
+    # 終了コード1で終わる(どちらも失敗の一覧を出す。画像は下の artifact)。
 
     services:
       postgres:
@@ -150,18 +149,11 @@ jobs:
           restore-keys: gas-preview-fonts-
 
       # ── 見比べ(モック。API・DB は使わない) ──────────────────────
-      # TODO: ハーネスが Vite を自前で起動するようになったら、この起動手順と KATAHIMO_WEB_URL を外す
-      - name: Web 開発サーバーの起動
-        if: steps.legacy.outputs.available == 'true'
-        run: |
-          nohup pnpm --filter @katahimo/web exec vite --host 127.0.0.1 --port "$WEB_PORT" --strictPort \
-            > "$RUNNER_TEMP/web-dev.log" 2>&1 &
-          curl --silent --fail --retry 60 --retry-delay 1 --retry-all-errors -o /dev/null "http://127.0.0.1:${WEB_PORT}/"
-
+      # 新アプリの Vite はハーネスが自分で起動して止める(WEB_DEV_PORT のポート)
       - name: 見比べ撮影(shoot)
         if: steps.legacy.outputs.available == 'true'
         env:
-          KATAHIMO_WEB_URL: http://127.0.0.1:${{ env.WEB_PORT }}
+          WEB_DEV_PORT: ${{ env.WEB_PORT }}
         run: pnpm --filter @katahimo/gas-preview shoot
 
       # ── 通し確認(実際の API・DB) ─────────────────────────────
@@ -186,7 +178,7 @@ jobs:
       - name: サーバーのログ
         if: always()
         run: |
-          for f in "$RUNNER_TEMP"/web-dev.log "$RUNNER_TEMP"/api.log; do
+          for f in "$RUNNER_TEMP"/api.log; do
             [ -f "$f" ] || continue
             echo "::group::$(basename "$f")"
             tail -n 200 "$f"
