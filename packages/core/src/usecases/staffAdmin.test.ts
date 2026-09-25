@@ -180,6 +180,17 @@ describe('スタッフ台帳の取込', () => {
     });
   });
 
+  it('取込では権限を下げない(本アプリで付けた管理者は台帳の K 列が空でも管理者のまま)。K 列=1 なら管理者にする', async () => {
+    await ctx.addStaff('佐藤 花子', 'hanako@gmail.com', 'admin');
+    await ctx.addStaff('鈴木 一郎', 'suzuki@gmail.com', 'staff');
+    await importStaffMasterRows(ctx.deps, ctx.tenantId, [
+      row({ isAdmin: false }),
+      row({ rowNumber: 3, name: '鈴木 一郎', email: 'suzuki@gmail.com', isAdmin: true }),
+    ]);
+    expect(credentialsOf('hanako@gmail.com')?.record.role).toBe('admin');
+    expect(credentialsOf('suzuki@gmail.com')?.record.role).toBe('admin');
+  });
+
   it('メールが空・CSV内の重複・他スタッフのアドレスとの衝突は取り込まずに理由を返す', async () => {
     await ctx.addStaff('別人', 'other@gmail.com');
     const result = await importStaffMasterRows(ctx.deps, ctx.tenantId, [

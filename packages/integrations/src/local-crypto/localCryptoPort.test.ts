@@ -77,6 +77,42 @@ describe('LocalCryptoPort(AES-256-GCM・AAD・DEKの版)', () => {
     expect(keys.calls).toBe(1);
   });
 
+  it('読み直した一覧に無い版(破棄した版)のアンラップ済みの DEK は捨て、その版の暗号文は復号できなくなる', async () => {
+    const { crypto, keys, kms } = await setup();
+    const old = await crypto.encrypt(memo(), 'before');
+    await keys.add(kms, 't1', 2, 'active');
+    expect(await crypto.decrypt(memo(), old)).toBe('before');
+    // 版1を destroyed にする(listUsable は active / decrypt_only だけを返す)
+    keys.rows.set(
+      't1',
+      (keys.rows.get('t1') ?? []).filter((r) => r.version !== 1),
+    );
+    await expect(crypto.decrypt(memo(), old)).rejects.toThrow(/版 1 がありません/);
+    const fresh = await crypto.encrypt(memo(), 'after');
+    expect(await crypto.decrypt(memo(), fresh)).toBe('after');
+  });
+
+  it('prepare は鍵の一覧の読み込みと全ての版のアンラップを先に済ませる(その後の暗号化・復号は KMS も DB も呼ばない)', async () => {
+    const kms = new LocalKmsPort(KEK);
+    const keys = new MemoryDataKeys();
+    await keys.add(kms, 't1', 1, 'active');
+    await keys.add(kms, 't1', 2, 'active');
+    const crypto = new LocalCryptoPort(keys, kms, 60_000);
+    let unwraps = 0;
+    const unwrap = kms.unwrap.bind(kms);
+    kms.unwrap = (wrapped, tenantId) => {
+      unwraps++;
+      return unwrap(wrapped, tenantId);
+    };
+    await crypto.prepare('t1');
+    expect(unwraps).toBe(2);
+    keys.calls = 0;
+    const enc = await crypto.encrypt(memo(), 'x');
+    expect(await crypto.decrypt(memo(), enc)).toBe('x');
+    expect(unwraps).toBe(2);
+    expect(keys.calls).toBe(0);
+  });
+
   it('形式の違う値は明示的なエラーにする', async () => {
     const { crypto } = await setup();
     await expect(crypto.decrypt(memo(), new Uint8Array([2, 0, 1]))).rejects.toThrow(/未対応の暗号文の形式/);

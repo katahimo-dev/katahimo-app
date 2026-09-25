@@ -9,7 +9,7 @@ import { StopSignal } from './stopSignal';
  * Cloud Run Jobs 等から1回だけ実行するジョブの共通の起動処理。job が ok=false を返す・例外を投げる・
  * JOB_TIMEOUT_MS を超えたら終了コード1(Cloud Run Jobs が失敗として扱い再試行できる)。停止の合図が来たら
  * job に伝え(区切りで止まる)、WORKER_SHUTDOWN_TIMEOUT_MS 待っても終わらなければ強制終了する。
- * 終わるときは DB の接続プールを閉じる。
+ * 終わるときは DB の接続プール(鍵の読み込み専用のプールも)を閉じる。
  */
 export function runOneShot(
   name: string,
@@ -18,7 +18,9 @@ export function runOneShot(
   loadDotenv();
   const env = loadWorkerEnv();
   const db = createDatabase(env.WORKER_DATABASE_URL);
-  const container = createWorkerContainer(env, db);
+  // テナントの鍵の読み込み専用のプール(api の server.ts と同じ)
+  const keyDb = createDatabase(env.WORKER_DATABASE_URL, { max: 1 });
+  const container = createWorkerContainer(env, db, keyDb);
   const stop = new StopSignal().listen((signal) => {
     logJson('WARNING', `${name}: ${signal} を受け取りました。区切りで止めます`);
     setTimeout(() => {
@@ -35,7 +37,7 @@ export function runOneShot(
   const startedAt = Date.now();
   logJson('INFO', `${name} を開始します`);
   const finish = async (code: number) => {
-    await closeDatabase(db).catch(() => undefined);
+    await Promise.all([closeDatabase(db), closeDatabase(keyDb)]).catch(() => undefined);
     process.exit(code);
   };
   job(container, env, stop)

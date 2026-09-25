@@ -98,7 +98,7 @@ describe('保育日報・事故報告', () => {
     ]);
   });
 
-  it('事故報告とヒヤリハットは上書きで切り替えられない', async () => {
+  it('事故報告とヒヤリハットは上書きで切り替えられる(GAS版と同じ)。記録は1件のまま', async () => {
     const base = {
       customerId,
       reportType: '事故報告',
@@ -116,9 +116,18 @@ describe('保育日報・事故報告', () => {
     };
     const saved = await saveAccidentReport(ctx.deps, staff, base);
     expect(saved.reportType).toBe('事故報告');
-    await expect(
-      saveAccidentReport(ctx.deps, staff, { ...base, reportId: saved.id, reportType: 'ヒヤリハット' }),
-    ).rejects.toMatchObject({ code: 'validation_failed', reason: 'record_type_mismatch' });
+    const switched = await saveAccidentReport(ctx.deps, staff, {
+      ...base,
+      reportId: saved.id,
+      reportType: 'ヒヤリハット',
+      rowVersion: saved.rowVersion,
+    });
+    expect(switched).toMatchObject({ id: saved.id, reportType: 'ヒヤリハット' });
+    expect(ctx.data().careRecords).toEqual([
+      expect.objectContaining({ id: saved.id, recordType: 'near_miss' }),
+    ]);
+    const back = await saveAccidentReport(ctx.deps, staff, { ...base, reportId: saved.id });
+    expect(back.reportType).toBe('事故報告');
   });
 
   it('活動記録はキーセットで重複・抜け無くページングできる(同じ時刻の記録を含む)', async () => {

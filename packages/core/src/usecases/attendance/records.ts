@@ -1,4 +1,5 @@
 import {
+  type AttendanceColumnKey,
   type AttendanceSheetDay,
   diffAttendanceSheets,
   type EntityDiff,
@@ -120,7 +121,10 @@ export interface SheetWriteContext {
   changeSource: ChangeSource;
 }
 
-/** 変更前の値(変わった項目だけ)を履歴の用途で暗号化して entity_changes に追記する。 */
+/**
+ * 変更前の値を履歴の用途で暗号化して entity_changes に追記する。before は書き残す値そのもの
+ * (更新は変わった項目だけ、削除は実体の全ての項目)。
+ */
 async function appendChange(
   r: TenantRepositories,
   ctx: SheetWriteContext,
@@ -133,7 +137,7 @@ async function appendChange(
   const beforeEnc = before
     ? await ctx.crypto.encrypt(
         { tenantId: r.tenantId, purpose: P.entityChangeBefore, rowId: id },
-        JSON.stringify(Object.fromEntries(changedFields.map((f) => [f, before[f] ?? null]))),
+        JSON.stringify(before),
       )
     : null;
   await r.entityChanges.append({
@@ -145,6 +149,18 @@ async function appendChange(
     changedFields,
     beforeEnc,
   });
+}
+
+/** 変わった項目だけの変更前の値。 */
+function pickFields(before: object, fields: string[]): Record<string, unknown> {
+  const values = before as Record<string, unknown>;
+  return Object.fromEntries(fields.map((f) => [f, values[f] ?? null]));
+}
+
+/** 削除した実体の全ての項目(ID は entity_id に残るため除く。削除した行を後から復元できるように)。 */
+function wholeEntity(entity: { id: string }): Record<string, unknown> {
+  const { id: _id, ...values } = entity as { id: string } & Record<string, unknown>;
+  return values;
 }
 
 async function recordHistory<T extends { id: string }>(
@@ -162,11 +178,11 @@ async function recordHistory<T extends { id: string }>(
       entityType,
       u.after.id,
       u.changedFields,
-      u.before as unknown as Record<string, unknown>,
+      pickFields(u.before, u.changedFields),
     );
   }
   for (const e of diff.delete) {
-    await appendChange(r, ctx, entityType, e.id, ['deleted'], e as unknown as Record<string, unknown>);
+    await appendChange(r, ctx, entityType, e.id, ['deleted'], wholeEntity(e));
   }
 }
 
@@ -274,9 +290,14 @@ export async function writeSheetDiff(
   const saved = await r.attendance.writeDay(rows.day.id, write, expectedVersion);
 
   if (diff.day) {
-    await appendChange(r, ctx, 'attendance_day', rows.day.id, diff.day.changedFields, {
-      ...diff.day.before,
-    } as unknown as Record<string, unknown>);
+    await appendChange(
+      r,
+      ctx,
+      'attendance_day',
+      rows.day.id,
+      diff.day.changedFields,
+      pickFields(diff.day.before, diff.day.changedFields),
+    );
   }
   await recordHistory(r, ctx, 'visit', diff.visits, setFields);
   await recordHistory(r, ctx, 'work_segment', diff.segments, setFields);
@@ -284,29 +305,45 @@ export async function writeSheetDiff(
   return saved;
 }
 
-/** 個別出勤簿スプレッドシートの該当日の行へのミラー(版ごとに1回)。 */
-export function enqueueAttendanceDayMirror(r: TenantRepositories, day: AttendanceDayRow): Promise<void> {
+/**
+ * 個別出勤簿スプレッドシートの該当日の行へのミラー(版ごとに1回)。書く列は今回の書き込みで表示の変わった列だけ
+ * (columns。ペイロードに持つ)。値はワーカーが送るときに DB から読み直す。
+ */
+export function enqueueAttendanceDayMirror(
+  r: TenantRepositories,
+  day: AttendanceDayRow,
+  columns: readonly AttendanceColumnKey[],
+): Promise<void> {
   return r.outbox.enqueue({
     topic: 'mirror.attendance_day',
     aggregateType: 'attendance_day',
     aggregateId: day.id,
     dedupeKey: outboxDedupeKey('mirror.attendance_day', day.id, day.rowVersion),
+    payload: { columns: [...columns] },
   });
 }
 
 /**
  * 「勤怠集計」スプレッドシートの該当スタッフ・該当日の行の書き直し。行の中身は GAS側がカレンダーから計算し直す
- * ため、同じ内容(fingerprint)の再送は重複として積まない。
+ * ため、予定の内容(fingerprint)がその日の最後に積んだものと同じなら積まない(force は管理者の明示の書き直し)。
+ * 重複排除キーはその日の送信の通し番号(ペイロードの seq)で、予定が A → B → A と戻った場合も3回目を積む
+ * (内容の指紋をキーにすると、戻った A が1回目と同じキーになり積まれなかった)。
  */
-export function enqueueAttendanceAggregateMirror(
+export async function enqueueAttendanceAggregateMirror(
   r: TenantRepositories,
   dayId: string,
   fingerprint: string,
+  options: { force?: boolean } = {},
 ): Promise<void> {
-  return r.outbox.enqueue({
-    topic: 'mirror.attendance_aggregate',
+  const topic = 'mirror.attendance_aggregate';
+  const last = await r.outbox.latestPayload(topic, dayId);
+  if (!options.force && last?.fingerprint === fingerprint) return;
+  const seq = (typeof last?.seq === 'number' ? last.seq : 0) + 1;
+  await r.outbox.enqueue({
+    topic,
     aggregateType: 'attendance_day',
     aggregateId: dayId,
-    dedupeKey: outboxDedupeKey('mirror.attendance_aggregate', dayId, fingerprint),
+    dedupeKey: outboxDedupeKey(topic, dayId, seq),
+    payload: { fingerprint, seq },
   });
 }

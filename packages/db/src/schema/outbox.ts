@@ -38,6 +38,8 @@ export const outboxMessages = pgTable(
     unique('outbox_messages_tenant_id_dedupe_key_key').on(t.tenantId, t.dedupeKey),
     index('outbox_messages_available_at_idx').on(t.availableAt).where(sql`status = 'pending'`),
     index('outbox_messages_locked_until_idx').on(t.lockedUntil).where(sql`status = 'processing'`),
+    // 同じ対象の最後のメッセージ(勤怠集計のミラーの通し番号。OutboxWriter.latestPayload)
+    index('outbox_messages_tenant_id_aggregate_id_id_idx').on(t.tenantId, t.aggregateId, t.id),
     index('outbox_messages_completed_at_idx')
       .on(t.completedAt)
       .where(sql`status in ('done', 'failed', 'dead')`),

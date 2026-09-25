@@ -12,7 +12,7 @@ import {
   notFound,
   outboxDedupeKey,
   ENCRYPTION_PURPOSES as P,
-  parseJstTimestampString,
+  parseJstTimestamp,
   resolveTargetStaffId,
 } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
@@ -22,9 +22,10 @@ import type { StoragePort } from '../ports/storage';
 import type { UnitOfWorkPort } from '../ports/unitOfWork';
 import { encryptOptional } from './cipher';
 import { notifyWithLog } from './notify';
-import type { Actor } from './requestMeta';
+import type { Actor, Clock } from './requestMeta';
+import { currentTime } from './requestMeta';
 
-export interface ReceiptDeps {
+export interface ReceiptDeps extends Clock {
   uow: UnitOfWorkPort;
   crypto: CryptoPort;
   blindIndex: BlindIndexPort;
@@ -89,7 +90,9 @@ export function parseAmountYen(value: string | number | null | undefined): numbe
  *   トランザクションが失敗したら保存した画像を消す。
  * - 「スタッフ・顧客・日時・金額・店名」が既存の登録と一致する画像は重複として登録しない。判定は dedupe_bidx の
  *   部分UNIQUE と INSERT … ON CONFLICT DO NOTHING で行い、同時の登録でも1件だけが残る。金額か店名が未入力の画像は
- *   判定しない。同じ操作の中の同じ内容(往復の運賃等)は全て登録する(判定するのは束の最初の1枚だけ)。
+ *   判定しない。同じ操作の中の同じ内容(往復の運賃等)は全て登録する(dedupe_bidx を持つのは束の最初の1枚だけ)。
+ *   最初の1枚が既存と重複したら、同じ内容の残りの画像も全て重複にする(GAS版と同じく、同じ束を送り直しても
+ *   1枚も増えない)。
  * - 1件以上登録できたら Google Chat へ通知する(GAS版 sendReceiptNotification)。
  */
 export async function uploadReceipts(
@@ -189,7 +192,13 @@ export async function uploadReceipts(
         });
         const registered: typeof stored = [];
         const duplicates: typeof stored = [];
+        // 既存と重複した内容(束の最初の1枚が弾かれたキー)。同じ内容の残りの画像も登録しない
+        const duplicateKeys = new Set<string>();
         for (const c of stored) {
+          if (c.key !== null && duplicateKeys.has(c.key)) {
+            duplicates.push(c);
+            continue;
+          }
           await r.storedFiles.insert({
             id: c.fileId,
             storageKey: c.storageKey,
@@ -206,7 +215,11 @@ export async function uploadReceipts(
             staffId,
             customerId: customer?.id ?? null,
             customerNameText,
-            receiptedAt: parseJstTimestampString(c.timestamp),
+            // 読めない領収書日時は GAS版と同じくフォールバックの日時(報告の日付+開始時刻等)、それも読めなければ登録時刻
+            receiptedAt:
+              parseJstTimestamp(c.timestamp) ??
+              parseJstTimestamp(input.fallbackTimestamp) ??
+              currentTime(deps),
             amountYen: parseAmountYen(c.img.amount),
             storeNameEnc: await encryptOptional(
               deps.crypto,
@@ -219,6 +232,7 @@ export async function uploadReceipts(
           });
           if (!inserted) {
             await r.storedFiles.delete(c.fileId);
+            if (c.key !== null) duplicateKeys.add(c.key);
             duplicates.push(c);
             continue;
           }

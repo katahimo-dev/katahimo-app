@@ -37,7 +37,9 @@ export type LoginResult =
  * テナントはログインフォームの tenantSlug で先に特定する(platform.tenants、RLS なし)。利用者の列挙を防ぐため、
  * テナント・アカウントが無い場合もパスワード不一致と同じ結果を返し、ダミーの argon2 照合で同じだけ時間をかける。
  * 退職済み・テナント停止中の判定はパスワードが一致した後に行う(パスワードを知らない人に在籍状況を伝えない)。
- * 総当たり対策: 失敗をアカウント単位(存在しないアカウントも同じく数える)と送信元IP単位で数え、上限で一時ロック。
+ * 総当たり対策: 試行をアカウント単位(存在しないアカウントも同じく数える)と送信元IP単位で数え、上限で一時ロック。
+ * 数えるのはパスワードの照合の前(枠を取ってから照合する)。照合の後に数えると、同時に送られた多数の試行が全て
+ * 「まだ上限前」と判定されて照合まで進んでしまう。成功した回は取り消す(アカウントは数え直し、送信元IPは1回分を返す)。
  * パスワードの照合(argon2、時間がかかる)はトランザクションの外で行う。
  */
 export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginResult> {
@@ -48,9 +50,10 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   const { loginFailureAccount, loginFailureIp } = deps.rateLimits;
   const masked = maskEmail(loginId);
 
+  // 先に1回分の枠を取る(同時の試行でも、照合まで進めるのは上限の回数まで)
   const [byAccount, byIp] = await Promise.all([
-    deps.rateLimiter.peek(loginFailureAccount, accountKey, now),
-    ip ? deps.rateLimiter.peek(loginFailureIp, ip, now) : null,
+    deps.rateLimiter.consume(loginFailureAccount, accountKey, now),
+    ip ? deps.rateLimiter.consume(loginFailureIp, ip, now) : null,
   ]);
   const blocked = !byAccount.allowed ? byAccount : byIp && !byIp.allowed ? byIp : null;
   if (blocked) {
@@ -65,12 +68,8 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   }
 
   const recordFailure = async (tenantId: string | null, reason: string, staffId?: string) => {
-    const [account, fromIp] = await Promise.all([
-      deps.rateLimiter.consume(loginFailureAccount, accountKey, now),
-      ip ? deps.rateLimiter.consume(loginFailureIp, ip, now) : null,
-    ]);
     if (tenantId && staffId) {
-      const lockedUntil = account.lockStarted ? new Date(now.getTime() + account.retryAfterMs) : null;
+      const lockedUntil = byAccount.lockStarted ? new Date(now.getTime() + byAccount.retryAfterMs) : null;
       await deps.uow.run(tenantId, (r) => r.staff.recordLoginFailure(staffId, lockedUntil));
     }
     await deps.appLog.write({
@@ -81,7 +80,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
       details: { reason, loginId: masked },
       ...input.meta,
     });
-    const lockScope = account.lockStarted ? 'account' : fromIp?.lockStarted ? 'ip' : null;
+    const lockScope = byAccount.lockStarted ? 'account' : byIp?.lockStarted ? 'ip' : null;
     if (lockScope) {
       await deps.appLog.write({
         tenantId,
@@ -119,7 +118,11 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
     await recordFailure(tenant.id, reason, staff.id);
     return { ok: false, reason: 'invalid_credentials' };
   }
-  await deps.rateLimiter.reset(loginFailureAccount, accountKey);
+  // パスワードが一致した回は数えない(アカウントは数え直し、送信元IPは先に取った1回分を返す)
+  await Promise.all([
+    deps.rateLimiter.reset(loginFailureAccount, accountKey),
+    ip ? deps.rateLimiter.refund(loginFailureIp, ip) : null,
+  ]);
 
   const refuse = async (reason: 'tenant_suspended' | 'retired'): Promise<LoginResult> => {
     await deps.appLog.write({

@@ -20,6 +20,8 @@ export interface NightlySyncTenantSummary {
   changedStaffCount: number;
   appointmentCount: number;
   failures: NightlySyncStaffFailure[];
+  /** 停止の合図で、全てのスタッフを処理する前に止めた。 */
+  interrupted: boolean;
   /** テナント単位で処理できなかった場合(スタッフ一覧の取得失敗等)の理由。 */
   error?: string;
 }
@@ -28,6 +30,8 @@ export interface NightlySyncSummary {
   tenants: NightlySyncTenantSummary[];
   succeeded: number;
   failed: number;
+  /** 停止の合図で、全てのテナント・スタッフを処理する前に止めた(ジョブは失敗として終わる)。 */
+  interrupted: boolean;
 }
 
 /**
@@ -52,9 +56,13 @@ export async function syncDayForAllStaff(
     changedStaffCount: 0,
     appointmentCount: 0,
     failures: [],
+    interrupted: false,
   };
   for (const staff of staffList) {
-    if (shouldStop()) break;
+    if (shouldStop()) {
+      summary.interrupted = true;
+      break;
+    }
     try {
       const result = await syncStaffDayFromCalendar(
         deps,
@@ -89,6 +97,7 @@ export async function syncDayForAllStaff(
       failed: summary.failed,
       changedStaffCount: summary.changedStaffCount,
       appointmentCount: summary.appointmentCount,
+      interrupted: summary.interrupted,
     },
   });
   return summary;
@@ -97,15 +106,20 @@ export async function syncDayForAllStaff(
 /**
  * 夜間バッチ(GAS版 autoSyncTodayScheduleForAllStaff、毎日22時台): 利用中の全テナントについて、テナントの
  * タイムゾーンでの「今日」(または options.date)の予定を、その日に在籍している全スタッフの出勤簿へ反映する。
- * 各スタッフの反映は冪等なので、途中で失敗して再実行しても二重には書かない。
+ * 各スタッフの反映は冪等なので、途中で失敗して再実行しても二重には書かない。停止の合図で途中で止めた場合は
+ * interrupted(残りは再実行で反映する)。
  */
 export async function runNightlyCalendarSync(
   deps: NightlyCalendarSyncDeps,
   options: { date?: string; shouldStop?: () => boolean } = {},
 ): Promise<NightlySyncSummary> {
   const summaries: NightlySyncTenantSummary[] = [];
+  let interrupted = false;
   for (const tenant of await deps.tenants.listActive()) {
-    if (options.shouldStop?.()) break;
+    if (options.shouldStop?.()) {
+      interrupted = true;
+      break;
+    }
     const date = options.date ?? zonedBusinessDate(currentTime(deps), tenant.timezone);
     try {
       summaries.push(await syncDayForAllStaff(deps, tenant, date, options.shouldStop));
@@ -127,6 +141,7 @@ export async function runNightlyCalendarSync(
         changedStaffCount: 0,
         appointmentCount: 0,
         failures: [],
+        interrupted: false,
         error: message,
       });
     }
@@ -135,5 +150,6 @@ export async function runNightlyCalendarSync(
     tenants: summaries,
     succeeded: summaries.reduce((n, s) => n + s.succeeded, 0),
     failed: summaries.reduce((n, s) => n + s.failed, 0),
+    interrupted: interrupted || summaries.some((s) => s.interrupted),
   };
 }

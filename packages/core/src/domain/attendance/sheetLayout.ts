@@ -179,6 +179,17 @@ const OVERRIDE_NAMES = {
 
 const COLUMN_ORDER = Object.keys(ATTENDANCE_COLUMNS) as AttendanceColumnKey[];
 
+/**
+ * 列記号のシート上の位置(0始まり。A = 0)。既存の出勤簿をCSVに書き出したものを読む取込が使う
+ * (列記号を他のファイルに書かないため、位置の計算もここに置く)。
+ */
+export function sheetColumnIndex(column: AttendanceColumnKey): number {
+  return [...column].reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
+}
+
+/** 出勤簿の日付の列(A列)の位置。 */
+export const SHEET_DATE_COLUMN_INDEX = 0;
+
 /** 出勤簿の枠に載る訪問の数(4件目以降は保存するが出勤簿には出ない)。 */
 export const SHEET_VISIT_SLOT_COUNT = VISIT_SLOTS.length;
 
@@ -240,6 +251,38 @@ function overrideNameOf(target: CellTarget): string {
   }
 }
 
+/**
+ * 実体の無い枠の「手で変えた」印の名前(`visit:2:actual_start` 等。入れ物 attendance_days の overridden_fields に持つ)。
+ * GAS版の強調表示はセルの背景色のため、枠の値が全て空になって実体が消えても、次にその枠に値が入れば強調表示が
+ * 残っていた。本アプリも、印の付いた実体が消えるときは印を枠に移し、その枠に実体を作るときに引き継ぐ。
+ */
+type SlotRef =
+  | { entity: 'visit' | 'segment'; seq: number }
+  | { entity: 'leg'; kind: TravelLegEntity['kind']; seq: number };
+
+function slotPrefixOf(slot: SlotRef): string {
+  return slot.entity === 'leg' ? `leg:${slot.kind}:${slot.seq}:` : `${slot.entity}:${slot.seq}:`;
+}
+
+function slotOverrideKeyOf(target: CellTarget): string | null {
+  return target.entity === 'day' ? null : `${slotPrefixOf(target)}${overrideNameOf(target)}`;
+}
+
+/** 枠に残っていた印を、その枠に作った実体へ移す。 */
+function adoptSlotOverrides(day: DayEntity, slot: SlotRef, entity: { overriddenFields: string[] }): void {
+  const prefix = slotPrefixOf(slot);
+  const adopted = day.overriddenFields.filter((f) => f.startsWith(prefix)).map((f) => f.slice(prefix.length));
+  if (adopted.length === 0) return;
+  day.overriddenFields = day.overriddenFields.filter((f) => !f.startsWith(prefix));
+  for (const name of adopted) addOverride(entity, name);
+}
+
+/** 消える実体の印を枠に移す。 */
+function keepSlotOverrides(day: DayEntity, slot: SlotRef, entity: { overriddenFields: string[] }): void {
+  const prefix = slotPrefixOf(slot);
+  for (const name of entity.overriddenFields) addOverride(day, `${prefix}${name}`);
+}
+
 function overriddenFieldsOf(sheet: AttendanceSheetDay, target: CellTarget): readonly string[] {
   switch (target.entity) {
     case 'visit':
@@ -269,13 +312,36 @@ export function projectDay(sheet: AttendanceSheetDay): DayProjection {
   for (const column of COLUMN_ORDER) {
     const target = CELL_TARGETS[column];
     rowData[column] = cellOf(sheet, target);
-    if (overriddenFieldsOf(sheet, target).includes(overrideNameOf(target))) changedFields.push(column);
+    const slotKey = slotOverrideKeyOf(target);
+    if (
+      overriddenFieldsOf(sheet, target).includes(overrideNameOf(target)) ||
+      (slotKey !== null && sheet.day.overriddenFields.includes(slotKey))
+    ) {
+      changedFields.push(column);
+    }
   }
   return {
     rowData,
     changedFields,
     hiddenVisitCount: sheet.visits.filter((v) => v.seq > SHEET_VISIT_SLOT_COUNT).length,
   };
+}
+
+/**
+ * 2つの状態の間で、出勤簿の表示(値・手で変えた印)が変わった列(列の並びは出勤簿の順)。スプレッドシートへの
+ * ミラーはこの列だけを書く(シートにだけある値を空で上書きしないため)。
+ */
+export function changedSheetColumns(
+  before: AttendanceSheetDay,
+  after: AttendanceSheetDay,
+): AttendanceColumnKey[] {
+  const a = projectDay(before);
+  const b = projectDay(after);
+  return COLUMN_ORDER.filter(
+    (column) =>
+      a.rowData[column] !== b.rowData[column] ||
+      a.changedFields.includes(column) !== b.changedFields.includes(column),
+  );
 }
 
 /** 空の列を除いた行(画面に返す形)。 */
@@ -365,8 +431,11 @@ export interface CellChange {
 }
 
 export interface RowEditOptions {
-  /** user: 手入力(変えた項目を overridden_fields に加える)/ calendar_sync: カレンダー反映(加えない)。 */
-  source: 'user' | 'calendar_sync';
+  /**
+   * user: 手入力(変えた項目を overridden_fields に加える)/ calendar_sync: カレンダー反映(加えない)/
+   * import: 既存の出勤簿(スプレッドシート)からの取込(加えない。訪問は手入力と同じ manual として持つ)。
+   */
+  source: 'user' | 'calendar_sync' | 'import';
   newId: () => string;
 }
 
@@ -381,7 +450,7 @@ function blankVisit(id: string, seq: number, source: RowEditOptions['source']): 
     plannedStart: null,
     plannedEnd: null,
     status: 'completed',
-    source: source === 'user' ? 'manual' : 'google_calendar',
+    source: source === 'calendar_sync' ? 'google_calendar' : 'manual',
     externalEventId: null,
     overriddenFields: [],
   };
@@ -406,27 +475,14 @@ function normalizeSpan<T extends { start: number | null; end: number | null }>(e
   entity.end = end < entity.start ? end + 1440 : end;
 }
 
-function overlapError(visits: VisitEntity[]): string | null {
-  const timed = visits
-    .filter((v) => v.start !== null && v.end !== null)
-    .sort((a, b) => (a.start as number) - (b.start as number));
-  for (let i = 1; i < timed.length; i++) {
-    const previous = timed[i - 1] as VisitEntity;
-    const current = timed[i] as VisitEntity;
-    if ((current.start as number) < (previous.end as number)) {
-      return `訪問#${previous.seq}と#${current.seq}の時間が重なっています。時刻を確かめてください。`;
-    }
-  }
-  return null;
-}
-
 /**
  * 出勤簿の行の編集(送られた列だけ)を実体に当てる。値の変わった列だけを変え、変わった列の一覧を返す
  * (GAS版 updatePastSchedule の「変更されたセルだけ書き込む」と同じ)。
  * - 列の値は種類ごとに検証する(時刻 HH:MM・整数・距離・天候の選択肢)。不正なら validation_failed。
- * - 訪問・作業・移動の列が全て空になった実体は消す。空だった枠に値が入れば実体を作る。
+ * - 訪問・作業・移動の列が全て空になった実体は消す。空だった枠に値が入れば実体を作る。消した実体の「手で変えた」印は
+ *   枠に残し(入れ物の overridden_fields)、その枠に次に作る実体へ引き継ぐ(GAS版のセルの背景色と同じ)。
  * - source = 'user' なら変えた項目を overridden_fields に加える(カレンダー反映は加えも消しもしない)。
- * - 同じ日の訪問の時間が重なる場合は validation_failed(DB の EXCLUDE 制約と同じ規則)。
+ * - 訪問の時間帯が重なっていても拒否しない(GAS版の手入力・カレンダー反映と同じ。予定の正はカレンダー)。
  */
 export function applyRowEdit(
   sheet: AttendanceSheetDay,
@@ -467,6 +523,7 @@ export function applyRowEdit(
         let visit = next.visits.find((v) => v.seq === target.seq);
         if (!visit) {
           visit = blankVisit(options.newId(), target.seq, options.source);
+          adoptSlotOverrides(next.day, target, visit);
           next.visits.push(visit);
         }
         if (target.field === 'label') visit.label = (parsed as { value: string }).value;
@@ -480,6 +537,7 @@ export function applyRowEdit(
         let segment = next.segments.find((s) => s.seq === target.seq);
         if (!segment) {
           segment = blankSegment(options.newId(), target.seq);
+          adoptSlotOverrides(next.day, target, segment);
           next.segments.push(segment);
         }
         if (target.field === 'description') segment.description = (parsed as { value: string }).value;
@@ -491,6 +549,7 @@ export function applyRowEdit(
         let leg = findLeg(next, target.kind, target.seq);
         if (!leg) {
           leg = blankLeg(options.newId(), target.kind, target.seq);
+          adoptSlotOverrides(next.day, target, leg);
           next.legs.push(leg);
         }
         if (target.field === 'weather') leg.weather = (parsed as { value: WeatherCode | null }).value;
@@ -516,13 +575,22 @@ export function applyRowEdit(
       visit.plannedEnd = visit.end;
     }
   }
-  next.visits = next.visits.filter((v) => v.label !== '' || v.start !== null || v.end !== null);
-  next.segments = next.segments.filter((s) => s.description !== '' || s.start !== null || s.end !== null);
-  next.legs = next.legs.filter(
-    (l) => l.plannedMinutes !== null || l.distanceKm !== null || l.weather !== null,
-  );
+  const isEmptyVisit = (v: VisitEntity) => v.label === '' && v.start === null && v.end === null;
+  const isEmptySegment = (s: WorkSegmentEntity) => s.description === '' && s.start === null && s.end === null;
+  const isEmptyLeg = (l: TravelLegEntity) =>
+    l.plannedMinutes === null && l.distanceKm === null && l.weather === null;
+  for (const v of next.visits.filter(isEmptyVisit)) {
+    if (v.seq <= SHEET_VISIT_SLOT_COUNT) keepSlotOverrides(next.day, { entity: 'visit', seq: v.seq }, v);
+  }
+  for (const s of next.segments.filter(isEmptySegment)) {
+    keepSlotOverrides(next.day, { entity: 'segment', seq: s.seq }, s);
+  }
+  for (const l of next.legs.filter(isEmptyLeg)) {
+    keepSlotOverrides(next.day, { entity: 'leg', kind: l.kind, seq: l.seq }, l);
+  }
+  next.visits = next.visits.filter((v) => !isEmptyVisit(v));
+  next.segments = next.segments.filter((s) => !isEmptySegment(s));
+  next.legs = next.legs.filter((l) => !isEmptyLeg(l));
 
-  const overlap = overlapError(next.visits);
-  if (overlap) throw invalid(overlap, { rowData: overlap }, 'visit_overlap');
   return { next, changes };
 }

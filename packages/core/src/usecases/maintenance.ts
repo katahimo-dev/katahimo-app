@@ -32,29 +32,69 @@ export interface MaintenanceDeps extends Clock {
   shouldStop?: () => boolean;
 }
 
+/** 操作ログの月のパーティションを何か月先まで作っておくか(保守ジョブが何日か止まっても足りるように)。 */
+export const APP_LOG_PARTITION_MONTHS_AHEAD = 12;
+
 export interface MaintenanceSummary {
   partitionsCreated: number;
   partitionsDropped: number;
   rateLimitBucketsDeleted: number;
   tenants: Array<{ tenantId: string; deleted: Record<string, number>; filesDeleted: number; error?: string }>;
+  /** テナントに属さない処理(パーティション・レート制限)の失敗。 */
+  errors: string[];
+  /** 停止の合図で、全てのテナントを処理する前に止めた。 */
+  interrupted: boolean;
 }
 
 /**
- * 保守ジョブ(毎日1回): 操作ログの月のパーティションを先に作り・古いものを消し、テナントごとに保存期間を
- * 過ぎたセッション・outbox・再設定コード・マッチングの候補を消し、どこからも参照されないファイルを消す。
- * 1テナントの失敗で他を止めない。
+ * 保守ジョブ(毎日1回): 操作ログの月のパーティションを先に作り(既定のパーティションに入った行は月のパーティションへ
+ * 移す)・古いものを消し、消去されていない全てのテナント(停止中・解約済みを含む)について保存期間を過ぎた
+ * セッション・outbox・再設定コード・マッチングの候補を消し、どこからも参照されないファイルを消す。
+ * 1つの処理・1テナントの失敗で他を止めない。失敗は ERROR ログに残し、summary の errors / tenants[].error に入れる
+ * (ジョブは失敗として終わる)。
  */
 export async function runMaintenance(deps: MaintenanceDeps): Promise<MaintenanceSummary> {
   const now = currentTime(deps);
   const ago = (days: number) => new Date(now.getTime() - days * DAY_MS);
   const summary: MaintenanceSummary = {
-    partitionsCreated: await deps.platform.ensureAppLogPartitions(3),
-    partitionsDropped: await deps.platform.dropAppLogPartitions(deps.appLogRetentionMonths),
-    rateLimitBucketsDeleted: await deps.platform.purgeRateLimitBuckets(ago(RETENTION_DAYS.rateLimitBuckets)),
+    partitionsCreated: 0,
+    partitionsDropped: 0,
+    rateLimitBucketsDeleted: 0,
     tenants: [],
+    errors: [],
+    interrupted: false,
   };
-  for (const tenant of await deps.tenants.listActive()) {
-    if (deps.shouldStop?.()) break;
+  const platformStep = async (action: string, step: () => Promise<void>) => {
+    try {
+      await step();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      summary.errors.push(`${action}: ${message}`);
+      await deps.appLog.write({
+        tenantId: null,
+        level: 'ERROR',
+        action,
+        actorType: 'system',
+        details: { error: message.slice(0, 300) },
+      });
+    }
+  };
+  await platformStep('maintenance.app_log_partitions.create_failed', async () => {
+    summary.partitionsCreated = await deps.platform.ensureAppLogPartitions(APP_LOG_PARTITION_MONTHS_AHEAD);
+  });
+  await platformStep('maintenance.app_log_partitions.drop_failed', async () => {
+    summary.partitionsDropped = await deps.platform.dropAppLogPartitions(deps.appLogRetentionMonths);
+  });
+  await platformStep('maintenance.rate_limits.purge_failed', async () => {
+    summary.rateLimitBucketsDeleted = await deps.platform.purgeRateLimitBuckets(
+      ago(RETENTION_DAYS.rateLimitBuckets),
+    );
+  });
+  for (const tenant of await deps.tenants.listAll()) {
+    if (deps.shouldStop?.()) {
+      summary.interrupted = true;
+      break;
+    }
     try {
       const { deleted, files } = await deps.uow.run(tenant.id, async (r) => ({
         deleted: await r.retention.purge({
@@ -93,4 +133,9 @@ export async function runMaintenance(deps: MaintenanceDeps): Promise<Maintenance
     }
   }
   return summary;
+}
+
+/** 保守ジョブが最後まで成功したか(失敗が無く、途中で止めていない)。 */
+export function maintenanceSucceeded(summary: MaintenanceSummary): boolean {
+  return summary.errors.length === 0 && !summary.interrupted && summary.tenants.every((t) => !t.error);
 }

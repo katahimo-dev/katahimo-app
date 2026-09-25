@@ -3,7 +3,7 @@ import type { RateLimitDecision, RateLimitRule } from '../domain/rateLimit';
 /**
  * レート制限・一時ロックのポート。Cloud Run の複数インスタンスで共有できるよう、実装は Postgres
  * (@katahimo/db の DrizzleRateLimiter、rate_limit_buckets テーブル)に置く。判定の計算は
- * domain/rateLimit の consumeRateLimit / peekRateLimit で行い、実装は記録の読み書きを原子的に行う
+ * domain/rateLimit の consumeRateLimit / refundRateLimit で行い、実装は記録の読み書きを原子的に行う
  * (同時に来たリクエストが同じ回数を読んで上限を超えないよう、行ロックの中で数える)。
  *
  * key は規則ごとの識別子(IPアドレス、`テナントslug:ログインID`、スタッフID等)。実装はこれを
@@ -12,8 +12,11 @@ import type { RateLimitDecision, RateLimitRule } from '../domain/rateLimit';
 export interface RateLimiterPort {
   /** 1回分を記録し、その回を許可するかを返す。 */
   consume(rule: RateLimitRule, key: string, now: Date): Promise<RateLimitDecision>;
-  /** 記録せずに、次の1回が許可されるかを返す。 */
-  peek(rule: RateLimitRule, key: string, now: Date): Promise<RateLimitDecision>;
+  /**
+   * consume で数えた1回分を取り消す(先に数えてから評価した回が成功だった場合。ログインの成功で送信元IPの
+   * 失敗の枠を返す等)。記録が無ければ何もしない。
+   */
+  refund(rule: RateLimitRule, key: string): Promise<void>;
   /** 記録を消す(ログイン成功時に失敗回数を戻す等)。 */
   reset(rule: RateLimitRule, key: string): Promise<void>;
 }

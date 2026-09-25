@@ -73,6 +73,35 @@ describe('outbox ワーカー', () => {
     expect(await processNextOutboxMessage(ctx.deps)).toBe('done');
   });
 
+  it('処理中にリースが切れて別のワーカーが取り直したら、遅れて終わった処理は結果を書かない(lease_lost)', async () => {
+    await saveReport();
+    const message = ctx.data().outbox[0];
+    // 送信中に別のワーカーがリース切れの行を取り直した状況を作る
+    ctx.sender.onSend = () => {
+      if (message) Object.assign(message, { lockedBy: 'other-worker', attempts: message.attempts + 1 });
+    };
+    expect(await processNextOutboxMessage(ctx.deps)).toBe('lease_lost');
+    expect(message).toMatchObject({ status: 'processing', lockedBy: 'other-worker' });
+    expect(ctx.appLog.byAction('outbox.lease_lost')).toHaveLength(1);
+  });
+
+  it('処理中のままリースが切れて試行回数の上限に達したものは取り直さず dead(ERROR ログ)', async () => {
+    await saveReport();
+    const message = ctx.data().outbox[0];
+    if (message) {
+      Object.assign(message, {
+        status: 'processing',
+        attempts: message.maxAttempts,
+        lockedBy: 'crashed-worker',
+        lockedUntil: new Date(ctx.clock.now.getTime() - 1),
+      });
+    }
+    expect(await processNextOutboxMessage(ctx.deps)).toBe('idle');
+    expect(message?.status).toBe('dead');
+    expect(ctx.sender.dailyReports).toHaveLength(0);
+    expect(ctx.appLog.byAction('outbox.message_failed')[0]).toMatchObject({ level: 'ERROR' });
+  });
+
   it('MIRROR が無効ならミラーのトピックは送らずに完了にする(メールは送る)', async () => {
     await saveReport();
     ctx.deps.mirrorEnabled = false;

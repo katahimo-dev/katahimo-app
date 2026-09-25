@@ -4,6 +4,7 @@ import {
   type AttendanceRowPatch,
   applyRowEdit,
   type CellChange,
+  changedSheetColumns,
   checkAttendanceEditable,
   compactRowData,
   computeDayDerived,
@@ -161,7 +162,7 @@ export async function updateAttendanceDay(
           current,
           next,
         );
-        if (saved) await enqueueAttendanceDayMirror(r, saved);
+        if (saved) await enqueueAttendanceDayMirror(r, saved, changedSheetColumns(current, next));
         const after = saved ? await r.attendance.loadDay(target.staffId, businessDate) : rows;
         return { target, changes, attendance: await buildDayView(deps, r, target, after, today) };
       },

@@ -4860,6 +4860,33 @@
           "where": "status = 'processing'",
           "concurrently": false
         },
+        "outbox_messages_tenant_id_aggregate_id_id_idx": {
+          "name": "outbox_messages_tenant_id_aggregate_id_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "aggregate_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "outbox_messages_completed_at_idx": {
           "name": "outbox_messages_completed_at_idx",
           "columns": [
@@ -5730,7 +5757,7 @@
             "id"
           ],
           "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {

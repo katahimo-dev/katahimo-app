@@ -107,12 +107,18 @@ export async function importLatestCustomerCsv(
       };
     }
     const applied = { created: outcome.created, updated: outcome.updated, archived: outcome.archived };
-    await log('INFO', 'customer_csv.imported', {
-      fileName,
-      version,
-      unchanged: outcome.unchanged,
-      ...applied,
-    });
+    await log(
+      outcome.skipped > 0 || Object.keys(outcome.issues).length > 0 ? 'WARN' : 'INFO',
+      'customer_csv.imported',
+      {
+        fileName,
+        version,
+        unchanged: outcome.unchanged,
+        skipped: outcome.skipped,
+        issues: outcome.issues,
+        ...applied,
+      },
+    );
     return {
       status: 'imported',
       message: `顧客CSVを取り込みました: ${fileName}`,

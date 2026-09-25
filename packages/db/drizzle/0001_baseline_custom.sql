@@ -1,6 +1,6 @@
 -- 0001_baseline_custom: drizzle-kit では書けない定義(手書き)。
 -- トリガー・EXCLUDE 制約・ON DELETE SET NULL (列)・FORCE RLS・ロールごとの権限・パーティション表の app_logs・
--- テナント作成の関数。ロール(katahimo_owner / katahimo_app / katahimo_worker / katahimo_readonly)は
+-- テナントの作成・消去の関数。ロール(katahimo_owner / katahimo_app / katahimo_worker / katahimo_readonly)は
 -- infra/initdb・infra/cloudsql の初期化SQLが先に作っておく(無ければここで失敗する)。
 -- このマイグレーションは所有者ロール(katahimo_owner。katahimo_migrator が SET ROLE して実行)で流れる。
 
@@ -116,12 +116,9 @@ ALTER TABLE "customer_addresses" ADD CONSTRAINT "customer_addresses_tenant_id_cu
 ALTER TABLE "reservation_assignments" ADD CONSTRAINT "reservation_assignments_tenant_id_staff_id_period_excl"
   EXCLUDE USING gist ("tenant_id" WITH =, "staff_id" WITH =, "period" WITH &&)
   WHERE ("status" IN ('proposed', 'confirmed'));--> statement-breakpoint
--- 同じスタッフの訪問の実績の時間帯は重ならない(取消・開始か終了が未入力の訪問は対象外)。1日分の書き込みの途中
--- (時刻の入れ替え等)で一時的に重なっても良いよう、コミット時に確かめる(DEFERRABLE INITIALLY DEFERRED)
-ALTER TABLE "visits" ADD CONSTRAINT "visits_tenant_id_staff_id_actual_period_excl"
-  EXCLUDE USING gist ("tenant_id" WITH =, "staff_id" WITH =, "actual_period" WITH &&)
-  WHERE ("status" <> 'cancelled' AND NOT lower_inf("actual_period") AND NOT upper_inf("actual_period"))
-  DEFERRABLE INITIALLY DEFERRED;--> statement-breakpoint
+-- 訪問(visits)の実績の時間帯の重なりは制約にしない。予定の正はカレンダーで、GAS版もカレンダーの反映・手入力とも
+-- 重なった時間帯をそのまま出勤簿に書いていた(重なりを拒否すると、その日の反映が丸ごと失敗する)。二重予約の防止は
+-- 予約の割当(reservation_assignments の EXCLUDE)が受け持つ。
 -- 週次の勤務可能枠: 同じ曜日で有効期間が重なる枠の時間帯は重ならない(時刻は基準日 2000-01-01 に載せて比べる)
 ALTER TABLE "staff_weekly_availability" ADD CONSTRAINT "staff_weekly_availability_tenant_id_staff_id_weekday_excl"
   EXCLUDE USING gist (
@@ -146,7 +143,33 @@ ALTER TABLE "travel_legs" ADD CONSTRAINT "travel_legs_tenant_id_to_visit_id_fkey
 -- ─────────────────────────────────────────────────────────────
 -- 4. 勤怠の月の締め(attendance_periods.status = 'locked' の月は書き換えさせない)。アプリの判定に加えた二重の守り。
 --    SQLSTATE KH001 はアプリが「締め済み」(400 locked)として扱う。
+--    - 締めと書き込みが同時に走っても取りこぼさないよう、(テナント・スタッフ・月)ごとのアドバイザリロックで
+--      順序を付ける: 勤怠の書き込みは共有ロック、締め(status を locked にする)は排他ロック。締めの行がまだ無い月
+--      (INSERT で締める)でも効く。ロックはトランザクションの終わりまで持つ。
+--    - 締めの解除(locked → open)・締めた月の行の削除は所有者(運用の関数・テナントの消去)だけができる。
+--    - テナントの消去(platform.tenants の行の削除からの cascade)では確かめない(テナントの行が既に無い)。
 -- ─────────────────────────────────────────────────────────────
+CREATE FUNCTION public.attendance_period_lock_key(p_tenant_id uuid, p_staff_id uuid, p_year_month text)
+  RETURNS bigint
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  AS $$ SELECT hashtextextended(p_tenant_id::text || '/' || p_staff_id::text || '/' || p_year_month, 0) $$;--> statement-breakpoint
+
+-- 締めた月か(共有ロックを取ってから読む。締めの処理が終わるまで待つ)
+CREATE FUNCTION public.attendance_period_is_locked(p_tenant_id uuid, p_staff_id uuid, p_business_date date)
+  RETURNS boolean
+  LANGUAGE plpgsql
+  AS $$
+DECLARE
+  ym text := to_char(p_business_date, 'YYYY-MM');
+BEGIN
+  PERFORM pg_advisory_xact_lock_shared(public.attendance_period_lock_key(p_tenant_id, p_staff_id, ym));
+  RETURN EXISTS (
+    SELECT 1 FROM attendance_periods p
+    WHERE p.tenant_id = p_tenant_id AND p.staff_id = p_staff_id AND p.year_month = ym AND p.status = 'locked'
+  );
+END
+$$;--> statement-breakpoint
+
 CREATE FUNCTION public.enforce_attendance_period_lock() RETURNS trigger
   LANGUAGE plpgsql
   AS $$
@@ -154,19 +177,14 @@ DECLARE
   r record;
 BEGIN
   IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF;
-  IF EXISTS (
-    SELECT 1 FROM attendance_periods p
-    WHERE p.tenant_id = r.tenant_id AND p.staff_id = r.staff_id
-      AND p.year_month = to_char(r.business_date, 'YYYY-MM') AND p.status = 'locked'
-  ) OR (TG_OP = 'UPDATE' AND EXISTS (
-    SELECT 1 FROM attendance_periods p
-    WHERE p.tenant_id = OLD.tenant_id AND p.staff_id = OLD.staff_id
-      AND p.year_month = to_char(OLD.business_date, 'YYYY-MM') AND p.status = 'locked'
-  )) THEN
+  IF NOT EXISTS (SELECT 1 FROM platform.tenants t WHERE t.id = r.tenant_id) THEN
+    RETURN r;
+  END IF;
+  IF public.attendance_period_is_locked(r.tenant_id, r.staff_id, r.business_date)
+     OR (TG_OP = 'UPDATE' AND public.attendance_period_is_locked(OLD.tenant_id, OLD.staff_id, OLD.business_date)) THEN
     RAISE EXCEPTION 'attendance period % is locked', to_char(r.business_date, 'YYYY-MM') USING ERRCODE = 'KH001';
   END IF;
-  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
-  RETURN NEW;
+  RETURN r;
 END
 $$;--> statement-breakpoint
 
@@ -179,18 +197,67 @@ CREATE TRIGGER "work_segments_enforce_period_lock" BEFORE INSERT OR UPDATE OR DE
 CREATE TRIGGER "travel_legs_enforce_period_lock" BEFORE INSERT OR UPDATE OR DELETE ON "travel_legs"
   FOR EACH ROW EXECUTE FUNCTION public.enforce_attendance_period_lock();--> statement-breakpoint
 
--- ─────────────────────────────────────────────────────────────
--- 5. 記録の本文の変更履歴。提出済みの記録の本文が変わったら変更前を care_record_revisions に写す。
---    locked の記録の本文は変更できない(SQLSTATE KH002)。変更者はセッションの app.actor_id(UoW が設定)。
--- ─────────────────────────────────────────────────────────────
-CREATE FUNCTION public.care_records_route_revision() RETURNS trigger
+-- 締めの行そのものの守り: 締めるときは排他ロックを取り(書き込み中の同じ月のトランザクションを待つ)、
+-- 締めの解除・締めた月の行の削除は所有者だけに許す(アプリ・ワーカーは KH001)
+CREATE FUNCTION public.guard_attendance_period() RETURNS trigger
   LANGUAGE plpgsql
   AS $$
 BEGIN
+  IF TG_OP IN ('UPDATE', 'DELETE') AND OLD.status = 'locked'
+     AND (TG_OP = 'DELETE' OR NEW.status <> 'locked')
+     AND current_user <> 'katahimo_owner' THEN
+    RAISE EXCEPTION 'attendance period % is locked', OLD.year_month USING ERRCODE = 'KH001';
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  IF NEW.status = 'locked' THEN
+    PERFORM pg_advisory_xact_lock(public.attendance_period_lock_key(NEW.tenant_id, NEW.staff_id, NEW.year_month));
+  END IF;
+  RETURN NEW;
+END
+$$;--> statement-breakpoint
+CREATE TRIGGER "attendance_periods_guard" BEFORE INSERT OR UPDATE OR DELETE ON "attendance_periods"
+  FOR EACH ROW EXECUTE FUNCTION public.guard_attendance_period();--> statement-breakpoint
+
+-- 締めの解除(運用。所有者のメンバー = katahimo_migrator だけが実行できる)。解除した行があれば true
+CREATE FUNCTION platform.unlock_attendance_period(p_tenant_id uuid, p_staff_id uuid, p_year_month text)
+  RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER
+  SET search_path = pg_catalog, public
+  AS $$
+DECLARE
+  previous_tenant text := current_setting('app.tenant_id', true);
+  updated integer;
+BEGIN
+  PERFORM set_config('app.tenant_id', p_tenant_id::text, true);
+  UPDATE public.attendance_periods SET status = 'open', locked_at = NULL, locked_by = NULL
+  WHERE tenant_id = p_tenant_id AND staff_id = p_staff_id AND year_month = p_year_month AND status = 'locked';
+  GET DIAGNOSTICS updated = ROW_COUNT;
+  PERFORM set_config('app.tenant_id', coalesce(previous_tenant, ''), true);
+  RETURN updated > 0;
+END
+$$;--> statement-breakpoint
+
+-- ─────────────────────────────────────────────────────────────
+-- 5. 記録の守りと本文の変更履歴(全ての UPDATE・DELETE で動く。WHEN で絞らない)。
+--    - locked(確定済み)の記録は、本文以外の列も含めて変更・削除できない(SQLSTATE KH002)。locked から他の状態へも戻せない。
+--    - 下書き以外(submitted)の記録の本文(暗号文・本文の形式の版)が変わったら、変更前を care_record_revisions に写す。
+--      変更者はセッションの app.actor_id(UoW が設定)。
+--    - テナントの消去(platform.tenants の行の削除からの cascade)では確かめない。
+-- ─────────────────────────────────────────────────────────────
+CREATE FUNCTION public.care_records_guard() RETURNS trigger
+  LANGUAGE plpgsql
+  AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform.tenants t WHERE t.id = OLD.tenant_id) THEN
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+  END IF;
   IF OLD.status = 'locked' THEN
     RAISE EXCEPTION 'care record % is locked', OLD.id USING ERRCODE = 'KH002';
   END IF;
-  IF OLD.status = 'submitted' THEN
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  IF OLD.status <> 'draft' AND (OLD.body_enc IS DISTINCT FROM NEW.body_enc
+                                OR OLD.body_schema_ver IS DISTINCT FROM NEW.body_schema_ver) THEN
     INSERT INTO care_record_revisions (tenant_id, id, care_record_id, revision_no, body_enc, body_schema_ver, changed_by)
     VALUES (
       OLD.tenant_id,
@@ -206,9 +273,8 @@ BEGIN
   RETURN NEW;
 END
 $$;--> statement-breakpoint
-CREATE TRIGGER "care_records_route_revision" BEFORE UPDATE ON "care_records"
-  FOR EACH ROW WHEN (OLD.body_enc IS DISTINCT FROM NEW.body_enc)
-  EXECUTE FUNCTION public.care_records_route_revision();--> statement-breakpoint
+CREATE TRIGGER "care_records_guard" BEFORE UPDATE OR DELETE ON "care_records"
+  FOR EACH ROW EXECUTE FUNCTION public.care_records_guard();--> statement-breakpoint
 
 -- ─────────────────────────────────────────────────────────────
 -- 6. 操作ログ(app_logs): 月ごとの RANGE パーティション。テナント特定前(ログイン失敗等)の行は tenant_id が null。
@@ -240,27 +306,54 @@ CREATE POLICY "app_logs_select" ON "app_logs" AS PERMISSIVE FOR SELECT TO public
 CREATE POLICY "app_logs_insert" ON "app_logs" AS PERMISSIVE FOR INSERT TO public
   WITH CHECK (tenant_id IS NULL OR tenant_id = app_current_tenant());--> statement-breakpoint
 
--- 月のパーティションを今月から months_ahead か月先まで作る(既にあれば何もしない)。作った数を返す。
-CREATE FUNCTION platform.ensure_app_log_partitions(months_ahead integer DEFAULT 3) RETURNS integer
+-- 既定のパーティション(該当する月のパーティションが無い行の受け皿)。月のパーティションを作り忘れても(保守ジョブの
+-- 失敗等)操作ログの書き込みは失敗しない。受け皿に入った行は次の ensure_app_log_partitions が月のパーティションへ移す。
+CREATE TABLE "app_logs_default" PARTITION OF "app_logs" DEFAULT;--> statement-breakpoint
+ALTER TABLE "app_logs_default" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+
+-- 月のパーティションを今月から months_ahead か月先まで作り、既定のパーティションに入っている行の月の分も作って
+-- 行を移す(既定のパーティションに該当する行があると PARTITION OF では作れないため、別の表に移してから ATTACH する)。
+-- 作った数を返す。既にあれば何もしない。
+CREATE FUNCTION platform.ensure_app_log_partitions(months_ahead integer DEFAULT 12) RETURNS integer
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, public
   AS $$
 DECLARE
-  month_start date := date_trunc('month', now() AT TIME ZONE 'UTC')::date;
+  this_month date := date_trunc('month', now() AT TIME ZONE 'UTC')::date;
+  month_start date;
+  range_from timestamptz;
+  range_to timestamptz;
   name text;
   created integer := 0;
 BEGIN
-  FOR i IN 0..months_ahead LOOP
+  IF months_ahead < 0 THEN
+    RAISE EXCEPTION 'months_ahead must be >= 0';
+  END IF;
+  FOR month_start IN
+    SELECT m::date FROM generate_series(this_month, this_month + make_interval(months => months_ahead), interval '1 month') m
+    UNION
+    SELECT DISTINCT date_trunc('month', d.created_at AT TIME ZONE 'UTC')::date FROM public.app_logs_default d
+    ORDER BY 1
+  LOOP
     name := 'app_logs_y' || to_char(month_start, 'YYYY') || 'm' || to_char(month_start, 'MM');
-    IF to_regclass('public.' || name) IS NULL THEN
+    CONTINUE WHEN to_regclass('public.' || name) IS NOT NULL;
+    range_from := month_start::timestamp AT TIME ZONE 'UTC';
+    range_to := (month_start + interval '1 month')::timestamp AT TIME ZONE 'UTC';
+    IF EXISTS (SELECT 1 FROM public.app_logs_default d WHERE d.created_at >= range_from AND d.created_at < range_to) THEN
+      EXECUTE format('CREATE TABLE public.%I (LIKE public.app_logs INCLUDING DEFAULTS INCLUDING CONSTRAINTS)', name);
       EXECUTE format(
-        'CREATE TABLE public.%I PARTITION OF public.app_logs FOR VALUES FROM (%L) TO (%L)',
-        name, month_start::timestamp AT TIME ZONE 'UTC', (month_start + interval '1 month')::timestamp AT TIME ZONE 'UTC'
+        'WITH moved AS (DELETE FROM public.app_logs_default WHERE created_at >= %L AND created_at < %L RETURNING *) '
+        'INSERT INTO public.%I SELECT * FROM moved',
+        range_from, range_to, name
       );
-      EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', name);
-      created := created + 1;
+      EXECUTE format('ALTER TABLE public.app_logs ATTACH PARTITION public.%I FOR VALUES FROM (%L) TO (%L)',
+        name, range_from, range_to);
+    ELSE
+      EXECUTE format('CREATE TABLE public.%I PARTITION OF public.app_logs FOR VALUES FROM (%L) TO (%L)',
+        name, range_from, range_to);
     END IF;
-    month_start := (month_start + interval '1 month')::date;
+    EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', name);
+    created := created + 1;
   END LOOP;
   RETURN created;
 END
@@ -291,7 +384,7 @@ BEGIN
   RETURN dropped;
 END
 $$;--> statement-breakpoint
-SELECT platform.ensure_app_log_partitions(3);--> statement-breakpoint
+SELECT platform.ensure_app_log_partitions(12);--> statement-breakpoint
 
 -- ─────────────────────────────────────────────────────────────
 -- 7. テナントの作成(運用の CLI・シードから)。所有者の権限で tenants・最初の DEK・設定をまとめて作る。
@@ -323,6 +416,30 @@ BEGIN
   VALUES (gen_random_uuid(), p_id, 'provisioned', session_user);
   PERFORM set_config('app.tenant_id', coalesce(previous_tenant, ''), true);
   RETURN p_id;
+END
+$$;--> statement-breakpoint
+
+-- テナントの消去(解約後。運用の CLI から、所有者のメンバー = katahimo_migrator だけが実行できる)。
+-- 解約済み(status = 'terminated')のテナントだけを消す。platform.tenants の行を消すと、全てのテナントのテーブルの
+-- tenant_id の外部キー(ON DELETE CASCADE)で1つの文の中で全データが消える(締めた月の勤怠・確定済みの記録・
+-- 記録の履歴も。各トリガーはテナントの行が無いことで消去と判断して通す)。操作ログ(app_logs)は外部キーを
+-- 持たないため残り、保存期間の経過でパーティションごと消える。消した場合 true、テナントが無ければ false。
+CREATE FUNCTION platform.purge_tenant(p_id uuid) RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER
+  SET search_path = pg_catalog, public
+  AS $$
+DECLARE
+  current_status text;
+BEGIN
+  SELECT status INTO current_status FROM platform.tenants WHERE id = p_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN false;
+  END IF;
+  IF current_status <> 'terminated' THEN
+    RAISE EXCEPTION 'tenant % is not terminated (status=%)', p_id, current_status;
+  END IF;
+  DELETE FROM platform.tenants WHERE id = p_id;
+  RETURN true;
 END
 $$;--> statement-breakpoint
 
@@ -396,119 +513,57 @@ CREATE POLICY "outbox_messages_worker" ON "outbox_messages" AS PERMISSIVE FOR AL
 REVOKE ALL ON SCHEMA platform FROM PUBLIC;--> statement-breakpoint
 GRANT USAGE ON SCHEMA public, platform TO katahimo_app, katahimo_worker, katahimo_readonly;--> statement-breakpoint
 REVOKE ALL ON FUNCTION platform.provision_tenant(uuid, text, text, bytea, text, text, text) FROM PUBLIC;--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.purge_tenant(uuid) FROM PUBLIC;--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.unlock_attendance_period(uuid, uuid, text) FROM PUBLIC;--> statement-breakpoint
 REVOKE ALL ON FUNCTION platform.ensure_app_log_partitions(integer) FROM PUBLIC;--> statement-breakpoint
 REVOKE ALL ON FUNCTION platform.drop_app_log_partitions(integer) FROM PUBLIC;--> statement-breakpoint
 GRANT EXECUTE ON FUNCTION platform.ensure_app_log_partitions(integer) TO katahimo_worker;--> statement-breakpoint
 GRANT EXECUTE ON FUNCTION platform.drop_app_log_partitions(integer) TO katahimo_worker;--> statement-breakpoint
--- platform: 参照だけ(レート制限のカウンタは読み書き)。tenant_lifecycle_events・platform_operators は運用者のみ
-GRANT SELECT ON "platform"."tenants", "platform"."plans", "platform"."plan_features" TO katahimo_app, katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "platform"."rate_limit_buckets" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, DELETE ON "platform"."rate_limit_buckets" TO katahimo_worker;--> statement-breakpoint
--- 操作ログは追記専用(UPDATE・DELETE なし。保存期間の削除はパーティションごと)
-GRANT SELECT, INSERT ON "app_logs" TO katahimo_app, katahimo_worker;--> statement-breakpoint
 
-GRANT SELECT, INSERT ON "ai_prompt_revisions" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT ON "ai_prompt_revisions" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "ai_prompts" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT ON "ai_prompts" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "attendance_days" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "attendance_days" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "attendance_periods" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "attendance_periods" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "attribute_definitions" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "attribute_definitions" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "care_recipients" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "care_recipients" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT ON "care_record_revisions" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT ON "care_record_revisions" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "care_records" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "care_records" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "custom_field_definitions" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT ON "custom_field_definitions" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_addresses" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_addresses" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_contacts" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_contacts" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_preferences" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_preferences" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_recurring_slots" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_recurring_slots" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_required_attributes" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_required_attributes" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_source_records" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_source_records" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_staff_affinities" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_staff_affinities" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customers" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "customers" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "data_export_requests" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "data_export_requests" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "data_subject_requests" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "data_subject_requests" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT ON "entity_changes" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT ON "entity_changes" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE ON "import_runs" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE ON "import_runs" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "matching_run_candidates" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "matching_run_candidates" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "matching_runs" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "matching_runs" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT ON "outbox_messages" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "outbox_messages" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "password_reset_codes" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, UPDATE, DELETE ON "password_reset_codes" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "receipt_uploads" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "receipt_uploads" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "receipts" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "receipts" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "reservation_assignments" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "reservation_assignments" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "reservation_recipients" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "reservation_recipients" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "reservations" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "reservations" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "retention_policies" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "retention_policies" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "service_areas" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "service_areas" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "service_items" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "service_items" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "sessions" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, DELETE ON "sessions" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_attributes" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_attributes" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_availability_exceptions" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_availability_exceptions" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_busy_blocks" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_busy_blocks" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_calendars" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_calendars" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE ON "staff_credentials" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_employment_terms" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_employment_terms" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_login_emails" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_login_emails" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_service_areas" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_service_areas" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_weekly_availability" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "staff_weekly_availability" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "stored_files" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "stored_files" TO katahimo_worker;--> statement-breakpoint
+-- ── katahimo_app(API) ──
+-- platform: 参照だけ(レート制限のカウンタは読み書き)。tenant_lifecycle_events・platform_operators は運用者のみ
+GRANT SELECT ON "platform"."tenants", "platform"."plans", "platform"."plan_features" TO katahimo_app;--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE, DELETE ON "platform"."rate_limit_buckets" TO katahimo_app;--> statement-breakpoint
+-- 追記専用(UPDATE・DELETE なし。操作ログの保存期間の削除はパーティションごと)
+GRANT SELECT, INSERT ON "app_logs", "ai_prompt_revisions", "care_record_revisions", "entity_changes" TO katahimo_app;--> statement-breakpoint
+-- 鍵は読むだけ(作成は provision_tenant)。outbox は積むだけ(状態の更新はワーカー)。設定の行は provision_tenant が作る
 GRANT SELECT ON "tenant_data_keys" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT ON "tenant_data_keys" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "tenant_features" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT ON "tenant_features" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "tenant_secrets" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT ON "tenant_secrets" TO katahimo_worker;--> statement-breakpoint
+GRANT SELECT, INSERT ON "outbox_messages" TO katahimo_app;--> statement-breakpoint
 GRANT SELECT, UPDATE ON "tenant_settings" TO katahimo_app;--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE ON "import_runs", "staff_credentials" TO katahimo_app;--> statement-breakpoint
+-- 月の締めは締めるだけ(解除・削除は所有者の platform.unlock_attendance_period / テナントの消去。トリガーでも守る)
+GRANT SELECT, INSERT, UPDATE ON "attendance_periods" TO katahimo_app;--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  "ai_prompts", "attendance_days", "attribute_definitions", "care_recipients", "care_records",
+  "custom_field_definitions", "customer_addresses", "customer_contacts", "customer_preferences",
+  "customer_recurring_slots", "customer_required_attributes", "customer_source_records", "customer_staff_affinities",
+  "customers", "data_export_requests", "data_subject_requests", "matching_run_candidates", "matching_runs",
+  "password_reset_codes", "receipt_uploads", "receipts", "reservation_assignments", "reservation_recipients",
+  "reservations", "retention_policies", "service_areas", "service_items", "sessions", "staff", "staff_attributes",
+  "staff_availability_exceptions", "staff_busy_blocks", "staff_calendars", "staff_employment_terms",
+  "staff_login_emails", "staff_service_areas", "staff_weekly_availability", "stored_files", "tenant_features",
+  "tenant_secrets", "travel_legs", "travel_time_cache", "visits", "work_segments"
+  TO katahimo_app;--> statement-breakpoint
+
+-- ── katahimo_worker(ワーカー・ジョブ)。ジョブが使う表・操作だけ(認証情報・テナントの秘密値・AIプロンプト・
+--    マッチングの表には権限を与えない)。ジョブを足すときはここと catalog.integration.test.ts の一覧を直す ──
+-- outbox: 取り出し・状態の更新・保存期間の削除(テナント横断のポリシー outbox_messages_worker)、夜間の反映の積み込み
+GRANT SELECT, INSERT, UPDATE, DELETE ON "outbox_messages" TO katahimo_worker;--> statement-breakpoint
+GRANT SELECT ON "platform"."tenants", "tenant_data_keys" TO katahimo_worker;--> statement-breakpoint
+GRANT INSERT ON "app_logs", "entity_changes" TO katahimo_worker;--> statement-breakpoint
+-- 夜間のカレンダー反映(勤怠の書き込み。締めの判定のため attendance_periods を読む)・予定のマスタの読み込み
+GRANT SELECT, INSERT, UPDATE, DELETE ON "attendance_days", "visits", "work_segments", "travel_legs" TO katahimo_worker;--> statement-breakpoint
+GRANT SELECT ON "attendance_periods", "staff", "staff_login_emails" TO katahimo_worker;--> statement-breakpoint
+GRANT SELECT, UPDATE ON "staff_calendars" TO katahimo_worker;--> statement-breakpoint
+-- 顧客CSVの取込(顧客は消さずにアーカイブする)
+GRANT SELECT, INSERT, UPDATE ON "customers", "customer_source_records", "care_recipients", "import_runs" TO katahimo_worker;--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE, DELETE ON "customer_addresses", "customer_contacts" TO katahimo_worker;--> statement-breakpoint
 GRANT SELECT, UPDATE ON "tenant_settings" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "travel_legs" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "travel_legs" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "travel_time_cache" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "travel_time_cache" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "visits" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "visits" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "work_segments" TO katahimo_app;--> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE, DELETE ON "work_segments" TO katahimo_worker;
+-- ミラーの送信(記録・領収書を読む)・再設定メールの送信
+GRANT SELECT ON "care_records", "receipts", "receipt_uploads" TO katahimo_worker;--> statement-breakpoint
+GRANT SELECT, UPDATE, DELETE ON "password_reset_codes" TO katahimo_worker;--> statement-breakpoint
+-- free/busy の同期
+GRANT SELECT, INSERT, DELETE ON "staff_busy_blocks" TO katahimo_worker;--> statement-breakpoint
+-- 保守(保存期間の削除。参照されないファイルの判定に staff_attributes・data_export_requests を読む)
+GRANT SELECT, DELETE ON "sessions", "matching_run_candidates", "stored_files", "platform"."rate_limit_buckets" TO katahimo_worker;--> statement-breakpoint
+GRANT SELECT ON "staff_attributes", "data_export_requests" TO katahimo_worker;

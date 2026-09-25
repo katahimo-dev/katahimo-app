@@ -1,4 +1,4 @@
-import type { ImportSource, OutboxTopic, TenantSecretName } from '@katahimo/core/domain';
+import { type ImportSource, newId, type OutboxTopic, type TenantSecretName } from '@katahimo/core/domain';
 import type {
   AiPromptKindValue,
   AiPromptRecord,
@@ -104,8 +104,15 @@ export class DrizzleAiPromptRepository extends TenantBound implements AiPromptRe
     return (await this.listAll()).find((p) => p.key === key) ?? null;
   }
 
-  /** 次の版(消した後に保存し直しても版が続くよう、履歴の最大値から数える)。 */
+  /**
+   * 次の版(消した後に保存し直しても版が続くよう、履歴の最大値から数える)。同じキーの保存が同時に来ても同じ版を
+   * 数えないよう、先にキーごとのアドバイザリロック(トランザクションの終わりまで)を取る。ai_prompts の行は
+   * 未保存・既定値に戻した後には無いため、行ロックでは足りない。
+   */
   private async nextRevision(key: string): Promise<number> {
+    await this.tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`ai_prompts/${this.tenantId}/${key}`}, 0))`,
+    );
     const [row] = await this.tx
       .select({ revision: max(aiPromptRevisions.revision) })
       .from(aiPromptRevisions)
@@ -137,6 +144,7 @@ export class DrizzleAiPromptRepository extends TenantBound implements AiPromptRe
   }
 
   async reset(key: string, updatedBy: string): Promise<void> {
+    const revision = await this.nextRevision(key);
     const deleted = await this.tx
       .delete(aiPrompts)
       .where(and(eq(aiPrompts.tenantId, this.tenantId), eq(aiPrompts.key, key)))
@@ -145,7 +153,7 @@ export class DrizzleAiPromptRepository extends TenantBound implements AiPromptRe
     await this.tx.insert(aiPromptRevisions).values({
       tenantId: this.tenantId,
       key,
-      revision: await this.nextRevision(key),
+      revision,
       body: null,
       createdBy: updatedBy,
     });
@@ -222,6 +230,8 @@ export class DrizzleOutboxWriter extends TenantBound implements OutboxWriter {
       .insert(outboxMessages)
       .values({
         tenantId: this.tenantId,
+        // UUIDv7(積んだ順に並ぶ。latestPayload が最後に積んだものを選ぶのに使う)
+        id: newId(),
         topic: message.topic,
         aggregateType: message.aggregateType,
         aggregateId: message.aggregateId,
@@ -229,6 +239,22 @@ export class DrizzleOutboxWriter extends TenantBound implements OutboxWriter {
         payload: message.payload ?? {},
       })
       .onConflictDoNothing({ target: [outboxMessages.tenantId, outboxMessages.dedupeKey] });
+  }
+
+  async latestPayload(topic: OutboxTopic, aggregateId: string): Promise<Record<string, unknown> | null> {
+    const [row] = await this.tx
+      .select({ payload: outboxMessages.payload })
+      .from(outboxMessages)
+      .where(
+        and(
+          eq(outboxMessages.tenantId, this.tenantId),
+          eq(outboxMessages.aggregateId, aggregateId),
+          eq(outboxMessages.topic, topic),
+        ),
+      )
+      .orderBy(desc(outboxMessages.id))
+      .limit(1);
+    return row?.payload ?? null;
   }
 }
 

@@ -59,6 +59,46 @@ describe('uploadReceipts', () => {
     expect((await uploadReceipts(ctx.deps, staff, input({ images: [same, same] }))).uploadedCount).toBe(2);
   });
 
+  it('同じ内容2枚の束を送り直しても増えない(束の全ての画像を重複にする。3回送っても2件のまま)', async () => {
+    const same = { data: JPEG, amount: '500', storeName: '往復バス' };
+    const batch = input({ images: [same, same] });
+    expect(await uploadReceipts(ctx.deps, staff, batch)).toMatchObject({
+      uploadedCount: 2,
+      duplicateCount: 0,
+    });
+    expect(await uploadReceipts(ctx.deps, staff, batch)).toMatchObject({
+      uploadedCount: 0,
+      duplicateCount: 2,
+    });
+    expect(await uploadReceipts(ctx.deps, staff, batch)).toMatchObject({
+      uploadedCount: 0,
+      duplicateCount: 2,
+    });
+    expect(ctx.data().receipts).toHaveLength(2);
+    expect(ctx.data().files).toHaveLength(2);
+    expect(ctx.storage.files.size).toBe(2);
+  });
+
+  it('領収書日時は1桁の月日・日付だけも読み、読めなければフォールバックの日時で記録する(登録時刻ではない)', async () => {
+    await uploadReceipts(
+      ctx.deps,
+      staff,
+      input({
+        images: [
+          { data: JPEG, amount: '100', storeName: 'a', receiptDate: '2026/9/5 9:05' },
+          { data: JPEG, amount: '200', storeName: 'b', receiptDate: '2026/09/06' },
+          { data: JPEG, amount: '300', storeName: 'c', receiptDate: '不明' },
+        ],
+        fallbackTimestamp: '2026/09/20 13:00:00',
+      }),
+    );
+    expect(ctx.data().receipts.map((r) => r.receiptedAt.toISOString())).toEqual([
+      '2026-09-05T00:05:00.000Z',
+      '2026-09-05T15:00:00.000Z',
+      '2026-09-20T04:00:00.000Z',
+    ]);
+  });
+
   it('一般スタッフが他人の名義を指定しても本人の名義になる', async () => {
     await uploadReceipts(ctx.deps, staff, input({ requestedStaffId: other.staffId }));
     expect(ctx.data().receipts.every((r) => r.staffId === staff.staffId)).toBe(true);

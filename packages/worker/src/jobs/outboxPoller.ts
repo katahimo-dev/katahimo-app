@@ -15,7 +15,7 @@ export async function drainOutboxOnce(
     maxMessages: options.maxMessages,
     ...(options.stop ? { shouldStop: () => options.stop?.stopped ?? false } : {}),
   });
-  if (result.done + result.skipped + result.retried + result.failed > 0) {
+  if (result.done + result.skipped + result.retried + result.failed + result.lease_lost > 0) {
     logJson('INFO', 'outbox を処理しました', { ...result });
   }
   return result;
@@ -30,7 +30,7 @@ export async function runOutboxPoller(
     try {
       const result = await drainOutboxOnce(container, options);
       // 上限まで処理した(まだ残っている)なら待たずに続ける
-      const handled = result.done + result.skipped + result.retried + result.failed;
+      const handled = result.done + result.skipped + result.retried + result.failed + result.lease_lost;
       if (handled >= options.maxMessages) continue;
     } catch (error) {
       logJson('ERROR', 'outbox の処理中にエラーが発生しました', { error: String(error) });

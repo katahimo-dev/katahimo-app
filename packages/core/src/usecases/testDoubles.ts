@@ -4,7 +4,7 @@
  * (ログイン用メール・領収書の重複・outbox の dedupe_key)は同じように弾く。
  */
 import type { RateLimitBucket, RateLimitDecision, RateLimitRule } from '../domain';
-import { conflict, consumeRateLimit, DomainError, peekRateLimit, STALE_WRITE_MESSAGE } from '../domain';
+import { conflict, consumeRateLimit, DomainError, refundRateLimit, STALE_WRITE_MESSAGE } from '../domain';
 import type { OutboxTopic } from '../domain/model';
 import type { AppLogEntry, AppLogPort } from '../ports/appLog';
 import type {
@@ -52,6 +52,7 @@ import type { NotificationChannel, NotifierPort, NotifyResult } from '../ports/n
 import type {
   ClaimedOutboxMessage,
   EntityChangeInput,
+  ExpiredOutboxMessage,
   OutboxMessageInput,
   OutboxQueuePort,
 } from '../ports/outbox';
@@ -102,6 +103,7 @@ export interface OutboxRow extends OutboxMessageInput {
   maxAttempts: number;
   availableAt: Date;
   lockedUntil: Date | null;
+  lockedBy: string | null;
   lastError: string | null;
   completedAt: Date | null;
 }
@@ -683,7 +685,14 @@ export function fakeRepositories(
         if (!c || (expectedVersion !== undefined && c.rowVersion !== expectedVersion)) {
           throw conflict(STALE_WRITE_MESSAGE, undefined, 'stale_row_version');
         }
-        if (patch.bodyEnc && !sameBytes(patch.bodyEnc, c.bodyEnc) && c.status === 'submitted') {
+        // DB のトリガー(care_records_guard)と同じ: 確定済みは変更できず、下書き以外の本文の変更は履歴に残す
+        if (c.status === 'locked') {
+          throw new DomainError('locked', '確定済みの記録は変更できません。', undefined, 'record_locked');
+        }
+        const bodyChanged =
+          (patch.bodyEnc && !sameBytes(patch.bodyEnc, c.bodyEnc)) ||
+          (patch.bodySchemaVer !== undefined && patch.bodySchemaVer !== c.bodySchemaVer);
+        if (bodyChanged && c.status !== 'draft') {
           d().careRecordRevisions.push({ careRecordId: id, bodyEnc: c.bodyEnc, changedBy: null });
         }
         Object.assign(c, structuredClone(patch), { rowVersion: c.rowVersion + 1 });
@@ -850,9 +859,16 @@ export function fakeRepositories(
           maxAttempts: 8,
           availableAt: new Date(0),
           lockedUntil: null,
+          lockedBy: null,
           lastError: null,
           completedAt: null,
         });
+      },
+      async latestPayload(topic, aggregateId) {
+        const last = d()
+          .outbox.filter((m) => m.topic === topic && m.aggregateId === aggregateId)
+          .at(-1);
+        return last ? structuredClone(last.payload ?? {}) : null;
       },
     },
     entityChanges: {
@@ -880,17 +896,21 @@ export class FakeOutboxQueue implements OutboxQueuePort {
     return this.db.of(tenantId).outbox.find((m) => m.id === id);
   }
 
-  async claimNext(_workerId: string, leaseMs: number, now: Date): Promise<ClaimedOutboxMessage | null> {
+  async claimNext(workerId: string, leaseMs: number, now: Date): Promise<ClaimedOutboxMessage | null> {
     const next = this.all().find(
       (m) =>
         (m.status === 'pending' && m.availableAt <= now) ||
-        (m.status === 'processing' && m.lockedUntil !== null && m.lockedUntil < now),
+        (m.status === 'processing' &&
+          m.lockedUntil !== null &&
+          m.lockedUntil < now &&
+          m.attempts < m.maxAttempts),
     );
     if (!next) return null;
     Object.assign(next, {
       status: 'processing',
       attempts: next.attempts + 1,
       lockedUntil: new Date(now.getTime() + leaseMs),
+      lockedBy: workerId,
     });
     return {
       id: next.id,
@@ -901,28 +921,60 @@ export class FakeOutboxQueue implements OutboxQueuePort {
       payload: next.payload ?? {},
       attempts: next.attempts,
       maxAttempts: next.maxAttempts,
+      lockedBy: workerId,
     };
   }
 
-  async complete(id: string, tenantId: string, now: Date): Promise<void> {
-    const m = this.find(id, tenantId);
-    if (m) Object.assign(m, { status: 'done', lockedUntil: null, completedAt: now, lastError: null });
+  async expireExhaustedLeases(now: Date, error: string): Promise<ExpiredOutboxMessage[]> {
+    const expired = this.all().filter(
+      (m) =>
+        m.status === 'processing' &&
+        m.lockedUntil !== null &&
+        m.lockedUntil < now &&
+        m.attempts >= m.maxAttempts,
+    );
+    for (const m of expired) {
+      Object.assign(m, {
+        status: 'dead',
+        lockedUntil: null,
+        lockedBy: null,
+        lastError: error,
+        completedAt: now,
+      });
+    }
+    return expired.map((m) => ({
+      id: m.id,
+      tenantId: m.tenantId,
+      topic: m.topic,
+      aggregateId: m.aggregateId,
+      attempts: m.attempts,
+    }));
   }
 
-  async retry(id: string, tenantId: string, error: string, availableAt: Date): Promise<void> {
-    const m = this.find(id, tenantId);
-    if (m) Object.assign(m, { status: 'pending', lockedUntil: null, lastError: error, availableAt });
+  /** 取り出したときのリースのままなら書く(DrizzleOutboxQueue と同じ条件)。 */
+  private finish(lease: ClaimedOutboxMessage, values: Partial<OutboxRow>): boolean {
+    const m = this.find(lease.id, lease.tenantId);
+    const held = m?.status === 'processing' && m.lockedBy === lease.lockedBy && m.attempts === lease.attempts;
+    if (!m || !held) return false;
+    Object.assign(m, { lockedUntil: null, lockedBy: null, ...values });
+    return true;
+  }
+
+  async complete(lease: ClaimedOutboxMessage, now: Date): Promise<boolean> {
+    return this.finish(lease, { status: 'done', completedAt: now, lastError: null });
+  }
+
+  async retry(lease: ClaimedOutboxMessage, error: string, availableAt: Date): Promise<boolean> {
+    return this.finish(lease, { status: 'pending', lastError: error, availableAt });
   }
 
   async giveUp(
-    id: string,
-    tenantId: string,
+    lease: ClaimedOutboxMessage,
     error: string,
     status: 'failed' | 'dead',
     now: Date,
-  ): Promise<void> {
-    const m = this.find(id, tenantId);
-    if (m) Object.assign(m, { status, lockedUntil: null, lastError: error, completedAt: now });
+  ): Promise<boolean> {
+    return this.finish(lease, { status, lastError: error, completedAt: now });
   }
 }
 
@@ -936,6 +988,9 @@ export class FakeTenantDirectory implements TenantDirectoryPort {
   }
   async listActive() {
     return [...this.db.tenants.values()].filter((t) => t.status === 'active');
+  }
+  async listAll() {
+    return [...this.db.tenants.values()];
   }
 }
 
@@ -963,6 +1018,7 @@ export class FakeCryptoPort implements CryptoPort {
     if (!text.startsWith(prefix)) throw new Error(`復号できません(文脈が違います): ${context.purpose}`);
     return text.slice(prefix.length);
   }
+  async prepare(): Promise<void> {}
 }
 
 /** テストで平文を読むための補助(FakeCryptoPort の暗号文から平文を取り出す)。 */
@@ -1040,8 +1096,9 @@ export class FakeRateLimiter implements RateLimiterPort {
     this.buckets.set(this.keyOf(rule, key), bucket);
     return decision;
   }
-  async peek(rule: RateLimitRule, key: string, now: Date): Promise<RateLimitDecision> {
-    return peekRateLimit(this.buckets.get(this.keyOf(rule, key)) ?? null, rule, now);
+  async refund(rule: RateLimitRule, key: string): Promise<void> {
+    const bucket = this.buckets.get(this.keyOf(rule, key));
+    if (bucket) this.buckets.set(this.keyOf(rule, key), refundRateLimit(bucket, rule));
   }
   async reset(rule: RateLimitRule, key: string): Promise<void> {
     this.buckets.delete(this.keyOf(rule, key));
@@ -1051,11 +1108,14 @@ export class FakeRateLimiter implements RateLimiterPort {
 export class FakePasswordHasherPort implements PasswordHasherPort {
   /** verifyDummy が呼ばれた回数(応答時間をそろえるための空振りが行われたかの確認用)。 */
   dummyVerifications = 0;
+  /** verify が呼ばれた回数(パスワードの照合まで進んだ試行の数)。 */
+  verifications = 0;
 
   async hash(password: string): Promise<string> {
     return `HASH:${password}`;
   }
   async verify(hash: string, password: string): Promise<boolean> {
+    this.verifications++;
     return hash === `HASH:${password}`;
   }
   async verifyDummy(_password: string): Promise<void> {
@@ -1092,8 +1152,11 @@ export class FakeMirrorSenderPort implements MirrorSenderPort {
   readonly attendanceAggregates: AttendanceAggregateMirrorPayload[] = [];
   /** 次の送信を失敗させる回数。 */
   failures = 0;
+  /** 送信のたびに呼ぶ(送信中に他で起きることを差し込むテスト用)。 */
+  onSend: (() => void) | null = null;
 
   private maybeFail() {
+    this.onSend?.();
     if (this.failures > 0) {
       this.failures--;
       throw new Error('GAS Bridge エラー(テスト)');

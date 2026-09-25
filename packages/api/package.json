@@ -13,7 +13,8 @@
     "build": "tsup",
     "seed": "tsx src/scripts/seed.ts",
     "import:reserva": "tsx src/scripts/importReservaCsv.ts",
-    "import:staff-master": "tsx src/scripts/importStaffMasterCsv.ts"
+    "import:staff-master": "tsx src/scripts/importStaffMasterCsv.ts",
+    "import:attendance": "tsx src/scripts/importAttendanceCsv.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",

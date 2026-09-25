@@ -35,6 +35,19 @@ describe('runMaintenance', () => {
   });
 });
 
+describe('runMaintenance の対象', () => {
+  it('停止中・解約済みのテナントも保存期間の削除の対象にする(消去されていない全てのテナント)', async () => {
+    const ctx = createTestContext();
+    const suspended = ctx.db.addTenant({ slug: 'suspended', status: 'suspended' });
+    const terminated = ctx.db.addTenant({ slug: 'terminated', status: 'terminated' });
+    const summary = await runMaintenance({ ...ctx.deps, platform, appLogRetentionMonths: 13 });
+    expect(summary.tenants.map((t) => t.tenantId).sort()).toEqual(
+      [ctx.tenantId, suspended.id, terminated.id].sort(),
+    );
+    expect(summary).toMatchObject({ errors: [], interrupted: false });
+  });
+});
+
 describe('provisionTenant', () => {
   it('DEK を作ってラップし、同じ slug の2回目は既存を返す', async () => {
     const ctx = createTestContext();

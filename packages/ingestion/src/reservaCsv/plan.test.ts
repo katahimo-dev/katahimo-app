@@ -129,4 +129,45 @@ describe('applyReservaImport(差分の適用)', () => {
     ]);
     expect(fakePlaintext(data.recipients[0]?.allergyEnc ?? null)).toBe('卵');
   });
+
+  it('住所2の適用終了日が開始日より前(前日を含む)でも取込を止めず、期間なしで持って数を残す。氏名の無い行は飛ばす', async () => {
+    const outcome = await run([
+      row({
+        customerId: 'c1',
+        address2: '神奈川県横浜市青葉区1-1',
+        address2StartDate: '2026/10/01',
+        address2EndDate: '2026/09/30',
+      }),
+      row({
+        customerId: 'c2',
+        address2: '東京都港区1-1',
+        address2StartDate: '2026/10/05',
+        address2EndDate: '2026/09/01',
+      }),
+      row({ customerId: 'c3', familyName: '', givenName: '' }),
+      row({
+        customerId: 'c4',
+        address2: '東京都品川区1-1',
+        address2StartDate: '2026/10/01',
+        address2EndDate: '2026/10/01',
+      }),
+    ]);
+    expect(outcome).toMatchObject({
+      status: 'applied',
+      created: 3,
+      skipped: 1,
+      issues: { secondary_period_inverted: 2, missing_name: 1 },
+    });
+    const secondary = ctx.data().addresses.filter((a) => a.kind === 'secondary');
+    expect(secondary.map((a) => a.valid)).toEqual([
+      { start: null, end: null },
+      { start: null, end: null },
+      { start: '2026-10-01', end: '2026-10-02' },
+    ]);
+    expect(ctx.data().importRuns.at(-1)?.counts).toMatchObject({
+      skipped: 1,
+      issue_secondary_period_inverted: 2,
+      issue_missing_name: 1,
+    });
+  });
 });

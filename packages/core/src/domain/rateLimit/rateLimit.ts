@@ -100,3 +100,16 @@ export function peekRateLimit(
     lockStarted: false,
   };
 }
+
+/**
+ * consume で数えた1回分を取り消した後の状態(先に数えてから評価した回が成功だった場合)。取り消して上限を
+ * 下回るなら、その回で始まったロックも解く(上限に達した回そのものが成功だった)。
+ */
+export function refundRateLimit(bucket: RateLimitBucket, rule: RateLimitRule): RateLimitBucket {
+  const count = Math.max(0, bucket.count - 1);
+  return {
+    windowStart: bucket.windowStart,
+    count,
+    blockedUntil: count < rule.limit ? null : bucket.blockedUntil,
+  };
+}

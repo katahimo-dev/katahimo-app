@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import type { RateLimitDecision, RateLimitRule } from '@katahimo/core/domain';
-import { consumeRateLimit, peekRateLimit } from '@katahimo/core/domain';
+import { consumeRateLimit, refundRateLimit } from '@katahimo/core/domain';
 import type { RateLimiterPort } from '@katahimo/core/ports';
 import { and, eq } from 'drizzle-orm';
 import type { Database } from '../../client';
@@ -57,13 +57,19 @@ export class DrizzleRateLimiter implements RateLimiterPort {
     });
   }
 
-  async peek(rule: RateLimitRule, key: string, now: Date): Promise<RateLimitDecision> {
-    const [row] = await this.db.select().from(rateLimitBuckets).where(this.where(rule, key));
-    return peekRateLimit(
-      row ? { windowStart: row.windowStart, count: row.hits, blockedUntil: row.blockedUntil } : null,
-      rule,
-      now,
-    );
+  refund(rule: RateLimitRule, key: string): Promise<void> {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx.select().from(rateLimitBuckets).where(this.where(rule, key)).for('update');
+      if (!row) return;
+      const next = refundRateLimit(
+        { windowStart: row.windowStart, count: row.hits, blockedUntil: row.blockedUntil },
+        rule,
+      );
+      await tx
+        .update(rateLimitBuckets)
+        .set({ hits: next.count, blockedUntil: next.blockedUntil })
+        .where(this.where(rule, key));
+    });
   }
 
   async reset(rule: RateLimitRule, key: string): Promise<void> {

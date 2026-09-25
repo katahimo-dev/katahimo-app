@@ -49,10 +49,10 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    const { created, updated, unchanged, archived, customerDataVersion } = outcome;
+    const { created, updated, unchanged, archived, skipped, issues, customerDataVersion } = outcome;
     console.log(
       '[import] 適用結果:',
-      JSON.stringify({ created, updated, unchanged, archived, customerDataVersion }),
+      JSON.stringify({ created, updated, unchanged, archived, skipped, issues, customerDataVersion }),
     );
   } finally {
     await closeDatabase(db);
