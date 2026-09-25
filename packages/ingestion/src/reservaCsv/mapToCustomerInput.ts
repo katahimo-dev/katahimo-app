@@ -1,4 +1,4 @@
-import { extractCityFromAddress } from '@katahimo/core/domain';
+import { extractAllergy, extractCityFromAddress } from '@katahimo/core/domain';
 import type { CreateCustomerInput } from '@katahimo/core/usecases';
 import type { ReservaCsvRow } from './types';
 
@@ -54,6 +54,7 @@ export function mapReservaRowToCustomerInput(tenantId: string, row: ReservaCsvRo
       name: m.name,
       dob: orUndefined(m.dob),
       info: orUndefined(m.info),
+      allergy: extractAllergy(m.info) ?? undefined,
     })),
   };
 }
