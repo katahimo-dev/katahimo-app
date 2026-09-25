@@ -1,19 +1,20 @@
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import { buildPostgresConnection } from './connection';
 import * as schema from './schema';
 
 export type Database = ReturnType<typeof createDatabase>;
 
 let singleton: Database | null = null;
 
+/**
+ * 接続プールを作る。Cloud SQL の Unix ソケット形式の URL(`?host=/cloudsql/...`)にも対応する
+ * (connection.ts)。プールの大きさは DB_POOL_MAX 等で調整する(doc/11 「接続数の見積もり」)。
+ */
 export function createDatabase(connectionString: string) {
-  const client = postgres(connectionString, {
-    // Cloud Run は同時実行数が読めないので控えめに。ローカルでも十分。
-    max: Number(process.env.DB_POOL_MAX ?? 10),
-    // 出勤簿・勤怠の日付は全てJST基準の業務日として扱う
-    connection: { TimeZone: 'Asia/Tokyo' },
-  });
+  const { url, options } = buildPostgresConnection(connectionString, process.env);
+  const client = postgres(url, options);
   return drizzle(client, { schema, casing: 'snake_case' });
 }
 

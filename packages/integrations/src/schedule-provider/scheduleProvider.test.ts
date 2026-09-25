@@ -5,7 +5,7 @@ import { GoogleMapsPlatformPort } from '../google-maps';
 import { GoogleSchedulePort } from '../google-schedule';
 import { NoopMapsPort, NoopSchedulePort } from '../noop';
 import type { ScheduleServiceDeps } from './scheduleProvider';
-import { createScheduleServices, selectScheduleProvider } from './scheduleProvider';
+import { createScheduleServices, scheduleEnvProblems, selectScheduleProvider } from './scheduleProvider';
 
 const bridge = { GAS_BRIDGE_URL: 'https://script.google.com/macros/s/x/exec', GAS_BRIDGE_SECRET: 's' };
 const google = { GOOGLE_MAPS_API_KEY: 'key', GOOGLE_APPLICATION_CREDENTIALS: '/secrets/sa.json' };
@@ -53,5 +53,13 @@ describe('createScheduleServices', () => {
       'GOOGLE_MAPS_API_KEY',
     );
     expect(() => createScheduleServices({ SCHEDULE_PROVIDER: 'gas_bridge' }, deps)).toThrow('GAS_BRIDGE_URL');
+  });
+});
+
+describe('scheduleEnvProblems', () => {
+  it('本番だけ SCHEDULE_PROVIDER の明示を要求する(資格情報からの自動選択に頼らない)', () => {
+    expect(scheduleEnvProblems({ ...google }, false)).toEqual([]);
+    expect(scheduleEnvProblems({ SCHEDULE_PROVIDER: 'google' }, true)).toEqual([]);
+    expect(scheduleEnvProblems({ ...google }, true).join()).toMatch(/SCHEDULE_PROVIDER/);
   });
 });

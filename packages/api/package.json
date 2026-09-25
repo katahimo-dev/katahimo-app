@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
-    "build": "tsup src/server.ts --format esm --clean",
+    "build": "tsup",
     "seed": "tsx src/scripts/seed.ts",
     "import:reserva": "tsx src/scripts/importReservaCsv.ts",
     "import:staff-master": "tsx src/scripts/importStaffMasterCsv.ts"

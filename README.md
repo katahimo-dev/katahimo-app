@@ -23,6 +23,23 @@ git submodule update --init
 git submodule update --remote legacy/gas-childcare-visit-app
 ```
 
+## 本番デプロイ(GCP)
+
+Cloud Run(API + Web画面 / outboxワーカー / 夜間ジョブ)+ Cloud SQL for PostgreSQL。構成・初回デプロイ・運用・
+GAS版からの切替手順は [`doc/11_GCPデプロイ手順.md`](doc/11_GCPデプロイ手順.md)。イメージは `Dockerfile`
+(`--target api` / `--target worker`)、インフラは `infra/gcp/`(Terraform)と `infra/cloudsql/`(ロール初期化SQL)、
+CI/CD は `cloudbuild.yaml`。
+
+```bash
+# 本番と同じビルド成果物を作る(Dockerfile が実行するのと同じコマンド)
+pnpm --filter @katahimo/api --filter @katahimo/worker --filter @katahimo/db build
+pnpm --filter @katahimo/web build
+```
+
+ビルド成果物(`packages/*/dist`)は外部依存をバンドルしないため、そのままではワークスペースの
+`node_modules`(pnpm の厳密な配置)から解決できない。実行はイメージ内(本番依存を平坦に入れた
+`/app/node_modules`)で行う。
+
 ## 運用方針
 
 - 変更履歴は `CHANGELOG.md` に記録する(`## [Ver. x.y.z] - 日付`)。

@@ -35,13 +35,13 @@ import {
   ConsoleAuditLogPort,
   ConsoleMailerPort,
   createCustomerCsvSource,
+  createKeyManagementPort,
   createScheduleServices,
+  createStoragePort,
   GeminiAiPort,
   InMemoryTtlCache,
   LocalBlindIndexPort,
   LocalCryptoPort,
-  LocalFileStoragePort,
-  LocalKmsPort,
   listAvailableGeminiModels,
   NoopMirrorPort,
   NoopReportAiPort,
@@ -117,7 +117,7 @@ function createMailer(env: Env): MailerPort {
 }
 
 export function createContainer(env: Env, db: Database): Container {
-  const kms = new LocalKmsPort(env.LOCAL_DEV_KEK);
+  const kms = createKeyManagementPort(env);
   const tenantKeys = new DrizzleTenantKeyRepository(db);
   const crypto = new LocalCryptoPort(tenantKeys, kms, new ConsoleAuditLogPort());
   const appSettings = new DrizzleAppSettingsRepository(db);
@@ -152,7 +152,7 @@ export function createContainer(env: Env, db: Database): Container {
     crypto,
     blindIndex: new LocalBlindIndexPort(env.LOCAL_DEV_MASTER_KEY),
     passwordHasher: argon2PasswordHasher,
-    storage: new LocalFileStoragePort(env.LOCAL_RECEIPT_STORAGE_DIR),
+    storage: createStoragePort(env),
     notifier: new WebhookNotifierPort({
       async resolve(tenantId, channel) {
         const settings = await appSettings.find(tenantId);

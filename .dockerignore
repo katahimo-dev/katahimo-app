@@ -1,0 +1,30 @@
+# イメージのビルドに不要なもの・秘密を含みうるものをビルドコンテキストから外す。
+# 依存はイメージ内で pnpm install し直すため node_modules / dist は送らない。
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/coverage
+.turbo
+
+# 秘密情報(本番は Secret Manager から環境変数で渡す)
+.env
+.env.*
+!.env.example
+**/*.pem
+**/*-key.json
+**/service-account*.json
+
+# 実データを含みうるローカルの保存先
+packages/api/data
+data
+
+# 実行に不要なもの
+.git
+.github
+legacy
+doc
+infra
+*.md
+Dockerfile
+.dockerignore
+cloudbuild.yaml

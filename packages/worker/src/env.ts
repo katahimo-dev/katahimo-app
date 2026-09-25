@@ -1,4 +1,12 @@
-import { parseTenantFolderMap, SCHEDULE_PROVIDERS } from '@katahimo/integrations';
+import {
+  KMS_PROVIDERS,
+  kmsEnvProblems,
+  parseTenantFolderMap,
+  SCHEDULE_PROVIDERS,
+  STORAGE_PROVIDERS,
+  scheduleEnvProblems,
+  storageEnvProblems,
+} from '@katahimo/integrations';
 import { z } from 'zod';
 
 const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
@@ -17,13 +25,28 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL が必要です'),
 
-  // CryptoPortが使うテナントDEKをラップするKEK。packages/api/src/env.tsのLOCAL_DEV_KEKと同じ値
-  // (テナントごとのDEKはDB(tenant_keys)に保存されているため、API/ワーカー間で共有する)。
-  LOCAL_DEV_KEK: z.string().regex(/^[0-9a-f]{64}$/i, 'LOCAL_DEV_KEK は32バイト(64桁の16進数)にしてください'),
+  // Cloud Run サービスとして常駐させる場合のヘルスチェック用ポート(infra/gcp/run.tf が Cloud Run の PORT と
+  // 同じ値を渡す)。未設定なら待ち受けない(ローカル開発・Cloud Run Jobs)。PORT は API と .env を共有する
+  // ローカル開発で衝突するため使わない。
+  WORKER_HEALTH_PORT: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
 
-  // 領収書画像の保存先。packages/api/src/env.tsのLOCAL_RECEIPT_STORAGE_DIRと同じ値にすること
+  // CryptoPortが使うテナントDEKをラップするKEK。packages/api/src/env.ts と同じ設定にすること
+  // (テナントごとのDEKはDB(tenant_keys)に保存されているため、API/ワーカー間で共有する)。
+  KMS_PROVIDER: z.preprocess(emptyToUndefined, z.enum(KMS_PROVIDERS).default('local')),
+  LOCAL_DEV_KEK: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^[0-9a-f]{64}$/i, 'LOCAL_DEV_KEK は32バイト(64桁の16進数)にしてください')
+      .optional(),
+  ),
+  GCP_KMS_KEY_NAME: z.preprocess(emptyToUndefined, z.string().optional()),
+
+  // 領収書画像の保存先。packages/api/src/env.ts と同じ設定にすること
   // (ワーカーはAPIサーバーが保存したファイルを読み直してGAS版Driveへミラーする)。
+  STORAGE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(STORAGE_PROVIDERS).default('local')),
   LOCAL_RECEIPT_STORAGE_DIR: z.string().default('./data/receipts'),
+  GCS_BUCKET: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // 予定・ルート計算の実装(packages/api/src/env.ts と同じ意味。夜間のカレンダー反映に使う)。
   SCHEDULE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(SCHEDULE_PROVIDERS).optional()),
@@ -74,5 +97,12 @@ export function loadWorkerEnv(source: NodeJS.ProcessEnv = process.env): WorkerEn
     const detail = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(`環境変数の設定に問題があります:\n${detail}`);
   }
+  const isProduction = parsed.data.NODE_ENV === 'production';
+  const problems = [
+    ...kmsEnvProblems(parsed.data, isProduction),
+    ...storageEnvProblems(parsed.data, isProduction),
+    ...scheduleEnvProblems(parsed.data, isProduction),
+  ];
+  if (problems.length > 0) throw new Error(`環境変数の設定に問題があります:\n${problems.join('\n')}`);
   return parsed.data;
 }
