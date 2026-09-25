@@ -196,6 +196,35 @@ pnpm worker                          # outbox ポーラー(ミラーを使うと
 | `pnpm --filter @katahimo/gas-preview shoot [-- --only <正規表現>]` | GAS版との見比べ(web 開発サーバーを起動しておく) |
 | `pnpm --filter @katahimo/gas-preview e2e [-- --web-url …]` | 実際のAPI・DBでの通し確認(API と web を起動しておく) |
 
+## CI とブランチ保護
+
+GitHub Actions(`.github/workflows/`):
+
+| ワークフロー | 契機 | 内容 |
+| --- | --- | --- |
+| `ci.yml` の `check` | PR・main への push | `pnpm install --frozen-lockfile` → lint → 型検査 → PostgreSQL 17(本番の Cloud SQL と同じメジャー)に `infra/initdb` でロールを作って `pnpm db:migrate` → `pnpm db:generate` で差分が出ないこと(スキーマを変えてマイグレーションを作り忘れていないか)→ `pnpm test` → `pnpm build` |
+| `ci.yml` の `preview` | `check` の成功後 | GAS版との見比べ(`shoot`、モック)と通し確認(`e2e`、実際の API・DB)。撮影結果は成果物 `gas-preview-out`。**当面は失敗してもワークフローを失敗にしない**(ハーネスの作り替え中のため) |
+| `infra.yml` | `infra/gcp/**` の変更 | `terraform fmt -check` / `init -backend=false -lockfile=readonly` / `validate`(GCP には接続しない) |
+
+依存の更新は Dependabot(`.github/dependabot.yml`: npm は minor / patch をまとめて週1回、Docker のベースイメージ・
+GitHub Actions・Terraform プロバイダー)。レビューの割り当ては `.github/CODEOWNERS`、PR の説明は
+`.github/pull_request_template.md` の見出しに沿って書く。
+
+GitHub 側で設定するもの:
+
+- **Secrets → Actions の `SUBMODULE_TOKEN`**: `katahimo-dev/gas-childcare-visit-app`(非公開)を読めるトークン
+  (fine-grained personal access token で対象リポジトリの Contents: Read-only、または GitHub App のトークン)。
+  未設定・権限不足でも CI は失敗せず、警告を出して GAS版との一致テスト(gasParity)と見比べ撮影をスキップする
+  (`GITHUB_TOKEN` はこのリポジトリしか読めないため代わりにならない)。
+- **ブランチ保護(推奨。Settings → Rules → Rulesets で `main` を対象に)**:
+  - PR を必須にする(直接 push の禁止)。承認 1 件以上、CODEOWNERS のレビューを必須、新しい push で承認を取り消す。
+  - 必須のステータスチェック: `lint・型検査・テスト・ビルド`(`ci.yml` の `check`)。マージ前にブランチを最新に
+    することを必須にする。`preview` は安定してから加える。`infra.yml` はパスで絞って動くため必須にしない
+    (必須にすると infra 以外の PR が待ち状態のままになる)。
+  - force push とブランチの削除を禁止する。会話(レビューコメント)の解決を必須にする。
+  - main への push で動く Cloud Build のトリガー(`doc/11` 「4. 継続的デプロイ」)は、この保護を通ったコミットだけを
+    デプロイすることになる。
+
 ## 資料
 
 | 資料 | 内容 |

@@ -1,0 +1,202 @@
+# CI: lint / 型検査 / マイグレーション(差分チェック含む)/ テスト / ビルド、と GAS版との見比べ・通し確認。
+# 必要な設定(README「CI とブランチ保護」):
+#   secrets.SUBMODULE_TOKEN … katahimo-dev/gas-childcare-visit-app を読めるトークン(fine-grained PAT の
+#                             Contents: Read-only 等)。未設定でも CI は通り、GAS版との一致テストだけがスキップされる。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同じ PR への新しい push で古い実行を止める。main への push は1コミットずつ結果を残すため止めない
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # services の PostgreSQL(スーパーユーザー)。infra/initdb の SQL を流すのに使う
+  PGHOST: localhost
+  PGUSER: postgres
+  PGPASSWORD: postgres
+  # infra/initdb/*.sql が作るロール(.env.example と同じ)
+  DATABASE_URL: postgres://katahimo_app:katahimo_app@localhost:5432/katahimo_dev
+  MIGRATION_DATABASE_URL: postgres://katahimo:katahimo@localhost:5432/katahimo_dev
+
+jobs:
+  check:
+    name: lint・型検査・テスト・ビルド
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        # 本番の Cloud SQL(infra/gcp の sql_database_version = POSTGRES_17)とメジャーバージョンを合わせる
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - id: legacy
+        uses: ./.github/actions/legacy-submodule
+        with:
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+
+      - uses: ./.github/actions/setup
+
+      - name: lint(biome)
+        run: pnpm lint
+
+      - name: 型検査
+        run: pnpm typecheck
+
+      - uses: ./.github/actions/test-db
+
+      - name: スキーマとマイグレーションの差分チェック
+        run: |
+          pnpm db:generate
+          # schema を変えたのに pnpm db:generate の結果(SQL・drizzle/meta)をコミットし忘れていると、ここで差分が出る
+          if [ -n "$(git status --porcelain -- packages/db/drizzle)" ]; then
+            git status --short -- packages/db/drizzle
+            git diff -- packages/db/drizzle
+            echo "::error title=マイグレーション未生成::packages/db/src/schema の変更に対応するマイグレーションがありません。pnpm db:generate の結果をコミットしてください。"
+            exit 1
+          fi
+
+      - name: テスト
+        run: pnpm test
+
+      - name: ビルド
+        run: pnpm build
+
+  preview:
+    name: GAS版との見比べ・通し確認(e2e)
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # 見比べハーネス(tools/gas-preview)は差分が閾値を超えたら失敗する形・Vite の自前起動に作り替え中のため、
+    # 当面は失敗してもワークフロー全体は失敗にしない。安定したら continue-on-error を外して必須チェックに加える。
+    continue-on-error: true
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      API_PORT: '8080'
+      WEB_PORT: '5173'
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - id: legacy
+        uses: ./.github/actions/legacy-submodule
+        with:
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+
+      - uses: ./.github/actions/setup
+
+      # playwright-core の版に対応する Chromium を入れる(版は tools/gas-preview/package.json で固定)
+      - id: playwright
+        name: Playwright の版
+        run: echo "version=$(node -p "require('./tools/gas-preview/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v5
+        id: browsers
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Chromium のインストール
+        if: steps.browsers.outputs.cache-hit != 'true'
+        run: pnpm --filter @katahimo/gas-preview exec playwright-core install --with-deps chromium
+
+      - name: Chromium の依存ライブラリ
+        if: steps.browsers.outputs.cache-hit == 'true'
+        run: pnpm --filter @katahimo/gas-preview exec playwright-core install-deps chromium
+
+      # Google Fonts のキャッシュ(src/fontCache.ts)。撮る場面によって取得するサブセットが増えるため、
+      # 毎回新しいキーで保存し、直近のものから復元する
+      - uses: actions/cache@v5
+        with:
+          path: tools/gas-preview/.cache/fonts
+          key: gas-preview-fonts-${{ github.run_id }}
+          restore-keys: gas-preview-fonts-
+
+      # ── 見比べ(モック。API・DB は使わない) ──────────────────────
+      # TODO: ハーネスが Vite を自前で起動するようになったら、この起動手順と KATAHIMO_WEB_URL を外す
+      - name: Web 開発サーバーの起動
+        if: steps.legacy.outputs.available == 'true'
+        run: |
+          nohup pnpm --filter @katahimo/web exec vite --host 127.0.0.1 --port "$WEB_PORT" --strictPort \
+            > "$RUNNER_TEMP/web-dev.log" 2>&1 &
+          curl --silent --fail --retry 60 --retry-delay 1 --retry-all-errors -o /dev/null "http://127.0.0.1:${WEB_PORT}/"
+
+      - name: 見比べ撮影(shoot)
+        if: steps.legacy.outputs.available == 'true'
+        env:
+          KATAHIMO_WEB_URL: http://127.0.0.1:${{ env.WEB_PORT }}
+        run: pnpm --filter @katahimo/gas-preview shoot
+
+      # ── 通し確認(実際の API・DB) ─────────────────────────────
+      - uses: ./.github/actions/test-db
+
+      - name: 開発用データの投入
+        run: pnpm db:seed
+
+      - name: API の起動(ビルドした Web 画面を同じオリジンで配信)
+        run: |
+          pnpm --filter @katahimo/web build
+          WEB_DIST_DIR="$GITHUB_WORKSPACE/packages/web/dist" PORT="$API_PORT" \
+            nohup pnpm --filter @katahimo/api start > "$RUNNER_TEMP/api.log" 2>&1 &
+          curl --silent --fail --retry 60 --retry-delay 1 --retry-all-errors -o /dev/null \
+            "http://127.0.0.1:${API_PORT}/api/health/db"
+
+      - name: 通し確認(e2e)
+        env:
+          KATAHIMO_WEB_URL: http://127.0.0.1:${{ env.API_PORT }}
+        run: pnpm --filter @katahimo/gas-preview e2e
+
+      - name: サーバーのログ
+        if: always()
+        run: |
+          for f in "$RUNNER_TEMP"/web-dev.log "$RUNNER_TEMP"/api.log; do
+            [ -f "$f" ] || continue
+            echo "::group::$(basename "$f")"
+            tail -n 200 "$f"
+            echo "::endgroup::"
+          done
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gas-preview-out
+          path: tools/gas-preview/out
+          if-no-files-found: ignore
+          retention-days: 14

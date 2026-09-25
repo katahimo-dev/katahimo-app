@@ -1,0 +1,10 @@
+# レビュー依頼の自動割り当て。後に書いた行が優先される。
+# 担当者が増えたら、パスごとに担当(チーム)を分ける(例: /infra/ @katahimo-dev/infra)。
+*                   @ohru131
+
+# 本番の構成・CI・DB の変更は特に確認する
+/infra/             @ohru131
+/Dockerfile         @ohru131
+/cloudbuild.yaml    @ohru131
+/.github/           @ohru131
+/packages/db/drizzle/ @ohru131

@@ -1,0 +1,17 @@
+name: セットアップ(pnpm・Node・依存)
+description: package.json の packageManager の pnpm と Node 22 を入れ、pnpm install --frozen-lockfile まで行う
+
+runs:
+  using: composite
+  steps:
+    # version を指定しないと package.json の packageManager(pnpm@x.y.z)を使う
+    - uses: pnpm/action-setup@v4
+
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 22
+        cache: pnpm
+
+    - name: 依存のインストール
+      shell: bash
+      run: pnpm install --frozen-lockfile

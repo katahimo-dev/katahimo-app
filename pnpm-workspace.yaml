@@ -3,6 +3,10 @@ packages:
   # 開発用ツール(GAS版との見た目の比較ハーネス等)
   - 'tools/*'
 
+# package.json の engines(Node 22 以上)を満たさない Node では install を失敗させる。
+# pnpm 11 は .npmrc から認証・レジストリ以外の設定を読まないため、pnpm の設定はここに書く。
+engineStrict: true
+
 # pnpm v10以降は依存パッケージのpostinstallを既定でブロックする(サプライチェーン対策)。
 # 実行を許可/明示的に拒否するパッケージを allowBuilds で宣言する。
 allowBuilds:

@@ -131,8 +131,11 @@ describe.skipIf(!GAS_LEGACY_AVAILABLE)('GAS版コードとの出力一致', () =
         'buildTimesheetRowDataFromAppointments_',
       ],
     });
-  const gas = load();
+  // skipIf でスキップされても describe の中身は収集のために実行されるため、GAS版のソースは
+  // 最初に使うときに読む(サブモジュールが無い環境でファイルの読み込みエラーにしない)
+  let gas: GasFunctions | undefined;
   const gasFn = (name: string) => {
+    gas ??= load();
     const fn = gas[name];
     if (!fn) throw new Error(`GAS版の関数がありません: ${name}`);
     return fn;
