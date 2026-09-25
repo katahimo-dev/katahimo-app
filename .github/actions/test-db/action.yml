@@ -1,0 +1,29 @@
+name: テスト用DB・鍵の準備
+description: >-
+  services の PostgreSQL に infra/initdb の SQL でロール katahimo(所有者)/ katahimo_app(アプリ)と
+  katahimo_dev を作ってマイグレーションを流し、開発用の鍵を生成して以後の手順の環境変数に入れる。
+  呼び出し側のジョブで PGHOST / PGUSER / PGPASSWORD(スーパーユーザー)と
+  DATABASE_URL / MIGRATION_DATABASE_URL を設定しておくこと。
+
+runs:
+  using: composite
+  steps:
+    - name: ロール・データベースの作成
+      shell: bash
+      run: |
+        psql -v ON_ERROR_STOP=1 -d postgres -f infra/initdb/00_create_database.sql
+        psql -v ON_ERROR_STOP=1 -d katahimo_dev -f infra/initdb/01_bootstrap.sql
+
+    - name: マイグレーション
+      shell: bash
+      run: pnpm db:migrate
+
+    - name: 開発用の鍵を生成
+      shell: bash
+      run: |
+        # ジョブの中だけで使う使い捨ての値(LOCAL_DEV_MASTER_KEY と LOCAL_DEV_KEK は別の値にする)
+        for name in SESSION_SECRET LOCAL_DEV_MASTER_KEY LOCAL_DEV_KEK; do
+          value="$(openssl rand -hex 32)"
+          echo "::add-mask::${value}"
+          echo "${name}=${value}" >> "$GITHUB_ENV"
+        done

@@ -2,11 +2,13 @@
 locals {
   services = [
     "artifactregistry.googleapis.com",
+    "billingbudgets.googleapis.com", # 予算アラート(monitoring.tf。billing_account_id を指定したときに使う)
     "cloudbuild.googleapis.com",
     "cloudkms.googleapis.com",
     "cloudscheduler.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com", # GCS 署名付きURL(signBlob)
+    "monitoring.googleapis.com",     # アラート・外形監視(monitoring.tf)
     "run.googleapis.com",
     "secretmanager.googleapis.com",
     "sqladmin.googleapis.com", # Cloud Run の Cloud SQL 接続(Auth Proxy)が使う
