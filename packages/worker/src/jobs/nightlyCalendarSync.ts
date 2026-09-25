@@ -1,6 +1,7 @@
-import { type NightlySyncSummary, runNightlyCalendarSync } from '@katahimo/core';
+import { type NightlySyncSummary, runNightlyCalendarSync } from '@katahimo/core/usecases';
 import type { WorkerContainer } from '../container';
 import { logJson } from './log';
+import type { StopSignal } from './stopSignal';
 
 /**
  * 夜間のカレンダー → 出勤簿反映(GAS版 autoSyncTodayScheduleForAllStaff)。推奨: 毎日22:00 JST。
@@ -9,11 +10,13 @@ import { logJson } from './log';
  */
 export async function runNightlyCalendarSyncJob(
   container: WorkerContainer,
-  options: { date?: string } = {},
+  options: { date?: string | undefined; stop?: StopSignal } = {},
 ): Promise<{ ok: boolean; summary: NightlySyncSummary }> {
-  const summary = await runNightlyCalendarSync(container, options);
+  const summary = await runNightlyCalendarSync(container, {
+    ...(options.date ? { date: options.date } : {}),
+    ...(options.stop ? { shouldStop: () => options.stop?.stopped ?? false } : {}),
+  });
   logJson(summary.failed > 0 ? 'ERROR' : 'INFO', '夜間のカレンダー反映が終わりました', {
-    date: summary.date,
     succeeded: summary.succeeded,
     failed: summary.failed,
     tenants: summary.tenants.map((t) => ({

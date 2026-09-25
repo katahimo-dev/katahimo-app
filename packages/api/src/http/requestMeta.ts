@@ -1,6 +1,7 @@
 import { getConnInfo } from '@hono/node-server/conninfo';
 import type { RequestMeta } from '@katahimo/core/usecases';
 import type { Context, MiddlewareHandler } from 'hono';
+import { requestIdOf } from './requestLog';
 
 /** clientIpMiddleware が Context に置く送信元IPの変数名。 */
 const CLIENT_IP_VAR = 'clientIp';
@@ -46,7 +47,11 @@ export function clientIp(c: Context): string | null {
   return value === undefined ? socketAddress(c) : value;
 }
 
-/** アプリログに添える送信元情報。 */
+/** アプリログに添える送信元情報とリクエストID。 */
 export function requestMeta(c: Context): RequestMeta {
-  return { ip: clientIp(c), userAgent: c.req.header('user-agent')?.slice(0, 300) ?? null };
+  return {
+    ip: clientIp(c),
+    userAgent: c.req.header('user-agent')?.slice(0, 300) ?? null,
+    requestId: requestIdOf(c),
+  };
 }

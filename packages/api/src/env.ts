@@ -1,165 +1,55 @@
 import {
-  KMS_PROVIDERS,
-  kmsEnvProblems,
-  parseTenantFolderMap,
-  SCHEDULE_PROVIDERS,
-  STORAGE_PROVIDERS,
-  scheduleEnvProblems,
-  storageEnvProblems,
+  emptyToUndefined,
+  optionalPositiveInt,
+  parseEnvOrThrow,
+  sharedEnvProblems,
+  sharedEnvShape,
 } from '@katahimo/integrations';
 import { z } from 'zod';
 
-const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
-
 /**
- * 'true'/'1' だけを真とする機能フラグ。z.coerce.boolean() は文字列 'false' も真にしてしまう
- * (空でない文字列は Boolean() で true)ため使わない。
- */
-const booleanFlag = z
-  .string()
-  .optional()
-  .transform((value) => value === 'true' || value === '1');
-
-/**
- * 環境変数の検証。起動時に一度だけ実行し、足りない設定は起動前に落とす。
- * GAS版は Script Properties の未設定に実行時まで気づけなかった(AUTH_SALT等)ため、
- * 新実装では起動時に明示的に検証する。
+ * API サーバーの環境変数。起動時に一度だけ検証し、足りない設定は起動前に落とす(GAS版は Script Properties の
+ * 未設定に実行時まで気づけなかった)。ワーカーと同じでなければならない変数は sharedEnvShape(@katahimo/integrations)。
  */
 const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  ...sharedEnvShape,
   PORT: z.coerce.number().int().positive().default(8080),
+  // アプリ用の DB ユーザー(katahimo_app。RLS の対象、DDL の権限なし)。
   DATABASE_URL: z.string().min(1, 'DATABASE_URL が必要です'),
   SESSION_SECRET: z.string().min(16, 'SESSION_SECRET は16文字以上にしてください'),
 
-  // ビルド済みWeb画面(packages/web の dist)を同じサービスから配信する場合のディレクトリ(本番コンテナ)。
-  // 未設定なら配信しない(開発は Vite の開発サーバーが配信する)。
+  // ビルド済み Web 画面(packages/web の dist)を同じサービスから配信する場合のディレクトリ(本番コンテナ)。
   WEB_DIST_DIR: z.preprocess(emptyToUndefined, z.string().optional()),
 
-  // BlindIndexPortの開発用実装(LocalBlindIndexPort)が使うマスターキー。32バイト(64桁hex)。
-  // CryptoPort(実値の暗号化)とは意図的に鍵を分けている(一方の漏洩だけでは他方に影響しない
-  // 権限分離のため、packages/core/src/ports/crypto.ts参照)。名前に反して本番もこの実装を使い、値は
-  // Secret Manager(katahimo-blind-index-key)から渡す。値を変えると既存の検索用インデックスが引けなくなる。
-  LOCAL_DEV_MASTER_KEY: z
+  // ブラインドインデックス(領収書の重複判定)のマスター鍵。32バイト(64桁hex)。テナント・用途ごとの鍵は
+  // HKDF で導出する。データの暗号化鍵(KEK/DEK)とは別の値にすること。値を変えると既存のインデックスが引けなくなる。
+  BLIND_INDEX_MASTER_KEY: z
     .string()
-    .regex(/^[0-9a-f]{64}$/i, 'LOCAL_DEV_MASTER_KEY は32バイト(64桁の16進数)にしてください'),
+    .regex(/^[0-9a-f]{64}$/i, 'BLIND_INDEX_MASTER_KEY は32バイト(64桁の16進数)にしてください'),
 
-  // CryptoPortが使うテナントDEKをラップするKEKの実装。local: LOCAL_DEV_KEK(開発用のKMS代替) /
-  // gcp: Cloud KMS の鍵 GCP_KMS_KEY_NAME(本番は必須)。環境ごとに最初に決めて途中で変えないこと
-  // (既存のtenant_keysを復号できなくなる)。
-  KMS_PROVIDER: z.preprocess(emptyToUndefined, z.enum(KMS_PROVIDERS).default('local')),
-  // KMS_PROVIDER=local のKEK。32バイト(64桁hex)。LOCAL_DEV_MASTER_KEYとは別の値にすること
-  // (こちらが漏れてもblind indexの鍵には影響しない、逆も同様)。
-  LOCAL_DEV_KEK: z.preprocess(
-    emptyToUndefined,
-    z
-      .string()
-      .regex(/^[0-9a-f]{64}$/i, 'LOCAL_DEV_KEK は32バイト(64桁の16進数)にしてください')
-      .optional(),
-  ),
-  // KMS_PROVIDER=gcp の鍵(projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>)。
-  GCP_KMS_KEY_NAME: z.preprocess(emptyToUndefined, z.string().optional()),
+  // 移行期のみ必要: GAS版 Script Properties の AUTH_SALT と同じ値(GAS版のパスワードのままのログインに使う)。
+  LEGACY_AUTH_SALT: z.preprocess(emptyToUndefined, z.string().optional()),
 
-  // 移行期のみ必要: GAS版 Script Properties の AUTH_SALT と同じ値。
-  // 未設定でも起動はできるが、既存パスワードでのログインは失敗する。
-  LEGACY_AUTH_SALT: z.string().optional(),
+  GEMINI_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  GEMINI_MODEL_REPORT: z.preprocess(emptyToUndefined, z.string().optional()),
+  GEMINI_MODEL_OCR: z.preprocess(emptyToUndefined, z.string().optional()),
 
-  GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
-  GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
-  GOOGLE_OAUTH_REDIRECT_URI: z.string().optional(),
+  // Google Chat Incoming Webhook の既定(テナントが管理者設定で保存していない場合)。未設定なら通知しない。
+  GCHAT_REPORT_WEBHOOK_URL: z.preprocess(emptyToUndefined, z.string().optional()),
+  GCHAT_RECEIPT_WEBHOOK_URL: z.preprocess(emptyToUndefined, z.string().optional()),
 
-  // ── 予定・ルート計算(doc/api/schedule-route.md) ──
-  // google: Google Calendar API + Google Maps Platform を直接呼ぶ / gas_bridge: GAS版Web Appに委ねる /
-  // noop: 常に予定なし。未指定なら設定されている資格情報から選ぶ(selectScheduleProvider参照)。
-  SCHEDULE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(SCHEDULE_PROVIDERS).optional()),
-  // Geocoding API と Routes API を有効にしたAPIキー(SCHEDULE_PROVIDER=google で必須)。
-  GOOGLE_MAPS_API_KEY: z.string().optional(),
-  // サービスアカウントキー(JSON)のパス。Cloud Run(Workload Identity)では不要。
-  GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
-  // staff.calendar_id 以外に読むカレンダー。カンマ区切りで `ID` または `ID=持ち主のスタッフ名`。
-  GOOGLE_CALENDAR_IDS: z.string().optional(),
-  // ドメイン全体の委任で成り代わるWorkspaceユーザー(未指定ならサービスアカウント自身として読む)。
-  GOOGLE_CALENDAR_IMPERSONATE: z.string().optional(),
-
-  // 稼働中のgas-childcare-visit-appのWeb Appデプロイ(Bridge.js)。GAS_BRIDGE_URLはその/exec
-  // エンドポイント、GAS_BRIDGE_SECRETはGAS側Bridge.jsのBRIDGE_API_SECRET(Script Properties)と
-  // 同じ値。SCHEDULE_PROVIDER=gas_bridge の予定取得と、outboxミラー書き込みに使う。
-  GAS_BRIDGE_URL: z.string().optional(),
-  GAS_BRIDGE_SECRET: z.string().optional(),
-
-  GEMINI_API_KEY: z.string().optional(),
-  // 日報/事故報告生成・領収書OCRに使うモデル名(未設定時はGAS版と同じデフォルトを使う)。
-  GEMINI_MODEL_REPORT: z.string().optional(),
-  GEMINI_MODEL_OCR: z.string().optional(),
-
-  // Google Chat Incoming Webhook。GAS版GoogleChat.jsのScript Propertiesと同じ役割。
-  // 未設定の場合は通知を送らずスキップする(GAS版と同じフォールバック)。
-  GCHAT_REPORT_WEBHOOK_URL: z.string().optional(),
-  GCHAT_RECEIPT_WEBHOOK_URL: z.string().optional(),
-
-  // 領収書画像の保存先。local: LOCAL_RECEIPT_STORAGE_DIR(開発用) / gcs: GCS_BUCKET(本番は必須)。
-  STORAGE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(STORAGE_PROVIDERS).default('local')),
-  LOCAL_RECEIPT_STORAGE_DIR: z.string().default('./data/receipts'),
-  GCS_BUCKET: z.preprocess(emptyToUndefined, z.string().optional()),
-
-  // スプレッドシート脱却時はここを false にするだけでミラーが止まる
-  MIRROR_TO_GOOGLE_SHEETS: booleanFlag,
-  MIRROR_TO_GOOGLE_CALENDAR: booleanFlag,
-
-  // 顧客CSV(RESERVA「Kokyaku_YYYYMMDDHHmm_N.csv」)の自動取込元(GAS版 CUSTOMER_CSV_FOLDER_ID)。
-  // CUSTOMER_CSV_DRIVE_FOLDERS: {"テナントslug": "DriveフォルダID"} のJSON(サービスアカウントに閲覧権限を共有する)。
-  // CUSTOMER_CSV_LOCAL_DIR: ローカル開発用。<dir>/<テナントslug>/ に置いたCSVを読む(Driveの設定が無い場合のみ)。
-  CUSTOMER_CSV_DRIVE_FOLDERS: z
-    .string()
-    .optional()
-    .transform((value, ctx) => {
-      try {
-        return parseTenantFolderMap(value);
-      } catch (e) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: e instanceof Error ? e.message : String(e) });
-        return z.NEVER;
-      }
-    }),
-  CUSTOMER_CSV_LOCAL_DIR: z.string().optional(),
-
-  // ── 送信元IP(doc/api/auth-reports-settings.md「送信元IPの判定」) ──
-  // X-Forwarded-For の右から何番目を送信元IPとみなすか(信頼できるプロキシの段数)。Cloud Run に直接届く
-  // 構成は1(Google Front End が末尾に付け足した値)、外部ロードバランサを前に置く場合は2。0なら
-  // X-Forwarded-For を使わず接続元のアドレスを使う。未指定は本番1・それ以外0(開発はプロキシ無し)。
+  // X-Forwarded-For の右から何番目を送信元IPとみなすか(信頼できるプロキシの段数)。Cloud Run 直は1、
+  // 外部ロードバランサを前に置く場合は2、0なら接続元のアドレス。未指定は本番1・それ以外0。
   TRUSTED_PROXY_HOPS: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(5).optional()),
 
-  // ── レート制限の回数(packages/core/src/usecases/rateLimits.ts。未指定は既定値。窓の長さは固定) ──
-  // ログイン失敗: アカウント単位(15分・既定10回で15分ロック)/送信元IP単位(15分・既定50回で15分ロック)
-  RATE_LIMIT_LOGIN_FAILURES_PER_ACCOUNT: z.preprocess(
-    emptyToUndefined,
-    z.coerce.number().int().positive().optional(),
-  ),
-  RATE_LIMIT_LOGIN_FAILURES_PER_IP: z.preprocess(
-    emptyToUndefined,
-    z.coerce.number().int().positive().optional(),
-  ),
-  // パスワード再設定の発行要求(1時間): アカウント単位(既定5回)/送信元IP単位(既定20回)
-  RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT: z.preprocess(
-    emptyToUndefined,
-    z.coerce.number().int().positive().optional(),
-  ),
-  RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_IP: z.preprocess(
-    emptyToUndefined,
-    z.coerce.number().int().positive().optional(),
-  ),
-  // AI生成(日報・事故報告)・領収書OCR: スタッフ単位の1日の上限(既定200回・300回)
-  RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY: z.preprocess(
-    emptyToUndefined,
-    z.coerce.number().int().positive().optional(),
-  ),
-  RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY: z.preprocess(
-    emptyToUndefined,
-    z.coerce.number().int().positive().optional(),
-  ),
-  // 予定のルート再計算(forceRefresh): スタッフ単位の1時間の上限(既定30回)
-  RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR: z.preprocess(
-    emptyToUndefined,
-    z.coerce.number().int().positive().optional(),
-  ),
+  // レート制限の回数(packages/core/src/usecases/rateLimits.ts。未指定は既定値。窓の長さは固定)。
+  RATE_LIMIT_LOGIN_FAILURES_PER_ACCOUNT: optionalPositiveInt,
+  RATE_LIMIT_LOGIN_FAILURES_PER_IP: optionalPositiveInt,
+  RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT: optionalPositiveInt,
+  RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_IP: optionalPositiveInt,
+  RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY: optionalPositiveInt,
+  RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY: optionalPositiveInt,
+  RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR: optionalPositiveInt,
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -169,27 +59,17 @@ export function trustedProxyHops(env: Pick<Env, 'NODE_ENV' | 'TRUSTED_PROXY_HOPS
   return env.TRUSTED_PROXY_HOPS ?? (env.NODE_ENV === 'production' ? 1 : 0);
 }
 
-/** 項目単体では表せない組み合わせの検証。 */
 function checkCombinations(env: Env): string[] {
-  const isProduction = env.NODE_ENV === 'production';
-  const problems = [
-    ...kmsEnvProblems(env, isProduction),
-    ...storageEnvProblems(env, isProduction),
-    ...scheduleEnvProblems(env, isProduction),
-  ];
-  if (isProduction && (env.SESSION_SECRET.length < 32 || env.SESSION_SECRET === 'change-me-in-production')) {
+  const problems = sharedEnvProblems(env);
+  if (
+    env.NODE_ENV === 'production' &&
+    (env.SESSION_SECRET.length < 32 || env.SESSION_SECRET === 'change-me-in-production')
+  ) {
     problems.push('  - SESSION_SECRET: 本番は32文字以上のランダムな値にしてください(openssl rand -hex 32)');
   }
   return problems;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  const parsed = envSchema.safeParse(source);
-  if (!parsed.success) {
-    const detail = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
-    throw new Error(`環境変数の設定に問題があります:\n${detail}`);
-  }
-  const problems = checkCombinations(parsed.data);
-  if (problems.length > 0) throw new Error(`環境変数の設定に問題があります:\n${problems.join('\n')}`);
-  return parsed.data;
+  return parseEnvOrThrow(envSchema, source, checkCombinations);
 }

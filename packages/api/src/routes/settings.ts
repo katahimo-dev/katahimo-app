@@ -1,4 +1,4 @@
-import type { SaveSettingsResult } from '@katahimo/core';
+import type { SaveSettingsResult } from '@katahimo/core/usecases';
 import {
   getAdminSettings,
   listAiPromptsForAdmin,
@@ -7,30 +7,28 @@ import {
   saveGeminiModelSettings,
   saveGoogleChatWebhookSettings,
   updateAiPrompts,
-} from '@katahimo/core';
+} from '@katahimo/core/usecases';
 import {
+  adminSettingsResponseSchema,
+  aiPromptListResponseSchema,
   listGeminiModelsRequestSchema,
+  listGeminiModelsResponseSchema,
   saveGchatWebhooksRequestSchema,
   saveGeminiApiKeyRequestSchema,
   saveGeminiModelsRequestSchema,
+  saveSettingsResponseSchema,
   updateAiPromptsRequestSchema,
 } from '@katahimo/shared';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { Container } from '../container';
-import { requestMeta } from '../http/requestMeta';
-import { apiError, parseJsonBody } from '../http/responses';
+import { apiError, jsonOk, parseJsonBody } from '../http/responses';
 import type { SessionEnv } from '../session';
-import { requireAdmin } from '../session';
-
-function actorOf(c: Context<SessionEnv>) {
-  const session = c.get('session');
-  return { tenantId: session.tenantId, staffId: session.staffId, meta: requestMeta(c) };
-}
+import { actorOf, requireAdmin } from '../session';
 
 function respondSave(c: Context, result: SaveSettingsResult) {
   if (!result.ok) return apiError(c, 400, 'validation_failed', result.message);
-  return c.json(result);
+  return jsonOk(c, saveSettingsResponseSchema, result);
 }
 
 /**
@@ -42,7 +40,9 @@ export function createSettingsRoutes(container: Container) {
 
   /** 現在の管理者設定を返す(APIキー・Webhook URLは伏せ字と設定済みフラグだけ)。 */
   app.get('/admin', requireAdmin(container, 'settings.admin.view'), async (c) => {
-    return c.json({ settings: await getAdminSettings(container, actorOf(c)) });
+    return jsonOk(c, adminSettingsResponseSchema, {
+      settings: await getAdminSettings(container, actorOf(c)),
+    });
   });
 
   app.post('/admin/gemini-key', requireAdmin(container, 'settings.gemini_api_key.save'), async (c) => {
@@ -83,26 +83,35 @@ export function createSettingsRoutes(container: Container) {
       if (!body.ok) return body.response;
       const result = await listGeminiModelsForAdmin(container, actorOf(c), body.data.apiKey);
       if (!result.ok) {
-        return apiError(c, result.reason === 'no_api_key' ? 400 : 502, 'validation_failed', result.message);
+        return result.reason === 'no_api_key'
+          ? apiError(c, 400, 'validation_failed', result.message)
+          : apiError(c, 502, 'upstream_unavailable', result.message);
       }
-      return c.json({ success: true as const, models: result.models });
+      return jsonOk(c, listGeminiModelsResponseSchema, { success: true, models: result.models });
     },
   );
 
   /** 編集可能なAIプロンプト・入力欄プレースホルダーの一覧(GAS版「ＡＩプロンプト」シート)。 */
   app.get('/admin/prompts', requireAdmin(container, 'settings.ai_prompts.view'), async (c) => {
-    return c.json({ prompts: await listAiPromptsForAdmin(container, c.get('session').tenantId) });
+    return jsonOk(c, aiPromptListResponseSchema, {
+      prompts: await listAiPromptsForAdmin(container, c.get('session').tenantId),
+    });
   });
 
   app.put('/admin/prompts', requireAdmin(container, 'settings.ai_prompts.save'), async (c) => {
     const body = await parseJsonBody(c, updateAiPromptsRequestSchema);
     if (!body.ok) return body.response;
-    const actor = actorOf(c);
-    const result = await updateAiPrompts(container, { ...actor, prompts: body.data.prompts });
+    const { tenantId, staffId, meta } = actorOf(c);
+    const result = await updateAiPrompts(container, {
+      tenantId,
+      staffId,
+      prompts: body.data.prompts,
+      ...(meta ? { meta } : {}),
+    });
     if (!result.ok) {
       return apiError(c, 400, 'validation_failed', `不明なプロンプトです: ${result.keys.join(', ')}`);
     }
-    return c.json({ prompts: result.prompts });
+    return jsonOk(c, aiPromptListResponseSchema, { prompts: result.prompts });
   });
 
   return app;

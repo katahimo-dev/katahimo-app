@@ -1,4 +1,3 @@
-import type { SaveReportFailure } from '@katahimo/core';
 import {
   generateAccidentReportDraft,
   generateDailyReportDraft,
@@ -6,62 +5,40 @@ import {
   saveAccidentReport,
   saveDailyReport,
   sendVisitCompleteNotification,
-} from '@katahimo/core';
+} from '@katahimo/core/usecases';
 import {
-  businessDateSchema,
-  idSchema,
+  customerHistoryQuerySchema,
+  customerHistoryResponseSchema,
+  generateAccidentReportResponseSchema,
+  generateDailyReportResponseSchema,
+  generateReportRequestSchema,
   saveAccidentReportRequestSchema,
+  saveAccidentReportResponseSchema,
   saveDailyReportRequestSchema,
+  saveDailyReportResponseSchema,
+  visitCompleteRequestSchema,
+  visitCompleteResponseSchema,
 } from '@katahimo/shared';
-import type { Context } from 'hono';
 import { Hono } from 'hono';
-import { z } from 'zod';
 import type { Container } from '../container';
 import { enforceStaffQuota } from '../http/quota';
-import { requestMeta } from '../http/requestMeta';
-import { apiError, parseJsonBody } from '../http/responses';
+import { jsonOk, parseJsonBody, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
-import { requireSession, resolveReportTargetStaffId } from '../session';
+import { actorOf, requireSession } from '../session';
 
 const HISTORY_LIMIT = 5;
 const AI_QUOTA_MESSAGE = '本日のAI生成の利用回数の上限に達しました。明日以降に再度お試しください。';
 
-const generateRequestSchema = z.object({
-  text: z.string().trim().min(1, 'text が必要です').max(20_000, 'メモが長すぎます'),
-  start: z.string().optional(),
-  end: z.string().optional(),
-});
-
-const visitCompleteRequestSchema = z.object({
-  staffId: idSchema.optional(),
-  customerId: idSchema,
-  visitDate: businessDateSchema,
-  startTime: z.string(),
-  endTime: z.string(),
-});
-
-function saveFailure(c: Context, reason: SaveReportFailure) {
-  switch (reason) {
-    case 'forbidden':
-      return apiError(c, 403, 'forbidden', '他のスタッフの報告は修正できません');
-    case 'report_not_found':
-      return apiError(c, 404, 'not_found', '修正対象の報告が見つかりません');
-    case 'customer_not_found':
-      return apiError(c, 404, 'not_found', '顧客が見つかりません');
-    case 'customer_mismatch':
-      return apiError(c, 409, 'conflict', '別のお客様の報告は上書きできません。画面を開きなおしてください');
-    case 'staff_not_found':
-      return apiError(c, 404, 'not_found', 'スタッフが見つかりません');
-  }
-}
-
+/**
+ * 保育日報・事故報告の API(GAS版 Main.js saveReport / saveAccidentReport / getCustomerReports)。
+ * 担当スタッフ・上書きの権限・顧客と担当の一致は usecase が確かめる(違反は DomainError → app.onError)。
+ */
 export function createReportRoutes(container: Container) {
   const app = new Hono<SessionEnv>();
 
-  /** 保育日報の下書きをAI生成する(GAS版generateReportWithWarnings)。 */
+  /** 保育日報の下書きをAI生成する(GAS版 generateReportWithWarnings)。 */
   app.post('/daily/generate', requireSession(container), async (c) => {
-    const session = c.get('session');
-    const body = await parseJsonBody(c, generateRequestSchema);
+    const body = await parseJsonBody(c, generateReportRequestSchema);
     if (!body.ok) return body.response;
     const limited = await enforceStaffQuota(
       c,
@@ -70,14 +47,13 @@ export function createReportRoutes(container: Container) {
       AI_QUOTA_MESSAGE,
     );
     if (limited) return limited;
-    const draft = await generateDailyReportDraft(container, session, body.data);
-    return c.json({ draft });
+    const draft = await generateDailyReportDraft(container, c.get('session'), body.data);
+    return jsonOk(c, generateDailyReportResponseSchema, { draft });
   });
 
-  /** 事故報告/ヒヤリハットの下書きをAI生成する(GAS版generateAccidentReport)。 */
+  /** 事故報告/ヒヤリハットの下書きをAI生成する(GAS版 generateAccidentReport)。 */
   app.post('/accident/generate', requireSession(container), async (c) => {
-    const session = c.get('session');
-    const body = await parseJsonBody(c, generateRequestSchema);
+    const body = await parseJsonBody(c, generateReportRequestSchema);
     if (!body.ok) return body.response;
     const limited = await enforceStaffQuota(
       c,
@@ -86,69 +62,52 @@ export function createReportRoutes(container: Container) {
       AI_QUOTA_MESSAGE,
     );
     if (limited) return limited;
-    const draft = await generateAccidentReportDraft(container, session, body.data);
-    return c.json({ draft });
+    const draft = await generateAccidentReportDraft(container, c.get('session'), body.data);
+    return jsonOk(c, generateAccidentReportResponseSchema, { draft });
   });
 
-  /** 保育日報を保存する。GAS版Main.js saveReport。 */
+  /** 保育日報を保存する(GAS版 Main.js saveReport)。 */
   app.post('/daily', requireSession(container, 'report.daily.save'), async (c) => {
-    const session = c.get('session');
     const body = await parseJsonBody(c, saveDailyReportRequestSchema);
     if (!body.ok) return body.response;
     const { staffId, ...fields } = body.data;
-    const result = await saveDailyReport(container, session.tenantId, {
-      ...fields,
-      actor: { staffId: session.staffId, isAdmin: session.isAdmin },
-      requestedStaffId: staffId,
-      meta: requestMeta(c),
-    });
-    if (!result.ok) return saveFailure(c, result.reason);
-    return c.json({ success: true as const, message: '保存しました', report: result.report });
+    const report = await saveDailyReport(container, actorOf(c), { ...fields, requestedStaffId: staffId });
+    return jsonOk(c, saveDailyReportResponseSchema, { success: true, message: '保存しました', report });
   });
 
-  /** 事故報告/ヒヤリハットを保存する。GAS版Main.js saveAccidentReport。 */
+  /** 事故報告/ヒヤリハットを保存する(GAS版 Main.js saveAccidentReport)。 */
   app.post('/accident', requireSession(container, 'report.accident.save'), async (c) => {
-    const session = c.get('session');
     const body = await parseJsonBody(c, saveAccidentReportRequestSchema);
     if (!body.ok) return body.response;
     const { staffId, ...fields } = body.data;
-    const result = await saveAccidentReport(container, session.tenantId, {
-      ...fields,
-      actor: { staffId: session.staffId, isAdmin: session.isAdmin },
-      requestedStaffId: staffId,
-      meta: requestMeta(c),
-    });
-    if (!result.ok) return saveFailure(c, result.reason);
-    return c.json({ success: true as const, report: result.report });
+    const report = await saveAccidentReport(container, actorOf(c), { ...fields, requestedStaffId: staffId });
+    return jsonOk(c, saveAccidentReportResponseSchema, { success: true, report });
   });
 
-  /** 「訪問完了」通知のみ送信する(DB書き込みなし)。GAS版sendVisitComplete。 */
+  /** 「訪問完了」通知のみ送信する(DB書き込みなし。GAS版 sendVisitComplete)。 */
   app.post('/visit-complete', requireSession(container), async (c) => {
-    const session = c.get('session');
     const body = await parseJsonBody(c, visitCompleteRequestSchema);
     if (!body.ok) return body.response;
-    const result = await sendVisitCompleteNotification(container, session.tenantId, {
-      ...body.data,
-      staffId: resolveReportTargetStaffId(session, body.data.staffId),
-    });
-    if (!result.ok) return apiError(c, 404, 'not_found', '顧客またはスタッフが見つかりません');
-    return c.json({ success: true as const });
+    const { staffId, ...fields } = body.data;
+    await sendVisitCompleteNotification(container, actorOf(c), { ...fields, requestedStaffId: staffId });
+    return jsonOk(c, visitCompleteResponseSchema, { success: true });
   });
 
-  /** 顧客の活動記録(日報+事故報告)を新しい順に取得する。GAS版getCustomerReports。 */
+  /**
+   * 顧客の活動記録(日報+事故報告)を新しい順に5件ずつ(GAS版 getCustomerReports)。続きは before に
+   * 前の応答の nextCursor を渡す(キーセットページング)。
+   */
   app.get('/history', requireSession(container, 'report.history.view'), async (c) => {
-    const session = c.get('session');
-    const customerId = c.req.query('customerId');
-    if (!customerId || !idSchema.safeParse(customerId).success) {
-      return apiError(c, 400, 'validation_failed', 'customerId クエリパラメータが必要です');
-    }
-    const beforeParam = c.req.query('before');
-    const before = beforeParam ? new Date(beforeParam) : null;
-    if (before && Number.isNaN(before.getTime())) {
-      return apiError(c, 400, 'validation_failed', 'before は有効なISO日時にしてください');
-    }
-    const items = await getCustomerHistory(container, session.tenantId, customerId, before, HISTORY_LIMIT);
-    return c.json({ items });
+    const query = parseQuery(c, customerHistoryQuerySchema);
+    if (!query.ok) return query.response;
+    const page = await getCustomerHistory(
+      container,
+      actorOf(c),
+      query.data.customerId,
+      query.data.before ?? null,
+      HISTORY_LIMIT,
+    );
+    return jsonOk(c, customerHistoryResponseSchema, page);
   });
 
   return app;

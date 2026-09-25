@@ -1,5 +1,5 @@
-import type { RateLimitRule } from '@katahimo/core';
-import { consumeQuota } from '@katahimo/core';
+import type { RateLimitRule } from '@katahimo/core/domain';
+import { consumeQuota } from '@katahimo/core/usecases';
 import type { Context } from 'hono';
 import type { Container } from '../container';
 import type { SessionEnv } from '../session';

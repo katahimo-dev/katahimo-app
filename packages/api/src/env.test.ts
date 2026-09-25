@@ -7,7 +7,7 @@ const hex = (ch: string) => ch.repeat(64);
 const development = {
   DATABASE_URL: 'postgres://katahimo_app:x@localhost:5432/katahimo_dev',
   SESSION_SECRET: 'change-me-in-production',
-  LOCAL_DEV_MASTER_KEY: hex('a'),
+  BLIND_INDEX_MASTER_KEY: hex('a'),
   LOCAL_DEV_KEK: hex('b'),
 };
 
@@ -16,7 +16,7 @@ const production = {
   NODE_ENV: 'production',
   DATABASE_URL: 'postgres://katahimo_app:x@/katahimo?host=/cloudsql/p:asia-northeast1:katahimo-db',
   SESSION_SECRET: 'f'.repeat(64),
-  LOCAL_DEV_MASTER_KEY: hex('a'),
+  BLIND_INDEX_MASTER_KEY: hex('a'),
   KMS_PROVIDER: 'gcp',
   GCP_KMS_KEY_NAME: 'projects/p/locations/asia-northeast1/keyRings/katahimo/cryptoKeys/tenant-kek',
   STORAGE_PROVIDER: 'gcs',

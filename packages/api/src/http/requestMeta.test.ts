@@ -23,6 +23,6 @@ describe('X-Forwarded-For からの送信元IPの判定', () => {
     const res = await app.request('/', {
       headers: { 'x-forwarded-for': 'spoofed, 198.51.100.20', 'user-agent': 'test-agent' },
     });
-    expect(await res.json()).toEqual({ ip: '198.51.100.20', userAgent: 'test-agent' });
+    expect(await res.json()).toEqual({ ip: '198.51.100.20', userAgent: 'test-agent', requestId: null });
   });
 });
