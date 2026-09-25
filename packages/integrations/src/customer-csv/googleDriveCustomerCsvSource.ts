@@ -47,7 +47,7 @@ export class GoogleDriveCustomerCsvSource implements CustomerCsvSourcePort {
         q: `'${escapeDriveQueryValue(folderId)}' in parents and trashed = false and name contains 'Kokyaku_'`,
         fields: 'nextPageToken, files(id, name)',
         pageSize: 1000,
-        pageToken,
+        ...(pageToken ? { pageToken } : {}),
         supportsAllDrives: true,
         includeItemsFromAllDrives: true,
       });

@@ -2,11 +2,11 @@ import { formatJstDateTime } from './jstTime';
 
 export interface ReceiptFallbackTimestampInput {
   /** クライアントが組み立てた 'yyyy/MM/dd HH:mm[:ss]'(GAS版buildReceiptTimestampの値)。 */
-  receiptTimestamp?: string;
+  receiptTimestamp?: string | undefined;
   /** 日報の訪問日 'YYYY-MM-DD'。 */
-  reportDate?: string;
+  reportDate?: string | undefined;
   /** 日報の開始時刻 'HH:mm'。 */
-  startTime?: string;
+  startTime?: string | undefined;
 }
 
 /**

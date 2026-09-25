@@ -18,13 +18,13 @@ export type ScheduleProvider = (typeof SCHEDULE_PROVIDERS)[number];
 
 /** 予定・地図の実装選択に使う環境変数(api/worker の env から渡す)。 */
 export interface ScheduleProviderEnv {
-  SCHEDULE_PROVIDER?: ScheduleProvider;
-  GOOGLE_MAPS_API_KEY?: string;
-  GOOGLE_APPLICATION_CREDENTIALS?: string;
-  GOOGLE_CALENDAR_IDS?: string;
-  GOOGLE_CALENDAR_IMPERSONATE?: string;
-  GAS_BRIDGE_URL?: string;
-  GAS_BRIDGE_SECRET?: string;
+  SCHEDULE_PROVIDER?: ScheduleProvider | undefined;
+  GOOGLE_MAPS_API_KEY?: string | undefined;
+  GOOGLE_APPLICATION_CREDENTIALS?: string | undefined;
+  GOOGLE_CALENDAR_IDS?: string | undefined;
+  GOOGLE_CALENDAR_IMPERSONATE?: string | undefined;
+  GAS_BRIDGE_URL?: string | undefined;
+  GAS_BRIDGE_SECRET?: string | undefined;
 }
 
 /**

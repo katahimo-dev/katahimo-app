@@ -6,6 +6,8 @@ import type { AttendanceColumnKey } from '@katahimo/shared';
  * 労働時間・残業などの派生値(テンプレートの数式列)は含まない。
  */
 export type AttendanceRowData = Partial<Record<AttendanceColumnKey, string>>;
+/** 画面から送られた修正(列が無い・undefined は「変えない」)。 */
+export type AttendanceRowPatch = { [K in AttendanceColumnKey]?: string | undefined };
 
 export interface MoveChainResult {
   moveStart: string;

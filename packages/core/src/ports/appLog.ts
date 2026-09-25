@@ -13,7 +13,7 @@ export interface AppLogEntry {
   /** 管理者が他スタッフのデータを操作・閲覧した場合の対象スタッフ(target_type = 'staff')。 */
   targetStaffId?: string | null;
   /** 付加情報。個人情報・本文は入れない(ID・件数・理由コード程度に留める)。 */
-  details?: Record<string, unknown>;
+  details?: Record<string, unknown> | undefined;
   ip?: string | null;
   userAgent?: string | null;
   requestId?: string | null;

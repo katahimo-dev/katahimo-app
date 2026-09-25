@@ -9,20 +9,20 @@ export interface PostgresConnectionConfig {
 /** プールの設定に使う環境変数(未指定なら既定値)。 */
 export interface PoolEnv {
   /** 1プロセスあたりの最大接続数(既定10)。 */
-  DB_POOL_MAX?: string;
+  DB_POOL_MAX?: string | undefined;
   /** 使われていない接続を閉じるまでの秒数(既定60)。0で閉じない。 */
-  DB_IDLE_TIMEOUT_SEC?: string;
+  DB_IDLE_TIMEOUT_SEC?: string | undefined;
   /** 接続の最大寿命(秒)。未指定なら postgres.js の既定(30〜60分のランダム)。 */
-  DB_MAX_LIFETIME_SEC?: string;
+  DB_MAX_LIFETIME_SEC?: string | undefined;
 }
 
 const DEFAULT_POSTGRES_PORT = '5432';
 
-function positiveInt(
+function positiveInt<F extends number | undefined>(
   name: string,
   raw: string | undefined,
-  fallback: number | undefined,
-): number | undefined {
+  fallback: F,
+): number | F {
   if (raw === undefined || raw === '') return fallback;
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 0)

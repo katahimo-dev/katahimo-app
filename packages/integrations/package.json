@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "@katahimo/core": "workspace:*",
-    "@katahimo/shared": "workspace:*",
     "google-auth-library": "^9.15.0",
     "googleapis": "^144.0.0",
     "nodemailer": "^9.1.1",

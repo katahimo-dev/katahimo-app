@@ -8,7 +8,7 @@ import type {
   VisitEntity,
   WorkSegmentEntity,
 } from './entities';
-import type { AttendanceRowData } from './types';
+import type { AttendanceRowData, AttendanceRowPatch } from './types';
 
 /**
  * 出勤簿テンプレート(個別出勤簿スプレッドシート)の列レイアウト。
@@ -430,7 +430,7 @@ function overlapError(visits: VisitEntity[]): string | null {
  */
 export function applyRowEdit(
   sheet: AttendanceSheetDay,
-  patch: AttendanceRowData,
+  patch: AttendanceRowPatch,
   options: RowEditOptions,
 ): { next: AttendanceSheetDay; changes: CellChange[] } {
   const { rowData: current } = projectDay(sheet);

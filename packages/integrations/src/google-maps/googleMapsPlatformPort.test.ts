@@ -3,7 +3,7 @@ import { GoogleMapsPlatformPort } from './googleMapsPlatformPort';
 
 interface Captured {
   url: string;
-  init?: RequestInit;
+  init?: RequestInit | undefined;
 }
 
 function fakeFetch(status: number, body: unknown, captured: Captured[]): typeof fetch {

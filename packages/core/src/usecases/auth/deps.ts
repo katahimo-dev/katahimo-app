@@ -29,7 +29,7 @@ export interface AuthDeps extends StaffRegistrationDeps, Clock {
    * GAS版 Script Properties の AUTH_SALT と同じ値。GAS版から移行したスタッフ(legacy_password_hash だけを持つ)の
    * 初回ログインにだけ使う。
    */
-  legacyAuthSalt?: string;
+  legacyAuthSalt?: string | undefined;
 }
 
 /** ログイン。失敗回数によるアカウント・送信元IP単位の一時ロックを伴う。 */

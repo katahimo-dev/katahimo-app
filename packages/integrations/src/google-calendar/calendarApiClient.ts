@@ -6,7 +6,7 @@ export interface CalendarApiClientOptions {
    * ドメイン全体の委任(domain-wide delegation)で成り代わるWorkspaceユーザーのメールアドレス。
    * 未指定ならサービスアカウント自身として読む(カレンダーをサービスアカウントに共有しておく方式)。
    */
-  impersonateSubject?: string;
+  impersonateSubject?: string | undefined;
 }
 
 const CALENDAR_READONLY_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';

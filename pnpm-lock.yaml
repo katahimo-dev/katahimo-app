@@ -82,9 +82,6 @@ importers:
       '@katahimo/core':
         specifier: workspace:*
         version: link:../core
-      '@katahimo/shared':
-        specifier: workspace:*
-        version: link:../shared
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
@@ -107,12 +104,6 @@ importers:
       '@katahimo/core':
         specifier: workspace:*
         version: link:../core
-      '@katahimo/db':
-        specifier: workspace:*
-        version: link:../db
-      '@katahimo/integrations':
-        specifier: workspace:*
-        version: link:../integrations
       '@katahimo/shared':
         specifier: workspace:*
         version: link:../shared
@@ -128,9 +119,6 @@ importers:
       '@katahimo/core':
         specifier: workspace:*
         version: link:../core
-      '@katahimo/shared':
-        specifier: workspace:*
-        version: link:../shared
       google-auth-library:
         specifier: ^9.15.0
         version: 9.15.1
@@ -220,15 +208,9 @@ importers:
       '@katahimo/integrations':
         specifier: workspace:*
         version: link:../integrations
-      '@katahimo/shared':
-        specifier: workspace:*
-        version: link:../shared
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
-      drizzle-orm:
-        specifier: ^0.45.3
-        version: 0.45.3(gel@2.2.0)(postgres@3.4.9)
       zod:
         specifier: ^3.24.1
         version: 3.25.76

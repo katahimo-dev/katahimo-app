@@ -1,6 +1,7 @@
 import {
   type AttendanceDayDerived,
   type AttendanceRowData,
+  type AttendanceRowPatch,
   applyRowEdit,
   type CellChange,
   checkAttendanceEditable,
@@ -122,7 +123,7 @@ export async function updateAttendanceDay(
   actor: Actor,
   targetStaffId: string,
   businessDate: string,
-  patch: AttendanceRowData,
+  patch: AttendanceRowPatch,
   expectedVersion?: number,
 ): Promise<UpdateAttendanceDayResult> {
   try {

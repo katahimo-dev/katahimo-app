@@ -15,8 +15,9 @@ import { apiError } from './http/responses';
  */
 export const SESSION_COOKIE_NAME = 'katahimo_session';
 
-function cookiePrefix(container: Container): 'host' | undefined {
-  return container.config.isProduction ? 'host' : undefined;
+/** Cookie の接頭辞の指定(本番だけ `__Host-`)。 */
+function cookiePrefix(container: Container): { prefix: 'host' } | Record<string, never> {
+  return container.config.isProduction ? { prefix: 'host' } : {};
 }
 
 export function setSessionCookie(c: Context, container: Container, value: string, expires: Date): void {
@@ -26,7 +27,7 @@ export function setSessionCookie(c: Context, container: Container, value: string
     sameSite: 'Lax',
     path: '/',
     expires,
-    prefix: cookiePrefix(container),
+    ...cookiePrefix(container),
   });
 }
 
@@ -36,12 +37,12 @@ export function clearSessionCookie(c: Context, container: Container): void {
     httpOnly: true,
     secure: container.config.isProduction,
     sameSite: 'Lax',
-    prefix: cookiePrefix(container),
+    ...cookiePrefix(container),
   });
 }
 
 export function readSessionCookie(c: Context, container: Container): string | undefined {
-  return getCookie(c, SESSION_COOKIE_NAME, cookiePrefix(container));
+  return getCookie(c, SESSION_COOKIE_NAME, container.config.isProduction ? 'host' : undefined);
 }
 
 /**
@@ -96,7 +97,7 @@ export function requireSession(container: Container, deniedAction?: string): Mid
       return apiError(c, 401, 'unauthenticated', 'ログインセッションが無効です。再度ログインしてください。');
     }
     c.set('session', session);
-    await next();
+    return next();
   };
 }
 
@@ -121,7 +122,7 @@ export function requireAdmin(container: Container, action: string): MiddlewareHa
         : apiError(c, 401, 'unauthenticated', 'ログインセッションが無効です。再度ログインしてください。');
     }
     c.set('session', session);
-    await next();
+    return next();
   };
 }
 

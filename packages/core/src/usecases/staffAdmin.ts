@@ -88,11 +88,11 @@ async function assertEmailsFree(
 export interface CreateStaffInput {
   name: string;
   email: string;
-  altEmail?: string | null;
-  phone?: string | null;
+  altEmail?: string | null | undefined;
+  phone?: string | null | undefined;
   role: StaffRole;
   /** 省略時はパスワード未設定(本人がパスワード再設定で初回設定する)。 */
-  initialPassword?: string;
+  initialPassword?: string | undefined;
 }
 
 async function logRejected(
@@ -149,12 +149,12 @@ export async function createStaffByAdmin(
 }
 
 export interface UpdateStaffInput {
-  name?: string;
-  email?: string;
-  altEmail?: string | null;
-  phone?: string | null;
-  role?: StaffRole;
-  retiredOn?: string | null;
+  name?: string | undefined;
+  email?: string | undefined;
+  altEmail?: string | null | undefined;
+  phone?: string | null | undefined;
+  role?: StaffRole | undefined;
+  retiredOn?: string | null | undefined;
 }
 
 /**

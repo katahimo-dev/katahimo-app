@@ -51,7 +51,7 @@ class FakeCalendar implements GoogleCalendarPort {
 
 class FakeMaps implements MapsPort {
   geocodeCalls: string[] = [];
-  routeCalls: Array<{ origin: LatLng; destination: LatLng; options?: RouteOptions }> = [];
+  routeCalls: Array<{ origin: LatLng; destination: LatLng; options?: RouteOptions | undefined }> = [];
   failRoutes = false;
   async geocode(address: string) {
     this.geocodeCalls.push(address);

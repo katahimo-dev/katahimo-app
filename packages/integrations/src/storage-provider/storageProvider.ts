@@ -9,7 +9,7 @@ export type StorageProvider = (typeof STORAGE_PROVIDERS)[number];
 export interface StorageProviderEnv {
   STORAGE_PROVIDER: StorageProvider;
   LOCAL_RECEIPT_STORAGE_DIR: string;
-  GCS_BUCKET?: string;
+  GCS_BUCKET?: string | undefined;
 }
 
 /** 起動時の設定検証(環境変数の検証エラーと同じ形式の行)。本番はオブジェクトストレージ必須。 */

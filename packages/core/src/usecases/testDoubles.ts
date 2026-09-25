@@ -1135,7 +1135,7 @@ export class FakeSchedulePort implements SchedulePort {
   setAppointments(
     staffName: string,
     date: string,
-    appointments: ScheduleWithRouteResult['appointments'],
+    appointments: NonNullable<ScheduleWithRouteResult['appointments']>,
   ): void {
     this.results.set(`${staffName}|${date}`, { success: true, date, staffName, appointments });
   }
