@@ -38,6 +38,8 @@ export const passwordResetCodes = pgTable(
     expiresAt: timestamp({ withTimezone: true }).notNull(),
     usedAt: timestamp({ withTimezone: true }),
     attemptCount: integer().notNull().default(0),
+    mailCodeCiphertext: text(),
+    mailCodeKeyVersion: integer(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

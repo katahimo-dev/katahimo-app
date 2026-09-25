@@ -19,10 +19,12 @@ import {
   FakeCustomerRepository,
   FakeDailyReportRepository,
   FakeFamilyMemberRepository,
+  FakeMailerPort,
   FakeMirrorSenderPort,
   FakeNotifierPort,
   FakeOutboxRepository,
   FakePasswordHasherPort,
+  FakePasswordResetCodeRepository,
   FakeReceiptRepository,
   FakeSessionRepository,
   FakeStaffRepository,
@@ -73,6 +75,8 @@ describe('runOutboxBatch / processOutboxJob', () => {
 
   const workerDeps = (attendanceDays = new FakeAttendanceDayRepository()): MirrorWorkerDeps => ({
     outbox,
+    passwordResetCodes: new FakePasswordResetCodeRepository(),
+    mailer: new FakeMailerPort(),
     dailyReports: new FakeDailyReportRepository(),
     accidentReports: new FakeAccidentReportRepository(),
     receipts: new FakeReceiptRepository(),
@@ -112,6 +116,8 @@ describe('runOutboxBatch / processOutboxJob', () => {
 
     const workerDeps: MirrorWorkerDeps = {
       outbox,
+      passwordResetCodes: new FakePasswordResetCodeRepository(),
+      mailer: new FakeMailerPort(),
       dailyReports,
       accidentReports: new FakeAccidentReportRepository(),
       receipts: new FakeReceiptRepository(),
@@ -176,6 +182,8 @@ describe('runOutboxBatch / processOutboxJob', () => {
 
     const workerDeps: MirrorWorkerDeps = {
       outbox,
+      passwordResetCodes: new FakePasswordResetCodeRepository(),
+      mailer: new FakeMailerPort(),
       dailyReports: new FakeDailyReportRepository(),
       accidentReports,
       receipts: new FakeReceiptRepository(),
@@ -224,7 +232,7 @@ describe('runOutboxBatch / processOutboxJob', () => {
       customerId,
       images: [
         {
-          data: 'data:image/jpeg;base64,AAAA',
+          data: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
           amount: '1200',
           storeName: 'コンビニ',
         },
@@ -235,6 +243,8 @@ describe('runOutboxBatch / processOutboxJob', () => {
 
     const workerDeps: MirrorWorkerDeps = {
       outbox,
+      passwordResetCodes: new FakePasswordResetCodeRepository(),
+      mailer: new FakeMailerPort(),
       dailyReports: new FakeDailyReportRepository(),
       accidentReports: new FakeAccidentReportRepository(),
       receipts,
@@ -255,7 +265,7 @@ describe('runOutboxBatch / processOutboxJob', () => {
       customerName: '田中 一郎',
       amount: '1200',
       storeName: 'コンビニ',
-      imageDataUrl: 'data:image/jpeg;base64,AAAA',
+      imageDataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
     });
   });
 
@@ -409,6 +419,8 @@ describe('runOutboxBatch / processOutboxJob', () => {
 
     const workerDeps: MirrorWorkerDeps = {
       outbox,
+      passwordResetCodes: new FakePasswordResetCodeRepository(),
+      mailer: new FakeMailerPort(),
       dailyReports: new FakeDailyReportRepository(),
       accidentReports: new FakeAccidentReportRepository(),
       receipts: new FakeReceiptRepository(),

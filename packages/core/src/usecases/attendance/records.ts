@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AttendanceRowData } from '../../domain/attendance';
+import { ENCRYPTION_PURPOSES } from '../../domain/pii';
 import type { AttendanceDayRecord } from '../../ports/attendanceDays';
 import type { EncryptedField } from '../../ports/repositories';
 import type { AttendanceDeps } from './deps';
@@ -11,7 +12,9 @@ export async function readRowData(
   record: AttendanceDayRecord | null,
 ): Promise<AttendanceRowData> {
   if (!record) return {};
-  return JSON.parse(await deps.crypto.decrypt(tenantId, record.rowData)) as AttendanceRowData;
+  return JSON.parse(
+    await deps.crypto.decrypt(tenantId, record.rowData, ENCRYPTION_PURPOSES.attendanceRowData),
+  ) as AttendanceRowData;
 }
 
 export function encryptRowData(
@@ -19,7 +22,7 @@ export function encryptRowData(
   tenantId: string,
   rowData: AttendanceRowData,
 ): Promise<EncryptedField> {
-  return deps.crypto.encrypt(tenantId, JSON.stringify(rowData));
+  return deps.crypto.encrypt(tenantId, JSON.stringify(rowData), ENCRYPTION_PURPOSES.attendanceRowData);
 }
 
 /** 個別出勤簿スプレッドシートの該当日の行へのミラーを積む(ワーカーが最新値を読み直して送る)。 */

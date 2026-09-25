@@ -11,6 +11,7 @@ export * from './dailyReports';
 export * from './familyMembers';
 export * from './outbox';
 export * from './passwordResetCodes';
+export * from './rateLimitBuckets';
 export * from './receipts';
 export * from './reservations';
 export * from './sessions';

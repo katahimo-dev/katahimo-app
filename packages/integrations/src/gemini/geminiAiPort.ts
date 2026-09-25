@@ -40,7 +40,8 @@ async function callGemini(
   generationConfig: Record<string, unknown> | null,
   modelName: string,
 ): Promise<GeminiCallResult> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+  // APIキーはURLに載せずヘッダーで送る(URLはプロキシ・アクセスログに残りやすいため)。
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`;
   const payload = {
     contents: [{ parts: contentParts }],
     generationConfig: generationConfig || { responseMimeType: 'application/json' },
@@ -51,7 +52,7 @@ async function callGemini(
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify(payload),
     });
     httpCode = response.status;

@@ -9,6 +9,7 @@ import {
   summarizeReceiptAmounts,
 } from '../../domain/attendance';
 import { datesOfMonth, isValidYearMonth, jstBusinessDate } from '../../domain/calendarDate';
+import { ENCRYPTION_PURPOSES } from '../../domain/pii';
 import {
   type AttendanceActor,
   type AttendanceTarget,
@@ -89,7 +90,7 @@ async function summarizeMonthReceipts(
     try {
       entries.push({
         businessDate: jstBusinessDate(receipt.receiptTimestamp),
-        amount: await deps.crypto.decrypt(actor.tenantId, receipt.amount),
+        amount: await deps.crypto.decrypt(actor.tenantId, receipt.amount, ENCRYPTION_PURPOSES.receiptAmount),
       });
     } catch {
       skipped++;

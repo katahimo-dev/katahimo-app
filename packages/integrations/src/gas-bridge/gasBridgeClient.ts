@@ -9,7 +9,18 @@ export interface GasBridgeOptions {
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
-/** Bridge.js(GAS版Web Appの?api=1エンドポイント)への共通クライアント。 */
+/** Bridge.js 以外の中継(プロキシ等)が読むための共有シークレットのヘッダー。 */
+export const GAS_BRIDGE_SECRET_HEADER = 'X-Katahimo-Bridge-Secret';
+
+/**
+ * Bridge.js(GAS版Web Appの?api=1エンドポイント)への共通クライアント。
+ *
+ * 共有シークレットはヘッダー(GAS_BRIDGE_SECRET_HEADER)とURLクエリ(secret)の両方に付ける。Apps Script の
+ * Web App(doGet/doPost の e)はリクエストヘッダーを読めないため、Bridge.js は今もクエリの secret で認証
+ * しており、クエリは外せない。POST 本体で受け取るよう Bridge.js を変えたら(doc/api/attendance-batch.md
+ * 「Bridge.js 側の変更」)、クエリの secret は POST から外す。URL(シークレットを含む)はログ・例外の
+ * メッセージに入れないこと。
+ */
 export class GasBridgeClient {
   constructor(private readonly options: GasBridgeOptions) {}
 
@@ -30,6 +41,7 @@ export class GasBridgeClient {
     try {
       res = await fetch(url, {
         ...init,
+        headers: { ...init.headers, [GAS_BRIDGE_SECRET_HEADER]: this.options.secret },
         signal: AbortSignal.timeout(this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
       });
     } catch (error) {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ApiRequestError } from '../../../api/client';
 import { receiptsApi } from '../../../api/receipts';
 import { pushRecentCustomer } from '../../../lib/recentCustomers';
 import type { UserStorageScope } from '../../../lib/storage';
@@ -98,6 +99,9 @@ export function useReceipts(storageScope: UserStorageScope) {
       } catch (e) {
         console.error('OCR Failed', e);
         if (generation !== generationRef.current) return;
+        // 読み取りの失敗はGAS版と同じく知らせない(手で入れればよい)。ただし回数の上限に達したときは、
+        // 続けて写真を足しても読み取られないので知らせる
+        if (e instanceof ApiRequestError && e.code === 'rate_limited') showErrorToast(e);
         patchImage(id, (img) => ({
           loading: false,
           receiptDate: img.receiptDate || nowDatetimeLocal(),

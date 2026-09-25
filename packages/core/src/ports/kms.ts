@@ -20,7 +20,11 @@ export interface WrappedDek {
 export interface KeyManagementPort {
   /** 現在有効なKEKのバージョン。新規にDEKをラップする際に使う。 */
   readonly currentKekVersion: number;
-  wrap(dek: Buffer): Promise<WrappedDek>;
-  /** kekVersionが古い場合も含め、指定バージョンのKEKでアンラップできる必要がある。 */
-  unwrap(wrapped: WrappedDek): Promise<Buffer>;
+  /**
+   * DEKをラップする。tenantIdは追加認証データ(AAD)としてラップに結び付け、あるテナントの
+   * wrapped_dek を別のテナントの行にコピーしてもアンラップできないようにする。
+   */
+  wrap(dek: Buffer, tenantId: string): Promise<WrappedDek>;
+  /** kekVersionが古い場合も含め、指定バージョンのKEKでアンラップできる必要がある。tenantIdはwrapと同じ値。 */
+  unwrap(wrapped: WrappedDek, tenantId: string): Promise<Buffer>;
 }

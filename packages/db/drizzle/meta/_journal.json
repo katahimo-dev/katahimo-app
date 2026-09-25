@@ -15,6 +15,20 @@
       "when": 1790331289499,
       "tag": "0001_custom_constraints",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790346899042,
+      "tag": "0002_security_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790346908066,
+      "tag": "0003_app_role_privileges",
+      "breakpoints": true
     }
   ]
 }

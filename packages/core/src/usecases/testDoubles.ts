@@ -1,6 +1,8 @@
 import { createHash, createHmac } from 'node:crypto';
 import { isRetiredOn, jstBusinessDate } from '../domain';
 import { jstMonthInstantRange } from '../domain/calendarDate';
+import type { RateLimitBucket, RateLimitDecision, RateLimitRule } from '../domain/rateLimit';
+import { consumeRateLimit, peekRateLimit } from '../domain/rateLimit';
 import type { AiPromptRecord, AiPromptRepositoryPort, UpsertAiPromptInput } from '../ports/aiPrompts';
 import type { AppLogEntry, AppLogPort } from '../ports/appLog';
 import type {
@@ -9,7 +11,7 @@ import type {
   AttendanceDayRepositoryPort,
   SaveAttendanceDayInput,
 } from '../ports/attendanceDays';
-import type { BlindIndexPort, CryptoPort, EncryptedValue } from '../ports/crypto';
+import type { BlindIndexPort, CryptoPort, EncryptedValue, EncryptionPurpose } from '../ports/crypto';
 import type {
   CustomerCsvSourceFile,
   CustomerCsvSourcePort,
@@ -32,6 +34,7 @@ import type {
   PasswordResetCodeRecord,
   PasswordResetCodeRepositoryPort,
 } from '../ports/passwordResetCodes';
+import type { RateLimiterPort } from '../ports/rateLimiter';
 import type {
   AccidentReportRecord,
   AccidentReportRepositoryPort,
@@ -83,10 +86,10 @@ import type { PasswordHasherPort } from './auth/deps';
 
 /** 暗号化は行わず`ENC:平文`のタグを付けるだけの、検証しやすいフェイク実装。 */
 export class FakeCryptoPort implements CryptoPort {
-  async encrypt(_tenantId: string, plaintext: string): Promise<EncryptedValue> {
+  async encrypt(_tenantId: string, plaintext: string, _purpose: EncryptionPurpose): Promise<EncryptedValue> {
     return { ciphertext: `ENC:${plaintext}`, keyVersion: 1 };
   }
-  async decrypt(_tenantId: string, value: EncryptedValue): Promise<string> {
+  async decrypt(_tenantId: string, value: EncryptedValue, _purpose: EncryptionPurpose): Promise<string> {
     return value.ciphertext.replace(/^ENC:/, '');
   }
 }
@@ -145,7 +148,10 @@ export class FakePasswordResetCodeRepository implements PasswordResetCodeReposit
 
   async replaceActive(input: NewPasswordResetCodeInput, now: Date): Promise<PasswordResetCodeRecord> {
     for (const r of this.rows) {
-      if (r.tenantId === input.tenantId && r.staffId === input.staffId && !r.usedAt) r.usedAt = now;
+      if (r.tenantId === input.tenantId && r.staffId === input.staffId && !r.usedAt) {
+        r.usedAt = now;
+        r.mailCode = null;
+      }
     }
     const record: PasswordResetCodeRecord = {
       id: `reset-${++this.seq}`,
@@ -161,19 +167,58 @@ export class FakePasswordResetCodeRepository implements PasswordResetCodeReposit
     const candidates = this.rows.filter((r) => r.tenantId === tenantId && r.staffId === staffId && !r.usedAt);
     return candidates[candidates.length - 1] ?? null;
   }
-  async countIssuedSince(tenantId: string, staffId: string, since: Date): Promise<number> {
-    return this.rows.filter((r) => r.tenantId === tenantId && r.staffId === staffId && r.createdAt >= since)
-      .length;
+  async findById(tenantId: string, id: string): Promise<PasswordResetCodeRecord | null> {
+    return this.rows.find((r) => r.tenantId === tenantId && r.id === id) ?? null;
   }
-  async incrementAttempts(tenantId: string, id: string): Promise<number> {
+  /** 実装(条件付きUPDATE)と同じく、判定と加算の間に他の処理が割り込まない(同期的に行う)。 */
+  async registerAttempt(
+    tenantId: string,
+    id: string,
+    maxAttempts: number,
+    now: Date,
+  ): Promise<PasswordResetCodeRecord | null> {
     const row = this.rows.find((r) => r.tenantId === tenantId && r.id === id);
-    if (!row) return 0;
+    if (!row || row.usedAt || row.attemptCount >= maxAttempts || row.expiresAt <= now) return null;
     row.attemptCount += 1;
-    return row.attemptCount;
+    return { ...row };
+  }
+  async consume(tenantId: string, id: string, now: Date): Promise<boolean> {
+    const row = this.rows.find((r) => r.tenantId === tenantId && r.id === id);
+    if (!row || row.usedAt) return false;
+    row.usedAt = now;
+    row.mailCode = null;
+    return true;
   }
   async markUsed(tenantId: string, id: string, usedAt: Date): Promise<void> {
     const row = this.rows.find((r) => r.tenantId === tenantId && r.id === id);
-    if (row) row.usedAt = usedAt;
+    if (row) {
+      row.usedAt ??= usedAt;
+      row.mailCode = null;
+    }
+  }
+  async clearMailCode(tenantId: string, id: string): Promise<void> {
+    const row = this.rows.find((r) => r.tenantId === tenantId && r.id === id);
+    if (row) row.mailCode = null;
+  }
+}
+
+/** RateLimiterPortのインメモリ実装(判定はPostgres実装と同じくdomain/rateLimitの関数で行う)。 */
+export class FakeRateLimiter implements RateLimiterPort {
+  readonly buckets = new Map<string, RateLimitBucket>();
+
+  private keyOf(rule: RateLimitRule, key: string): string {
+    return `${rule.name}|${key}`;
+  }
+  async consume(rule: RateLimitRule, key: string, now: Date): Promise<RateLimitDecision> {
+    const { bucket, decision } = consumeRateLimit(this.buckets.get(this.keyOf(rule, key)) ?? null, rule, now);
+    this.buckets.set(this.keyOf(rule, key), bucket);
+    return decision;
+  }
+  async peek(rule: RateLimitRule, key: string, now: Date): Promise<RateLimitDecision> {
+    return peekRateLimit(this.buckets.get(this.keyOf(rule, key)) ?? null, rule, now);
+  }
+  async reset(rule: RateLimitRule, key: string): Promise<void> {
+    this.buckets.delete(this.keyOf(rule, key));
   }
 }
 
@@ -199,11 +244,17 @@ export class FakeAiPromptRepository implements AiPromptRepositoryPort {
 }
 
 export class FakePasswordHasherPort implements PasswordHasherPort {
+  /** verifyDummyが呼ばれた回数(応答時間をそろえるための空振りが行われたかの確認用)。 */
+  dummyVerifications = 0;
+
   async hash(password: string): Promise<string> {
     return `HASH:${password}`;
   }
   async verify(hash: string, password: string): Promise<boolean> {
     return hash === `HASH:${password}`;
+  }
+  async verifyDummy(_password: string): Promise<void> {
+    this.dummyVerifications++;
   }
 }
 
@@ -218,7 +269,12 @@ export class FakeTenantRepository implements TenantRepositoryPort {
     return this.rows.get(id) ?? null;
   }
   async create(input: NewTenantInput): Promise<TenantRecord> {
-    const record: TenantRecord = { id: `tenant-${++this.seq}`, name: input.name, slug: input.slug };
+    const record: TenantRecord = {
+      id: `tenant-${++this.seq}`,
+      name: input.name,
+      slug: input.slug,
+      status: 'active',
+    };
     this.rows.set(record.id, record);
     return record;
   }
@@ -226,7 +282,13 @@ export class FakeTenantRepository implements TenantRepositoryPort {
     return [...this.rows.values()];
   }
   async listActive(): Promise<TenantRecord[]> {
-    return [...this.rows.values()];
+    return [...this.rows.values()].filter((t) => t.status === 'active');
+  }
+
+  /** テスト専用: テナントを停止/再開する。 */
+  setStatusForTest(id: string, status: TenantRecord['status']): void {
+    const record = this.rows.get(id);
+    if (record) record.status = status;
   }
 }
 
@@ -298,16 +360,18 @@ export class FakeSessionRepository implements SessionRepositoryPort {
       tenantId: input.tenantId,
       staffId: input.staffId,
       expiresAt: input.expiresAt,
+      createdAt: input.createdAt,
       tokenHash: input.tokenHash,
     };
     this.rows.push(record);
-    return { id: record.id, tenantId: record.tenantId, staffId: record.staffId, expiresAt: record.expiresAt };
+    const { tokenHash: _tokenHash, ...session } = record;
+    return session;
   }
   async findByTokenHash(tenantId: string, tokenHash: string): Promise<SessionRecord | null> {
     const row = this.rows.find((s) => s.tenantId === tenantId && s.tokenHash === tokenHash);
-    return row
-      ? { id: row.id, tenantId: row.tenantId, staffId: row.staffId, expiresAt: row.expiresAt }
-      : null;
+    if (!row) return null;
+    const { tokenHash: _tokenHash, ...session } = row;
+    return session;
   }
   async updateExpiry(tenantId: string, sessionId: string, expiresAt: Date): Promise<void> {
     const row = this.rows.find((s) => s.tenantId === tenantId && s.id === sessionId);

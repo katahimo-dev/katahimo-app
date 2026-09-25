@@ -7,7 +7,13 @@ import { sessions } from '../schema';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function toRecord(row: typeof sessions.$inferSelect): SessionRecord {
-  return { id: row.id, tenantId: row.tenantId, staffId: row.staffId, expiresAt: row.expiresAt };
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    staffId: row.staffId,
+    expiresAt: row.expiresAt,
+    createdAt: row.createdAt,
+  };
 }
 
 export class DrizzleSessionRepository implements SessionRepositoryPort {

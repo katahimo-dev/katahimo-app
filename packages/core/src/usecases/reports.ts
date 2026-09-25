@@ -3,6 +3,7 @@ import {
   buildAccidentHistoryInternalText,
   buildAccidentReportNotificationText,
   buildDailyReportNotificationText,
+  ENCRYPTION_PURPOSES,
   formatJstDateTimeShort,
   parseJstDateTime,
 } from '../domain';
@@ -188,7 +189,11 @@ export async function saveDailyReport(
     occurredAt: input.reportDate ? parseJstDateTime(input.reportDate, input.startTime) : new Date(),
     riskRating: input.riskRating,
     esRating: input.esRating,
-    content: await deps.crypto.encrypt(tenantId, JSON.stringify(content)),
+    content: await deps.crypto.encrypt(
+      tenantId,
+      JSON.stringify(content),
+      ENCRYPTION_PURPOSES.dailyReportContent,
+    ),
   };
   const saved = existing
     ? await deps.dailyReports.update(tenantId, existing.id, record)
@@ -296,7 +301,11 @@ export async function saveAccidentReport(
     customerId: input.customerId,
     occurredAt: new Date(),
     reportType,
-    content: await deps.crypto.encrypt(tenantId, JSON.stringify(content)),
+    content: await deps.crypto.encrypt(
+      tenantId,
+      JSON.stringify(content),
+      ENCRYPTION_PURPOSES.accidentReportContent,
+    ),
   };
   const saved = existing
     ? await deps.accidentReports.update(tenantId, existing.id, record)
@@ -414,7 +423,9 @@ export async function getCustomerHistory(
 
   const dailyItems: HistoryItem[] = await Promise.all(
     dailyRecords.map(async (r) => {
-      const content = JSON.parse(await deps.crypto.decrypt(tenantId, r.content)) as DailyReportContent;
+      const content = JSON.parse(
+        await deps.crypto.decrypt(tenantId, r.content, ENCRYPTION_PURPOSES.dailyReportContent),
+      ) as DailyReportContent;
       return {
         type: 'daily' as const,
         id: r.id,
@@ -432,7 +443,9 @@ export async function getCustomerHistory(
 
   const accidentItems: HistoryItem[] = await Promise.all(
     accidentRecords.map(async (r) => {
-      const content = JSON.parse(await deps.crypto.decrypt(tenantId, r.content)) as AccidentReportContent;
+      const content = JSON.parse(
+        await deps.crypto.decrypt(tenantId, r.content, ENCRYPTION_PURPOSES.accidentReportContent),
+      ) as AccidentReportContent;
       return {
         type: 'accident' as const,
         id: r.id,

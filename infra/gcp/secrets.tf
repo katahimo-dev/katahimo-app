@@ -12,7 +12,7 @@ locals {
     "session-secret"         = ["api"]
     "blind-index-key"        = ["api"] # LOCAL_DEV_MASTER_KEY
     "legacy-auth-salt"       = ["api"] # GAS版の AUTH_SALT(移行期のみ)
-    "smtp-pass"              = ["api"]
+    "smtp-pass"              = ["worker"] # パスワード再設定メールはワーカーが送る
     "gemini-api-key"         = ["api"]
     "google-maps-api-key"    = ["api", "worker"]
     "gas-bridge-secret"      = ["api", "worker"]

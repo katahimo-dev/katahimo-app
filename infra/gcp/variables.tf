@@ -143,9 +143,8 @@ variable "optional_secrets" {
 
 variable "outbox_poller_enabled" {
   description = <<-EOT
-    outbox ポーラー(常駐の katahimo-worker サービス)を動かすか。ミラー書き込み(GAS_BRIDGE_URL +
-    MIRROR_TO_GOOGLE_SHEETS 等)を使わない間は outbox に何も積まれないか、積まれても送信先が無いため
-    false にしてよい(常時起動の固定費がかからない)。
+    outbox ポーラー(常駐の katahimo-worker サービス)を動かすか。パスワード再設定メールも outbox 経由で
+    ワーカーが送るため、本番では true のままにすること(false にすると再設定メールが届かない)。
   EOT
   type        = bool
   default     = true

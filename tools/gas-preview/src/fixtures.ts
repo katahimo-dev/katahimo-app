@@ -1,3 +1,4 @@
+import { SECRET_MASK_CHAR } from '@katahimo/shared';
 import { addDays, dayOfWeek } from './dates';
 import type { RowData } from './gasRuntime';
 
@@ -389,12 +390,19 @@ export function customerReports(customerId: string, today: string): FixtureRepor
 
 // ── 管理者設定 ────────────────────────────────────────────────
 
+/**
+ * 新アプリのサーバーは APIキー・Webhook URL を伏せ字にして返す(packages/core/src/usecases/settings.ts の
+ * maskApiKey / maskWebhookUrl と同じ形。GAS版は平文を返していた)。見比べでは、GAS版のモックにも同じ伏せ字の値を
+ * 返させて、伏せ字以外の見た目を比べる(README「分かっている違い」)。
+ */
+const MASK = SECRET_MASK_CHAR.repeat(8);
+
 export const ADMIN_SETTINGS = {
-  geminiApiKey: 'AIzaSyMOCK-0000000000000000000000000',
+  geminiApiKey: `${MASK}0000`,
   reportModel: 'gemini-2.5-flash',
   ocrModel: 'gemini-2.5-flash-lite',
-  reportWebhookUrl: 'https://chat.googleapis.com/v1/spaces/MOCK/messages?key=report',
-  receiptWebhookUrl: 'https://chat.googleapis.com/v1/spaces/MOCK/messages?key=receipt',
+  reportWebhookUrl: `https://chat.googleapis.com/v1/spaces/MOCK/messages?${MASK}`,
+  receiptWebhookUrl: `https://chat.googleapis.com/v1/spaces/MOCK/messages?${MASK}`,
 };
 
 export const AVAILABLE_MODELS = [

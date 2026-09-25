@@ -40,7 +40,7 @@ function respondSave(c: Context, result: SaveSettingsResult) {
 export function createSettingsRoutes(container: Container) {
   const app = new Hono<SessionEnv>();
 
-  /** 現在の管理者設定を復号して返す(閲覧はSECURITYログに残る)。 */
+  /** 現在の管理者設定を返す(APIキー・Webhook URLは伏せ字と設定済みフラグだけ)。 */
   app.get('/admin', requireAdmin(container, 'settings.admin.view'), async (c) => {
     return c.json({ settings: await getAdminSettings(container, actorOf(c)) });
   });

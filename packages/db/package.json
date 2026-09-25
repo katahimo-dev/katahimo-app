@@ -16,14 +16,14 @@
     "studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@katahimo/core": "workspace:*",
     "@katahimo/shared": "workspace:*",
-    "drizzle-orm": "^0.38.2",
-    "postgres": "^3.4.5",
     "dotenv": "^16.4.7",
-    "@katahimo/core": "workspace:*"
+    "drizzle-orm": "^0.45.3",
+    "postgres": "^3.4.5"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.30.1",
+    "drizzle-kit": "^0.31.11",
     "tsup": "^8.3.5"
   }
 }

@@ -3,6 +3,7 @@ import type {
   AuditLogPort,
   CryptoPort,
   EncryptedValue,
+  EncryptionPurpose,
   KeyManagementPort,
   TenantKeyRepositoryPort,
 } from '@katahimo/core/ports';
@@ -10,6 +11,21 @@ import type {
 interface CachedDek {
   dek: Buffer;
   dekVersion: number;
+}
+
+/** 暗号文の形式の版。保存する値の先頭に `v2:` を付ける(将来形式を変えるときに見分けるため)。 */
+const FORMAT_PREFIX = 'v2:';
+const NONCE_BYTES = 12;
+const TAG_BYTES = 16;
+
+/**
+ * AES-GCMの追加認証データ(AAD)。テナントIDと用途(`テーブル.列`)に結び付け、暗号文を別のテナント・
+ * 別の列にコピーすると復号に失敗する(認証タグの検証で改ざんとして検出される)ようにする。
+ * 行IDは含めない(多くの行はINSERTの時点でIDが決まらず、attendance_day_changes のように同じ暗号文を
+ * 別の行へ写す使い方もあるため)。
+ */
+export function fieldAad(tenantId: string, purpose: EncryptionPurpose): Buffer {
+  return Buffer.from(`katahimo/field/v2\0${tenantId}\0${purpose}`, 'utf8');
 }
 
 /**
@@ -22,14 +38,17 @@ interface CachedDek {
  * KeyManagementPort(KEK)でラップした状態のみをTenantKeyRepositoryPort経由でDBへ永続化する。
  *
  * DEKは初回アクセス時に遅延生成し(getOrCreateDek)、アンラップ結果をプロセス内メモリに
- * キャッシュする(GEOCODE_MEMO_CACHE_ 等と同様、プロセス生存期間のみ有効。DEKの実体を
- * リクエストのたびにKMS/DBへ問い合わせるコストを避けるため)。KEKローテーション(rewrap)は
- * DEKの値自体を変えないため、このキャッシュに影響しない。DEKそのもののローテーションは
- * 未実装(実行するとキャッシュ済みの古いDEKで復号できなくなるため、対応する再暗号化
- * バッチと合わせて実装する必要がある。将来の課題)。
+ * キャッシュする(プロセス生存期間のみ有効。DEKの実体をリクエストのたびにKMS/DBへ問い合わせる
+ * コストを避けるため)。KEKローテーション(rewrap)はDEKの値自体を変えないため、このキャッシュに
+ * 影響しない。DEKそのもののローテーションは未実装(対応する再暗号化バッチと合わせて実装する必要が
+ * ある。将来の課題)。
  *
  * アルゴリズムはAES-256-GCM(認証付き・値ごとにランダムなnonce)。同じ平文でも呼ぶたびに
  * 異なる暗号文になるため、決定的暗号化のような統計的漏洩がない。
+ *
+ * 保存形式(2026-09 のセキュリティレビューで変更): `v2:` + base64(nonce 12バイト | 認証タグ 16バイト |
+ * 暗号文)、AADは fieldAad(テナントID・用途)。それより前の形式(接頭辞なし・AADなし)は読めない
+ * (本番データはまだ無いため移行処理は持たない。開発DBは作り直す)。
  */
 export class LocalCryptoPort implements CryptoPort {
   private readonly dekCache = new Map<string, CachedDek>();
@@ -52,27 +71,30 @@ export class LocalCryptoPort implements CryptoPort {
     }
     if (!record) {
       const dek = randomBytes(32);
-      const wrapped = await this.kms.wrap(dek);
+      const wrapped = await this.kms.wrap(dek, tenantId);
       record = await this.tenantKeys.create(tenantId, wrapped.ciphertext, wrapped.kekVersion);
     }
 
-    const dek = await this.kms.unwrap({ ciphertext: record.wrappedDek, kekVersion: record.kekVersion });
+    const dek = await this.kms.unwrap(
+      { ciphertext: record.wrappedDek, kekVersion: record.kekVersion },
+      tenantId,
+    );
     const entry: CachedDek = { dek, dekVersion: record.dekVersion };
     this.dekCache.set(tenantId, entry);
     return entry;
   }
 
-  async encrypt(tenantId: string, plaintext: string): Promise<EncryptedValue> {
+  async encrypt(tenantId: string, plaintext: string, purpose: EncryptionPurpose): Promise<EncryptedValue> {
     const { dek, dekVersion } = await this.getOrCreateDek(tenantId);
-    const nonce = randomBytes(12);
+    const nonce = randomBytes(NONCE_BYTES);
     const cipher = createCipheriv('aes-256-gcm', dek, nonce);
+    cipher.setAAD(fieldAad(tenantId, purpose));
     const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-    const authTag = cipher.getAuthTag();
-    const payload = Buffer.concat([nonce, authTag, encrypted]);
-    return { ciphertext: payload.toString('base64'), keyVersion: dekVersion };
+    const payload = Buffer.concat([nonce, cipher.getAuthTag(), encrypted]);
+    return { ciphertext: `${FORMAT_PREFIX}${payload.toString('base64')}`, keyVersion: dekVersion };
   }
 
-  async decrypt(tenantId: string, value: EncryptedValue): Promise<string> {
+  async decrypt(tenantId: string, value: EncryptedValue, purpose: EncryptionPurpose): Promise<string> {
     const { dek, dekVersion } = await this.getOrCreateDek(tenantId);
     if (value.keyVersion !== dekVersion) {
       // 過去バージョンのDEKを保持する仕組みがまだ無いため、現在のDEKと異なるバージョンで
@@ -81,14 +103,19 @@ export class LocalCryptoPort implements CryptoPort {
         `未対応のDEKバージョンです(tenantId=${tenantId}, keyVersion=${value.keyVersion}, 現在のDEKバージョン=${dekVersion})。`,
       );
     }
+    if (!value.ciphertext.startsWith(FORMAT_PREFIX)) {
+      throw new Error(
+        `未対応の暗号文の形式です(tenantId=${tenantId}, 用途=${purpose})。2026-09 より前の形式の開発DBは作り直してください。`,
+      );
+    }
     this.auditLog?.recordDecrypt({ tenantId });
-    const payload = Buffer.from(value.ciphertext, 'base64');
-    const nonce = payload.subarray(0, 12);
-    const authTag = payload.subarray(12, 28);
-    const encrypted = payload.subarray(28);
+    const payload = Buffer.from(value.ciphertext.slice(FORMAT_PREFIX.length), 'base64');
+    const nonce = payload.subarray(0, NONCE_BYTES);
+    const authTag = payload.subarray(NONCE_BYTES, NONCE_BYTES + TAG_BYTES);
+    const encrypted = payload.subarray(NONCE_BYTES + TAG_BYTES);
     const decipher = createDecipheriv('aes-256-gcm', dek, nonce);
+    decipher.setAAD(fieldAad(tenantId, purpose));
     decipher.setAuthTag(authTag);
-    const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
-    return decrypted.toString('utf8');
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
   }
 }

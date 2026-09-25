@@ -1,12 +1,15 @@
 import type { AttendanceRowData } from '../domain/attendance';
 import { DEFAULT_RETRY_POLICY, decideOnFailure, type RetryPolicy } from '../domain/outbox';
+import { ENCRYPTION_PURPOSES } from '../domain/pii';
 import { formatJstDateTime } from '../domain/reports/jstTime';
 import type { AccidentReportContent, DailyReportContent } from '../domain/reports/types';
 import type { AppLogPort } from '../ports/appLog';
 import type { AttendanceDayRepositoryPort } from '../ports/attendanceDays';
-import type { CryptoPort } from '../ports/crypto';
+import type { CryptoPort, EncryptionPurpose } from '../ports/crypto';
+import type { MailerPort } from '../ports/mailer';
 import type { MirrorKind, OutboxJobRecord, OutboxRepositoryPort } from '../ports/mirror';
 import type { MirrorSenderPort } from '../ports/mirrorSender';
+import type { PasswordResetCodeRepositoryPort } from '../ports/passwordResetCodes';
 import type {
   AccidentReportRepositoryPort,
   CustomerRepositoryPort,
@@ -15,6 +18,7 @@ import type {
   StaffRepositoryPort,
 } from '../ports/repositories';
 import type { StoragePort } from '../ports/storage';
+import { sendPasswordResetMail } from './auth/passwordReset';
 
 export interface MirrorWorkerDeps {
   outbox: OutboxRepositoryPort;
@@ -27,6 +31,9 @@ export interface MirrorWorkerDeps {
   crypto: CryptoPort;
   storage: StoragePort;
   sender: MirrorSenderPort;
+  /** kind='password_reset_mail' のジョブ(パスワード再設定メール)の送信に使う。 */
+  passwordResetCodes: PasswordResetCodeRepositoryPort;
+  mailer: MailerPort;
   appLog: AppLogPort;
   /** 省略時は DEFAULT_RETRY_POLICY。 */
   retryPolicy?: RetryPolicy;
@@ -54,7 +61,7 @@ const mirrorDailyReport: JobHandler = async (deps, tenantId, targetId) => {
   const [staffName, customerName, json] = await Promise.all([
     staffNameOf(deps, tenantId, record.staffId),
     customerNameOf(deps, tenantId, record.customerId),
-    deps.crypto.decrypt(tenantId, record.content),
+    deps.crypto.decrypt(tenantId, record.content, ENCRYPTION_PURPOSES.dailyReportContent),
   ]);
   const content = JSON.parse(json) as DailyReportContent;
   await deps.sender.sendDailyReport({
@@ -79,7 +86,7 @@ const mirrorAccidentReport: JobHandler = async (deps, tenantId, targetId) => {
   const [staffName, customerName, json] = await Promise.all([
     staffNameOf(deps, tenantId, record.staffId),
     customerNameOf(deps, tenantId, record.customerId),
-    deps.crypto.decrypt(tenantId, record.content),
+    deps.crypto.decrypt(tenantId, record.content, ENCRYPTION_PURPOSES.accidentReportContent),
   ]);
   const content = JSON.parse(json) as AccidentReportContent;
   await deps.sender.sendAccidentReport({
@@ -106,14 +113,14 @@ const mirrorAccidentReport: JobHandler = async (deps, tenantId, targetId) => {
 const mirrorReceipt: JobHandler = async (deps, tenantId, targetId) => {
   const record = await deps.receipts.findById(tenantId, targetId);
   if (!record) return;
-  const decryptOrBlank = (value: typeof record.amount) =>
-    value ? deps.crypto.decrypt(tenantId, value) : Promise.resolve('');
+  const decryptOrBlank = (value: typeof record.amount, purpose: EncryptionPurpose) =>
+    value ? deps.crypto.decrypt(tenantId, value, purpose) : Promise.resolve('');
   const [staffName, customerName, amount, storeName, handoffText, imageBytes] = await Promise.all([
     staffNameOf(deps, tenantId, record.staffId),
     customerNameOf(deps, tenantId, record.customerId),
-    decryptOrBlank(record.amount),
-    decryptOrBlank(record.storeName),
-    decryptOrBlank(record.handoffText),
+    decryptOrBlank(record.amount, ENCRYPTION_PURPOSES.receiptAmount),
+    decryptOrBlank(record.storeName, ENCRYPTION_PURPOSES.receiptStoreName),
+    decryptOrBlank(record.handoffText, ENCRYPTION_PURPOSES.receiptHandoffText),
     deps.storage.get(record.fileKey),
   ]);
   if (!imageBytes) return;
@@ -136,7 +143,7 @@ const mirrorAttendanceDay: JobHandler = async (deps, tenantId, targetId) => {
   if (!record) return;
   const [staffName, json] = await Promise.all([
     staffNameOf(deps, tenantId, record.staffId),
-    deps.crypto.decrypt(tenantId, record.rowData),
+    deps.crypto.decrypt(tenantId, record.rowData, ENCRYPTION_PURPOSES.attendanceRowData),
   ]);
   const rowData = JSON.parse(json) as AttendanceRowData;
   const values = Object.fromEntries(
@@ -166,6 +173,7 @@ const HANDLERS: Partial<Record<MirrorKind, JobHandler>> = {
   receipt: mirrorReceipt,
   attendance_day: mirrorAttendanceDay,
   attendance_aggregate: mirrorAttendanceAggregate,
+  password_reset_mail: (deps, tenantId, targetId) => sendPasswordResetMail(deps, tenantId, targetId),
 };
 
 /**

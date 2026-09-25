@@ -17,15 +17,17 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Container } from '../container';
+import { enforceStaffQuota } from '../http/quota';
 import { requestMeta } from '../http/requestMeta';
 import { apiError, parseJsonBody } from '../http/responses';
 import type { SessionEnv } from '../session';
 import { requireSession, resolveReportTargetStaffId } from '../session';
 
 const HISTORY_LIMIT = 5;
+const AI_QUOTA_MESSAGE = '本日のAI生成の利用回数の上限に達しました。明日以降に再度お試しください。';
 
 const generateRequestSchema = z.object({
-  text: z.string().trim().min(1, 'text が必要です'),
+  text: z.string().trim().min(1, 'text が必要です').max(20_000, 'メモが長すぎます'),
   start: z.string().optional(),
   end: z.string().optional(),
 });
@@ -61,6 +63,13 @@ export function createReportRoutes(container: Container) {
     const session = c.get('session');
     const body = await parseJsonBody(c, generateRequestSchema);
     if (!body.ok) return body.response;
+    const limited = await enforceStaffQuota(
+      c,
+      container,
+      container.rateLimits.aiGenerateStaff,
+      AI_QUOTA_MESSAGE,
+    );
+    if (limited) return limited;
     const draft = await generateDailyReportDraft(container, session, body.data);
     return c.json({ draft });
   });
@@ -70,6 +79,13 @@ export function createReportRoutes(container: Container) {
     const session = c.get('session');
     const body = await parseJsonBody(c, generateRequestSchema);
     if (!body.ok) return body.response;
+    const limited = await enforceStaffQuota(
+      c,
+      container,
+      container.rateLimits.aiGenerateStaff,
+      AI_QUOTA_MESSAGE,
+    );
+    if (limited) return limited;
     const draft = await generateAccidentReportDraft(container, session, body.data);
     return c.json({ draft });
   });

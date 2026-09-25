@@ -4,6 +4,7 @@ export * from './auth';
 export * from './customers';
 export * from './mirrorWorker';
 export * from './notify';
+export * from './rateLimits';
 export * from './receipts';
 export * from './reportAi';
 export * from './reports';
