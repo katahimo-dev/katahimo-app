@@ -4,6 +4,7 @@
 // (google-chatは実装済み。google-mapsはGoogle Maps Platformの新規契約を避けるため、
 // gas-bridge/がGAS版Web Appをプロキシとして使う形で代替している)。
 export * from './audit';
+export * from './customer-csv';
 export * from './gas-bridge';
 export * from './gemini';
 export * from './google-chat';

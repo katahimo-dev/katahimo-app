@@ -1,46 +1,49 @@
-import { runOutboxBatch } from '@katahimo/core';
 import { getDatabase } from '@katahimo/db';
 import { createWorkerContainer } from './container';
 import { loadWorkerEnv } from './env';
+import { runCsvImportJob } from './jobs/csvImport';
+import { scheduleDailyJst } from './jobs/dailySchedule';
+import { logJson } from './jobs/log';
+import { runNightlyCalendarSyncJob } from './jobs/nightlyCalendarSync';
+import { runOutboxPoller } from './jobs/outboxPoller';
 import { loadDotenv } from './loadDotenv';
 
-// outboxミラー(Sheets/Drive)を実行するワーカー。夜間同期・CSV取込ポーリングは別Phaseで追加する。
-// Cloud Run Jobs / 常駐プロセスのどちらでも動くよう、単純なポーリングループにしてある。
+// 常駐ワーカー: outboxミラー(Sheets/Drive)のポーリングを続ける。
+// 夜間ジョブ(カレンダー反映・顧客CSV取込)は本番では Cloud Scheduler → Cloud Run Jobs で
+// entrypoints/*.ts を1回ずつ実行する。WORKER_IN_PROCESS_CRON=true のときだけ、ローカル開発用に
+// この常駐プロセスの中でも同じ時刻(JST 22:00 / 03:00)に実行する。
 
 loadDotenv();
 const env = loadWorkerEnv();
-const db = getDatabase();
-const container = createWorkerContainer(env, db);
+const container = createWorkerContainer(env, getDatabase());
 
 let stopping = false;
-process.on('SIGTERM', () => {
+const stopCron: Array<() => void> = [];
+const stop = (): void => {
   stopping = true;
-});
-process.on('SIGINT', () => {
-  stopping = true;
-});
+  for (const cancel of stopCron) cancel();
+};
+process.on('SIGTERM', stop);
+process.on('SIGINT', stop);
 
-async function pollOnce(): Promise<void> {
-  const tenants = await container.tenants.listAll();
-  for (const tenant of tenants) {
-    const { processed, failed } = await runOutboxBatch(container, tenant.id, env.OUTBOX_BATCH_SIZE);
-    if (processed > 0 || failed > 0) {
-      console.log(`[mirror] tenant=${tenant.slug} processed=${processed} failed=${failed}`);
-    }
-  }
+if (env.WORKER_IN_PROCESS_CRON) {
+  stopCron.push(
+    scheduleDailyJst(22, 0, async () => {
+      await runNightlyCalendarSyncJob(container);
+    }),
+    scheduleDailyJst(3, 0, async () => {
+      await runCsvImportJob(container);
+    }),
+  );
+  logJson('INFO', 'プロセス内の定期実行を有効にしました(夜間反映 22:00 / 顧客CSV取込 03:00 JST)');
 }
 
-async function mainLoop(): Promise<void> {
-  console.log(`katahimo worker を起動しました(ポーリング間隔: ${env.OUTBOX_POLL_INTERVAL_MS}ms)`);
-  while (!stopping) {
-    try {
-      await pollOnce();
-    } catch (e) {
-      console.error('[mirror] ポーリング中にエラーが発生しました', e);
-    }
-    await new Promise((resolve) => setTimeout(resolve, env.OUTBOX_POLL_INTERVAL_MS));
-  }
-  console.log('katahimo worker を停止しました');
-}
-
-mainLoop();
+logJson('INFO', 'katahimo worker を起動しました', { pollIntervalMs: env.OUTBOX_POLL_INTERVAL_MS });
+runOutboxPoller(container, {
+  intervalMs: env.OUTBOX_POLL_INTERVAL_MS,
+  batchSize: env.OUTBOX_BATCH_SIZE,
+  shouldStop: () => stopping,
+}).then(() => {
+  logJson('INFO', 'katahimo worker を停止しました');
+  process.exit(0);
+});

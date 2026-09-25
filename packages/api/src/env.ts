@@ -1,4 +1,14 @@
+import { parseTenantFolderMap } from '@katahimo/integrations';
 import { z } from 'zod';
+
+/**
+ * 'true'/'1' だけを真とする機能フラグ。z.coerce.boolean() は文字列 'false' も真にしてしまう
+ * (空でない文字列は Boolean() で true)ため使わない。
+ */
+const booleanFlag = z
+  .string()
+  .optional()
+  .transform((value) => value === 'true' || value === '1');
 
 /**
  * 環境変数の検証。起動時に一度だけ実行し、足りない設定は起動前に落とす。
@@ -56,8 +66,24 @@ const envSchema = z.object({
   LOCAL_RECEIPT_STORAGE_DIR: z.string().default('./data/receipts'),
 
   // スプレッドシート脱却時はここを false にするだけでミラーが止まる
-  MIRROR_TO_GOOGLE_SHEETS: z.coerce.boolean().default(false),
-  MIRROR_TO_GOOGLE_CALENDAR: z.coerce.boolean().default(false),
+  MIRROR_TO_GOOGLE_SHEETS: booleanFlag,
+  MIRROR_TO_GOOGLE_CALENDAR: booleanFlag,
+
+  // 顧客CSV(RESERVA「Kokyaku_YYYYMMDDHHmm_N.csv」)の自動取込元(GAS版 CUSTOMER_CSV_FOLDER_ID)。
+  // CUSTOMER_CSV_DRIVE_FOLDERS: {"テナントslug": "DriveフォルダID"} のJSON(サービスアカウントに閲覧権限を共有する)。
+  // CUSTOMER_CSV_LOCAL_DIR: ローカル開発用。<dir>/<テナントslug>/ に置いたCSVを読む(Driveの設定が無い場合のみ)。
+  CUSTOMER_CSV_DRIVE_FOLDERS: z
+    .string()
+    .optional()
+    .transform((value, ctx) => {
+      try {
+        return parseTenantFolderMap(value);
+      } catch (e) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: e instanceof Error ? e.message : String(e) });
+        return z.NEVER;
+      }
+    }),
+  CUSTOMER_CSV_LOCAL_DIR: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

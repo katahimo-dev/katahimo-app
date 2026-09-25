@@ -18,7 +18,10 @@
     "db:generate": "pnpm --filter @katahimo/db generate",
     "db:migrate": "pnpm --filter @katahimo/db migrate",
     "db:seed": "pnpm --filter @katahimo/db seed",
-    "db:studio": "pnpm --filter @katahimo/db studio"
+    "db:studio": "pnpm --filter @katahimo/db studio",
+    "worker": "pnpm --filter @katahimo/worker start",
+    "job:nightly-calendar-sync": "pnpm --filter @katahimo/worker job:nightly-calendar-sync",
+    "job:csv-import": "pnpm --filter @katahimo/worker job:csv-import"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.0",

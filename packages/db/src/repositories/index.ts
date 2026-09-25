@@ -4,6 +4,7 @@ export * from './appLogRepository';
 export * from './appSettingsRepository';
 export * from './attendanceDayRepository';
 export * from './attributeRepository';
+export * from './customerImportStateRepository';
 export * from './customerRepository';
 export * from './customerStaffAffinityRepository';
 export * from './dailyReportRepository';

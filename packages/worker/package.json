@@ -9,11 +9,15 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "dev": "tsx watch src/main.ts",
-    "start": "tsx src/main.ts"
+    "start": "tsx src/main.ts",
+    "outbox:once": "tsx src/entrypoints/outboxOnce.ts",
+    "job:nightly-calendar-sync": "tsx src/entrypoints/nightlyCalendarSync.ts",
+    "job:csv-import": "tsx src/entrypoints/csvImport.ts"
   },
   "dependencies": {
     "@katahimo/core": "workspace:*",
     "@katahimo/db": "workspace:*",
+    "@katahimo/ingestion": "workspace:*",
     "@katahimo/integrations": "workspace:*",
     "@katahimo/shared": "workspace:*",
     "dotenv": "^16.4.7",

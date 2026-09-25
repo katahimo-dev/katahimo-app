@@ -1,5 +1,6 @@
 import type {
   AppLogPort,
+  CustomerCsvSourcePort,
   MapsPort,
   MirrorPort,
   NotifierPort,
@@ -14,6 +15,7 @@ import {
   DrizzleAppLogRepository,
   DrizzleAppSettingsRepository,
   DrizzleAttendanceDayRepository,
+  DrizzleCustomerImportStateRepository,
   DrizzleCustomerRepository,
   DrizzleDailyReportRepository,
   DrizzleFamilyMemberRepository,
@@ -26,6 +28,7 @@ import {
 } from '@katahimo/db/repositories';
 import {
   ConsoleAuditLogPort,
+  createCustomerCsvSource,
   GasBridgeMapsPort,
   GasBridgeSchedulePort,
   GeminiAiPort,
@@ -86,6 +89,10 @@ export interface Container {
   mirror: MirrorPort;
   /** アプリ操作ログ・監査ログ(app_logs)。GAS版 logToBuffer に相当。 */
   appLog: AppLogPort;
+  /** 顧客CSV取込の状態(最後に取り込んだ版・data_version)。 */
+  importState: DrizzleCustomerImportStateRepository;
+  /** 顧客CSVの取込元(Google Drive / ローカルディレクトリ)。管理者の手動取込で使う。 */
+  csvSource: CustomerCsvSourcePort;
   /** GAS版 Script Properties AUTH_SALT と同じ値。移行済みスタッフのログインにのみ使う。 */
   legacyAuthSalt?: string;
 }
@@ -137,6 +144,11 @@ export function createContainer(env: Env, db: Database): Container {
     schedule: gasBridgeOptions ? new GasBridgeSchedulePort(gasBridgeOptions) : new NoopSchedulePort(),
     mirror: env.MIRROR_TO_GOOGLE_SHEETS ? new DrizzleOutboxRepository(db) : new NoopMirrorPort(),
     appLog: new DrizzleAppLogRepository(db),
+    importState: new DrizzleCustomerImportStateRepository(db),
+    csvSource: createCustomerCsvSource({
+      driveFolderIdsByTenantSlug: env.CUSTOMER_CSV_DRIVE_FOLDERS,
+      localDir: env.CUSTOMER_CSV_LOCAL_DIR,
+    }),
     legacyAuthSalt: env.LEGACY_AUTH_SALT,
   };
 }
