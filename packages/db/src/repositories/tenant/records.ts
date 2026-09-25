@@ -11,7 +11,7 @@ import type {
   StoredFileRepository,
   StoredFileRow,
 } from '@katahimo/core/ports';
-import { and, asc, desc, eq, gte, lt, notExists, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lt, notExists, sql } from 'drizzle-orm';
 import {
   careRecords,
   dataExportRequests,
@@ -86,11 +86,9 @@ export class DrizzleCareRecordRepository extends TenantBound implements CareReco
         and(
           eq(careRecords.tenantId, this.tenantId),
           eq(careRecords.customerId, customerId),
+          // 行の比較にすると (tenant_id, customer_id, occurred_at DESC, id DESC) の索引の範囲で読める
           after
-            ? or(
-                lt(careRecords.occurredAt, after.occurredAt),
-                and(eq(careRecords.occurredAt, after.occurredAt), lt(careRecords.id, after.id)),
-              )
+            ? sql`(${careRecords.occurredAt}, ${careRecords.id}) < (${after.occurredAt.toISOString()}::timestamptz, ${after.id}::uuid)`
             : undefined,
         ),
       )
