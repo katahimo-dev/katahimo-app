@@ -1,3 +1,12 @@
+import {
+  ATTENDANCE_SLOTS,
+  COMMUTE_DISTANCE_COLUMN,
+  LEAVING_DISTANCE_COLUMN,
+  MOVE_LEGS,
+  type MoveLeg,
+  SHOPPING_ERRAND_COLUMN,
+  SNOW_WEATHER,
+} from './sheetLayout';
 import type {
   AttendanceDayDerived,
   AttendanceMonthlyDay,
@@ -10,14 +19,11 @@ import type {
 } from './types';
 
 /**
- * 出勤簿テンプレート(出勤簿テンプレート.xlsx)の数式を再現した純粋計算関数群。
+ * 出勤簿テンプレート(出勤簿テンプレート.xlsx)の数式列を再現した純粋計算関数群。
  *
- * 移植元: gas-childcare-visit-app/AttendanceCalc.js(webapp-poc/server/attendanceCalc.jsと
- * バイト単位で同一のロジック)。ロジックは一切変更せず、型を付けただけの移植。
- * 給与計算に直結するため(Ver.1.0.5で「AL35に日次の式がそのままドラッグコピーされ、
- * 月合計の基準距離超過回数が過大計上されていた」不具合が発生した実績がある)、
- * このファイルの計算式は実データでGAS版と数値が完全一致することを確認してから
- * 本番切替すること(移行計画のPhase 6検証ゲート)。
+ * 移植元: gas-childcare-visit-app/AttendanceCalc.js。計算式は一切変えていない
+ * (列の参照を sheetLayout.ts の名前付き定義経由にしただけ)。給与計算に直結するため、
+ * 変更時は attendanceCalc.test.ts(GAS版の実行結果を正解とした回帰テスト)が通ることを必ず確認する。
  */
 
 const CORE_START_MIN = 10 * 60; // 10:00
@@ -25,6 +31,8 @@ const CORE_END_MIN = 17 * 60; // 17:00
 const OVER_THRESHOLD_KM = 15;
 const OVER_THRESHOLD_STEP_KM = 5;
 const SNOW_MOVE_MULTIPLIER = 1.3;
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 export function parseTimeToMinutes(hhmm: string | undefined | null): number | null {
   if (!hhmm || typeof hhmm !== 'string') return null;
@@ -50,10 +58,8 @@ function toNumberOrNull(v: string | undefined | null): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
-/** computeMoveChainの戻り値(number | '')を、'' なら0として扱う。 */
-function numOrZero(v: number | ''): number {
-  return v === '' ? 0 : v;
-}
+const numberOrZero = (v: string | undefined): number => toNumberOrNull(v) || 0;
+const blankToZero = (v: number | ''): number => (v === '' ? 0 : v);
 
 /**
  * F/G/J/K(またはO/P/S/T)相当。ある訪問の終業時刻・次の移動の計画時間・気象状況・
@@ -70,25 +76,26 @@ export function computeMoveChain(
   const nextStartMin = parseTimeToMinutes(nextStartTime);
 
   const weatherAdjustedMoveMin =
-    planned === null ? null : weather === '雪' ? planned * SNOW_MOVE_MULTIPLIER : planned;
-
-  let moveEndMin: number | null = null;
-  if (moveStartMin !== null && planned !== null) {
-    moveEndMin = moveStartMin + planned;
-  }
-
-  let waitMin: number | null = null;
-  if (moveEndMin !== null && nextStartMin !== null) {
-    waitMin = Math.max(0, nextStartMin - moveEndMin);
-  }
+    planned === null ? null : weather === SNOW_WEATHER ? planned * SNOW_MOVE_MULTIPLIER : planned;
+  const moveEndMin = moveStartMin !== null && planned !== null ? moveStartMin + planned : null;
+  const waitMin =
+    moveEndMin !== null && nextStartMin !== null ? Math.max(0, nextStartMin - moveEndMin) : null;
 
   return {
     moveStart: moveStartMin === null ? '' : formatMinutesToTime(moveStartMin),
     moveEnd: moveEndMin === null ? '' : formatMinutesToTime(moveEndMin),
-    weatherAdjustedMoveMin:
-      weatherAdjustedMoveMin === null ? '' : Math.round(weatherAdjustedMoveMin * 100) / 100,
+    weatherAdjustedMoveMin: weatherAdjustedMoveMin === null ? '' : round2(weatherAdjustedMoveMin),
     waitMin: waitMin === null ? '' : Math.round(waitMin),
   };
+}
+
+function computeLegMoveChain(rowData: AttendanceRowData, leg: MoveLeg): MoveChainResult {
+  return computeMoveChain(
+    rowData[leg.from.end],
+    rowData[leg.plannedMinutes],
+    rowData[leg.weather],
+    rowData[leg.to.start],
+  );
 }
 
 /**
@@ -119,27 +126,25 @@ export function isMtgLabel(label: string | undefined): boolean {
 
 /**
  * AD(労働時間数)/AE(残業時間)相当。訪問3件+事務作業2件、計5つの時間帯を集計する。
+ * 事務作業の内容に「mtg」を含む時間帯は全体を所定内として扱う。
+ *
+ * workedMinutes(所定内+所定外)は画面の「働いた時間」用。AD列は所定内しか数えないため、
+ * 17時以降の訪問だけの日に0分と表示されてしまう問題(GAS版 2026-09-17)への対応でGAS版に追加された値。
  */
 export function computeLaborAndOvertime(rowData: AttendanceRowData): LaborAndOvertime {
-  const blocks = [
-    { start: rowData.D, end: rowData.E, mtg: false },
-    { start: rowData.M, end: rowData.N, mtg: false },
-    { start: rowData.V, end: rowData.W, mtg: false },
-    { start: rowData.Y, end: rowData.Z, mtg: isMtgLabel(rowData.X) },
-    { start: rowData.AB, end: rowData.AC, mtg: isMtgLabel(rowData.AA) },
-  ];
-
   let laborMinutes = 0;
   let overtimeMinutes = 0;
-  for (const b of blocks) {
-    const { core, overtime } = splitCoreAndOvertimeMinutes(b.start, b.end, b.mtg);
+  for (const slot of ATTENDANCE_SLOTS) {
+    const isMtg = slot.kind === 'office' && isMtgLabel(rowData[slot.title]);
+    const { core, overtime } = splitCoreAndOvertimeMinutes(rowData[slot.start], rowData[slot.end], isMtg);
     laborMinutes += core;
     overtimeMinutes += overtime;
   }
 
   return {
     laborMinutes: Math.round(laborMinutes),
-    overtimeMinutes: Math.round(overtimeMinutes * 100) / 100,
+    overtimeMinutes: round2(overtimeMinutes),
+    workedMinutes: Math.round(laborMinutes + overtimeMinutes),
   };
 }
 
@@ -155,51 +160,59 @@ export function countOverThreshold(distances: Array<string | undefined>): number
 }
 
 /**
- * AM(訪問等回数)相当: AH(#2移動距離)が数値なら3、AG(#1移動距離)が数値なら2、
- * AI/AJ(出勤/退勤距離)のどちらかが数値なら1、それ以外は0。
+ * AM(訪問等回数)相当: #2→#3移動距離が数値なら3、#1→#2移動距離が数値なら2、
+ * 出勤/退勤距離のどちらかが数値なら1、それ以外は0。
  */
 export function computeVisitCount(rowData: AttendanceRowData): number {
-  const ag = toNumberOrNull(rowData.AG);
-  const ah = toNumberOrNull(rowData.AH);
-  const ai = toNumberOrNull(rowData.AI);
-  const aj = toNumberOrNull(rowData.AJ);
-  if (ah !== null) return 3;
-  if (ag !== null) return 2;
-  if (ai !== null || aj !== null) return 1;
+  const [leg1, leg2] = MOVE_LEGS;
+  if (toNumberOrNull(rowData[leg2.distanceKm]) !== null) return 3;
+  if (toNumberOrNull(rowData[leg1.distanceKm]) !== null) return 2;
+  if (
+    toNumberOrNull(rowData[COMMUTE_DISTANCE_COLUMN]) !== null ||
+    toNumberOrNull(rowData[LEAVING_DISTANCE_COLUMN]) !== null
+  ) {
+    return 1;
+  }
   return 0;
 }
 
+/** 1日の距離の列(#1→#2、#2→#3、出勤、退勤)の値。 */
+function distanceValues(rowData: AttendanceRowData): Array<string | undefined> {
+  return [
+    ...MOVE_LEGS.map((leg) => rowData[leg.distanceKm]),
+    rowData[COMMUTE_DISTANCE_COLUMN],
+    rowData[LEAVING_DISTANCE_COLUMN],
+  ];
+}
+
 /**
- * AF/AK/AL/AM相当。leg1MoveMin/leg2MoveMinは天候補正後の値(J/S)を使う。
+ * AF/AK/AL/AM相当。移動時間は天候補正後の値(J/S)を使う。
  */
 export function computeDistanceAggregates(
   rowData: AttendanceRowData,
   leg1WeatherAdjustedMoveMin: number | '',
   leg2WeatherAdjustedMoveMin: number | '',
 ): DistanceAggregates {
-  const j = numOrZero(leg1WeatherAdjustedMoveMin);
-  const s = numOrZero(leg2WeatherAdjustedMoveMin);
-  const ag = toNumberOrNull(rowData.AG) || 0;
-  const ah = toNumberOrNull(rowData.AH) || 0;
-  const ai = toNumberOrNull(rowData.AI) || 0;
-  const aj = toNumberOrNull(rowData.AJ) || 0;
+  const distances = distanceValues(rowData);
+  const totalDistance = distances.reduce((sum: number, d) => sum + numberOrZero(d), 0);
 
   return {
-    totalMoveMin: Math.round((j + s) * 100) / 100,
-    totalDistanceKm: Math.round((ag + ah + ai + aj) * 100) / 100,
-    overThresholdCount: countOverThreshold([rowData.AG, rowData.AH, rowData.AI, rowData.AJ]),
+    totalMoveMin: round2(blankToZero(leg1WeatherAdjustedMoveMin) + blankToZero(leg2WeatherAdjustedMoveMin)),
+    totalDistanceKm: round2(totalDistance),
+    overThresholdCount: countOverThreshold(distances),
     visitCount: computeVisitCount(rowData),
   };
 }
 
 /**
- * 1日分のrow_dataから、テンプレートの数式列に相当する派生値をすべて計算する。
+ * 1日分のrowDataから、テンプレートの数式列に相当する派生値をすべて計算する。
  */
 export function computeDayDerived(rowData: AttendanceRowData | undefined | null): AttendanceDayDerived {
   const data = rowData ?? {};
-  const leg1 = computeMoveChain(data.E, data.H, data.I, data.M);
-  const leg2 = computeMoveChain(data.N, data.Q, data.R, data.V);
-  const { laborMinutes, overtimeMinutes } = computeLaborAndOvertime(data);
+  const [leg1Def, leg2Def] = MOVE_LEGS;
+  const leg1 = computeLegMoveChain(data, leg1Def);
+  const leg2 = computeLegMoveChain(data, leg2Def);
+  const labor = computeLaborAndOvertime(data);
   const distanceAgg = computeDistanceAggregates(
     data,
     leg1.weatherAdjustedMoveMin,
@@ -215,8 +228,9 @@ export function computeDayDerived(rowData: AttendanceRowData | undefined | null)
     leg2MoveEnd: leg2.moveEnd,
     leg2WeatherAdjustedMoveMin: leg2.weatherAdjustedMoveMin,
     leg2WaitMin: leg2.waitMin,
-    laborMinutes,
-    overtimeMinutes,
+    laborMinutes: labor.laborMinutes,
+    overtimeMinutes: labor.overtimeMinutes,
+    workedMinutes: labor.workedMinutes,
     totalMoveMin: distanceAgg.totalMoveMin,
     totalDistanceKm: distanceAgg.totalDistanceKm,
     overThresholdCount: distanceAgg.overThresholdCount,
@@ -225,50 +239,34 @@ export function computeDayDerived(rowData: AttendanceRowData | undefined | null)
 }
 
 /**
- * 月合計(テンプレート35行目相当)。ALは日次ALの合計(SUM(AL4:AL34)相当)。
- * かつてテンプレートのAL35に、SUMではなく日次の超過回数の式が誤ってそのまま
- * ドラッグコピーされていた不具合(月合計distanceに対して式を再適用してしまい
- * 超過回数が過大計上される)があったため、日次の値を単純合計する形に修正済み
- * (Ver.1.0.5、01_GAS/CHANGELOG.md参照)。
+ * 月合計(テンプレート35行目相当)。基準距離超過回数は日次の値の単純合計(SUM(AL4:AL34)相当)。
+ * かつてテンプレートのAL35に日次の式が誤ってドラッグコピーされ、月合計距離に式を再適用して
+ * 超過回数が過大計上されていた不具合(Ver.1.0.5で修正)を再発させないため。
  */
 export function computeMonthlyTotals(days: AttendanceMonthlyDay[]): AttendanceMonthlyTotals {
-  let laborMinutes = 0;
-  let overtimeMinutes = 0;
-  let totalMoveMin = 0;
-  let sumAG = 0;
-  let sumAH = 0;
-  let sumAI = 0;
-  let sumAJ = 0;
-  let overThresholdCount = 0;
-  let visitCountTotal = 0;
-  let shoppingErrandTotal = 0;
+  const [leg1, leg2] = MOVE_LEGS;
+  const sum = (pick: (day: AttendanceMonthlyDay) => number): number =>
+    days.reduce((acc, day) => acc + pick(day), 0);
+  const sumColumn = (column: keyof AttendanceRowData): number =>
+    sum((day) => numberOrZero(day.rowData[column]));
 
-  for (const { rowData, derived } of days) {
-    laborMinutes += derived.laborMinutes;
-    overtimeMinutes += derived.overtimeMinutes;
-    totalMoveMin += derived.totalMoveMin;
-    sumAG += toNumberOrNull(rowData.AG) || 0;
-    sumAH += toNumberOrNull(rowData.AH) || 0;
-    sumAI += toNumberOrNull(rowData.AI) || 0;
-    sumAJ += toNumberOrNull(rowData.AJ) || 0;
-    overThresholdCount += derived.overThresholdCount;
-    visitCountTotal += derived.visitCount;
-    shoppingErrandTotal += toNumberOrNull(rowData.AN) || 0;
-  }
-
-  const totalDistanceKm = Math.round((sumAG + sumAH + sumAI + sumAJ) * 100) / 100;
+  const leg1Distance = sumColumn(leg1.distanceKm);
+  const leg2Distance = sumColumn(leg2.distanceKm);
+  const commuteDistance = sumColumn(COMMUTE_DISTANCE_COLUMN);
+  const leavingDistance = sumColumn(LEAVING_DISTANCE_COLUMN);
 
   return {
-    laborMinutes: Math.round(laborMinutes),
-    overtimeMinutes: Math.round(overtimeMinutes * 100) / 100,
-    totalMoveMin: Math.round(totalMoveMin * 100) / 100,
-    leg1DistanceKmTotal: Math.round(sumAG * 100) / 100,
-    leg2DistanceKmTotal: Math.round(sumAH * 100) / 100,
-    attendanceDistanceKmTotal: Math.round(sumAI * 100) / 100,
-    leavingDistanceKmTotal: Math.round(sumAJ * 100) / 100,
-    totalDistanceKm,
-    overThresholdCount,
-    visitCountTotal,
-    shoppingErrandTotal: Math.round(shoppingErrandTotal * 100) / 100,
+    laborMinutes: Math.round(sum((d) => d.derived.laborMinutes)),
+    overtimeMinutes: round2(sum((d) => d.derived.overtimeMinutes)),
+    workedMinutes: Math.round(sum((d) => d.derived.workedMinutes)),
+    totalMoveMin: round2(sum((d) => d.derived.totalMoveMin)),
+    leg1DistanceKmTotal: round2(leg1Distance),
+    leg2DistanceKmTotal: round2(leg2Distance),
+    attendanceDistanceKmTotal: round2(commuteDistance),
+    leavingDistanceKmTotal: round2(leavingDistance),
+    totalDistanceKm: round2(leg1Distance + leg2Distance + commuteDistance + leavingDistance),
+    overThresholdCount: sum((d) => d.derived.overThresholdCount),
+    visitCountTotal: sum((d) => d.derived.visitCount),
+    shoppingErrandTotal: round2(sumColumn(SHOPPING_ERRAND_COLUMN)),
   };
 }

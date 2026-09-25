@@ -8,7 +8,11 @@ export const apiErrorSchema = z.object({
     'not_found',
     'validation_failed',
     'conflict',
+    /** 月ロック等、期限切れで変更できない */
+    'locked',
     'rate_limited',
+    /** 外部サービス(カレンダー・GAS Bridge等)から結果を得られなかった */
+    'upstream_unavailable',
     'internal',
   ]),
   message: z.string(),

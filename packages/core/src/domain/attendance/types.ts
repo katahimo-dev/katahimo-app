@@ -1,47 +1,11 @@
+import type { AttendanceColumnKey } from '@katahimo/shared';
+
 /**
- * 出勤簿テンプレート(出勤簿テンプレート.xlsx)の入力列1日分。
- * 移植元: gas-childcare-visit-app/AttendanceCalc.js のコメント、
- * PastSchedule.js の PAST_SCHEDULE_INPUT_COLUMNS。
- *
- * 列名(C/D/E等)はスプレッドシートの列記号をそのままキーにしている。読みにくく見えるが、
- * GAS版・webapp-poc版と全く同じキー名にしておくことで、実データを使った数値照合
- * (このオブジェクトをそのまま両実装に渡して出力を比較する)が row_data の変換なしにできる、
- * という利点を優先した意図的な選択(Phase 7で実データ突き合わせを行う際にそのまま使う)。
- *
- *   C/D/E = #1訪問先/始業/終業, I = #1後の気象状況, H = #1→#2計画移動時間(分)
- *   L/M/N = #2訪問先/始業/終業, R = #2後の気象状況, Q = #2→#3計画移動時間(分)
- *   U/V/W = #3訪問先/始業/終業
- *   X/Y/Z = 事務作業1/開始/終了, AA/AB/AC = 事務作業2/開始/終了
- *   AG = #1移動距離(km), AH = #2移動距離(km), AI = 出勤距離(km), AJ = 退勤距離(km)
- *   AN = 買物代行, AO = 備考
+ * 出勤簿1日分の入力列。キーは出勤簿スプレッドシートの列記号(attendance_days.row_data と同じ形)。
+ * 各列の意味は sheetLayout.ts を参照(業務ロジックは列記号を直接書かず、そちらの名前付き定義を使う)。
+ * 労働時間・残業などの派生値(テンプレートの数式列)は含まない。
  */
-export interface AttendanceRowData {
-  C?: string;
-  D?: string;
-  E?: string;
-  H?: string;
-  I?: string;
-  L?: string;
-  M?: string;
-  N?: string;
-  Q?: string;
-  R?: string;
-  U?: string;
-  V?: string;
-  W?: string;
-  X?: string;
-  Y?: string;
-  Z?: string;
-  AA?: string;
-  AB?: string;
-  AC?: string;
-  AG?: string;
-  AH?: string;
-  AI?: string;
-  AJ?: string;
-  AN?: string;
-  AO?: string;
-}
+export type AttendanceRowData = Partial<Record<AttendanceColumnKey, string>>;
 
 export interface MoveChainResult {
   moveStart: string;
@@ -58,6 +22,8 @@ export interface CoreAndOvertime {
 export interface LaborAndOvertime {
   laborMinutes: number;
   overtimeMinutes: number;
+  /** 所定内+所定外 = 実際に働いた時間(laborMinutes は所定内だけ)。 */
+  workedMinutes: number;
 }
 
 export interface DistanceAggregates {
@@ -78,6 +44,7 @@ export interface AttendanceDayDerived {
   leg2WaitMin: number | '';
   laborMinutes: number;
   overtimeMinutes: number;
+  workedMinutes: number;
   totalMoveMin: number;
   totalDistanceKm: number;
   overThresholdCount: number;
@@ -92,6 +59,7 @@ export interface AttendanceMonthlyDay {
 export interface AttendanceMonthlyTotals {
   laborMinutes: number;
   overtimeMinutes: number;
+  workedMinutes: number;
   totalMoveMin: number;
   leg1DistanceKmTotal: number;
   leg2DistanceKmTotal: number;
