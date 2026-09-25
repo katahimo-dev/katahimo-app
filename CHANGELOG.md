@@ -1,5 +1,68 @@
 # 更新履歴 (katahimo-app)
 
+## [Ver. 0.2.0] - 2026-09-25
+
+### データベースの作り直し(新しいベースライン)
+
+公開前のため互換性を持たずにスキーマを作り直し、マイグレーションを `0000_baseline.sql`(drizzle-kit)と
+`0001_baseline_custom.sql`(手書き)の2本にした。**開発DBは作り直しが必要**(`infra/initdb` の SQL でロールから作り直し、
+`pnpm db:migrate`・`pnpm db:seed`・CSV取込をやり直す。Docker はボリューム名が `katahimo-pgdata-17-v2` に変わる)。
+構造は `doc/09`(ER図・ロール・暗号化・outbox・保存期間)。
+
+- **テナント分離**: 主キー `(tenant_id, id)`、テナントの表への外部キーは全て `tenant_id` を含む複合キー、全テーブルの
+  `tenant_id` は `platform.tenants` へ。`app_current_tenant()` が NULL のときは何も見えない。全テーブル FORCE RLS。
+  テナント・プラン・レート制限等は `platform` スキーマ。テナントは `platform.provision_tenant()` だけが作る。
+- **ロール**: `katahimo_owner`(所有者)/ `katahimo_migrator`(マイグレーション・テナント作成)/ `katahimo_app`(API)/
+  `katahimo_worker`(ワーカー。専用の `WORKER_DATABASE_URL`)/ `katahimo_readonly`。権限はテーブルごとに明示し、
+  追記専用の表(履歴・変更記録・操作ログ)は SELECT・INSERT だけ。
+- **型**: 列挙は text + CHECK、期間は `tstzrange` / `daterange` の `[開始, 終了)`、`row_version`(楽観的排他)、
+  `updated_at` はトリガー、`archived_at`・`retired_on`。ID はアプリが UUIDv7 で採番する。
+- **出勤簿**: 1日1行の JSON をやめ、入れ物(`attendance_days`)と訪問・事務作業・移動の実体に分けた。GAS版の列記号の
+  `rowData` との対応は `sheetLayout.ts` だけが持つ(画面・API の契約と GAS版との一致テストは変えていない)。変更は差分で書き、
+  変更前の値を `entity_changes` に残す。訪問の時間帯の重なりは EXCLUDE 制約、締めた月はトリガーが拒否する。
+  4件目以降の訪問は保存し、出勤簿には出さない(WARN ログ)。距離は常に小数2桁(`6` → `6.00`)。
+- **顧客**: 住所・緊急連絡先・子ども・取込元の ID を別の表にし、取込は1トランザクションの差分適用(ID を保つ。
+  消えた顧客・子どもはアーカイブ、戻れば戻す)。取込の記録は `import_runs`、データの版数は `tenant_settings`。
+- **記録**: 日報・事故報告・ヒヤリハットを `care_records` にまとめ、本文の変更前はトリガーが `care_record_revisions` に残す。
+- **領収書**: 登録の束(`receipt_uploads`、申し送りは束に1つ)・ファイル(`stored_files`)・領収書に分け、重複は
+  `dedupe_bidx` の部分 UNIQUE + `ON CONFLICT DO NOTHING`(同時の登録でも1件)。拡張子・種類は画像の中身から決め、
+  登録に失敗したら保存した画像を消す。
+- **暗号化**: 暗号文は自己記述のバイト列(v3: 形式・DEK の版・nonce・暗号文・タグ)、AAD にテナント・列・行ID。
+  DEK は版ごとに複数持て(`tenant_data_keys`)、`kek_key_name` で KEK を確かめる。ブラインドインデックスは
+  `HKDF(マスター, テナント, 用途)` + 鍵の版。復号の監査は操作ごとに1件。
+- **outbox**: `outbox_messages` に決定的な `dedupe_key` で同じトランザクションに積み、ワーカーが1件ずつリースを付けて取り出す
+  (FOR UPDATE SKIP LOCKED)。試行回数の上限はメッセージごと。
+- **操作ログ**: `app_logs` を月のパーティションにし、保守ジョブ(`job:maintenance`、毎日 04:00)が先のパーティションを作り、
+  保存期間(既定13か月)を過ぎたものを消す。セッション・outbox・再設定コード等の保存期間も同じジョブが扱う。
+- **マッチング・ライフサイクル**: 予約・割当・属性・勤務可能時間帯・相性・マッチングの記録、データの書き出し・開示請求・
+  保存期間の表を用意した(表だけ。doc/10)。
+
+### サーバー
+
+- すべての DB の読み書きを Unit of Work(`uow.run(tenantId, repos => …)`)にし、リポジトリはテナントIDを受け取らない。
+- 楽観的排他: 出勤簿・報告の応答に `rowVersion`、更新の要求に省略可能な `rowVersion`(食い違えば 409)。
+  出勤簿の読み→書きはその日の行を押さえる。報告の上書きで顧客・担当スタッフは変えられない(409)。
+- 活動記録のページングをキーセット(`nextCursor`)にした(同じ時刻の記録があっても重複・抜けが無い)。
+- エラーの応答を `app.onError` の1か所にまとめ(`DomainError` → code、想定外は 500 internal でログにだけ詳細)、
+  リクエストごとの構造化ログとリクエストID(`X-Request-Id`)を追加。成功の応答も契約のスキーマに通してから返す。
+- 役割に `coordinator`(他のスタッフの予定・出勤簿・報告を扱えるが管理者設定はできない)を追加し、`isAdmin` を `role` にした。
+- 予定の取得はスタッフIDで対象を決める(同姓同名でも取り違えない)。外部サービスの失敗は一般的な文言の 502。
+- 夜間のカレンダー反映・在籍の判定はテナントのタイムゾーンの業務日。
+- 顧客・スタッフのマスタのキャッシュは顧客データの版数ごと(取込で作り直す)。同時の読み込みは1回にまとめる。
+- API とワーカーで同じでなければならない環境変数を1か所にまとめた(`sharedEnvShape`)。ワーカーも
+  `MIRROR_TO_GOOGLE_SHEETS` に従う(無効なら残っているミラーを送らずに完了にする)。
+- 停止処理: API は SIGTERM / SIGINT で受付を止めて接続プールを閉じ、8秒で強制終了。ワーカーは待ち時間をすぐに抜け、
+  処理中の1件を終えてから止まり、ジョブには上限時間がある。
+- 環境変数の名前の変更: `LOCAL_DEV_MASTER_KEY` → `BLIND_INDEX_MASTER_KEY`、ワーカーは `WORKER_DATABASE_URL`。
+
+### 開発
+
+- vitest 5 の projects(unit / integration / web)にし、DB の結合テスト(カタログの約束事・テナントの分離・複合外部キー・
+  UoW のロールバック・row_version・EXCLUDE・締めのトリガー・本文の履歴・キーセット・領収書の同時登録・outbox の同時取り出し)
+  と API のルートのテスト(エラーの形・admin-vs-self)を追加。CI でも動く。
+- `exactOptionalPropertyTypes`・`noImplicitReturns`(サーバー側)、Biome の `noFloatingPromises` を有効にした。
+- 使っていない依存を外した。
+
 ## [Ver. 0.1.1] - 2026-09-25
 
 ### CI・運用

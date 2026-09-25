@@ -16,7 +16,7 @@ GAS版 `gas-childcare-visit-app` の `Auth.js` / `Main.js` / `GeminiReport.js` /
 
 | メソッド・パス | 権限 | リクエスト | レスポンス | 契約 | 主なログ |
 | --- | --- | --- | --- | --- | --- |
-| `POST /login` | 誰でも | `{tenantSlug, email, password}`。`email` はメール・サブメール(`alt_email`)のどちらでもよい | `{staff: {staffId, tenantId, name, email, isAdmin}}` + Cookie。失敗は401「メールアドレスまたはパスワードが違います」、退職済み(パスワード一致後に判定)は401「ログイン権限のないユーザーです」、テナント停止中(同)は401「ご利用の法人は現在利用を停止しています。…」、失敗が続いてロック中は429 | `loginRequestSchema` / `sessionUserResponseSchema` | 成功 INFO `auth.login.succeeded`、失敗 SECURITY `auth.login.failed`(テナント不明時は tenant_id=null)、ロック開始 SECURITY `auth.login.lockout_started`、ロック中の試行 SECURITY `auth.login.locked` |
+| `POST /login` | 誰でも | `{tenantSlug, email, password}`。`email` はメール・サブメール(`alt_email`)のどちらでもよい | `{staff: {staffId, tenantId, name, email, role}}` + Cookie(`role` は `staff` / `coordinator` / `admin`)。失敗は401「メールアドレスまたはパスワードが違います」、退職済み(パスワード一致後に判定)は401「ログイン権限のないユーザーです」、テナント停止中(同)は401「ご利用の法人は現在利用を停止しています。…」、失敗が続いてロック中は429 | `loginRequestSchema` / `sessionUserResponseSchema` | 成功 INFO `auth.login.succeeded`、失敗 SECURITY `auth.login.failed`(テナント不明時は tenant_id=null)、ロック開始 SECURITY `auth.login.lockout_started`、ロック中の試行 SECURITY `auth.login.locked` |
 | `GET /me` | ログイン中 | - | `{staff}`。無効なら401 | `sessionUserResponseSchema` | ページ読込扱いで INFO `auth.session.auto_login` / WARN `auth.session.auto_login_failed` |
 | `POST /logout` | 誰でも | - | `{ok: true}`。セッション行を削除しCookieを消す | - | INFO `auth.logout` |
 | `POST /change-password` | ログイン中 | `{currentPassword, newPassword}`(8〜128文字) | `{success: true, message}`。操作中以外のセッションは失効 | `changePasswordRequestSchema` / `changePasswordResponseSchema` | SECURITY `auth.password_change.succeeded` / `.failed`、未ログイン WARN `auth.password_change.access_denied` |
@@ -57,14 +57,18 @@ GAS版 `gas-childcare-visit-app` の `Auth.js` / `Main.js` / `GeminiReport.js` /
 
 | メソッド・パス | 権限 | リクエスト | レスポンス | 契約 |
 | --- | --- | --- | --- | --- |
-| `POST /daily` | ログイン中 | `{reportId?, staffId?, customerId, reportDate?, startTime, endTime, inputText, internalText, customerText, riskRating?, esRating?}` | `{success: true, message, report}` | `saveDailyReportRequestSchema` / `saveDailyReportResponseSchema` |
-| `POST /accident` | ログイン中 | `{reportId?, staffId?, customerId, reportType('事故報告'/'ヒヤリハット'), targetName, …, inputText}` | `{success: true, report}` | `saveAccidentReportRequestSchema` / `saveAccidentReportResponseSchema` |
-| `POST /daily/generate`・`/accident/generate` | ログイン中 | `{text, start?, end?}` | `{draft}`。プロンプトはテナントの編集版(無ければ既定) | - |
-| `POST /visit-complete` | ログイン中 | `{staffId?, customerId, visitDate, startTime, endTime}` | `{success: true}` | - |
-| `GET /history?customerId=&before=` | ログイン中 | - | `{items}`(5件) | - |
+| `POST /daily` | ログイン中 | `{reportId?, rowVersion?, staffId?, customerId, reportDate?, startTime, endTime, inputText, internalText, customerText, riskRating?, esRating?}` | `{success: true, message, report}`(`report.rowVersion` を含む) | `saveDailyReportRequestSchema` / `saveDailyReportResponseSchema` |
+| `POST /accident` | ログイン中 | `{reportId?, rowVersion?, staffId?, customerId, reportType('事故報告'/'ヒヤリハット'), targetName, …, inputText}` | `{success: true, report}` | `saveAccidentReportRequestSchema` / `saveAccidentReportResponseSchema` |
+| `POST /daily/generate`・`/accident/generate` | ログイン中 | `{text, start?, end?}` | `{draft}`。プロンプトはテナントの編集版(無ければ既定) | `generateReportRequestSchema` |
+| `POST /visit-complete` | ログイン中 | `{staffId?, customerId, visitDate, startTime, endTime}` | `{success: true}` | `visitCompleteRequestSchema` |
+| `GET /history?customerId=&before=` | ログイン中 | `before` は前の応答の `nextCursor` | `{items, nextCursor}`(5件ずつ。続きが無ければ `nextCursor: null`) | `customerHistoryQuerySchema` / `customerHistoryResponseSchema` |
 
-- 担当スタッフ: 管理者以外は常に本人(`staffId` は無視)。管理者は `staffId` 指定 → 上書き対象の元の担当者 → 本人 の順。
-- **上書き(`reportId`)の権限**: 管理者以外は自分の報告しか上書きできない(403、SECURITY `report.<daily|accident>.save_denied`)。GAS版は行番号さえ分かれば他人の日報を上書きできた穴を塞いだ。存在しない `reportId` は404。`reportId` の報告が送られた `customerId` のお客様のものでなければ409 `conflict`(WARN `report.<daily|accident>.save_denied` reason `customer_mismatch`。別のお客様の日報を開き直したあとに前の保存が届いた場合などに、前のお客様の報告を書きかえないため)。
+- 担当スタッフ: 一般スタッフは常に本人(`staffId` は無視)。管理者・コーディネーターは `staffId` 指定 → 上書き対象の元の担当者 → 本人 の順。
+- 日報・事故報告・ヒヤリハットは `care_records` の1行(本文は暗号化した JSON)。上書きで本文が変わるとトリガーが変更前を
+  `care_record_revisions` に残す。`rowVersion` を送れば、他の人が先に保存していた場合に 409 `conflict`。
+- 活動記録は `(occurred_at DESC, id DESC)` のキーセットで読む(同じ時刻の記録があっても重複・抜けが無い)。`before` が
+  読めなければ 400。
+- **上書き(`reportId`)の権限**: 管理者以外は自分の報告しか上書きできない(403、SECURITY `report.<daily|accident>.save_denied`)。GAS版は行番号さえ分かれば他人の日報を上書きできた穴を塞いだ。存在しない `reportId` は404。`reportId` の報告が送られた `customerId` のお客様のものでなければ409 `conflict`(WARN `report.<daily|accident>.save_denied` reason `customer_mismatch`。別のお客様の日報を開き直したあとに前の保存が届いた場合などに、前のお客様の報告を書きかえないため)。同じく担当スタッフの異なる報告を指定して上書きしようとした場合も409(reason `author_mismatch`)。
 - 保存成功で INFO `report.<daily|accident>.saved`(管理者が他スタッフ名義で保存した場合は target_staff_id に担当者)。
 - Google Chat通知の未設定は WARN `notification.gchat.not_configured`、送信失敗は ERROR `notification.gchat.failed`(保存自体は成功扱い)。
 
@@ -119,9 +123,9 @@ GAS版 `gas-childcare-visit-app` の `Auth.js` / `Main.js` / `GeminiReport.js` /
 
 | メソッド・パス | リクエスト | レスポンス | 契約 | ログ |
 | --- | --- | --- | --- | --- |
-| `GET /` | - | `{staff: [{id, name, email, altEmail, phone, isAdmin, retirementDate, isRetired, passwordStatus}]}`(退職者を含む) | `adminStaffListResponseSchema` | - |
-| `POST /` | `{name, email, altEmail?, phone?, isAdmin, initialPassword?}`。初期パスワード省略時は未設定(本人がパスワード再設定で設定) | 201 `{staff}` | `createStaffRequestSchema` / `adminStaffResponseSchema` | SECURITY `staff.admin.created` |
-| `PATCH /:id` | `{name?, email?, altEmail?, phone?, isAdmin?, retirementDate?}`(nullで削除) | `{staff}` | `updateStaffRequestSchema` / `adminStaffResponseSchema` | SECURITY `staff.admin.updated`(変更した項目名) |
+| `GET /` | - | `{staff: [{id, name, email, altEmail, phone, role, retiredOn, isRetired, passwordStatus}]}`(退職者を含む) | `adminStaffListResponseSchema` | - |
+| `POST /` | `{name, email, altEmail?, phone?, role, initialPassword?}`。初期パスワード省略時は未設定(本人がパスワード再設定で設定) | 201 `{staff}` | `createStaffRequestSchema` / `adminStaffResponseSchema` | SECURITY `staff.admin.created` |
+| `PATCH /:id` | `{name?, email?, altEmail?, phone?, role?, retiredOn?}`(nullで削除)。退職日を設定するとそのスタッフのセッションを全て失効させる | `{staff}` | `updateStaffRequestSchema` / `adminStaffResponseSchema` | SECURITY `staff.admin.updated`(変更した項目名) |
 
 - email/altEmailはテナント内で両列を跨いで一意(409 `conflict`、`fields` に項目名)。
 - 自分自身の管理者権限の解除・退職日設定は400(管理者不在の事故防止)。

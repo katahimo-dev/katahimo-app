@@ -26,7 +26,7 @@ flowchart LR
   subgraph run[Cloud Run asia-northeast1]
     api[katahimo-api<br/>サービス: API + Web画面<br/>min 0 / max 3]
     worker[katahimo-worker<br/>サービス: outbox ポーラー<br/>min=max=1, ingress internal]
-    jobs[Cloud Run Jobs<br/>migrate / nightly-calendar-sync /<br/>csv-import / sync-busy-blocks]
+    jobs[Cloud Run Jobs<br/>migrate / nightly-calendar-sync /<br/>csv-import / maintenance / sync-busy-blocks]
   end
   sched[Cloud Scheduler<br/>22:00 / 03:00 JST] -->|jobs.run| jobs
   api & worker & jobs -->|Unix ソケット /cloudsql| sql[(Cloud SQL<br/>PostgreSQL)]
@@ -55,9 +55,11 @@ flowchart LR
   (`outbox_poller_enabled = true`。SMTP の設定・`smtp-pass` はワーカーに渡す)。
 - **jobs**: 同じ worker イメージの別コマンド(`node dist/<job>.js`、migrate は `node db/dist/migrate.js`)。
   失敗すると終了コード1になり、Cloud Run Jobs の再試行とアラートに乗る。
-- **鍵**: テナントごとの DEK は Cloud KMS の `tenant-kek` でラップして DB(`tenant_keys`)に保存する
-  (`KMS_PROVIDER=gcp`、`CloudKmsPort`)。blind index の HMAC 鍵(`LOCAL_DEV_MASTER_KEY`、名前は開発用だが
-  本番も使う)は Secret Manager に置く。`LOCAL_DEV_KEK` は本番では使わない。
+- **鍵**: テナントごとの DEK は Cloud KMS の `tenant-kek` でラップして DB(`tenant_data_keys`、版ごと)に保存する
+  (`KMS_PROVIDER=gcp`、`CloudKmsPort`)。ブラインドインデックスのマスター鍵(`BLIND_INDEX_MASTER_KEY`)は
+  Secret Manager に置く。`LOCAL_DEV_KEK` は本番では使わない。
+- **DB ユーザー**: API は `katahimo_app`(`database-url`)、ワーカー・ジョブは `katahimo_worker`(`worker-database-url`)、
+  migrate は `katahimo_migrator`(`migration-database-url`)。ロールと権限は doc/09 第1.4節。
 - **本番の起動時検証**: `NODE_ENV=production` のとき、API・ワーカーとも次を満たさなければ起動前に落ちる:
   `KMS_PROVIDER=gcp` + `GCP_KMS_KEY_NAME`、`STORAGE_PROVIDER=gcs` + `GCS_BUCKET`、`SCHEDULE_PROVIDER` の明示、
   (ワーカーのみ)`SMTP_HOST`、(API のみ)32文字以上の `SESSION_SECRET`。
@@ -98,14 +100,14 @@ postgres.js のプールは1プロセスあたり `DB_POOL_MAX` 本(既定10)。
 | --- | --- | --- |
 | api | `api_max_instances`(3)× `api_db_pool_max`(5) | 15 |
 | worker(常駐) | 1 × 3 | 3 |
-| 夜間ジョブ | 1 × 3(同時に動くのは通常1つ) | 3 |
+| 夜間ジョブ(nightly-calendar-sync / csv-import / maintenance) | 1 × 3(時刻をずらしており、同時に動くのは通常1つ) | 3 |
 | migrate | 1 × 1 | 1 |
 | 運用者(psql 等) | | 数本 |
 
 合計を Cloud SQL の `max_connections` 未満に保つ。`db-g1-small` の既定は 50 程度(要確認。
 `SHOW max_connections;` で確認できる)。API を増やすときは `api_max_instances × api_db_pool_max` を見直す。
 
-RLS との関係: `withTenant()`(`packages/db/src/client.ts`)はトランザクション内で
+RLS との関係: Unit of Work(`packages/db/src/uow.ts` → `withTenant()`)はトランザクション内で
 `set_config('app.tenant_id', …, true)`(= `SET LOCAL`)を使うため、設定はトランザクション終了で消え、
 プールの接続が別テナントのリクエストに使い回されても漏れない。トランザクションモードの接続プーラー
 (PgBouncer / Cloud SQL のマネージド接続プーリング)を前に置いても同じ理由で安全だが、postgres.js の
@@ -170,24 +172,28 @@ Cloud Shell で Auth Proxy を起動し(別タブ)、psql で2つのスクリプ
 # タブ1
 cloud-sql-proxy "$(terraform -chdir=infra/gcp output -raw sql_connection_name)" --port 5432
 # タブ2
-export KATAHIMO_OWNER_PASSWORD="$(openssl rand -hex 24)"
+export KATAHIMO_MIGRATOR_PASSWORD="$(openssl rand -hex 24)"
 export KATAHIMO_APP_PASSWORD="$(openssl rand -hex 24)"
+export KATAHIMO_WORKER_PASSWORD="$(openssl rand -hex 24)"
 psql "host=127.0.0.1 port=5432 user=postgres dbname=postgres" \
-  -v owner_password="$KATAHIMO_OWNER_PASSWORD" -v app_password="$KATAHIMO_APP_PASSWORD" \
+  -v migrator_password="$KATAHIMO_MIGRATOR_PASSWORD" -v app_password="$KATAHIMO_APP_PASSWORD" \
+  -v worker_password="$KATAHIMO_WORKER_PASSWORD" \
   -f infra/cloudsql/00_roles_and_database.sql
 psql "host=127.0.0.1 port=5432 user=postgres dbname=katahimo" -f infra/cloudsql/01_bootstrap.sql
 ```
 
-- `00`: ロール `katahimo`(テーブル所有者・マイグレーション用)と `katahimo_app`(アプリ用)を素の LOGIN ロールと
-  して作り、`katahimo` が所有するデータベース `katahimo` を作る。`gcloud sql users create` / Terraform の
+- `00`: ロールを作る(doc/09 第1.4節)。`katahimo_owner`(NOLOGIN、全テーブル・関数の所有者)、`katahimo_migrator`
+  (LOGIN、owner のメンバーでログインすると `SET ROLE katahimo_owner`。マイグレーション・テナントの作成)、
+  `katahimo_app`(API)、`katahimo_worker`(ワーカー・ジョブ)、`katahimo_readonly`(NOLOGIN、将来の分析用)。
+  所有者が `katahimo_owner` のデータベース `katahimo` を作る。`gcloud sql users create` / Terraform の
   `google_sql_user` で作ると自動で `cloudsqlsuperuser`(CREATEROLE / CREATEDB 付き)のメンバーになるため使わない。
-  `postgres` を `katahimo` のメンバーにする(DB の所有者指定と既定権限の設定に必要)。再実行するとパスワードを
-  設定し直す(ローテーションにも使う)。
-- `01`: `btree_gist` 拡張(Cloud SQL の対応拡張。PostgreSQL 13 以降は trusted extension)、`katahimo_app` への
-  CONNECT / USAGE、`katahimo` が今後作るテーブル・シーケンスへの既定権限(SELECT/INSERT/UPDATE/DELETE、
-  USAGE/SELECT)。PUBLIC からは CONNECT を外す。ローカルの `infra/initdb/01_bootstrap.sql` と同じ権限構成。
-- どちらのロールも `rolsuper = f`・`rolbypassrls = f` であることをスクリプト末尾の SELECT で確認する。
-  テーブルは FORCE ROW LEVEL SECURITY のため、所有者 `katahimo` でもテナント分離は効く。
+  `postgres` を `katahimo_owner` のメンバーにする(DB の所有者の指定に必要)。再実行するとパスワードを設定し直す
+  (ローテーションにも使う)。
+- `01`: `btree_gist` 拡張(Cloud SQL の対応拡張)、ログインロールへの CONNECT、`katahimo_owner` への CREATE、
+  public スキーマの所有者を `katahimo_owner` にして PUBLIC の CREATE を外す。テーブルごとの権限は既定権限に頼らず
+  マイグレーション(`0001_baseline_custom.sql`)が明示的に付ける。ローカルの `infra/initdb/01_bootstrap.sql` と同じ。
+- どのロールも `rolsuper = f`・`rolbypassrls = f` であることをスクリプト末尾の SELECT で確認する。
+  テーブルは FORCE ROW LEVEL SECURITY のため、所有者でもテナントを設定しなければ何も読めない。
 - **Cloud SQL 固有の注意(要確認)**: `cloudsqlsuperuser` は BYPASSRLS を持たない想定。運用者が全テナント横断で
   調べたいときは、スーパーユーザーではなく `SET app.tenant_id = '<id>'` をテナントごとに設定して読む。
 
@@ -204,9 +210,10 @@ add() { printf '%s' "$2" | gcloud secrets versions add "katahimo-$1" --data-file
 CONN="$(terraform -chdir=infra/gcp output -raw sql_connection_name)"
 
 add database-url           "postgres://katahimo_app:${KATAHIMO_APP_PASSWORD}@/katahimo?host=/cloudsql/${CONN}"
-add migration-database-url "postgres://katahimo:${KATAHIMO_OWNER_PASSWORD}@/katahimo?host=/cloudsql/${CONN}"
+add worker-database-url    "postgres://katahimo_worker:${KATAHIMO_WORKER_PASSWORD}@/katahimo?host=/cloudsql/${CONN}"
+add migration-database-url "postgres://katahimo_migrator:${KATAHIMO_MIGRATOR_PASSWORD}@/katahimo?host=/cloudsql/${CONN}"
 add session-secret         "$(openssl rand -hex 32)"
-add blind-index-key        "$(openssl rand -hex 32)"   # LOCAL_DEV_MASTER_KEY。後から変えられない(下記)
+add blind-index-key        "$(openssl rand -hex 32)"   # BLIND_INDEX_MASTER_KEY。後から変えられない(下記)
 add smtp-pass              '<SMTP のパスワード>'
 add google-maps-api-key    '<Maps API キー>'
 add gemini-api-key         '<Gemini API キー>'
@@ -219,12 +226,14 @@ add gas-bridge-secret      '<GAS版 Script Properties の BRIDGE_API_SECRET>'
   (上の `openssl rand -hex` なら不要)。
 - 任意のシークレット(smtp-pass / google-maps-api-key / gemini-api-key / legacy-auth-salt / gas-bridge-secret)
   は、値を登録したものだけを `terraform.tfvars` の `optional_secrets` に列挙する。
-- `blind-index-key` を変えると既存の検索用インデックス(メール・氏名の blind index)が引けなくなる。
-  `KMS_PROVIDER` も途中で変えない(既存の `tenant_keys` を復号できなくなる)。
+- `blind-index-key` を変えると既存のブラインドインデックス(領収書の重複判定)が引けなくなる。
+  `KMS_PROVIDER` も途中で変えない(既存の `tenant_data_keys` を復号できなくなる。`kek_key_name` で検出する)。
+- DB の接続はロールごとに別の secret(`database-url` = API、`worker-database-url` = ワーカー・ジョブ、
+  `migration-database-url` = migrate ジョブ)。サービスアカウントは自分の secret しか読めない(infra/gcp/secrets.tf)。
 
 ### 3.5 Google 連携の準備
 
-- **カレンダー**: 各スタッフのカレンダー(`staff.calendar_id`)と `google_calendar_ids` のカレンダーを、
+- **カレンダー**: 各スタッフのカレンダー(`staff_calendars`)と `google_calendar_ids` のカレンダーを、
   `terraform output service_accounts` の **api と worker** のメールアドレスに「予定の表示(すべての予定の詳細)」
   で共有する(夜間反映はワーカー、画面表示は API が読む)。ドメイン全体の委任(`GOOGLE_CALENDAR_IMPERSONATE`)は
   サービスアカウントキーが必要になるため使わない。
@@ -266,7 +275,7 @@ Scheduler は `scheduler_paused = true`(既定)の間は一時停止状態で作
 gcloud run jobs execute katahimo-migrate --region="$REGION" --wait
 ```
 
-`MIGRATION_DATABASE_URL`(所有者 `katahimo`)で `packages/db/drizzle` を適用する。以後は Cloud Build が
+`MIGRATION_DATABASE_URL`(`katahimo_migrator` → 所有者 `katahimo_owner`)で `packages/db/drizzle` を適用する。以後は Cloud Build が
 デプロイの前に毎回実行する。
 
 ### 3.9 動作確認
@@ -285,14 +294,16 @@ curl -sI "$URL/" | grep -i cache-control   # no-cache
 
 テナント・スタッフ・顧客の投入(`packages/api/src/scripts/`: `seed.ts` / `importStaffMasterCsv.ts` /
 `importReservaCsv.ts`)は現状イメージに含めていない。当面は作業者の端末(または Cloud Shell)から
-Auth Proxy 経由で本番 DB に向けて実行する:
+Auth Proxy 経由で本番 DB に向けて実行する。テナントの作成は `platform.provision_tenant()`(`katahimo_migrator` だけが
+実行できる)を使うため `MIGRATION_DATABASE_URL` も要る(`seed.ts` の `provisionTenant` と同じ手順。本番用のテナント作成の
+CLI は未作成):
 
 ```bash
 cloud-sql-proxy "$CONN" --port 5433 &
 gcloud auth application-default login   # KMS の鍵を使うため(作業者に cryptoKeyEncrypterDecrypter を一時付与)
 DATABASE_URL="postgres://katahimo_app:${KATAHIMO_APP_PASSWORD}@127.0.0.1:5433/katahimo" \
 KMS_PROVIDER=gcp GCP_KMS_KEY_NAME="$(terraform -chdir=infra/gcp output -raw kms_key_name)" \
-LOCAL_DEV_MASTER_KEY="$(gcloud secrets versions access latest --secret=katahimo-blind-index-key)" \
+BLIND_INDEX_MASTER_KEY="$(gcloud secrets versions access latest --secret=katahimo-blind-index-key)" \
 SESSION_SECRET=unused-for-scripts-0000 \
   pnpm --filter @katahimo/api import:staff-master -- <テナントslug> <CSVパス>
 ```
@@ -364,7 +375,7 @@ resource.labels.service_name="katahimo-worker" AND jsonPayload.failed>0
 | アラート | 条件(既定) | 重大度 |
 | --- | --- | --- |
 | `katahimo-api: 5xx 応答の増加` | `run.googleapis.com/request_count` の 5xx が 5 分間に `alert_api_5xx_threshold`(5)件を超えた。利用者が少なく割合だと1件で跳ねるため件数で見る | ERROR |
-| `katahimo ジョブ: 実行の失敗` | `run.googleapis.com/job/completed_execution_count` の `result=failed`(再試行を使い切った失敗)。対象は migrate / nightly-calendar-sync / csv-import / sync-busy-blocks | ERROR |
+| `katahimo ジョブ: 実行の失敗` | `run.googleapis.com/job/completed_execution_count` の `result=failed`(再試行を使い切った失敗)。対象は migrate / nightly-calendar-sync / csv-import / maintenance / sync-busy-blocks | ERROR |
 | `katahimo-db: 資源の逼迫` | CPU 80% が 15 分・ディスク 80%・接続数(`num_backends` の合計)が `alert_sql_connections_threshold`(40)超 | WARNING |
 | `katahimo-api: 外形監視の失敗` | `https://<API のホスト>/api/health` を 3 地域から 5 分ごとに確認し、2 地域以上で 10 分間失敗。ホストは Cloud Run の URL(独自ドメインにしたら `uptime_check_host`)。`deploy_workloads = true` のときに作る | CRITICAL |
 | 予算(`google_billing_budget`) | 月額 `budget_amount`(既定 30,000 円)の 50% / 90% / 100%(実績)と 100%(月末の予測)。請求先アカウントの管理者と `alert_emails` に届く。`billing_account_id` を指定したときだけ作る | — |
@@ -401,7 +412,7 @@ git add .terraform.lock.hcl
 
 - Cloud Run はインスタンス起動時に `latest` を読む。値を更新したら新しいリビジョンを作って反映する
   (`gcloud run services update katahimo-api --region="$REGION" --update-labels=secret-rotated=$(date +%s)` 等)。
-- DB パスワード: `00_roles_and_database.sql` を新しいパスワードで再実行 → `database-url` /
+- DB パスワード: `00_roles_and_database.sql` を新しいパスワードで再実行 → `database-url` / `worker-database-url` /
   `migration-database-url` に新しいバージョンを追加 → サービス・ジョブを再デプロイ。
 - KMS の `tenant-kek` は90日ごとに自動ローテーションされる(旧バージョンは有効なまま残り、既存の DEK も復号
   できる)。旧バージョンを無効化・破棄するには、先に全テナントの DEK を新バージョンで再ラップする作業が必要
@@ -447,7 +458,7 @@ GAS 側の変更は `katahimo-dev/gas-childcare-visit-app` リポジトリで行
       を設定し、GAS 側 Bridge.js の書き込み action をデプロイした(`doc/api/attendance-batch.md`
       「GAS側(Bridge.js)に必要な変更」)。**GAS の Web App(Bridge)は、ミラーか `SCHEDULE_PROVIDER=gas_bridge`
       を使う間は公開したままにする**
-- [ ] `katahimo-nightly-calendar-sync` / `katahimo-csv-import` を手動実行して結果を確認した(Scheduler は停止中)
+- [ ] `katahimo-nightly-calendar-sync` / `katahimo-csv-import` / `katahimo-maintenance` を手動実行して結果を確認した(Scheduler は停止中)
 
 ### 切替日(同じ日に行う。二重反映・二重取込を防ぐため)
 

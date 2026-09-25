@@ -320,6 +320,7 @@ export const webHandlers: Record<string, WebHandler> = {
         customerId: String(req.body.customerId),
         riskRating: (req.body.riskRating as number | null) ?? null,
         esRating: (req.body.esRating as number | null) ?? null,
+        rowVersion: 1,
         content: {
           startTime: String(req.body.startTime ?? ''),
           endTime: String(req.body.endTime ?? ''),
@@ -340,6 +341,7 @@ export const webHandlers: Record<string, WebHandler> = {
         staffId: user.id,
         customerId: String(req.body.customerId),
         reportType: String(req.body.reportType ?? '事故報告'),
+        rowVersion: 1,
         content: {},
       },
     },
@@ -537,6 +539,7 @@ function attendanceDayBody(date: string, staff: FixtureStaff, today: string) {
     rowData: toContractRow(row),
     derived: derivedOf(row),
     changedFields: [],
+    rowVersion: 1,
     editable: date >= range.from && date <= range.to,
     editableFrom: range.from,
     editableTo: range.to,
