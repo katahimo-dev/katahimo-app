@@ -21,7 +21,7 @@ TypeScript, pnpm 11 workspaces (`packages/*`, `tools/*`), Node 22+. Packages (`@
 | `ingestion` | RESERVA customer CSV and GAS staff-master CSV parsing/import; latest-CSV auto import. |
 | `api` | Hono server. `src/container.ts` is the composition root, `src/routes/*`, `src/session.ts`, `src/http/` (error helpers, static web serving), `src/scripts/` (seed, CSV imports). |
 | `worker` | Resident outbox poller (`src/main.ts`) and one-shot jobs (`src/entrypoints/`). |
-| `web` | React 18 + Vite 6 + TanStack Query + Tailwind **v3** PWA. Its own conventions are in `packages/web/README.md` — read it before touching UI. |
+| `web` | React 19 + Vite 7 + TanStack Query + Tailwind **v3** PWA. Its own conventions are in `packages/web/README.md` — read it before touching UI. |
 | `tools/gas-preview` | Side-by-side screenshot harness (GAS vs new app) and the live e2e journey. |
 
 ## Commands
@@ -119,7 +119,7 @@ The schema already holds the matching extension (doc/10): tenant status/timezone
 ## GAS parity verification
 
 - **Logic parity tests** run the legacy GAS source itself in `node:vm` with fake GAS services and compare outputs with the TypeScript port: `packages/core/src/domain/attendance/gasParity.test.ts` (seeded random inputs through `testSupport/gasLegacy.ts`) and `packages/integrations/src/google-schedule/gasParity.test.ts` (`RouteSearch.js` scenarios). They are skipped if the submodule is missing, so run `git submodule update --init` before trusting a green run. When porting more GAS logic, add a parity test in the same style rather than eyeballing.
-- **UI parity**: `tools/gas-preview` serves the GAS `index.html` with a mocked `google.script.run` and screenshots it next to the new app (Vite dev server with mocked `/api`) at 390×844, same fixtures, clock fixed at 2026-09-25 10:00 JST. Run `pnpm --filter @katahimo/web dev`, then `pnpm --filter @katahimo/gas-preview shoot` (all 124 shots, ~25 min) or `-- --only '<regex>'`. Output in `tools/gas-preview/out/` (gitignored); every shot should stay ≤ 0.05% diff. New screens get shots in `src/shots/<feature>.ts` plus mocks in `gasMock.ts` / `webMock.ts` (web mocks are validated against the zod contracts). Known deliberate differences are listed in the READMEs.
+- **UI parity**: `tools/gas-preview` serves the GAS `index.html` with a mocked `google.script.run` and screenshots it next to the new app (Vite dev server with mocked `/api`) at 390×844, same fixtures, clock fixed at 2026-09-25 10:00 JST. Run `pnpm --filter @katahimo/gas-preview shoot` (starts Vite itself; `--web-url` to reuse a running server; `--only '<regex>'`, `--max-diff` default 0.05 — exits 1 on any shot above it; `--concurrency`). `e2e` likewise starts Vite and the API if needed. Output in `tools/gas-preview/out/` (gitignored); every shot should stay ≤ 0.05% diff. New screens get shots in `src/shots/<feature>.ts` plus mocks in `gasMock.ts` / `webMock.ts` (web mocks are validated against the zod contracts). Known deliberate differences are listed in the READMEs.
 - **Live journey**: `pnpm --filter @katahimo/gas-preview e2e` (API :8080 + web :5173 running, seeded DB) drives login → schedule → customers → report/receipts → attendance → settings → logout, then a non-admin checks hidden admin UI and 403s. Screenshots in `out/e2e/`. It writes to the DB — dev only.
 - Chromium is preinstalled at `/opt/pw-browsers` and `playwright-core` is pinned to 1.56 to match; never run `playwright install`.
 

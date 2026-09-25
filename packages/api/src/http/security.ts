@@ -41,7 +41,7 @@ export function securityHeaders(isProduction: boolean): MiddlewareHandler {
     crossOriginResourcePolicy: 'same-origin',
     // Google Fonts をCORSなしで読むため、COEP は付けない
     crossOriginEmbedderPolicy: false,
-    permissionsPolicy: { camera: ['self'], microphone: [], geolocation: [], payment: [] },
+    permissionsPolicy: { camera: ['self'], microphone: ['self'], geolocation: [], payment: [] },
   });
 }
 
