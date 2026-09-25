@@ -2,8 +2,11 @@
 // ここには「サーバーとブラウザの両方で成立するもの」だけを置く。
 // Node固有・DB固有のものは @katahimo/core / @katahimo/db 側に置くこと。
 
+export * from './contracts/attendance';
 export * from './contracts/auth';
+export * from './contracts/calendarSync';
 export * from './contracts/common';
+export * from './contracts/customerImport';
 export * from './contracts/customers';
 export * from './contracts/receipts';
 export * from './contracts/reports';

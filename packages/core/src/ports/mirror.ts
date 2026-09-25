@@ -46,21 +46,24 @@ export interface OutboxJobRecord {
   tenantId: string;
   kind: MirrorKind;
   targetId: string;
-  /** 取得(claim)のたびに1増える。無限リトライを避ける将来の上限判定に使う想定(現時点では未使用)。 */
+  /** 取得(claim)のたびに1増える試行回数。リトライ上限・バックオフ間隔の判定に使う。 */
   attempts: number;
 }
 
 /**
  * outbox_jobsテーブルへのアクセス(積む側のMirrorPortに加え、ワーカーが処理するための取得・
- * 完了/失敗マークまでを含む)。実装は@katahimo/dbに置く(DrizzleOutboxRepository)。
+ * 完了/再試行/失敗マークまでを含む)。実装は@katahimo/dbに置く(DrizzleOutboxRepository)。
  */
 export interface OutboxRepositoryPort extends MirrorPort {
   /**
-   * pending状態のジョブを最大limit件、processingへ遷移させながら取得する。
-   * ワーカーはテナントごとにポーリングする(outbox_jobsはRLS対象のため、
-   * テナントを跨いで一度に取得することはできない。packages/worker/src/main.ts参照)。
+   * 処理してよいジョブを最大limit件、processingへ遷移させながら取得する(attemptsを+1する)。
+   * 対象は pending かつ next_attempt_at を過ぎたもの、および processing のまま一定時間
+   * (ワーカーの異常終了等で)放置されたもの。テナントごとに呼ぶ(outbox_jobsはRLS対象)。
    */
   claimPending(tenantId: string, limit: number): Promise<OutboxJobRecord[]>;
   markDone(tenantId: string, id: string): Promise<void>;
+  /** 失敗したジョブを pending に戻し、nextAttemptAt まで取得されないようにする(バックオフ)。 */
+  scheduleRetry(tenantId: string, id: string, error: string, nextAttemptAt: Date): Promise<void>;
+  /** リトライ上限に達したジョブを最終的な失敗(failed)にする。以後は自動では再試行しない。 */
   markFailed(tenantId: string, id: string, error: string): Promise<void>;
 }

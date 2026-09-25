@@ -180,6 +180,9 @@ importers:
       '@katahimo/db':
         specifier: workspace:*
         version: link:../db
+      '@katahimo/ingestion':
+        specifier: workspace:*
+        version: link:../ingestion
       '@katahimo/integrations':
         specifier: workspace:*
         version: link:../integrations

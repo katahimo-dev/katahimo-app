@@ -85,11 +85,14 @@ describe('syncStaffBusyBlocks', () => {
 
   it('全テナント版は1テナントの例外で他を止めない', async () => {
     const { deps, logs } = setup([profile('a', 'a@x')], new Map([['a@x', { busy: [] }]]));
+    const tenantList = [
+      { id: 't1', name: '', slug: 't1' },
+      { id: 't2', name: '', slug: 't2' },
+    ];
     const tenants = {
-      listAll: async () => [
-        { id: 't1', name: '', slug: 't1' },
-        { id: 't2', name: '', slug: 't2' },
-      ],
+      listAll: async () => tenantList,
+      listActive: async () => tenantList,
+      findById: async () => null,
       findBySlug: async () => null,
       create: async () => ({ id: '', name: '', slug: '' }),
     };

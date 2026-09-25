@@ -33,3 +33,16 @@ export async function parseJsonBody<S extends z.ZodTypeAny>(
   const message = parsed.error.issues[0]?.message ?? '入力内容に誤りがあります';
   return { ok: false, response: apiError(c, 400, 'validation_failed', message, fields) };
 }
+
+/** クエリパラメータをzodスキーマで検証する。失敗時は400(validation_failed)の応答を返す。 */
+export function parseQuery<S extends z.ZodTypeAny>(c: Context, schema: S): ParsedBody<z.output<S>> {
+  const parsed = schema.safeParse(c.req.query());
+  if (parsed.success) return { ok: true, data: parsed.data };
+  const fields: Record<string, string> = {};
+  for (const issue of parsed.error.issues) {
+    const key = issue.path.join('.') || '_';
+    fields[key] ??= issue.message;
+  }
+  const message = parsed.error.issues[0]?.message ?? '入力内容に誤りがあります';
+  return { ok: false, response: apiError(c, 400, 'validation_failed', message, fields) };
+}

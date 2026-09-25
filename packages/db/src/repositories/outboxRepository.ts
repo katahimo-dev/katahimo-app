@@ -1,10 +1,17 @@
 import type { MirrorJob, OutboxJobRecord, OutboxRepositoryPort } from '@katahimo/core/ports';
-import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, lte, or, sql } from 'drizzle-orm';
 import type { Database } from '../client';
 import { withTenant } from '../client';
 import { outboxJobs } from '../schema';
 
 type OutboxJobRow = typeof outboxJobs.$inferSelect;
+
+/**
+ * processing のまま更新が止まったジョブを取り直すまでの時間。ワーカーが処理中に落ちた場合でも、
+ * この時間が過ぎれば別のワーカー(次回のポーリング)が再取得する。1件の送信(GAS Bridge呼び出し)に
+ * 掛かる時間より十分長くしておく。
+ */
+const PROCESSING_LEASE = sql`interval '10 minutes'`;
 
 function toRecord(row: OutboxJobRow): OutboxJobRecord {
   return {
@@ -38,21 +45,32 @@ export class DrizzleOutboxRepository implements OutboxRepositoryPort {
     return withTenant(this.db, tenantId, async (tx) => {
       // FOR UPDATE SKIP LOCKEDで、複数ワーカーインスタンスが同時にポーリングしても
       // 同じジョブを二重に取得しないようにする。
-      const pending = await tx
+      const claimable = await tx
         .select({ id: outboxJobs.id })
         .from(outboxJobs)
-        // next_attempt_at(既定はenqueue時刻)より前のジョブは、失敗後のバックオフ中として取得しない。
-        .where(and(eq(outboxJobs.status, 'pending'), lte(outboxJobs.nextAttemptAt, sql`now()`)))
-        .orderBy(asc(outboxJobs.createdAt))
+        .where(
+          or(
+            and(eq(outboxJobs.status, 'pending'), lte(outboxJobs.nextAttemptAt, sql`now()`)),
+            and(
+              eq(outboxJobs.status, 'processing'),
+              lte(outboxJobs.updatedAt, sql`now() - ${PROCESSING_LEASE}`),
+            ),
+          ),
+        )
+        .orderBy(asc(outboxJobs.nextAttemptAt), asc(outboxJobs.createdAt))
         .limit(limit)
         .for('update', { skipLocked: true });
-      if (pending.length === 0) return [];
+      if (claimable.length === 0) return [];
 
-      const ids = pending.map((p) => p.id);
       const rows = await tx
         .update(outboxJobs)
-        .set({ status: 'processing', attempts: sql`${outboxJobs.attempts} + 1`, updatedAt: new Date() })
-        .where(inArray(outboxJobs.id, ids))
+        .set({ status: 'processing', attempts: sql`${outboxJobs.attempts} + 1`, updatedAt: sql`now()` })
+        .where(
+          inArray(
+            outboxJobs.id,
+            claimable.map((p) => p.id),
+          ),
+        )
         .returning();
       return rows.map(toRecord);
     });
@@ -62,7 +80,16 @@ export class DrizzleOutboxRepository implements OutboxRepositoryPort {
     await withTenant(this.db, tenantId, async (tx) => {
       await tx
         .update(outboxJobs)
-        .set({ status: 'done', processedAt: new Date(), updatedAt: new Date() })
+        .set({ status: 'done', lastError: null, processedAt: sql`now()`, updatedAt: sql`now()` })
+        .where(eq(outboxJobs.id, id));
+    });
+  }
+
+  async scheduleRetry(tenantId: string, id: string, error: string, nextAttemptAt: Date): Promise<void> {
+    await withTenant(this.db, tenantId, async (tx) => {
+      await tx
+        .update(outboxJobs)
+        .set({ status: 'pending', lastError: error, nextAttemptAt, updatedAt: sql`now()` })
         .where(eq(outboxJobs.id, id));
     });
   }
@@ -71,7 +98,7 @@ export class DrizzleOutboxRepository implements OutboxRepositoryPort {
     await withTenant(this.db, tenantId, async (tx) => {
       await tx
         .update(outboxJobs)
-        .set({ status: 'failed', lastError: error, processedAt: new Date(), updatedAt: new Date() })
+        .set({ status: 'failed', lastError: error, processedAt: sql`now()`, updatedAt: sql`now()` })
         .where(eq(outboxJobs.id, id));
     });
   }

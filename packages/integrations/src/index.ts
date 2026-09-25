@@ -4,6 +4,7 @@
 // gas-bridge(GAS版Web Appに委ねる移行期の実装)を schedule-provider で切り替える。
 export * from './audit';
 export * from './cache';
+export * from './customer-csv';
 export * from './gas-bridge';
 export * from './gemini';
 export * from './google-calendar';

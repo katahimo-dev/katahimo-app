@@ -1,12 +1,26 @@
 import { createHash, createHmac } from 'node:crypto';
 import { isRetiredOn, jstBusinessDate } from '../domain';
+import { jstMonthInstantRange } from '../domain/calendarDate';
 import type { AiPromptRecord, AiPromptRepositoryPort, UpsertAiPromptInput } from '../ports/aiPrompts';
 import type { AppLogEntry, AppLogPort } from '../ports/appLog';
+import type {
+  AttendanceDayHistoryEntry,
+  AttendanceDayRecord,
+  AttendanceDayRepositoryPort,
+  SaveAttendanceDayInput,
+} from '../ports/attendanceDays';
 import type { BlindIndexPort, CryptoPort, EncryptedValue } from '../ports/crypto';
+import type {
+  CustomerCsvSourceFile,
+  CustomerCsvSourcePort,
+  CustomerCsvSourceTenant,
+} from '../ports/customerCsvSource';
+import type { CustomerImportState, CustomerImportStateRepositoryPort } from '../ports/customerImportState';
 import type { MailerPort, MailMessage } from '../ports/mailer';
 import type { MirrorJob, OutboxJobRecord, OutboxRepositoryPort } from '../ports/mirror';
 import type {
   AccidentReportMirrorPayload,
+  AttendanceAggregateMirrorPayload,
   AttendanceDayMirrorPayload,
   DailyReportMirrorPayload,
   MirrorSenderPort,
@@ -25,8 +39,6 @@ import type {
   AppSettingsPatchInput,
   AppSettingsRecord,
   AppSettingsRepositoryPort,
-  AttendanceDayRecord,
-  AttendanceDayRepositoryPort,
   CustomerPatchInput,
   CustomerProfileFields,
   CustomerRecord,
@@ -54,6 +66,12 @@ import type {
   TenantRecord,
   TenantRepositoryPort,
 } from '../ports/repositories';
+import type {
+  ScheduleLightResult,
+  SchedulePort,
+  ScheduleWithRouteOptions,
+  ScheduleWithRouteResult,
+} from '../ports/schedule';
 import type { StoragePort, StoredFile } from '../ports/storage';
 import type { PasswordHasherPort } from './auth/deps';
 
@@ -102,6 +120,11 @@ export class FakeAppLogPort implements AppLogPort {
 
   actions(): string[] {
     return this.entries.map((e) => e.action);
+  }
+
+  /** 指定actionのログだけを返す。 */
+  byAction(action: string): AppLogEntry[] {
+    return this.entries.filter((e) => e.action === action);
   }
 }
 
@@ -191,12 +214,18 @@ export class FakeTenantRepository implements TenantRepositoryPort {
   async findBySlug(slug: string): Promise<TenantRecord | null> {
     return [...this.rows.values()].find((t) => t.slug === slug) ?? null;
   }
+  async findById(id: string): Promise<TenantRecord | null> {
+    return this.rows.get(id) ?? null;
+  }
   async create(input: NewTenantInput): Promise<TenantRecord> {
     const record: TenantRecord = { id: `tenant-${++this.seq}`, name: input.name, slug: input.slug };
     this.rows.set(record.id, record);
     return record;
   }
   async listAll(): Promise<TenantRecord[]> {
+    return [...this.rows.values()];
+  }
+  async listActive(): Promise<TenantRecord[]> {
     return [...this.rows.values()];
   }
 }
@@ -452,46 +481,63 @@ export class FakeFamilyMemberRepository implements FamilyMemberRepositoryPort {
 
 export class FakeAttendanceDayRepository implements AttendanceDayRepositoryPort {
   private readonly rows: AttendanceDayRecord[] = [];
+  /** テスト用: save() で追記された変更履歴。 */
+  readonly history: (AttendanceDayHistoryEntry & { attendanceDayId: string })[] = [];
   private seq = 0;
 
-  async findByStaffAndDate(
-    tenantId: string,
-    staffId: string,
-    businessDate: string,
-  ): Promise<AttendanceDayRecord | null> {
-    return (
-      this.rows.find(
-        (r) => r.tenantId === tenantId && r.staffId === staffId && r.businessDate === businessDate,
-      ) ?? null
-    );
-  }
-
-  async findById(tenantId: string, id: string): Promise<AttendanceDayRecord | null> {
-    return this.rows.find((r) => r.tenantId === tenantId && r.id === id) ?? null;
-  }
-
-  async upsert(
-    tenantId: string,
-    staffId: string,
-    businessDate: string,
-    rowData: EncryptedField,
-  ): Promise<AttendanceDayRecord> {
-    const existing = this.rows.find(
+  private find(tenantId: string, staffId: string, businessDate: string): AttendanceDayRecord | undefined {
+    return this.rows.find(
       (r) => r.tenantId === tenantId && r.staffId === staffId && r.businessDate === businessDate,
     );
-    if (existing) {
-      existing.rowData = rowData;
-      return existing;
-    }
+  }
+
+  private insert(tenantId: string, staffId: string, businessDate: string, rowData: EncryptedField) {
     const record: AttendanceDayRecord = {
       id: `attendance-day-${++this.seq}`,
       tenantId,
       staffId,
       businessDate,
       rowData,
+      changedFields: [],
+      lastChangedByStaffId: null,
     };
     this.rows.push(record);
     return record;
+  }
+
+  async findByStaffAndDate(
+    tenantId: string,
+    staffId: string,
+    businessDate: string,
+  ): Promise<AttendanceDayRecord | null> {
+    return this.find(tenantId, staffId, businessDate) ?? null;
+  }
+
+  async findById(tenantId: string, id: string): Promise<AttendanceDayRecord | null> {
+    return this.rows.find((r) => r.tenantId === tenantId && r.id === id) ?? null;
+  }
+
+  async save(input: SaveAttendanceDayInput): Promise<AttendanceDayRecord> {
+    const record =
+      this.find(input.tenantId, input.staffId, input.businessDate) ??
+      this.insert(input.tenantId, input.staffId, input.businessDate, input.rowData);
+    record.rowData = input.rowData;
+    record.changedFields = [...input.changedFields];
+    record.lastChangedByStaffId = input.lastChangedByStaffId;
+    this.history.push({ ...input.history, attendanceDayId: record.id });
+    return { ...record };
+  }
+
+  async findOrCreate(
+    tenantId: string,
+    staffId: string,
+    businessDate: string,
+    emptyRowData: EncryptedField,
+  ): Promise<AttendanceDayRecord> {
+    return {
+      ...(this.find(tenantId, staffId, businessDate) ??
+        this.insert(tenantId, staffId, businessDate, emptyRowData)),
+    };
   }
 
   async listByStaffAndMonth(
@@ -517,6 +563,11 @@ export class FakeAttendanceDayRepository implements AttendanceDayRepositoryPort 
         r.businessDate >= startDate &&
         r.businessDate <= endDate,
     );
+  }
+
+  /** テスト用: 保存されているレコード数。 */
+  countForTest(): number {
+    return this.rows.length;
   }
 }
 
@@ -673,6 +724,19 @@ export class FakeReceiptRepository implements ReceiptRepositoryPort {
         .map((r) => r.dedupeBlindIndex as string),
     );
   }
+
+  async listByStaffAndMonth(tenantId: string, staffId: string, yearMonth: string): Promise<ReceiptRecord[]> {
+    const { from, to } = jstMonthInstantRange(yearMonth);
+    return this.rows
+      .map((r) => r.record)
+      .filter(
+        (r) =>
+          r.tenantId === tenantId &&
+          r.staffId === staffId &&
+          r.receiptTimestamp >= from &&
+          r.receiptTimestamp < to,
+      );
+  }
 }
 
 /**
@@ -680,9 +744,18 @@ export class FakeReceiptRepository implements ReceiptRepositoryPort {
  * pending→processingへ遷移させてから返す(実DBのFOR UPDATE SKIP LOCKEDに相当する排他制御は
  * テストでは不要なため省略)。
  */
+export interface FakeOutboxRow extends OutboxJobRecord {
+  idempotencyKey: string;
+  status: 'pending' | 'processing' | 'done' | 'failed';
+  nextAttemptAt: Date;
+  lastError: string | null;
+}
+
 export class FakeOutboxRepository implements OutboxRepositoryPort {
-  private readonly rows: (OutboxJobRecord & { idempotencyKey: string; status: string })[] = [];
+  private readonly rows: FakeOutboxRow[] = [];
   private seq = 0;
+  /** テスト用: claimPending が「今」とみなす時刻。 */
+  now: () => Date = () => new Date();
 
   async enqueue(job: MirrorJob): Promise<void> {
     if (this.rows.some((r) => r.tenantId === job.tenantId && r.idempotencyKey === job.idempotencyKey)) {
@@ -696,12 +769,15 @@ export class FakeOutboxRepository implements OutboxRepositoryPort {
       idempotencyKey: job.idempotencyKey,
       attempts: 0,
       status: 'pending',
+      nextAttemptAt: new Date(0),
+      lastError: null,
     });
   }
 
   async claimPending(tenantId: string, limit: number): Promise<OutboxJobRecord[]> {
+    const now = this.now();
     const claimed = this.rows
-      .filter((r) => r.tenantId === tenantId && r.status === 'pending')
+      .filter((r) => r.tenantId === tenantId && r.status === 'pending' && r.nextAttemptAt <= now)
       .slice(0, limit);
     for (const r of claimed) {
       r.status = 'processing';
@@ -721,13 +797,23 @@ export class FakeOutboxRepository implements OutboxRepositoryPort {
     if (row) row.status = 'done';
   }
 
-  async markFailed(tenantId: string, id: string): Promise<void> {
+  async scheduleRetry(tenantId: string, id: string, error: string, nextAttemptAt: Date): Promise<void> {
     const row = this.rows.find((r) => r.tenantId === tenantId && r.id === id);
-    if (row) row.status = 'failed';
+    if (!row) return;
+    row.status = 'pending';
+    row.lastError = error;
+    row.nextAttemptAt = nextAttemptAt;
   }
 
-  /** テスト専用: 現在保持しているジョブ一覧(statusを含む)を確認する。 */
-  listAllForTest(): readonly (OutboxJobRecord & { idempotencyKey: string; status: string })[] {
+  async markFailed(tenantId: string, id: string, error: string): Promise<void> {
+    const row = this.rows.find((r) => r.tenantId === tenantId && r.id === id);
+    if (!row) return;
+    row.status = 'failed';
+    row.lastError = error;
+  }
+
+  /** テスト用: 現在保持しているジョブ一覧(statusを含む)を確認する。 */
+  listAllForTest(): readonly FakeOutboxRow[] {
     return this.rows;
   }
 }
@@ -738,6 +824,7 @@ export class FakeMirrorSenderPort implements MirrorSenderPort {
   readonly accidentReports: AccidentReportMirrorPayload[] = [];
   readonly receipts: ReceiptMirrorPayload[] = [];
   readonly attendanceDays: AttendanceDayMirrorPayload[] = [];
+  readonly attendanceAggregates: AttendanceAggregateMirrorPayload[] = [];
 
   async sendDailyReport(payload: DailyReportMirrorPayload): Promise<void> {
     this.dailyReports.push(payload);
@@ -750,5 +837,100 @@ export class FakeMirrorSenderPort implements MirrorSenderPort {
   }
   async sendAttendanceDay(payload: AttendanceDayMirrorPayload): Promise<void> {
     this.attendanceDays.push(payload);
+  }
+  async sendAttendanceAggregate(payload: AttendanceAggregateMirrorPayload): Promise<void> {
+    this.attendanceAggregates.push(payload);
+  }
+}
+
+/**
+ * スタッフ名×日付ごとに返す予定を設定できる SchedulePort のフェイク実装。
+ * getScheduleWithRoute の引数(forceRefresh・options)も記録する(出勤簿の反映は常に fresh で取る必要があるため)。
+ */
+export class FakeSchedulePort implements SchedulePort {
+  private readonly results = new Map<string, ScheduleWithRouteResult>();
+  readonly calls: {
+    staffName: string;
+    date: string;
+    forceRefresh: boolean;
+    options?: ScheduleWithRouteOptions;
+  }[] = [];
+
+  setAppointments(
+    staffName: string,
+    date: string,
+    appointments: ScheduleWithRouteResult['appointments'],
+  ): void {
+    this.results.set(`${staffName}|${date}`, { success: true, date, staffName, appointments });
+  }
+
+  setFailure(staffName: string, date: string, message: string): void {
+    this.results.set(`${staffName}|${date}`, { success: false, message });
+  }
+
+  async getSchedule(staffName: string, dateString: string): Promise<ScheduleLightResult> {
+    const result = await this.getScheduleWithRoute(staffName, dateString, false);
+    return {
+      success: result.success,
+      appointments: (result.appointments ?? []).map((a) => ({
+        title: a.customerName,
+        eventType: a.eventType,
+        start: a.startTime,
+        end: a.endTime,
+        address: a.address,
+      })),
+    };
+  }
+
+  async getScheduleWithRoute(
+    staffName: string,
+    dateString: string,
+    forceRefresh: boolean,
+    options?: ScheduleWithRouteOptions,
+  ): Promise<ScheduleWithRouteResult> {
+    this.calls.push({ staffName, date: dateString, forceRefresh, options });
+    return this.results.get(`${staffName}|${dateString}`) ?? { success: true, appointments: [] };
+  }
+}
+
+export class FakeCustomerImportStateRepository implements CustomerImportStateRepositoryPort {
+  private readonly states = new Map<string, CustomerImportState>();
+
+  async get(tenantId: string): Promise<CustomerImportState> {
+    return this.states.get(tenantId) ?? { lastImportedVersion: null, lastImportedAt: null, dataVersion: 0 };
+  }
+
+  async recordImport(tenantId: string, version: string, importedAt: Date): Promise<CustomerImportState> {
+    const current = await this.get(tenantId);
+    const next = {
+      lastImportedVersion: version,
+      lastImportedAt: importedAt,
+      dataVersion: current.dataVersion + 1,
+    };
+    this.states.set(tenantId, next);
+    return next;
+  }
+}
+
+/** テナントslugごとにファイル(名前→内容)を置けるインメモリの取込元。未登録のテナントは「取込元なし」。 */
+export class FakeCustomerCsvSource implements CustomerCsvSourcePort {
+  private readonly files = new Map<string, Map<string, Buffer>>();
+
+  put(tenantSlug: string, name: string, content: Buffer): void {
+    const folder = this.files.get(tenantSlug) ?? new Map<string, Buffer>();
+    folder.set(name, content);
+    this.files.set(tenantSlug, folder);
+  }
+
+  async listFiles(tenant: CustomerCsvSourceTenant): Promise<CustomerCsvSourceFile[] | null> {
+    const folder = this.files.get(tenant.slug);
+    if (!folder) return null;
+    return [...folder.keys()].map((name) => ({ id: name, name }));
+  }
+
+  async readFile(tenant: CustomerCsvSourceTenant, file: CustomerCsvSourceFile): Promise<Buffer> {
+    const content = this.files.get(tenant.slug)?.get(file.id);
+    if (!content) throw new Error(`ファイルがありません: ${file.name}`);
+    return content;
   }
 }

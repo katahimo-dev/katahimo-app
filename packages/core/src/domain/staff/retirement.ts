@@ -7,12 +7,8 @@
  * 判定が1日ずれるため、ここでは日付文字列同士をJSTの業務日として比較する。
  */
 
-const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
-
-/** 指定時刻のJSTでの日付を 'YYYY-MM-DD' で返す。 */
-export function jstBusinessDate(now: Date): string {
-  return new Date(now.getTime() + JST_OFFSET_MS).toISOString().slice(0, 10);
-}
+/** 指定時刻のJSTでの日付('YYYY-MM-DD')。暦日の計算は domain/calendarDate.ts に集約している。 */
+export { jstBusinessDate } from '../calendarDate';
 
 /** retirementDate('YYYY-MM-DD')が businessDate('YYYY-MM-DD')以前なら退職済み。 */
 export function isRetiredOn(retirementDate: string | null, businessDate: string): boolean {
