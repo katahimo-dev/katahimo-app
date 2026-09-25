@@ -1,12 +1,17 @@
+export type { InstantRange } from './_rangeSql';
 export * from './accidentReportRepository';
 export * from './appSettingsRepository';
 export * from './attendanceDayRepository';
+export * from './attributeRepository';
 export * from './customerRepository';
+export * from './customerStaffAffinityRepository';
 export * from './dailyReportRepository';
 export * from './familyMemberRepository';
 export * from './outboxRepository';
 export * from './receiptRepository';
 export * from './sessionRepository';
+export * from './staffAvailabilityRepository';
+export * from './staffBusyBlockRepository';
 export * from './staffRepository';
 export * from './tenantKeyRepository';
 export * from './tenantRepository';

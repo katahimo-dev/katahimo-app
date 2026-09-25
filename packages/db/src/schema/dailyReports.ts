@@ -1,5 +1,16 @@
 import { sql } from 'drizzle-orm';
-import { foreignKey, integer, pgPolicy, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  check,
+  foreignKey,
+  index,
+  integer,
+  pgPolicy,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { TENANT_RLS_USING } from './_rls';
 import { customers } from './customers';
 import { staff } from './staff';
@@ -38,6 +49,9 @@ export const dailyReports = pgTable(
   },
   (t) => [
     pgPolicy('tenant_isolation', { for: 'all', using: TENANT_RLS_USING, withCheck: TENANT_RLS_USING }),
+    // 顧客ごとの履歴一覧(listByCustomer: occurred_at降順のカーソルページネーション)用。
+    index('daily_reports_tenant_customer_occurred_idx').on(t.tenantId, t.customerId, t.occurredAt),
+    unique('daily_reports_tenant_id_uk').on(t.tenantId, t.id),
     // (tenant_id, staff_id)/(tenant_id, customer_id)の複合FK。RLSはSELECTしか絞り込まず、
     // FK制約自体はRLSをバイパスするため、単一列FKのままだとテナントAのstaffId/customerIdに
     // 別テナントの行が混入してもDBが検知できない(データベース構造レビューで発見)。
@@ -51,5 +65,7 @@ export const dailyReports = pgTable(
       columns: [t.tenantId, t.customerId],
       foreignColumns: [customers.tenantId, customers.id],
     }),
+    check('daily_reports_risk_rating_check', sql`${t.riskRating} is null or ${t.riskRating} between 1 and 5`),
+    check('daily_reports_es_rating_check', sql`${t.esRating} is null or ${t.esRating} between 1 and 5`),
   ],
 ).enableRLS();

@@ -3,6 +3,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgPolicy,
   pgTable,
   text,
@@ -119,6 +120,13 @@ export const customers = pgTable(
     registeredAt: timestamp({ withTimezone: true }),
     /** RESERVA側の最終更新日時。このアプリ内でのupdatedAtとは別物。 */
     externalLastUpdatedAt: timestamp({ withTimezone: true }),
+
+    /**
+     * テナント独自の表示・検索用項目(doc/07 第4.2節、2026-09追加)。請求・記録などの本体データは
+     * 置かない。要配慮性の高い値(自由記述メモ等)は暗号化されないためここに入れないこと。
+     * マッチング用の顧客の希望条件は customer_preferences(customerMatching.ts)に持つ。
+     */
+    customFields: jsonb().$type<Record<string, unknown>>().notNull().default({}),
 
     /** 取込元に存在しなくなった場合に設定するソフトデリートのタイムスタンプ。nullなら有効。 */
     deactivatedAt: timestamp({ withTimezone: true }),

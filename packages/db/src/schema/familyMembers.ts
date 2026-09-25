@@ -1,5 +1,15 @@
 import { sql } from 'drizzle-orm';
-import { foreignKey, integer, pgPolicy, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  foreignKey,
+  index,
+  integer,
+  pgPolicy,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { TENANT_RLS_USING } from './_rls';
 import { customers } from './customers';
 import { tenants } from './tenants';
@@ -28,15 +38,25 @@ export const familyMembers = pgTable(
     dobCiphertext: text(),
     dobKeyVersion: integer(),
 
-    /** 職業・アレルギー・その他共有事項などの自由記述(parseFamilyInfoのinfo)。 */
+    /** 職業・その他共有事項などの自由記述(parseFamilyInfoのinfo)。 */
     infoCiphertext: text(),
     infoKeyVersion: integer(),
+
+    /**
+     * アレルギー(GAS版「家族DB_New」のアレルギー列に相当)。健康情報(要配慮個人情報に近い)のため
+     * 暗号化する。従来はinfoの自由記述に混在していたが、訪問前の確認事項として独立して表示・
+     * 編集できるよう列を分けた。
+     */
+    allergyCiphertext: text(),
+    allergyKeyVersion: integer(),
 
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     pgPolicy('tenant_isolation', { for: 'all', using: TENANT_RLS_USING, withCheck: TENANT_RLS_USING }),
+    index('family_members_tenant_customer_idx').on(t.tenantId, t.customerId),
+    unique('family_members_tenant_id_uk').on(t.tenantId, t.id),
     // dailyReports.tsと同じ理由。
     foreignKey({
       name: 'family_members_tenant_customer_fk',

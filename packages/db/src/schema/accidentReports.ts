@@ -1,5 +1,15 @@
 import { sql } from 'drizzle-orm';
-import { foreignKey, integer, pgPolicy, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  foreignKey,
+  index,
+  integer,
+  pgPolicy,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { TENANT_RLS_USING } from './_rls';
 import { customers } from './customers';
 import { staff } from './staff';
@@ -36,6 +46,9 @@ export const accidentReports = pgTable(
   },
   (t) => [
     pgPolicy('tenant_isolation', { for: 'all', using: TENANT_RLS_USING, withCheck: TENANT_RLS_USING }),
+    // 顧客ごとの履歴一覧(listByCustomer: occurred_at降順のカーソルページネーション)用。
+    index('accident_reports_tenant_customer_occurred_idx').on(t.tenantId, t.customerId, t.occurredAt),
+    unique('accident_reports_tenant_id_uk').on(t.tenantId, t.id),
     // dailyReports.tsと同じ理由(複合FKでテナント跨ぎの取り違えを構造的に防ぐ)。
     foreignKey({
       name: 'accident_reports_tenant_staff_fk',

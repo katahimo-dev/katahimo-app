@@ -1,5 +1,5 @@
 import type { MirrorJob, OutboxJobRecord, OutboxRepositoryPort } from '@katahimo/core/ports';
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { Database } from '../client';
 import { withTenant } from '../client';
 import { outboxJobs } from '../schema';
@@ -41,7 +41,8 @@ export class DrizzleOutboxRepository implements OutboxRepositoryPort {
       const pending = await tx
         .select({ id: outboxJobs.id })
         .from(outboxJobs)
-        .where(eq(outboxJobs.status, 'pending'))
+        // next_attempt_at(既定はenqueue時刻)より前のジョブは、失敗後のバックオフ中として取得しない。
+        .where(and(eq(outboxJobs.status, 'pending'), lte(outboxJobs.nextAttemptAt, sql`now()`)))
         .orderBy(asc(outboxJobs.createdAt))
         .limit(limit)
         .for('update', { skipLocked: true });
@@ -50,7 +51,7 @@ export class DrizzleOutboxRepository implements OutboxRepositoryPort {
       const ids = pending.map((p) => p.id);
       const rows = await tx
         .update(outboxJobs)
-        .set({ status: 'processing', attempts: sql`${outboxJobs.attempts} + 1` })
+        .set({ status: 'processing', attempts: sql`${outboxJobs.attempts} + 1`, updatedAt: new Date() })
         .where(inArray(outboxJobs.id, ids))
         .returning();
       return rows.map(toRecord);
@@ -61,7 +62,7 @@ export class DrizzleOutboxRepository implements OutboxRepositoryPort {
     await withTenant(this.db, tenantId, async (tx) => {
       await tx
         .update(outboxJobs)
-        .set({ status: 'done', processedAt: new Date() })
+        .set({ status: 'done', processedAt: new Date(), updatedAt: new Date() })
         .where(eq(outboxJobs.id, id));
     });
   }
@@ -70,7 +71,7 @@ export class DrizzleOutboxRepository implements OutboxRepositoryPort {
     await withTenant(this.db, tenantId, async (tx) => {
       await tx
         .update(outboxJobs)
-        .set({ status: 'failed', lastError: error, processedAt: new Date() })
+        .set({ status: 'failed', lastError: error, processedAt: new Date(), updatedAt: new Date() })
         .where(eq(outboxJobs.id, id));
     });
   }
