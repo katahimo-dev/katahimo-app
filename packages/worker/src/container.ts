@@ -22,12 +22,12 @@ import {
   ConsoleAuditLogPort,
   createCustomerCsvSource,
   createGoogleCalendarPort,
+  createKeyManagementPort,
   createScheduleServices,
+  createStoragePort,
   GasBridgeMirrorSenderPort,
   InMemoryTtlCache,
   LocalCryptoPort,
-  LocalFileStoragePort,
-  LocalKmsPort,
   NoopMirrorSenderPort,
 } from '@katahimo/integrations';
 import type { WorkerEnv } from './env';
@@ -40,7 +40,7 @@ export interface WorkerContainer extends MirrorWorkerDeps, NightlyCalendarSyncDe
 }
 
 export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerContainer {
-  const kms = new LocalKmsPort(env.LOCAL_DEV_KEK);
+  const kms = createKeyManagementPort(env);
   const crypto = new LocalCryptoPort(new DrizzleTenantKeyRepository(db), kms, new ConsoleAuditLogPort());
   const gasBridgeOptions =
     env.GAS_BRIDGE_URL && env.GAS_BRIDGE_SECRET
@@ -70,7 +70,7 @@ export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerConta
     customers,
     familyMembers: new DrizzleFamilyMemberRepository(db),
     crypto,
-    storage: new LocalFileStoragePort(env.LOCAL_RECEIPT_STORAGE_DIR),
+    storage: createStoragePort(env),
     sender: gasBridgeOptions ? new GasBridgeMirrorSenderPort(gasBridgeOptions) : new NoopMirrorSenderPort(),
     schedule: scheduleServices.schedule,
     appLog,

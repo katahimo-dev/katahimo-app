@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { createContainer } from './container';
 import type { Env } from './env';
+import { registerWebStatic } from './http/webStatic';
 import { createAdminImportRoutes } from './routes/adminImport';
 import { createAdminStaffRoutes } from './routes/adminStaff';
 import { createAttendanceRoutes } from './routes/attendance';
@@ -50,6 +51,9 @@ export function createApp(deps: AppDeps) {
   app.route('/api/data-version', createDataVersionRoutes(container));
   app.route('/api/admin/staff', createAdminStaffRoutes(container));
   app.route('/api/ui-config', createUiConfigRoutes(container));
+
+  // 本番コンテナではビルド済みのWeb画面も同じオリジンから配信する(APIのルートより後に登録し、/api を優先)
+  if (deps.env.WEB_DIST_DIR) registerWebStatic(app, deps.env.WEB_DIST_DIR);
 
   app.notFound((c) => c.json({ code: 'not_found', message: '該当するAPIがありません' }, 404));
 

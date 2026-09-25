@@ -1,4 +1,12 @@
-import { parseTenantFolderMap, SCHEDULE_PROVIDERS } from '@katahimo/integrations';
+import {
+  KMS_PROVIDERS,
+  kmsEnvProblems,
+  parseTenantFolderMap,
+  SCHEDULE_PROVIDERS,
+  STORAGE_PROVIDERS,
+  scheduleEnvProblems,
+  storageEnvProblems,
+} from '@katahimo/integrations';
 import { z } from 'zod';
 
 const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
@@ -23,17 +31,33 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL が必要です'),
   SESSION_SECRET: z.string().min(16, 'SESSION_SECRET は16文字以上にしてください'),
 
+  // ビルド済みWeb画面(packages/web の dist)を同じサービスから配信する場合のディレクトリ(本番コンテナ)。
+  // 未設定なら配信しない(開発は Vite の開発サーバーが配信する)。
+  WEB_DIST_DIR: z.preprocess(emptyToUndefined, z.string().optional()),
+
   // BlindIndexPortの開発用実装(LocalBlindIndexPort)が使うマスターキー。32バイト(64桁hex)。
   // CryptoPort(実値の暗号化)とは意図的に鍵を分けている(一方の漏洩だけでは他方に影響しない
-  // 権限分離のため、packages/core/src/ports/crypto.ts参照)。
+  // 権限分離のため、packages/core/src/ports/crypto.ts参照)。名前に反して本番もこの実装を使い、値は
+  // Secret Manager(katahimo-blind-index-key)から渡す。値を変えると既存の検索用インデックスが引けなくなる。
   LOCAL_DEV_MASTER_KEY: z
     .string()
     .regex(/^[0-9a-f]{64}$/i, 'LOCAL_DEV_MASTER_KEY は32バイト(64桁の16進数)にしてください'),
 
-  // CryptoPortが使うテナントDEKをラップするKEK(KeyManagementPortの開発用実装LocalKmsPortが
-  // 使う)。32バイト(64桁hex)。本番はCloud KMSに置き換える(Phase 5)。LOCAL_DEV_MASTER_KEYとは
-  // 別の値にすること(こちらが漏れてもblind indexの鍵には影響しない、逆も同様)。
-  LOCAL_DEV_KEK: z.string().regex(/^[0-9a-f]{64}$/i, 'LOCAL_DEV_KEK は32バイト(64桁の16進数)にしてください'),
+  // CryptoPortが使うテナントDEKをラップするKEKの実装。local: LOCAL_DEV_KEK(開発用のKMS代替) /
+  // gcp: Cloud KMS の鍵 GCP_KMS_KEY_NAME(本番は必須)。環境ごとに最初に決めて途中で変えないこと
+  // (既存のtenant_keysを復号できなくなる)。
+  KMS_PROVIDER: z.preprocess(emptyToUndefined, z.enum(KMS_PROVIDERS).default('local')),
+  // KMS_PROVIDER=local のKEK。32バイト(64桁hex)。LOCAL_DEV_MASTER_KEYとは別の値にすること
+  // (こちらが漏れてもblind indexの鍵には影響しない、逆も同様)。
+  LOCAL_DEV_KEK: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^[0-9a-f]{64}$/i, 'LOCAL_DEV_KEK は32バイト(64桁の16進数)にしてください')
+      .optional(),
+  ),
+  // KMS_PROVIDER=gcp の鍵(projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>)。
+  GCP_KMS_KEY_NAME: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // 移行期のみ必要: GAS版 Script Properties の AUTH_SALT と同じ値。
   // 未設定でも起動はできるが、既存パスワードでのログインは失敗する。
@@ -80,8 +104,10 @@ const envSchema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().default('保育日報 <noreply@localhost>'),
 
-  // 領収書画像の保存先(ローカル開発用ファイルシステムパス)。本番はGCS(Phase 5)に置き換える。
+  // 領収書画像の保存先。local: LOCAL_RECEIPT_STORAGE_DIR(開発用) / gcs: GCS_BUCKET(本番は必須)。
+  STORAGE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(STORAGE_PROVIDERS).default('local')),
   LOCAL_RECEIPT_STORAGE_DIR: z.string().default('./data/receipts'),
+  GCS_BUCKET: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // スプレッドシート脱却時はここを false にするだけでミラーが止まる
   MIRROR_TO_GOOGLE_SHEETS: booleanFlag,
@@ -108,9 +134,17 @@ export type Env = z.infer<typeof envSchema>;
 
 /** 項目単体では表せない組み合わせの検証。 */
 function checkCombinations(env: Env): string[] {
-  const problems: string[] = [];
-  if (env.NODE_ENV === 'production' && !env.SMTP_HOST) {
+  const isProduction = env.NODE_ENV === 'production';
+  const problems = [
+    ...kmsEnvProblems(env, isProduction),
+    ...storageEnvProblems(env, isProduction),
+    ...scheduleEnvProblems(env, isProduction),
+  ];
+  if (isProduction && !env.SMTP_HOST) {
     problems.push('  - SMTP_HOST: 本番ではパスワード再設定メールの送信にSMTP設定が必要です');
+  }
+  if (isProduction && (env.SESSION_SECRET.length < 32 || env.SESSION_SECRET === 'change-me-in-production')) {
+    problems.push('  - SESSION_SECRET: 本番は32文字以上のランダムな値にしてください(openssl rand -hex 32)');
   }
   return problems;
 }
