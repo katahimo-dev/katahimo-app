@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import type { CalendarEvent } from '@katahimo/core/domain';
+import { isSameStaffName } from '@katahimo/core/domain';
 import type {
   AppLogPort,
   GoogleCalendarPort,
@@ -208,6 +209,12 @@ function createGoogleSchedulePort(scenario: Scenario) {
 
 const hasLegacySource = existsSync(ROUTE_SEARCH_JS);
 
+/** 呼び出し側(usecase)と同じく、氏名からスタッフIDを解決した対象(ID は createGoogleSchedulePort と同じ規則)。 */
+const targetOf = (staffName: string) => ({
+  staffId: `staff-${gasScenario.staff.findIndex((s) => isSameStaffName(s.name, staffName))}`,
+  staffName,
+});
+
 describe.skipIf(!hasLegacySource)('GAS版 RouteSearch.js との差分テスト', () => {
   // GAS版は new Date('2026/09/25') と setHours でスクリプトのタイムゾーン(Asia/Tokyo)の0時を作るため、
   // GAS側コードの実行中だけプロセスのタイムゾーンをJSTにする(新実装はタイムゾーンに依存しない)。
@@ -225,20 +232,22 @@ describe.skipIf(!hasLegacySource)('GAS版 RouteSearch.js との差分テスト',
   it.each(staffNames)('ルートつき予定が一致する: %s', async (staffName) => {
     const gas = loadGasRouteSearch(gasScenario).scheduleWithRoute(staffName, gasScenario.date);
     const port = createGoogleSchedulePort(gasScenario);
-    const ours = await port.getScheduleWithRoute(staffName, gasScenario.date, true, { tenantId });
+    const ours = await port.getScheduleWithRoute(targetOf(staffName), gasScenario.date, true, { tenantId });
     expect(ours).toEqual(JSON.parse(JSON.stringify(gas)));
   });
 
   it.each(staffNames)('軽量版の予定一覧が一致する: %s', async (staffName) => {
     const gas = loadGasRouteSearch(gasScenario).schedule(staffName, gasScenario.date);
     const port = createGoogleSchedulePort(gasScenario);
-    const ours = await port.getSchedule(staffName, gasScenario.date, { tenantId });
+    const ours = await port.getSchedule(targetOf(staffName), gasScenario.date, { tenantId });
     expect(ours).toEqual(JSON.parse(JSON.stringify(gas)));
   });
 
   it('シナリオが意図した分岐を通っている(差分テスト自体の確認)', async () => {
     const port = createGoogleSchedulePort(gasScenario);
-    const result = await port.getScheduleWithRoute('佐藤 美咲', gasScenario.date, true, { tenantId });
+    const result = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), gasScenario.date, true, {
+      tenantId,
+    });
     const rows = result.appointments ?? [];
     expect(rows.map((r) => `${r.startTime} ${r.eventType} ${r.customerName}`)).toEqual([
       '09:00 CUSTOMER APPOINTMENT 山田 花子',
@@ -257,7 +266,9 @@ describe.skipIf(!hasLegacySource)('GAS版 RouteSearch.js との差分テスト',
     expect(rows[3]?.moveUrl).toContain('destination=35.5689,139.5577');
 
     // 終日の[事務]は1日中と重なるため、その日の事務作業をすべて1件にまとめる(GAS版と同じ)
-    const takahashi = await port.getScheduleWithRoute('高橋 由美', gasScenario.date, true, { tenantId });
+    const takahashi = await port.getScheduleWithRoute(targetOf('高橋 由美'), gasScenario.date, true, {
+      tenantId,
+    });
     expect(takahashi.appointments?.map((r) => `${r.startTime}-${r.endTime} ${r.customerName}`)).toEqual([
       '00:00-00:00 棚卸し,打合せ',
       '10:00-11:00 小林様 体験訪問',

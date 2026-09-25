@@ -1,121 +1,124 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import type {
-  AuditLogPort,
+  CipherContext,
   CryptoPort,
-  EncryptedValue,
-  EncryptionPurpose,
   KeyManagementPort,
-  TenantKeyRepositoryPort,
+  TenantDataKeyReaderPort,
+  TenantDataKeyRecord,
 } from '@katahimo/core/ports';
 
-interface CachedDek {
-  dek: Buffer;
-  dekVersion: number;
-}
-
-/** 暗号文の形式の版。保存する値の先頭に `v2:` を付ける(将来形式を変えるときに見分けるため)。 */
-const FORMAT_PREFIX = 'v2:';
+/**
+ * 暗号文の形式(v3):
+ *   [0]      形式の版(0x03)
+ *   [1..2]   DEK の版(tenant_data_keys.version、符号なし16ビット)
+ *   [3..14]  nonce(12バイト、値ごとにランダム)
+ *   [15..]   AES-256-GCM の暗号文 | 認証タグ(16バイト)
+ * AAD は `katahimo/field/v3 \0 テナントID \0 用途(テーブル.列) \0 行ID`。先頭に DEK の版を書くため、
+ * DEK をローテーション(新しい版を active にして古い版を decrypt_only に)しても古い暗号文を読める。
+ */
+const FORMAT_V3 = 0x03;
+const HEADER_BYTES = 3;
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 
-/**
- * AES-GCMの追加認証データ(AAD)。テナントIDと用途(`テーブル.列`)に結び付け、暗号文を別のテナント・
- * 別の列にコピーすると復号に失敗する(認証タグの検証で改ざんとして検出される)ようにする。
- * 行IDは含めない(多くの行はINSERTの時点でIDが決まらず、attendance_day_changes のように同じ暗号文を
- * 別の行へ写す使い方もあるため)。
- */
-export function fieldAad(tenantId: string, purpose: EncryptionPurpose): Buffer {
-  return Buffer.from(`katahimo/field/v2\0${tenantId}\0${purpose}`, 'utf8');
+export function fieldAad(context: CipherContext): Buffer {
+  return Buffer.from(`katahimo/field/v3\0${context.tenantId}\0${context.purpose}\0${context.rowId}`, 'utf8');
+}
+
+interface TenantKeys {
+  activeVersion: number;
+  deks: Map<number, Promise<Uint8Array>>;
+  records: Map<number, TenantDataKeyRecord>;
 }
 
 /**
- * CryptoPortの実装。テナントごとのDEK(データ暗号化鍵)によるエンベロープ暗号化を行う。
+ * CryptoPort の実装(エンベロープ暗号化)。テナントの DEK はテナント作成時(provision_tenant)に作られ、KEK で
+ * ラップした値だけが tenant_data_keys にある。アンラップした DEK はプロセス内に版ごとにキャッシュする。
  *
- * 旧実装(マスターキー1本からSHA256でテナント鍵を都度導出)は、マスターキーが漏れれば
- * 全テナントの鍵を誰でも再計算できてしまい、実質「鍵を1本共有しているのと同じ」だった
- * (2026-08 データベース構造レビューで指摘)。この実装ではDEKをテナントごとに
- * `crypto.randomBytes`で独立に生成し、平文のままでは保存せず、常に
- * KeyManagementPort(KEK)でラップした状態のみをTenantKeyRepositoryPort経由でDBへ永続化する。
- *
- * DEKは初回アクセス時に遅延生成し(getOrCreateDek)、アンラップ結果をプロセス内メモリに
- * キャッシュする(プロセス生存期間のみ有効。DEKの実体をリクエストのたびにKMS/DBへ問い合わせる
- * コストを避けるため)。KEKローテーション(rewrap)はDEKの値自体を変えないため、このキャッシュに
- * 影響しない。DEKそのもののローテーションは未実装(対応する再暗号化バッチと合わせて実装する必要が
- * ある。将来の課題)。
- *
- * アルゴリズムはAES-256-GCM(認証付き・値ごとにランダムなnonce)。同じ平文でも呼ぶたびに
- * 異なる暗号文になるため、決定的暗号化のような統計的漏洩がない。
- *
- * 保存形式(2026-09 のセキュリティレビューで変更): `v2:` + base64(nonce 12バイト | 認証タグ 16バイト |
- * 暗号文)、AADは fieldAad(テナントID・用途)。それより前の形式(接頭辞なし・AADなし)は読めない
- * (本番データはまだ無いため移行処理は持たない。開発DBは作り直す)。
+ * キャッシュは Promise を持つ(single-flight): 同じテナント・版を同時に要求しても KMS・DB への問い合わせは
+ * 1回で、失敗した Promise はキャッシュから外す(次の要求でやり直す)。active の版は keysTtlMs ごとに
+ * 読み直す(ローテーションを再起動なしで反映するため)。
  */
 export class LocalCryptoPort implements CryptoPort {
-  private readonly dekCache = new Map<string, CachedDek>();
+  private readonly tenants = new Map<string, { expiresAt: number; keys: Promise<TenantKeys> }>();
 
   constructor(
-    private readonly tenantKeys: TenantKeyRepositoryPort,
+    private readonly dataKeys: TenantDataKeyReaderPort,
     private readonly kms: KeyManagementPort,
-    private readonly auditLog?: AuditLogPort,
+    private readonly keysTtlMs = 10 * 60 * 1000,
   ) {}
 
-  private async getOrCreateDek(tenantId: string): Promise<CachedDek> {
-    const cached = this.dekCache.get(tenantId);
-    if (cached) return cached;
-
-    let record = await this.tenantKeys.find(tenantId);
-    if (record?.revokedAt) {
-      throw new Error(
-        `テナント(${tenantId})の鍵は暗号学的削除(解約処理)済みのため、このテナントのデータは復号できません。`,
-      );
-    }
-    if (!record) {
-      const dek = randomBytes(32);
-      const wrapped = await this.kms.wrap(dek, tenantId);
-      record = await this.tenantKeys.create(tenantId, wrapped.ciphertext, wrapped.kekVersion);
-    }
-
-    const dek = await this.kms.unwrap(
-      { ciphertext: record.wrappedDek, kekVersion: record.kekVersion },
-      tenantId,
-    );
-    const entry: CachedDek = { dek, dekVersion: record.dekVersion };
-    this.dekCache.set(tenantId, entry);
-    return entry;
+  private loadKeys(tenantId: string): Promise<TenantKeys> {
+    const cached = this.tenants.get(tenantId);
+    if (cached && cached.expiresAt > Date.now()) return cached.keys;
+    const keys = this.dataKeys.listUsable(tenantId).then((records) => {
+      const active = records.find((r) => r.state === 'active');
+      if (!active) {
+        throw new Error(
+          `テナント(${tenantId})に有効なデータ暗号化鍵がありません(未作成、または暗号学的削除済み)`,
+        );
+      }
+      const previous = cached ? cached.keys.catch(() => null) : Promise.resolve(null);
+      return previous.then((old) => ({
+        activeVersion: active.version,
+        // 読み直しの前にアンラップ済みの DEK は引き継ぐ(KMS を呼び直さない)
+        deks: old?.deks ?? new Map<number, Promise<Uint8Array>>(),
+        records: new Map(records.map((r) => [r.version, r])),
+      }));
+    });
+    this.tenants.set(tenantId, { expiresAt: Date.now() + this.keysTtlMs, keys });
+    keys.catch(() => {
+      if (this.tenants.get(tenantId)?.keys === keys) this.tenants.delete(tenantId);
+    });
+    return keys;
   }
 
-  async encrypt(tenantId: string, plaintext: string, purpose: EncryptionPurpose): Promise<EncryptedValue> {
-    const { dek, dekVersion } = await this.getOrCreateDek(tenantId);
+  private async dek(
+    tenantId: string,
+    version: number | 'active',
+  ): Promise<{ version: number; dek: Uint8Array }> {
+    const keys = await this.loadKeys(tenantId);
+    const resolved = version === 'active' ? keys.activeVersion : version;
+    let dek = keys.deks.get(resolved);
+    if (!dek) {
+      const record = keys.records.get(resolved);
+      if (!record) {
+        throw new Error(
+          `テナント(${tenantId})のデータ暗号化鍵の版 ${resolved} がありません(破棄済みの可能性)`,
+        );
+      }
+      dek = this.kms.unwrap({ wrapped: record.wrappedDek, kekKeyName: record.kekKeyName }, tenantId);
+      keys.deks.set(resolved, dek);
+      const pending = dek;
+      pending.catch(() => {
+        if (keys.deks.get(resolved) === pending) keys.deks.delete(resolved);
+      });
+    }
+    return { version: resolved, dek: await dek };
+  }
+
+  async encrypt(context: CipherContext, plaintext: string): Promise<Uint8Array> {
+    const { version, dek } = await this.dek(context.tenantId, 'active');
     const nonce = randomBytes(NONCE_BYTES);
     const cipher = createCipheriv('aes-256-gcm', dek, nonce);
-    cipher.setAAD(fieldAad(tenantId, purpose));
-    const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-    const payload = Buffer.concat([nonce, cipher.getAuthTag(), encrypted]);
-    return { ciphertext: `${FORMAT_PREFIX}${payload.toString('base64')}`, keyVersion: dekVersion };
+    cipher.setAAD(fieldAad(context));
+    const body = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+    const header = Buffer.from([FORMAT_V3, (version >> 8) & 0xff, version & 0xff]);
+    return Buffer.concat([header, nonce, body, cipher.getAuthTag()]);
   }
 
-  async decrypt(tenantId: string, value: EncryptedValue, purpose: EncryptionPurpose): Promise<string> {
-    const { dek, dekVersion } = await this.getOrCreateDek(tenantId);
-    if (value.keyVersion !== dekVersion) {
-      // 過去バージョンのDEKを保持する仕組みがまだ無いため、現在のDEKと異なるバージョンで
-      // 暗号化された値は復号できない(DEKローテーション実装時に合わせて対応する)。
-      throw new Error(
-        `未対応のDEKバージョンです(tenantId=${tenantId}, keyVersion=${value.keyVersion}, 現在のDEKバージョン=${dekVersion})。`,
-      );
+  async decrypt(context: CipherContext, ciphertext: Uint8Array): Promise<string> {
+    const bytes = Buffer.from(ciphertext);
+    if (bytes.length < HEADER_BYTES + NONCE_BYTES + TAG_BYTES || bytes[0] !== FORMAT_V3) {
+      throw new Error(`未対応の暗号文の形式です(用途=${context.purpose})`);
     }
-    if (!value.ciphertext.startsWith(FORMAT_PREFIX)) {
-      throw new Error(
-        `未対応の暗号文の形式です(tenantId=${tenantId}, 用途=${purpose})。2026-09 より前の形式の開発DBは作り直してください。`,
-      );
-    }
-    this.auditLog?.recordDecrypt({ tenantId });
-    const payload = Buffer.from(value.ciphertext.slice(FORMAT_PREFIX.length), 'base64');
-    const nonce = payload.subarray(0, NONCE_BYTES);
-    const authTag = payload.subarray(NONCE_BYTES, NONCE_BYTES + TAG_BYTES);
-    const encrypted = payload.subarray(NONCE_BYTES + TAG_BYTES);
+    const version = bytes.readUInt16BE(1);
+    const { dek } = await this.dek(context.tenantId, version);
+    const nonce = bytes.subarray(HEADER_BYTES, HEADER_BYTES + NONCE_BYTES);
     const decipher = createDecipheriv('aes-256-gcm', dek, nonce);
-    decipher.setAAD(fieldAad(tenantId, purpose));
-    decipher.setAuthTag(authTag);
-    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+    decipher.setAAD(fieldAad(context));
+    decipher.setAuthTag(bytes.subarray(bytes.length - TAG_BYTES));
+    const body = bytes.subarray(HEADER_BYTES + NONCE_BYTES, bytes.length - TAG_BYTES);
+    return Buffer.concat([decipher.update(body), decipher.final()]).toString('utf8');
   }
 }

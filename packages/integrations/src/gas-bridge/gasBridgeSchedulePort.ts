@@ -1,6 +1,7 @@
 import type {
   ScheduleLightResult,
   SchedulePort,
+  ScheduleTarget,
   ScheduleWithRouteOptions,
   ScheduleWithRouteResult,
 } from '@katahimo/core/ports';
@@ -12,8 +13,8 @@ import { GasBridgeClient } from './gasBridgeClient';
  * 移行期の実装(SCHEDULE_PROVIDER=gas_bridge)。Bridge.jsはGAS版RouteSearch.jsの
  * getScheduleForStaffOnDate / getScheduleWithRouteForStaffOnDate をそのまま呼ぶ。
  *
- * 対象スタッフ名の解決(管理者以外は本人名に強制)はkatahimo-app側のusecase/session.tsで
- * 既に済ませてから呼ぶこと(CLAUDE.mdのセキュリティパターン)。
+ * GAS版はスタッフを氏名で扱うため、ScheduleTarget の氏名(DB の値)を送る。対象スタッフの解決(一般スタッフは
+ * 本人に固定)は呼び出し側の usecase で済ませてから呼ぶこと(CLAUDE.md の admin-vs-self)。
  */
 export class GasBridgeSchedulePort implements SchedulePort {
   private readonly client: GasBridgeClient;
@@ -22,8 +23,11 @@ export class GasBridgeSchedulePort implements SchedulePort {
     this.client = new GasBridgeClient(options);
   }
 
-  async getSchedule(staffName: string, dateString: string): Promise<ScheduleLightResult> {
-    return this.client.fetchJson<ScheduleLightResult>('schedule', { staffName, date: dateString });
+  async getSchedule(target: ScheduleTarget, dateString: string): Promise<ScheduleLightResult> {
+    return this.client.fetchJson<ScheduleLightResult>('schedule', {
+      staffName: target.staffName,
+      date: dateString,
+    });
   }
 
   /**
@@ -31,13 +35,13 @@ export class GasBridgeSchedulePort implements SchedulePort {
    * (キャッシュは読まれない。計算結果がGAS側キャッシュに書かれる点だけがGoogleSchedulePortと異なる)。
    */
   async getScheduleWithRoute(
-    staffName: string,
+    target: ScheduleTarget,
     dateString: string,
     forceRefresh: boolean,
     options?: ScheduleWithRouteOptions,
   ): Promise<ScheduleWithRouteResult> {
     return this.client.fetchJson<ScheduleWithRouteResult>('scheduleWithRoute', {
-      staffName,
+      staffName: target.staffName,
       date: dateString,
       forceRefresh: forceRefresh || options?.fresh ? '1' : '0',
     });

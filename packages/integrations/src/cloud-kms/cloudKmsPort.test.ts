@@ -30,10 +30,8 @@ describe('CloudKmsPort', () => {
     const dek = randomBytes(32);
 
     const wrapped = await port.wrap(dek, 'tenant-1');
-    expect(wrapped.kekVersion).toBe(1);
-    expect(wrapped.ciphertext.startsWith('v2:')).toBe(true);
-    expect(wrapped.ciphertext).not.toContain(dek.toString('base64'));
-    expect(await port.unwrap(wrapped, 'tenant-1')).toEqual(dek);
+    expect(wrapped.kekKeyName).toBe(KEY);
+    expect(Buffer.from(await port.unwrap(wrapped, 'tenant-1'))).toEqual(dek);
     expect(calls).toEqual([
       { op: 'encrypt', keyName: KEY },
       { op: 'decrypt', keyName: KEY },
@@ -47,10 +45,12 @@ describe('CloudKmsPort', () => {
     await expect(port.unwrap(wrapped, 'tenant-2')).rejects.toThrow(/AAD/);
   });
 
-  it('未知の kekVersion は KMS を呼ばずに拒否する', async () => {
+  it('別の鍵名でラップされた DEK は KMS を呼ばずに拒否する', async () => {
     const { client, calls } = fakeKms();
     const port = new CloudKmsPort({ keyName: KEY, client });
-    await expect(port.unwrap({ ciphertext: 'x', kekVersion: 2 }, 'tenant-1')).rejects.toThrow(/kekVersion=2/);
+    await expect(
+      port.unwrap({ wrapped: new Uint8Array([1]), kekKeyName: 'local' }, 'tenant-1'),
+    ).rejects.toThrow(/別の KEK/);
     expect(calls).toEqual([]);
   });
 
