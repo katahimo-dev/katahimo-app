@@ -172,8 +172,8 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 | `POST /api/settings/admin/gemini-models` | 管理者 | `saveGeminiModelsRequestSchema`(`reportModel`・`ocrModel`)/ 同上 | SECURITY `settings.gemini_models.changed` |
 | `POST /api/settings/admin/gchat-webhooks` | 管理者 | `saveGchatWebhooksRequestSchema`(`reportWebhookUrl?`・`receiptWebhookUrl?`)/ 同上 | 新しい値は `https://chat.googleapis.com/v1/spaces/<space>/messages?…` だけ。SECURITY `settings.gchat_webhooks.changed`、WARN `.save_rejected` |
 | `POST /api/settings/admin/gemini-models/available` | 管理者 | `listGeminiModelsRequestSchema`(`apiKey?`)/ `listGeminiModelsResponseSchema` | `{ success, models }`。キー無し 400、API 失敗 502 |
-| `GET /api/settings/admin/prompts` | 管理者 | — / `aiPromptListResponseSchema` | `{ prompts: [{ key, kind, label, body, defaultBody, customized, updatedAt }] }` |
-| `PUT /api/settings/admin/prompts` | 管理者 | `updateAiPromptsRequestSchema`(`prompts: [{ key, body｜null }]`)/ 同上 | null・空・既定値と同じなら上書きを消す。未知の key が含まれると 400 で何も変えない。INFO `settings.ai_prompts.updated` |
+| `GET /api/settings/admin/prompts` | 管理者 | — / `aiPromptListResponseSchema` | `{ prompts: [{ key, kind, label, body, defaultBody, customized, updatedAt, revision }] }`。`revision` はキーの最新の版(履歴 `ai_prompt_revisions` の最大値。保存したことが無ければ 0) |
+| `PUT /api/settings/admin/prompts` | 管理者 | `updateAiPromptsRequestSchema`(`prompts: [{ key, body｜null, revision? }]`、本文は2万字まで)/ 同上 | null・空・既定値と同じなら上書きを消す。未知の key が含まれると 400 で何も変えない。`revision` が最新の版と違えば(他の管理者が先に保存した)409 で何も変えない(WARN `settings.ai_prompts.update_rejected`)。INFO `settings.ai_prompts.updated` |
 
 同じ値の保存は `changed: false`「変更ありません」でログも残さない。秘密値の伏せ字: APIキーは `••••••••` + 末尾4文字(8文字以下は
 全て伏せる)、Webhook URL は `…/messages?••••••••`(文字は `SECRET_MASK_CHAR`)。プロンプトの key(`AI_PROMPT_KEYS`):
@@ -184,12 +184,17 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 
 | メソッド・パス | 契約(要求 / 応答) | 応答・エラー・ログ |
 | --- | --- | --- |
-| `GET /api/admin/staff` | — / `adminStaffListResponseSchema` | `{ staff: [{ id, name, email, altEmail, phone, role, retiredOn, isRetired, passwordStatus }] }`(退職者を含む) |
-| `POST /api/admin/staff` | `createStaffRequestSchema`(`name`・`email`・`altEmail?`・`phone?`・`role`(既定 staff)・`initialPassword?`)/ `adminStaffResponseSchema` | 201 `{ staff }`。初期パスワードを省くと未設定(本人が再設定で決める)。メール・サブメールはテナント内で両方を跨いで一意(409)。SECURITY `staff.admin.created` |
-| `PATCH /api/admin/staff/:id` | `updateStaffRequestSchema`(各項目を省略可、`altEmail`・`phone`・`retiredOn` は null で消す)/ `adminStaffResponseSchema` | 退職日を入れると全セッションを失効。自分の管理者権限の解除・退職日は 400。SECURITY `staff.admin.updated` |
+| `GET /api/admin/staff` | — / `adminStaffListResponseSchema` | `{ staff: [{ id, name, kana, email, altEmail, phone, role, retiredOn, isRetired, passwordStatus, homeAddress, hasHomeGeo, travelMode, gender, scheduleCalendarId, rowVersion }] }`(退職者を含む、氏名順)。`kana` は「セイ メイ」、`scheduleCalendarId` は `staff_calendars`(purpose=schedule) |
+| `POST /api/admin/staff` | `createStaffRequestSchema`(`name`・`email`・`kana?`・`altEmail?`・`phone?`・`role`(既定 staff)・`homeAddress?`・`travelMode?`(car / bicycle / transit / walk)・`gender?`(female / male / other / unknown)・`scheduleCalendarId?`・`initialPassword?`)/ `adminStaffResponseSchema` | 201 `{ staff, homeGeocode }`。初期パスワードを省くと未設定。メール・サブメールはテナント内で両方を跨いで一意(409、`fields` つき)。自宅住所はジオコーディングして緯度経度・区画を保存し、`homeGeocode` に結果(`ok` / `not_found` / `failed` / `unavailable`。住所を送らなければ null)。ok 以外でも住所は保存する。SECURITY `staff.admin.created` |
+| `PATCH /api/admin/staff/:id` | `updateStaffRequestSchema`(登録の項目 + `retiredOn`、全て省略可。null・空欄は値を消す。`rowVersion?`)/ `adminStaffResponseSchema` | `rowVersion` が今の版と違えば 409(`stale_row_version`)。住所を変えたときだけジオコーディングし `homeGeocode` を返す(変えなければ null)。退職日を入れると全セッションを失効。自分の役割の変更・退職日は 400。更新する項目が無ければ 400。SECURITY `staff.admin.updated`(`changedFields` と役割・退職日・`homeGeocode`。値そのものは残さない) |
+| `DELETE /api/admin/staff/:id` | — / `okResponseSchema` | 業務の記録(出勤簿・訪問・移動・勤務・日報・領収書・取込・設定の更新者 等、`ON DELETE` の無い外部キー)から参照されていなければ削除し、認証情報・ログイン用メール・セッション・再設定コード・カレンダー設定も消える。参照されていれば 409「…記録があるため削除できません。辞めた方は退職日を設定してください。」(`staff_has_records`)。自分自身は 400、無ければ 404。SECURITY `staff.admin.deleted` |
+| `POST /api/admin/staff/:id/password-guide` | — / `okResponseSchema` | パスワード未設定・GAS版のパスワードのままの在籍者に、パスワード設定の案内(再設定コード。`mail.password_reset` を outbox に積み、payload は `{ purpose: 'setup_guide' }` だけ)をメールアドレス宛に送る。設定済み・退職者は 400。回数はアカウント単位の再設定の要求と共有し、超えたら 429(Retry-After)。SECURITY `staff.admin.password_guide_sent` |
+| `GET /api/admin/audit-logs` | `auditLogQuerySchema`(`from?`・`to?`(業務日、両端を含む。既定は今日までの7日間、93日まで)・`level?`・`staffId?`(操作者か対象)・`action?`(操作コードの前方一致)・`cursor?`・`limit`(1〜200、既定50))/ `auditLogListResponseSchema` | `{ entries: [{ id, createdAt, level, action, actorType, actorStaffId, actorName, targetStaffId, targetName, details, ip, userAgent, requestId }], nextCursor, range: { from, to }, timeZone }`。新しい順(`created_at`, `id` の keyset。`nextCursor` を次の `cursor` に)。テナントの行だけ(tenant_id が null のログイン前の記録は出さない)。期間の誤りは 400(`fields.from`)。最初のページだけ INFO `audit_log.viewed`(条件。スタッフを絞れば `targetStaffId`) |
+| `GET /api/admin/audit-logs.csv` | 同上(`cursor`・`limit` は使わない) | `text/csv; charset=utf-8`(BOM つき、CRLF、`attachment; filename="audit-logs_<from>_<to>.csv"`)。見出し: 日時(テナントのタイムゾーン)・レベル・操作・操作コード・操作者の種類・操作者・対象スタッフ・詳細・IPアドレス・ユーザーエージェント・リクエストID。条件に合う全件を500件ずつ別のトランザクションで読んで流す。`=`・`+`・`-`・`@` で始まる値は先頭に `'` を付ける。読み始める前に SECURITY `audit_log.exported` |
 | `POST /api/admin/customers/import` | `customerCsvImportRequestSchema`(`force` 既定 true)/ `customerCsvImportResponseSchema` | `{ status, message, fileName, version, stats, dataVersion }`。`imported` / `up_to_date` / `no_files` / `not_configured` は 200、`review_required` 409、`failed` 502 |
 
-拒否は WARN `<action>.access_denied`(`staff.admin.list` 等)・`staff.admin.create_rejected` / `update_rejected`・`customer_csv.import.access_denied`。
+拒否は WARN `<action>.access_denied`(`staff.admin.list` / `staff.admin.delete` / `staff.admin.password_guide` / `audit_log.view` / `audit_log.export` 等)・`staff.admin.create_rejected` / `update_rejected` / `delete_rejected` / `password_guide_rejected`(`details.reason` に理由コード)・`customer_csv.import.access_denied`。
+操作コードの日本語の表示名は `@katahimo/shared` の `AUDIT_ACTION_LABELS`(画面と CSV で共有)。
 
 ## 3. 本番での Web 画面の配信
 
