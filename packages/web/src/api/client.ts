@@ -161,7 +161,7 @@ export const api = {
   patch<S extends z.ZodTypeAny>(path: string, schema: S, body: unknown = {}, options?: RequestOptions) {
     return request('PATCH', path, schema, body, options);
   },
-  delete<S extends z.ZodTypeAny>(path: string, schema: S, options?: RequestOptions) {
-    return request('DELETE', path, schema, undefined, options);
+  delete<S extends z.ZodTypeAny>(path: string, schema: S, body?: unknown, options?: RequestOptions) {
+    return request('DELETE', path, schema, body, options);
   },
 };
