@@ -1,7 +1,13 @@
-import { parseTenantCalendarSettings, type TenantCalendarSettings } from '@katahimo/core/domain';
+import {
+  parseTenantCalendarSettings,
+  parseTenantCustomerImportSettings,
+  type TenantCalendarSettings,
+  type TenantCustomerImportSettings,
+} from '@katahimo/core/domain';
 import type {
   ProvisionTenantInput,
   TenantCalendarSettingsStore,
+  TenantCustomerImportSettingsStore,
   TenantDirectoryPort,
   TenantProvisioningPort,
   TenantRecord,
@@ -30,6 +36,17 @@ export async function findTenantCalendarSettings(db: Executor, id: string): Prom
     .from(tenants)
     .where(eq(tenants.id, id));
   return parseTenantCalendarSettings(rows[0]?.calendarSettings);
+}
+
+export async function findTenantCustomerImportSettings(
+  db: Executor,
+  id: string,
+): Promise<TenantCustomerImportSettings | null> {
+  const rows = await db
+    .select({ customerImportSettings: tenants.customerImportSettings })
+    .from(tenants)
+    .where(eq(tenants.id, id));
+  return parseTenantCustomerImportSettings(rows[0]?.customerImportSettings);
 }
 
 /** platform.tenants の参照(RLS なし)。 */
@@ -84,6 +101,30 @@ export class DrizzleTenantCalendarSettingsStore implements TenantCalendarSetting
     await this.db
       .update(tenants)
       .set({ calendarSettings: { ...settings } })
+      .where(eq(tenants.id, tenantId));
+  }
+}
+
+/** テナントの顧客データの取込元の設定(所有者の接続。運用担当者の CLI `pnpm tenant:customer-source`)。 */
+export class DrizzleTenantCustomerImportSettingsStore implements TenantCustomerImportSettingsStore {
+  constructor(private readonly db: Database) {}
+
+  get(tenantId: string): Promise<TenantCustomerImportSettings | null> {
+    return findTenantCustomerImportSettings(this.db, tenantId);
+  }
+
+  async findTenantIdsByDriveFolder(driveFolderId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: tenants.id })
+      .from(tenants)
+      .where(sql`${tenants.customerImportSettings}->>'driveFolderId' = ${driveFolderId}`);
+    return rows.map((row) => row.id);
+  }
+
+  async set(tenantId: string, settings: TenantCustomerImportSettings | null): Promise<void> {
+    await this.db
+      .update(tenants)
+      .set({ customerImportSettings: settings ? { ...settings } : {} })
       .where(eq(tenants.id, tenantId));
   }
 }

@@ -1,4 +1,4 @@
-import type { OutboxTopic } from '@katahimo/core/domain';
+import type { OutboxTopicPolicy } from '@katahimo/core/domain';
 import type {
   TenantRecord,
   TenantRepositories,
@@ -7,7 +7,11 @@ import type {
 } from '@katahimo/core/ports';
 import { type Database, type Tx, withTenant } from './client';
 import { mapDatabaseError } from './errors';
-import { findTenantById, findTenantCalendarSettings } from './repositories/platform/tenants';
+import {
+  findTenantById,
+  findTenantCalendarSettings,
+  findTenantCustomerImportSettings,
+} from './repositories/platform/tenants';
 import { DrizzleAppLogReadRepository } from './repositories/tenant/appLogs';
 import { DrizzleAttendanceRepository } from './repositories/tenant/attendance';
 import {
@@ -22,6 +26,7 @@ import {
   DrizzleCustomerRepository,
   DrizzleCustomerSourceRecordRepository,
 } from './repositories/tenant/customers';
+import { DrizzleIntegrationApiKeyRepository } from './repositories/tenant/integrations';
 import { DrizzlePushSubscriptionRepository } from './repositories/tenant/push';
 import {
   DrizzleCareRecordRepository,
@@ -40,8 +45,11 @@ import {
 import { DrizzleStaffRepository } from './repositories/tenant/staff';
 
 export interface UnitOfWorkConfig {
-  /** 積まない outbox のトピック(MIRROR_TO_GOOGLE_SHEETS が無効ならスプレッドシートへのミラー)。 */
-  skipOutboxTopics?: readonly OutboxTopic[];
+  /**
+   * どのテナントのどのトピックを outbox に積むか(ミラーは GAS Bridge の持ち主のテナントだけ、Web Push は VAPID が
+   * ある時だけ。core/domain/outbox/topicPolicy.ts)。省略すると全てのトピックを積む(DB の結合テスト)。
+   */
+  outboxPolicy?: OutboxTopicPolicy;
 }
 
 /** トランザクションに結び付いたリポジトリ一式を作る(テスト・ワーカーの読み出しでも使う)。 */
@@ -50,19 +58,22 @@ export function bindRepositories(
   tenantId: string,
   config: UnitOfWorkConfig = {},
 ): TenantRepositories {
-  const skip = new Set(config.skipOutboxTopics ?? []);
   let tenant: Promise<TenantRecord> | null = null;
+  const loadTenant = () => {
+    tenant ??= findTenantById(tx, tenantId).then((t) => {
+      if (!t) throw new Error(`テナントが見つかりません(tenantId=${tenantId})`);
+      return t;
+    });
+    return tenant;
+  };
   return {
     tenantId,
-    tenant() {
-      tenant ??= findTenantById(tx, tenantId).then((t) => {
-        if (!t) throw new Error(`テナントが見つかりません(tenantId=${tenantId})`);
-        return t;
-      });
-      return tenant;
-    },
+    tenant: loadTenant,
     calendarSettings() {
       return findTenantCalendarSettings(tx, tenantId);
+    },
+    customerImportSettings() {
+      return findTenantCustomerImportSettings(tx, tenantId);
     },
     staff: new DrizzleStaffRepository(tx, tenantId),
     sessions: new DrizzleSessionRepository(tx, tenantId),
@@ -80,10 +91,16 @@ export function bindRepositories(
     secrets: new DrizzleTenantSecretRepository(tx, tenantId),
     aiPrompts: new DrizzleAiPromptRepository(tx, tenantId),
     importRuns: new DrizzleImportRunRepository(tx, tenantId),
+    integrationApiKeys: new DrizzleIntegrationApiKeyRepository(tx, tenantId),
     staffCalendars: new DrizzleStaffCalendarRepository(tx, tenantId),
     busyBlocks: new DrizzleStaffBusyBlockRepository(tx, tenantId),
     pushSubscriptions: new DrizzlePushSubscriptionRepository(tx, tenantId),
-    outbox: new DrizzleOutboxWriter(tx, tenantId, skip),
+    outbox: new DrizzleOutboxWriter(
+      tx,
+      tenantId,
+      config.outboxPolicy ?? null,
+      async () => (await loadTenant()).slug,
+    ),
     appLogs: new DrizzleAppLogReadRepository(tx, tenantId),
     entityChanges: new DrizzleEntityChangeWriter(tx, tenantId),
     retention: new DrizzleTenantRetentionRepository(tx, tenantId),

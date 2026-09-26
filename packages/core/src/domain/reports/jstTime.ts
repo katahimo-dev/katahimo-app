@@ -1,3 +1,5 @@
+import { isRecordDate } from '@katahimo/shared';
+
 const JST_OFFSET_MINUTES = 9 * 60;
 
 /**
@@ -47,7 +49,8 @@ const RECEIPT_TIMESTAMP_PATTERN =
   /^(\d{4})\s*[/.\-年]\s*(\d{1,2})\s*[/.\-月]\s*(\d{1,2})\s*日?(?:(?:[ T]+|(?<=日))(\d{1,2})[:時](\d{1,2})分?(?::(\d{1,2}))?)?$/;
 
 /**
- * 領収書日時の文字列を Date にする(JST の壁時計時刻として解釈する)。読めない表記・存在しない日時は null
+ * 領収書日時の文字列を Date にする(JST の壁時計時刻として解釈する)。読めない表記・存在しない日時・
+ * 記録として書き込める年(@katahimo/shared RECORD_YEAR_MIN〜RECORD_YEAR_MAX)の外は null
  * (呼び出し側が GAS版と同じく報告の日付+開始時刻・登録時刻にフォールバックする)。
  */
 export function parseJstTimestamp(value: string | null | undefined): Date | null {
@@ -62,8 +65,8 @@ export function parseJstTimestamp(value: string | null | undefined): Date | null
     number,
   ];
   if (hour > 23 || minute > 59 || second > 59) return null;
+  // 業務であり得ない年(OCR の読み違い等)は読めない表記と同じ扱い(フォールバックの日時にする)
+  if (!isRecordDate(year, month, day)) return null;
   const wall = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  if (wall.getUTCFullYear() !== year || wall.getUTCMonth() !== month - 1 || wall.getUTCDate() !== day)
-    return null;
   return new Date(wall.getTime() - JST_OFFSET_MINUTES * 60_000);
 }

@@ -291,6 +291,11 @@ export async function sendPushNotice(deps: PushSendDeps, message: ClaimedOutboxM
 
 export interface RouteNoticeDeps extends ScheduleDeps, Clock {
   tenants: TenantDirectoryPort;
+  /**
+   * 予定を読めるテナントの slug(SCHEDULE_PROVIDER=gas_bridge の GAS_BRIDGE_TENANT。Bridge は1つのテナントの予定しか読めない)。
+   * 設定されていれば他のテナントは処理せずに飛ばす(INFO を1件残す。毎晩失敗で終わらせない)。null・未指定なら全テナント。
+   */
+  scheduleTenantSlug?: string | null | undefined;
 }
 
 export interface RouteNoticeStaffFailure {
@@ -320,6 +325,8 @@ export interface RouteNoticeTenantSummary {
 
 export interface RouteNoticeSummary {
   tenants: RouteNoticeTenantSummary[];
+  /** 予定を読めないため飛ばしたテナント(RouteNoticeDeps.scheduleTenantSlug)。 */
+  skippedTenants: { tenantId: string; tenantSlug: string }[];
   queued: number;
   alreadyQueued: number;
   failed: number;
@@ -433,12 +440,14 @@ export async function enqueueRouteNoticesForTenant(
 /**
  * 翌日の予定のお知らせ(GAS版 gas-root-serach の夜間の main() の LINE WORKS DM の置き換え。既定 19:00 JST)。
  * 利用中の全テナントについて、テナントのタイムゾーンの「明日」(または options.date)のお知らせを積む。
+ * 予定を読めるテナントが決まっていれば(gas_bridge)、他のテナントは飛ばして INFO `push.route_notice.tenant_skipped`。
  */
 export async function runRouteNoticeJob(
   deps: RouteNoticeDeps,
   options: { date?: string; shouldStop?: () => boolean } = {},
 ): Promise<RouteNoticeSummary> {
   const summaries: RouteNoticeTenantSummary[] = [];
+  const skippedTenants: RouteNoticeSummary['skippedTenants'] = [];
   let interrupted = false;
   for (const tenant of await deps.tenants.listActive()) {
     if (options.shouldStop?.()) {
@@ -446,6 +455,17 @@ export async function runRouteNoticeJob(
       break;
     }
     const date = options.date ?? tomorrowInTimeZone(currentTime(deps), tenant.timezone);
+    if (deps.scheduleTenantSlug && tenant.slug !== deps.scheduleTenantSlug) {
+      skippedTenants.push({ tenantId: tenant.id, tenantSlug: tenant.slug });
+      await deps.appLog.write({
+        tenantId: tenant.id,
+        level: 'INFO',
+        action: 'push.route_notice.tenant_skipped',
+        actorType: 'system',
+        details: { date, reason: 'schedule_provider_other_tenant' },
+      });
+      continue;
+    }
     try {
       summaries.push(await enqueueRouteNoticesForTenant(deps, tenant, date, options.shouldStop));
     } catch (error) {
@@ -474,6 +494,7 @@ export async function runRouteNoticeJob(
   }
   return {
     tenants: summaries,
+    skippedTenants,
     queued: summaries.reduce((n, s) => n + s.queued, 0),
     alreadyQueued: summaries.reduce((n, s) => n + s.alreadyQueued, 0),
     failed: summaries.reduce((n, s) => n + s.failed, 0),

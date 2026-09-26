@@ -14,6 +14,8 @@
     "seed": "tsx src/scripts/seed.ts",
     "tenant:create": "tsx src/scripts/createTenant.ts",
     "tenant:calendars": "tsx src/scripts/tenantCalendars.ts",
+    "tenant:customer-source": "tsx src/scripts/tenantCustomerSource.ts",
+    "tenant:api-keys": "tsx src/scripts/tenantApiKeys.ts",
     "import:reserva": "tsx src/scripts/importReservaCsv.ts",
     "import:staff-master": "tsx src/scripts/importStaffMasterCsv.ts",
     "import:attendance": "tsx src/scripts/importAttendanceCsv.ts"
@@ -28,6 +30,7 @@
     "@node-rs/argon2": "^2.0.2",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.45.3",
+    "exceljs": "^4.4.0",
     "hono": "^4.6.14",
     "zod": "^3.24.1"
   },

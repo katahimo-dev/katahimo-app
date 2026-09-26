@@ -61,7 +61,7 @@ src/
   styles/index.css         Tailwind + GAS版の<style>の移植
   app/                     画面の骨格(全機能で共有)
     App.tsx                Provider の組み立て(エラーの受け止め / Query / 文字の大きさ / 確認ダイアログ / ログイン / トースト / 新しい版のお知らせ)
-    AppShell.tsx           ヘッダー・3つのタブ(管理者は「🛠 管理」を加えた4つ)・下タブ・設定ダイアログ
+    AppShell.tsx           ヘッダー・3つのタブ(管理者・コーディネーターは「🛠 管理」を加えた4つ)・下タブ・設定ダイアログ
     Header.tsx, BottomNav.tsx, homeTabs.tsx(useHomeTabs)
     TextSizeProvider.tsx   useTextSize()
     adminTargetStaff/      管理者用「表示するスタッフ」(予定・出勤簿で共有)
@@ -80,9 +80,9 @@ src/
     schedule/              「📅 今日の予定」タブ
     customers/             「👪 お客様」タブ・お客様の情報/これまでの記録
     report/                日報・事故報告・領収書ダイアログ
-    attendance/            「🕒 出勤簿」タブとその中のダイアログ
-    admin/                 「🛠 管理」タブ(管理者だけ): staff/(一覧・登録/編集ダイアログ)・prompts/(AIプロンプト)・logs/(操作ログ)
-  lib/                     画面に依存しない小さな処理(storage / date / recentCustomers / textSize / tenant / messages / idle)
+    attendance/            「🕒 出勤簿」タブとその中のダイアログ(今月のまとめ・まとめて取り込む・カレンダーと違うところ・領収書の一覧/画像)
+    admin/                 「🛠 管理」タブ(管理者・コーディネーター): staff/(一覧・登録/編集ダイアログ)・reports/(報告一覧・報告の中身。コーディネーターはこれだけ)・prompts/(AIプロンプト)・logs/(操作ログ)
+  lib/                     画面に依存しない小さな処理(storage / date / recentCustomers / textSize / tenant / messages / idle / saveFile・useFileDownload(ファイルの保存))
   ui/                      共通の部品(トースト・確認ダイアログ・ダイアログの外側 Modal・読み込み中・0件表示・ErrorBoundary)
   test/                    テストの共通部品(providers.tsx・setup.ts)
 ```
@@ -95,8 +95,8 @@ src/
   お客様に関係ない領収書は `openStandaloneReceipt()`。
 - **予定→お客様タブへの移動**(GAS版 `jumpToCustomerFromSchedule`)は `useHomeTabs().switchTab('visitors')` を使い、
   検索欄への受け渡しは `features/customers` の中で用意する。
-- 「🛠 管理」タブは `homeTabsFor(user.role)` が管理者にだけ出し、`AppShell` も管理者のときだけ置く(`React.lazy` で別のJS)。
-  中の「スタッフ」「AIプロンプト」「操作ログ」は切り替えると作り直す(AIプロンプトに保存していない変更があれば確かめる)。
+- 「🛠 管理」タブは `homeTabsFor(user.role)` が管理者・コーディネーター(`canActForOthers`)にだけ出し、`AppShell` もそのときだけ置く(`React.lazy` で別のJS)。
+  中の「スタッフ」「報告一覧」「AIプロンプト」「操作ログ」は切り替えると作り直す(コーディネーターには「報告一覧」だけを出し、タブの列は出さない)(AIプロンプトに保存していない変更があれば確かめる)。
   クエリキーは `features/admin/adminQueryKeys.ts`。スタッフを書き換えたら「表示するスタッフ」(`queryKeys.activeStaff`)と操作ログ、
   AIプロンプトを保存したら `queryKeys.uiConfig` も読み直す。
 - 出勤簿タブはGAS版と同じく**初めて開いたときに作られる**(`AttendanceTab` の初回描画 = GAS版 `initPastScheduleTab`)。
@@ -145,6 +145,10 @@ src/
   - APIの失敗を赤いお知らせで出すときは `showErrorToast(error)`(`ui/toast`)。401(セッション切れ)は自動でログイン画面に
     戻り「しばらく使っていなかったので、もう一度ログインしてください」を出すため、お知らせは出さない。
   - 回数の上限(429 `rate_limited`)は、サーバーの理由に Retry-After から「（あと約15分）」を添える(`userMessageOf`)。
+  - ファイルの保存(出勤簿の Excel・操作ログ/報告一覧/領収書の一覧の CSV)は `api.download(path, query, 種類, 代わりの名前)` で受け、
+    `lib/saveFile.ts` の `saveBlobAsFile` で保存する。ボタンは `lib/useFileDownload.ts` の `useFileDownload()`(保存している間は2回目を
+    送らない・成功と失敗をお知らせで出す)を使う。断られたときは JSON の理由を読んで他の API と同じエラーにする(`<a href download>` だと
+    理由の JSON がファイルになってしまうため、保存のリンクは作らない)。
   - 読み込みの失敗は1回だけ読み直す。ただしサーバーが理由を付けて断った失敗(4xx)は読み直さない(`app/queryClient.ts`)。
   - 起動時に `/api/auth/me` が通信の失敗だったときは、ログイン画面ではなく「うまくいきませんでした…」+「もう一度読み込む」を
     出す(ログインしていないと決めるのは 401 のときだけ)。
@@ -155,13 +159,14 @@ src/
   `useAdminTargetStaff().requestStaffId` を `staffId` として渡し、クエリキーにも入れる(選び直すと自動で読み直される)。
   管理者・コーディネーター以外は `undefined`(= 本人。サーバーも一般スタッフの staffId は無視する)。
 - **顧客データのクエリ**は `queryKeys.customers.all` で始まるキーにする(新しい顧客CSVが取り込まれたとき、版数の監視が
-  まとめて読み直すため)。
+  まとめて読み直すため)。領収書の一覧のクエリは `queryKeys.receipts.all` で始まるキーにする(日報の画面の `useReceipts` が
+  領収書を送れたら読み直す)。
 - **localStorage**: キーは `src/lib/storage.ts` の `STORAGE_KEYS` に足してから使う。GAS版と同じ意味の値はGAS版と同じキー名。
   使う人の値(書きかけ・前回値など)は `USER_SCOPED_KEYS` に足し、`userStorageKey(key, storageScope)` のキーで読み書きする。
 - **日付**: 業務日は端末の時刻帯に関係なく JST の `'YYYY-MM-DD'`(契約の `businessDateSchema`)。「今日」「いまの時刻」は
   `src/lib/date.ts`(`todayJst` / `jstHHmm` / `jstParts`。Intl の timeZone: Asia/Tokyo)、日付どうしの計算は
   `addDaysYmd` / `weekdayOfYmd`(UTCの暦で計算)を使い、`new Date().getDate()` のような端末の時刻帯の値は使わない。
-- **分けて読むJS**: 出勤簿タブと、そのあまり使わないダイアログ(今月のまとめ・まとめて取り込む・カレンダーと違うところ)は
+- **分けて読むJS**: 出勤簿タブと、そのあまり使わないダイアログ(今月のまとめ・まとめて取り込む・カレンダーと違うところ・領収書の一覧)は
   `React.lazy` で別のJSにし、手が空いたとき(`lib/idle.ts`)に先に読んでおく(開いたときに待たないように)。
 - コメント・コミットメッセージは日本語。
 
@@ -200,12 +205,12 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
 | --- | --- |
 | `z-10` / `z-20` | ヘッダー / 下タブ |
 | `z-50` | ログイン、日報・事故報告 |
-| `z-[60]` | パスワード再設定、ヒント、お客様の情報、これまでの記録、スタッフの登録・編集(管理。上に確認ダイアログを重ねる) |
+| `z-[60]` | パスワード再設定、ヒント、お客様の情報、これまでの記録、スタッフの登録・編集(管理。上に確認ダイアログを重ねる)、報告の中身(管理の報告一覧) |
 | `z-[70]` | 確認ダイアログ(useConfirmModal) |
 | `z-[100]` | 設定 |
 | `z-[110]` | パスワード変更、今月のまとめ、まとめて取り込む |
-| `z-[115]` | カレンダーとの見比べ |
-| `z-[120]` | 予定の修正 |
+| `z-[115]` | カレンダーとの見比べ、領収書の一覧 |
+| `z-[120]` | 予定の修正、領収書の画像(一覧の上に重ねる) |
 | `z-[130]` | お知らせ(トースト) |
 
 ## GAS版と意図的に変えているところ
@@ -225,8 +230,14 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
 - 失敗のお知らせは読み上げで すぐに伝える(`role="alert"`)。同じ文言を続けて出しても、そのたびに読み上げる。
 - GAS版は未ログインでも顧客データの版数を確かめ、失敗のお知らせが出ることがあった。新アプリはログイン後だけ確かめる。
   また顧客CSVの取り込みはサーバーが定期実行するため、画面を開いたときの取り込み(checkAndImportLatestCsv)はしない。
-- 管理者には下タブに「🛠 管理」を出す(スタッフ台帳・AIプロンプトのシートの編集と Drive の CSV ログの確認の置き換え。
-  `doc/02_機能仕様.md` 10章)。
+- 今月のまとめに「⬇ Excelで保存」「⬇ <年度>年度分」、管理者には「⬇ 全員分をExcelで保存」を置く(GAS版は個別出勤簿のスプレッドシートを
+  直接開いていた。`doc/02_機能仕様.md` 8.6)。
+- 出勤簿タブに「🧾 領収書」(今月のまとめの「🧾 領収書の一覧・画像を見る」からも開く)を置き、月ごとの領収書の一覧・月の合計・画像を
+  アプリの中で見られるようにする(GAS版は管理者が「領収書一覧」シートと Drive のフォルダで見ていた)。一般スタッフも本人の分を見られ、
+  管理者・コーディネーターは他のスタッフ・全員分と「⬇ CSVで保存」。画像は `<img src="/api/receipts/<ID>/image">` で API から読む
+  (署名付きURLは使わない。`doc/02_機能仕様.md` 7.1)。
+- 管理者・コーディネーターには下タブに「🛠 管理」を出す(スタッフ台帳・AIプロンプトのシートの編集、「日報」「事故報告」シートの閲覧と
+  Drive の CSV ログの確認の置き換え。コーディネーターは報告一覧だけ。`doc/02_機能仕様.md` 10章)。
 - パスワード再設定の画面に「番号が届いている方はこちら」を置く(管理者が送った「パスワード設定の案内」の番号を、送り直さずに
   入力する)。
 - 設定の詳細設定は1回のAPI(GET /api/settings/admin)で読むため、読み込み中に保存したときの案内は

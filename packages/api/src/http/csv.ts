@@ -1,3 +1,5 @@
+import { writeStructuredLog } from './requestLog';
+
 /** CSV の1行(RFC 4180。区切り文字・引用符・改行を含む値は引用符で囲む。改行は CRLF)。 */
 export function csvLine(values: readonly string[]): string {
   return `${values.map(csvField).join(',')}\r\n`;
@@ -14,3 +16,46 @@ function csvField(value: string): string {
 
 /** Excel が UTF-8 と判断するための BOM。 */
 export const UTF8_BOM = '﻿';
+
+/** CSV を書く先(hono の StreamingApi のうち使う部分)。 */
+export interface CsvSink {
+  readonly aborted: boolean;
+  write(chunk: string): Promise<unknown>;
+}
+
+/** 書き出しが途中で失敗したときの最後の行(ここまでの行だけが入っている)。 */
+export function exportFailedMarker(requestId: string | null): string {
+  return `※ 書き出しが途中で失敗しました(request id ${requestId ?? '-'})。もう一度ダウンロードしてください`;
+}
+
+/**
+ * CSV を流して書く(BOM・見出し・まとまりごとの行)。受け取る側が切ったら読むのをやめる。途中で失敗したら
+ * (見出しは送った後なので状態コードは変えられない)ERROR を残し、最後の行に失敗の印を書く。
+ */
+export async function writeCsvStream<T>(
+  out: CsvSink,
+  options: {
+    header: readonly string[];
+    batches: AsyncIterable<T[]>;
+    toLine: (item: T) => string;
+    requestId: string | null;
+    /** 失敗したときのプロセスログの文(何の CSV か)。 */
+    failureMessage: string;
+  },
+): Promise<void> {
+  await out.write(UTF8_BOM + csvLine(options.header));
+  try {
+    for await (const batch of options.batches) {
+      if (out.aborted) return;
+      await out.write(batch.map(options.toLine).join(''));
+    }
+  } catch (error) {
+    writeStructuredLog({
+      severity: 'ERROR',
+      message: options.failureMessage,
+      requestId: options.requestId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    if (!out.aborted) await out.write(csvLine([exportFailedMarker(options.requestId)]));
+  }
+}

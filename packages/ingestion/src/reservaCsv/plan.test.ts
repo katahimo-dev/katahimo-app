@@ -130,6 +130,26 @@ describe('applyReservaImport(差分の適用)', () => {
     expect(data.recipients[0]?.allergy).toBe('卵');
   });
 
+  it('CSV の1行は顧客の今の全ての値: 空になった列は空にする(外部連携の API と違い今の値を保たない)。取込のロックを取る', async () => {
+    const full = row({
+      customerId: 'c1',
+      phone: '090-0000-0000',
+      address: '東京都渋谷区道玄坂1-1',
+      emergencyContact: '090-1111-2222',
+      address2: '神奈川県横浜市青葉区1-1',
+      familyMembers: [{ name: '佐藤 一郎', dob: '2022/4/1', info: '' }],
+    });
+    await run([full]);
+    const outcome = await run([row({ customerId: 'c1' })]);
+    expect(outcome).toMatchObject({ status: 'applied', updated: 1 });
+    const data = ctx.data();
+    expect(data.customers[0]?.phone).toBeNull();
+    expect(data.addresses).toEqual([]);
+    expect(data.contacts).toEqual([]);
+    expect(data.recipients.every((r) => r.archivedAt !== null)).toBe(true);
+    expect(ctx.db.customerImportLocks).toEqual([ctx.tenantId, ctx.tenantId]);
+  });
+
   it('住所2の適用終了日が開始日より前(前日を含む)でも取込を止めず、期間なしで持って数を残す。氏名の無い行は飛ばす', async () => {
     const outcome = await run([
       row({

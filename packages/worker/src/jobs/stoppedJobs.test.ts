@@ -53,4 +53,22 @@ describe('停止の合図で途中で止めたジョブは失敗として終わ�
     // 他の処理(テナントの保存期間の削除)は続ける
     expect(ctx.appLog.byAction('maintenance.retention.done').length).toBeGreaterThan(0);
   });
+
+  it('gas_bridge(予定を読めるテナントが1つ)では、他のテナントを飛ばして夜間のカレンダー反映を成功で終える', async () => {
+    const ctx = createTestContext();
+    await ctx.addStaff('山田 太郎', 'taro@example.com');
+    const other = ctx.db.addTenant({ slug: 'other-tenant' });
+    // Bridge は持ち主以外のテナントの予定を断る(GasBridgeTenantGuard と同じ)
+    const container = {
+      ...containerOf(ctx),
+      scheduleTenantSlug: 'test-tenant',
+    } as WorkerContainer;
+    const result = await runNightlyCalendarSyncJob(container, { stop: new StopSignal() });
+    expect(result).toMatchObject({
+      ok: true,
+      summary: { failed: 0, skippedTenants: [{ tenantId: other.id, tenantSlug: 'other-tenant' }] },
+    });
+    expect(result.summary.tenants.map((t) => t.tenantSlug)).toEqual(['test-tenant']);
+    expect(ctx.appLog.byAction('attendance.nightly_sync.tenant_skipped')).toHaveLength(1);
+  });
 });

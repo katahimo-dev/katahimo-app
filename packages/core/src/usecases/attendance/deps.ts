@@ -16,4 +16,9 @@ export interface CalendarSyncDeps extends AttendanceDeps {
 
 export interface NightlyCalendarSyncDeps extends CalendarSyncDeps {
   tenants: TenantDirectoryPort;
+  /**
+   * 予定を読めるテナントの slug(SCHEDULE_PROVIDER=gas_bridge の GAS_BRIDGE_TENANT。Bridge は1つのテナントの予定しか読めない)。
+   * 設定されていれば他のテナントは処理せずに飛ばす(INFO を1件残す。毎晩失敗で終わらせない)。null・未指定なら全テナント。
+   */
+  scheduleTenantSlug?: string | null | undefined;
 }

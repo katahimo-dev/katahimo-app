@@ -1,4 +1,9 @@
-import { isNewerCustomerCsvVersion, pickLatestCustomerCsv } from '@katahimo/core/domain';
+import {
+  CUSTOMER_IMPORT_BUSY_REASON,
+  isDomainError,
+  isNewerCustomerCsvVersion,
+  pickLatestCustomerCsv,
+} from '@katahimo/core/domain';
 import type { AppLogPort, CustomerCsvSourcePort, CustomerCsvSourceTenant } from '@katahimo/core/ports';
 import type { CustomerCsvImportStatus } from '@katahimo/shared';
 import { parseReservaCsv } from '../reservaCsv/parse';
@@ -41,6 +46,9 @@ export interface CustomerCsvImportResult {
  * GAS版は顧客DBシートを丸ごと書き換えていたが、こちらは外部ID(RESERVA顧客ID)での差分適用
  * (applyReservaImport)を使い、CSVから消えた顧客が多すぎる場合は適用を止める安全装置もそのまま効かせる。
  * 取込済みの版は import_runs(最後に適用した取込)、data_version は tenant_settings.customer_data_version。
+ * 取込元はテナントの設定(platform.tenants.customer_import_settings の Drive のフォルダ。運用担当者が
+ * `pnpm tenant:customer-source` で設定する)。設定の無いテナントは not_configured(ローカル開発の
+ * CUSTOMER_CSV_LOCAL_DIR を除く)。
  */
 export async function importLatestCustomerCsv(
   deps: CustomerCsvImportDeps,
@@ -50,7 +58,9 @@ export async function importLatestCustomerCsv(
   const state = await deps.uow.run(tenant.id, async (r) => ({
     lastImportedVersion: (await r.importRuns.latestApplied('reserva_csv'))?.fileVersion ?? null,
     dataVersion: (await r.settings.get()).customerDataVersion,
+    settings: await r.customerImportSettings(),
   }));
+  const location = { tenant, settings: state.settings };
   const base = { fileName: null, version: null, stats: null, dataVersion: String(state.dataVersion) };
   const log = (level: 'INFO' | 'WARN' | 'ERROR', action: string, details: Record<string, unknown>) =>
     deps.appLog.write({
@@ -64,7 +74,7 @@ export async function importLatestCustomerCsv(
   let fileName: string | null = null;
   let version: string | null = null;
   try {
-    const files = await deps.csvSource.listFiles(tenant);
+    const files = await deps.csvSource.listFiles(location);
     if (files === null) {
       return { ...base, status: 'not_configured', message: '顧客CSVの取込元が設定されていません。' };
     }
@@ -78,7 +88,7 @@ export async function importLatestCustomerCsv(
       return { ...base, fileName, version, status: 'up_to_date', message: '最新の顧客CSVは取込済みです。' };
     }
 
-    const rows = parseReservaCsv(await deps.csvSource.readFile(tenant, latest.file));
+    const rows = parseReservaCsv(await deps.csvSource.readFile(location, latest.file));
     if (rows.length === 0) throw new Error(`顧客CSVに顧客の行がありません: ${fileName}`);
 
     const outcome = await applyReservaImport(deps, tenant.id, rows, {
@@ -128,6 +138,11 @@ export async function importLatestCustomerCsv(
       dataVersion: String(outcome.customerDataVersion),
     };
   } catch (error) {
+    if (isDomainError(error) && error.reason === CUSTOMER_IMPORT_BUSY_REASON) {
+      // 他の取込(外部連携の API 等)が長くロックを持っていた。何も書いていないため、送り直せば通る
+      await log('WARN', 'customer_csv.import_failed', { fileName, version, error: error.reason });
+      return { ...base, fileName, version, status: 'busy', message: error.message };
+    }
     const reason = error instanceof Error ? error.message : String(error);
     await log('ERROR', 'customer_csv.import_failed', { fileName, version, error: reason });
     return {

@@ -45,10 +45,14 @@ export function securityHeaders(isProduction: boolean): MiddlewareHandler {
   });
 }
 
-/** API の応答はブラウザ・中継のキャッシュに残さない(個人情報を含むため)。 */
+/**
+ * API の応答はブラウザ・中継のキャッシュに残さない(個人情報を含むため)。ルートが no-store を含む指定
+ * (領収書の画像の private, no-store)を付けていればそのまま使う。
+ */
 export function noStoreApiResponses(): MiddlewareHandler {
   return async (c, next) => {
     await next();
+    if (c.res.headers.get('Cache-Control')?.includes('no-store')) return;
     c.res.headers.set('Cache-Control', 'no-store');
   };
 }
@@ -116,11 +120,12 @@ function hasBody(request: Request): boolean {
 const KB = 1024;
 const MB = 1024 * KB;
 
-/** 要求本体の大きさの上限。領収書(画像6枚まで)と領収書OCR(1枚)だけ大きくする。 */
+/** 要求本体の大きさの上限。領収書(画像6枚まで)・領収書OCR(1枚)・外部システムからの顧客(500件まで)だけ大きくする。 */
 export const BODY_LIMITS = {
   default: 256 * KB,
   receipts: 14 * MB,
   receiptOcr: 3 * MB,
+  integrationCustomers: 2 * MB,
 } as const;
 
 /**
@@ -134,11 +139,13 @@ export function apiBodyLimits(): MiddlewareHandler {
     default: bodyLimit({ maxSize: BODY_LIMITS.default, onError }),
     receipts: bodyLimit({ maxSize: BODY_LIMITS.receipts, onError }),
     receiptOcr: bodyLimit({ maxSize: BODY_LIMITS.receiptOcr, onError }),
+    integrationCustomers: bodyLimit({ maxSize: BODY_LIMITS.integrationCustomers, onError }),
   };
   return (c, next) => {
     const path = c.req.path.replace(/\/+$/, '');
     if (path === '/api/receipts') return limits.receipts(c, next);
     if (path === '/api/receipts/ocr') return limits.receiptOcr(c, next);
+    if (path === '/api/integrations/customers') return limits.integrationCustomers(c, next);
     return limits.default(c, next);
   };
 }

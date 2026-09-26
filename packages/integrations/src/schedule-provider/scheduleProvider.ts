@@ -5,31 +5,34 @@ import type {
   MapsPort,
   ScheduleDirectoryPort,
   SchedulePort,
+  TenantDirectoryPort,
 } from '@katahimo/core/ports';
-import { GasBridgeMapsPort, GasBridgeSchedulePort } from '../gas-bridge';
-import type { GasBridgeOptions } from '../gas-bridge/gasBridgeClient';
+import {
+  type GasBridgeEnv,
+  GasBridgeSchedulePort,
+  GasBridgeTenantGuard,
+  gasBridgeConfigOf,
+} from '../gas-bridge';
 import { createCalendarApiClient, GoogleCalendarApiPort } from '../google-calendar';
 import { GoogleMapsPlatformPort } from '../google-maps';
 import { GoogleSchedulePort } from '../google-schedule';
-import { NoopMapsPort, NoopSchedulePort } from '../noop';
+import { NoopSchedulePort } from '../noop';
 
 export const SCHEDULE_PROVIDERS = ['google', 'gas_bridge', 'noop'] as const;
 export type ScheduleProvider = (typeof SCHEDULE_PROVIDERS)[number];
 
 /** 予定・地図の実装選択に使う環境変数(api/worker の env から渡す)。 */
-export interface ScheduleProviderEnv {
+export interface ScheduleProviderEnv extends Omit<GasBridgeEnv, 'SCHEDULE_PROVIDER'> {
   SCHEDULE_PROVIDER?: ScheduleProvider | undefined;
   GOOGLE_MAPS_API_KEY?: string | undefined;
   GOOGLE_APPLICATION_CREDENTIALS?: string | undefined;
   GOOGLE_CALENDAR_IMPERSONATE?: string | undefined;
-  GAS_BRIDGE_URL?: string | undefined;
-  GAS_BRIDGE_SECRET?: string | undefined;
 }
 
 /**
  * SCHEDULE_PROVIDER が未指定の場合の既定:
  * 1. GOOGLE_MAPS_API_KEY と GOOGLE_APPLICATION_CREDENTIALS が両方あれば google
- * 2. GAS_BRIDGE_URL と GAS_BRIDGE_SECRET が両方あれば gas_bridge
+ * 2. GAS_BRIDGE_URL・GAS_BRIDGE_SECRET・GAS_BRIDGE_TENANT が揃っていれば gas_bridge(そのテナントだけ予定を返す)
  * 3. どちらも無ければ noop(常に予定なし)
  * Cloud Run(Workload Identity)では GOOGLE_APPLICATION_CREDENTIALS を使わないため、
  * SCHEDULE_PROVIDER=google を明示すること。
@@ -37,7 +40,7 @@ export interface ScheduleProviderEnv {
 export function selectScheduleProvider(env: ScheduleProviderEnv): ScheduleProvider {
   if (env.SCHEDULE_PROVIDER) return env.SCHEDULE_PROVIDER;
   if (env.GOOGLE_MAPS_API_KEY && env.GOOGLE_APPLICATION_CREDENTIALS) return 'google';
-  if (gasBridgeOptions(env)) return 'gas_bridge';
+  if (gasBridgeConfigOf(env)) return 'gas_bridge';
   return 'noop';
 }
 
@@ -56,12 +59,23 @@ export interface ScheduleServiceDeps {
   directory: ScheduleDirectoryPort;
   appLog: AppLogPort;
   routeCache: CachePort;
+  /** gas_bridge で、予定を求めたテナントが Bridge の持ち主か確かめるのに使う。 */
+  tenants: Pick<TenantDirectoryPort, 'findById'>;
 }
 
 export interface ScheduleServices {
   provider: ScheduleProvider;
   schedule: SchedulePort;
-  maps: MapsPort;
+  /**
+   * スタッフの自宅住所のジオコーディングに使う地図 API(google だけ)。gas_bridge はルートを GAS版が計算するため
+   * 本アプリの緯度経度を使わず、テナントを持たない地図の呼び出しで別のテナントの住所を Bridge に送らないよう、無し。
+   */
+  maps: MapsPort | null;
+  /**
+   * 予定を読めるテナントの slug(gas_bridge の GAS_BRIDGE_TENANT)。null なら全テナント。夜間の反映・翌日のお知らせの
+   * ジョブは、これがあれば他のテナントを飛ばす(Bridge に求めても断られるだけのため)。
+   */
+  scheduleTenantSlug: string | null;
 }
 
 /** 選ばれた実装で SchedulePort / MapsPort を組み立てる。必須の設定が欠けていれば起動時に例外。 */
@@ -70,7 +84,7 @@ export function createScheduleServices(
   deps: ScheduleServiceDeps,
 ): ScheduleServices {
   const provider = selectScheduleProvider(env);
-  const bridge = gasBridgeOptions(env);
+  const bridge = gasBridgeConfigOf(env);
 
   switch (provider) {
     case 'google': {
@@ -85,15 +99,25 @@ export function createScheduleServices(
         routeCache: deps.routeCache,
         appLog: deps.appLog,
       });
-      return { provider, schedule, maps };
+      return { provider, schedule, maps, scheduleTenantSlug: null };
     }
     case 'gas_bridge':
       if (!bridge) {
-        throw new Error('SCHEDULE_PROVIDER=gas_bridge には GAS_BRIDGE_URL と GAS_BRIDGE_SECRET が必要です');
+        throw new Error(
+          'SCHEDULE_PROVIDER=gas_bridge には GAS_BRIDGE_URL・GAS_BRIDGE_SECRET・GAS_BRIDGE_TENANT が必要です',
+        );
       }
-      return { provider, schedule: new GasBridgeSchedulePort(bridge), maps: new GasBridgeMapsPort(bridge) };
+      return {
+        provider,
+        schedule: new GasBridgeSchedulePort(
+          bridge,
+          new GasBridgeTenantGuard(bridge.tenantSlug, deps.tenants),
+        ),
+        maps: null,
+        scheduleTenantSlug: bridge.tenantSlug,
+      };
     case 'noop':
-      return { provider, schedule: new NoopSchedulePort(), maps: new NoopMapsPort() };
+      return { provider, schedule: new NoopSchedulePort(), maps: null, scheduleTenantSlug: null };
   }
 }
 
@@ -104,10 +128,4 @@ export function createGoogleCalendarPort(
   return new GoogleCalendarApiPort(
     createCalendarApiClient({ impersonateSubject: env.GOOGLE_CALENDAR_IMPERSONATE || undefined }),
   );
-}
-
-function gasBridgeOptions(env: ScheduleProviderEnv): GasBridgeOptions | null {
-  return env.GAS_BRIDGE_URL && env.GAS_BRIDGE_SECRET
-    ? { baseUrl: env.GAS_BRIDGE_URL, secret: env.GAS_BRIDGE_SECRET }
-    : null;
 }

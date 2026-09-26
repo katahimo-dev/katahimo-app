@@ -1,5 +1,7 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiRequestError } from '../../../api/client';
+import { queryKeys } from '../../../api/queryKeys';
 import { receiptsApi } from '../../../api/receipts';
 import { pushRecentCustomer } from '../../../lib/recentCustomers';
 import type { UserStorageScope } from '../../../lib/storage';
@@ -54,6 +56,7 @@ export const IMAGE_LOAD_FAILED_MESSAGE = '写真を読み込めませんでし�
 let nextImageId = 1;
 
 export function useReceipts(storageScope: UserStorageScope) {
+  const queryClient = useQueryClient();
   const [images, setImages] = useState<ReceiptImage[]>([]);
   const [handoff, setHandoff] = useState('');
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
@@ -213,6 +216,8 @@ export function useReceipts(storageScope: UserStorageScope) {
           receiptTimestamp: ctx.fallbackTimestamp,
           handoffText: handoff.trim(),
         });
+        // 領収書の一覧(出勤簿タブの「🧾 領収書」)を読み直させる(ダイアログを開き直していても、送った分はサーバーにある)
+        void queryClient.invalidateQueries({ queryKey: queryKeys.receipts.all });
         if (generation !== generationRef.current) return;
         const now = Date.now();
         saveReceiptKeyMap(
@@ -247,7 +252,7 @@ export function useReceipts(storageScope: UserStorageScope) {
         }
       }
     },
-    [handoff, storageScope],
+    [handoff, storageScope, queryClient],
   );
 
   return {

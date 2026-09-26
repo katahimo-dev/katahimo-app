@@ -1,22 +1,32 @@
 import { conflict, STALE_WRITE_MESSAGE } from '@katahimo/core/domain';
 import type {
   CareRecordCursor,
+  CareRecordListFilter,
+  CareRecordListRow,
   CareRecordPatch,
   CareRecordRepository,
   CareRecordRow,
   NewCareRecordInput,
+  ReceiptImageRef,
+  ReceiptListFilter,
+  ReceiptListPosition,
+  ReceiptListRow,
+  ReceiptListSummary,
   ReceiptRepository,
   ReceiptRow,
   ReceiptUploadRow,
   StoredFileRepository,
   StoredFileRow,
 } from '@katahimo/core/ports';
-import { and, asc, desc, eq, gte, lt, notExists, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, lt, notExists, sql } from 'drizzle-orm';
 import {
+  careRecordRevisions,
   careRecords,
+  customers,
   dataExportRequests,
   receipts,
   receiptUploads,
+  staff,
   staffAttributes,
   storedFiles,
 } from '../../schema';
@@ -40,6 +50,15 @@ const careRecordColumns = {
   retainUntil: careRecords.retainUntil,
   rowVersion: careRecords.rowVersion,
 };
+
+const careRecordListColumns = { ...careRecordColumns, updatedAt: careRecords.updatedAt };
+
+/** 並び (occurred_at DESC, id DESC) で after より後ろ(行の比較。索引の範囲で読める)。 */
+function afterCursor(after: CareRecordCursor | null) {
+  return after
+    ? sql`(${careRecords.occurredAt}, ${careRecords.id}) < (${after.occurredAt.toISOString()}::timestamptz, ${after.id}::uuid)`
+    : undefined;
+}
 
 export class DrizzleCareRecordRepository extends TenantBound implements CareRecordRepository {
   async findById(id: string): Promise<CareRecordRow | null> {
@@ -87,13 +106,50 @@ export class DrizzleCareRecordRepository extends TenantBound implements CareReco
           eq(careRecords.tenantId, this.tenantId),
           eq(careRecords.customerId, customerId),
           // 行の比較にすると (tenant_id, customer_id, occurred_at DESC, id DESC) の索引の範囲で読める
-          after
-            ? sql`(${careRecords.occurredAt}, ${careRecords.id}) < (${after.occurredAt.toISOString()}::timestamptz, ${after.id}::uuid)`
-            : undefined,
+          afterCursor(after),
         ),
       )
       .orderBy(desc(careRecords.occurredAt), desc(careRecords.id))
       .limit(limit);
+  }
+
+  listByPeriod(
+    filter: CareRecordListFilter,
+    after: CareRecordCursor | null,
+    limit: number,
+  ): Promise<CareRecordListRow[]> {
+    return this.tx
+      .select(careRecordListColumns)
+      .from(careRecords)
+      .where(
+        and(
+          eq(careRecords.tenantId, this.tenantId),
+          gte(careRecords.occurredAt, filter.from),
+          lt(careRecords.occurredAt, filter.to),
+          filter.authorStaffId ? eq(careRecords.authorStaffId, filter.authorStaffId) : undefined,
+          filter.customerId ? eq(careRecords.customerId, filter.customerId) : undefined,
+          filter.recordTypes ? inArray(careRecords.recordType, [...filter.recordTypes]) : undefined,
+          afterCursor(after),
+        ),
+      )
+      .orderBy(desc(careRecords.occurredAt), desc(careRecords.id))
+      .limit(limit);
+  }
+
+  async findListRowById(id: string): Promise<CareRecordListRow | null> {
+    const rows = await this.tx
+      .select(careRecordListColumns)
+      .from(careRecords)
+      .where(and(eq(careRecords.tenantId, this.tenantId), eq(careRecords.id, id)));
+    return rows[0] ?? null;
+  }
+
+  async countRevisions(id: string): Promise<number> {
+    const [row] = await this.tx
+      .select({ n: count() })
+      .from(careRecordRevisions)
+      .where(and(eq(careRecordRevisions.tenantId, this.tenantId), eq(careRecordRevisions.careRecordId, id)));
+    return row?.n ?? 0;
   }
 }
 
@@ -246,5 +302,96 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
         ),
       )
       .orderBy(asc(receipts.receiptedAt));
+  }
+
+  /** 一覧・合計の共通の条件(テナント・期間・スタッフ・お客様)。 */
+  private listConditions(filter: ReceiptListFilter) {
+    return and(
+      eq(receipts.tenantId, this.tenantId),
+      gte(receipts.receiptedAt, filter.from),
+      lt(receipts.receiptedAt, filter.to),
+      filter.staffId === undefined ? undefined : eq(receipts.staffId, filter.staffId),
+      filter.customerId === undefined ? undefined : eq(receipts.customerId, filter.customerId),
+    );
+  }
+
+  list(
+    filter: ReceiptListFilter,
+    after: ReceiptListPosition | null,
+    limit: number,
+  ): Promise<ReceiptListRow[]> {
+    return this.tx
+      .select({
+        id: receipts.id,
+        uploadId: receipts.uploadId,
+        staffId: receipts.staffId,
+        staffName: staff.displayName,
+        customerId: receipts.customerId,
+        customerDisplayName: customers.displayName,
+        customerNameText: receipts.customerNameText,
+        receiptedAt: receipts.receiptedAt,
+        amountYen: receipts.amountYen,
+        storeName: receipts.storeName,
+        handoffText: receiptUploads.handoffText,
+        contentType: storedFiles.contentType,
+        byteSize: storedFiles.byteSize,
+      })
+      .from(receipts)
+      .innerJoin(
+        receiptUploads,
+        and(eq(receiptUploads.tenantId, receipts.tenantId), eq(receiptUploads.id, receipts.uploadId)),
+      )
+      .innerJoin(
+        storedFiles,
+        and(eq(storedFiles.tenantId, receipts.tenantId), eq(storedFiles.id, receipts.fileId)),
+      )
+      .leftJoin(staff, and(eq(staff.tenantId, receipts.tenantId), eq(staff.id, receipts.staffId)))
+      .leftJoin(
+        customers,
+        and(eq(customers.tenantId, receipts.tenantId), eq(customers.id, receipts.customerId)),
+      )
+      .where(
+        and(
+          this.listConditions(filter),
+          after
+            ? sql`(${receipts.receiptedAt}, ${receipts.id}) < (${after.receiptedAt.toISOString()}::timestamptz, ${after.id}::uuid)`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(receipts.receiptedAt), desc(receipts.id))
+      .limit(limit);
+  }
+
+  async summarize(filter: ReceiptListFilter): Promise<ReceiptListSummary> {
+    const [row] = await this.tx
+      .select({
+        count: sql<number>`count(*)::int`,
+        totalYen: sql<number>`coalesce(sum(${receipts.amountYen}), 0)::bigint`,
+        noAmountCount: sql<number>`count(*) filter (where ${receipts.amountYen} is null)::int`,
+      })
+      .from(receipts)
+      .where(this.listConditions(filter));
+    return {
+      count: Number(row?.count ?? 0),
+      totalYen: Number(row?.totalYen ?? 0),
+      noAmountCount: Number(row?.noAmountCount ?? 0),
+    };
+  }
+
+  async findImage(receiptId: string): Promise<ReceiptImageRef | null> {
+    const rows = await this.tx
+      .select({
+        receiptId: receipts.id,
+        staffId: receipts.staffId,
+        storageKey: storedFiles.storageKey,
+        contentType: storedFiles.contentType,
+      })
+      .from(receipts)
+      .innerJoin(
+        storedFiles,
+        and(eq(storedFiles.tenantId, receipts.tenantId), eq(storedFiles.id, receipts.fileId)),
+      )
+      .where(and(eq(receipts.tenantId, this.tenantId), eq(receipts.id, receiptId)));
+    return rows[0] ?? null;
   }
 }

@@ -201,3 +201,29 @@ export const attendanceScheduleEventSchema = z.object({
 export const attendanceWeekResponseSchema = z.object({
   events: z.array(attendanceScheduleEventSchema),
 });
+
+// ── GET /api/attendance/export ・ /api/attendance/export/all(Excel の書き出し) ──
+
+/** 書き出す Excel ファイル(.xlsx)の Content-Type。 */
+export const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/** 1人分の書き出し: 1か月(month)か、年度の12か月(fiscalYear。4月〜翌3月)のどちらか一方。 */
+export const attendanceExportQuerySchema = z
+  .object({
+    month: yearMonthSchema.optional(),
+    fiscalYear: z
+      .string()
+      .regex(/^\d{4}$/, '年度は4桁の数字で指定してください')
+      .transform(Number)
+      .optional(),
+    staffId: targetStaffIdSchema,
+  })
+  .refine((q) => (q.month === undefined) !== (q.fiscalYear === undefined), {
+    message: '月か年度のどちらか一方を指定してください',
+    path: ['month'],
+  });
+export type AttendanceExportQuery = z.infer<typeof attendanceExportQuerySchema>;
+
+/** 管理者だけ: 全員分の書き出し(1か月、1人1シート)。 */
+export const attendanceBulkExportQuerySchema = z.object({ month: yearMonthSchema });
+export type AttendanceBulkExportQuery = z.infer<typeof attendanceBulkExportQuerySchema>;

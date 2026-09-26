@@ -1,7 +1,9 @@
+import type { QueryClient } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { queryKeys } from '../../../api/queryKeys';
 import { receiptsApi } from '../../../api/receipts';
-import { deferred, TEST_USER } from '../../../test/providers';
+import { createTestQueryClient, createWrapper, deferred, TEST_USER } from '../../../test/providers';
 import { toastStore } from '../../../ui/toast/toastStore';
 import { resizeImageFile } from '../model/receiptImage';
 import { IMAGE_LOAD_FAILED_MESSAGE, type ReceiptSendContext, useReceipts } from './useReceipts';
@@ -25,8 +27,10 @@ const ctx: ReceiptSendContext = {
 };
 
 describe('useReceipts', () => {
+  let queryClient: QueryClient;
   beforeEach(() => {
     vi.clearAllMocks();
+    queryClient = createTestQueryClient();
     toastStore.hide();
     resize.mockImplementation(async (f) => `data:image/jpeg;base64,${(f as File).name}`);
     ocr.mockResolvedValue({ result: { amount: 0, storeName: '', receiptDate: '2026/09/25 10:00' } } as never);
@@ -35,7 +39,7 @@ describe('useReceipts', () => {
   it('縮めている途中の写真も6枚までの数に入れる(続けて選んでも越えない)', async () => {
     const pending = deferred<string>();
     resize.mockReturnValueOnce(pending.promise);
-    const { result } = renderHook(() => useReceipts(SCOPE));
+    const { result } = renderHook(() => useReceipts(SCOPE), { wrapper: createWrapper({ queryClient }) });
 
     let first: Promise<void> = Promise.resolve();
     act(() => {
@@ -56,7 +60,7 @@ describe('useReceipts', () => {
   it('読み込めない写真があれば知らせ、読めた写真は足す', async () => {
     resize.mockRejectedValueOnce(new Error('decode failed'));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { result } = renderHook(() => useReceipts(SCOPE));
+    const { result } = renderHook(() => useReceipts(SCOPE), { wrapper: createWrapper({ queryClient }) });
     await act(async () => {
       await result.current.addFiles([file('broken'), file('ok')]);
     });
@@ -70,7 +74,7 @@ describe('useReceipts', () => {
   });
 
   it('送っている間は写真を消せない。重複だった写真だけを(IDで)残す', async () => {
-    const { result } = renderHook(() => useReceipts(SCOPE));
+    const { result } = renderHook(() => useReceipts(SCOPE), { wrapper: createWrapper({ queryClient }) });
     await act(async () => {
       await result.current.addFiles([file('a'), file('b'), file('c')]);
     });
@@ -80,6 +84,7 @@ describe('useReceipts', () => {
     const [a, b, c] = result.current.images;
     if (!a || !b || !c) throw new Error('unreachable');
 
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
     const pending = deferred<Awaited<ReturnType<typeof receiptsApi.upload>>>();
     upload.mockReturnValueOnce(pending.promise);
     let sending: Promise<void> = Promise.resolve();
@@ -105,5 +110,7 @@ describe('useReceipts', () => {
     expect(result.current.images.map((i) => i.id)).toEqual([b.id]);
     expect(result.current.duplicateWarning).not.toBeNull();
     expect(result.current.sending).toBe(false);
+    // 送れたら領収書の一覧を読み直させる
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.receipts.all });
   });
 });

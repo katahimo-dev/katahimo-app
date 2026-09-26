@@ -1,6 +1,7 @@
 import type { AuditLogEntryView } from '@katahimo/core/usecases';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { exportFailedMarker, writeAuditLogCsv } from './adminAuditLogs';
+import { exportFailedMarker } from '../http/csv';
+import { writeAuditLogCsv } from './adminAuditLogs';
 
 function entry(id: string): AuditLogEntryView {
   return {

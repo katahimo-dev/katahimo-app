@@ -82,6 +82,12 @@ export const tenants = platform.table(
      * スタッフの予定を読むカレンダーは allowedStaffCalendars に合うものだけ(core/domain/schedule/calendarPolicy.ts)。
      */
     calendarSettings: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+    /**
+     * 顧客データの取込元(運用担当者だけが `pnpm tenant:customer-source` で変える。アプリは読むだけ):
+     * `{ provider: 'reserva_csv', driveFolderId }`(RESERVA の顧客CSVを置く Google Drive のフォルダ。
+     * @katahimo/shared tenantCustomerImportSettingsSchema)。`{}` は未設定(夜間の顧客CSV取込の対象外)。
+     */
+    customerImportSettings: jsonb().$type<Record<string, unknown>>().notNull().default({}),
     terminatedAt: timestamp({ withTimezone: true }),
     purgeAfter: timestamp({ withTimezone: true }),
     createdAt: createdAt(),

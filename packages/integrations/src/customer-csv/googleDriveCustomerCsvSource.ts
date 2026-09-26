@@ -1,32 +1,28 @@
-import type {
-  CustomerCsvSourceFile,
-  CustomerCsvSourcePort,
-  CustomerCsvSourceTenant,
-} from '@katahimo/core/ports';
+import type { CustomerCsvSourceFile } from '@katahimo/core/ports';
 import type { drive_v3 } from 'googleapis';
 
 const DRIVE_READONLY_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
-
-export interface GoogleDriveCustomerCsvSourceOptions {
-  /** テナントslug → 顧客CSVが置かれるDriveフォルダID(GAS版 Config.js の CUSTOMER_CSV_FOLDER_ID)。 */
-  folderIdsByTenantSlug: Readonly<Record<string, string>>;
-}
 
 /** Driveの検索クエリに埋め込む文字列リテラルのエスケープ(GAS版 escapeForDriveQuery_ と同じ)。 */
 function escapeDriveQueryValue(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+/** 顧客CSVを置く Drive のフォルダの読み出し(テスト用に差し替えられるよう、取込元の選択とは分ける)。 */
+export interface CustomerCsvDriveFolderReader {
+  listFiles(folderId: string): Promise<CustomerCsvSourceFile[]>;
+  readFile(fileId: string): Promise<Buffer>;
+}
+
 /**
- * Google Drive のフォルダから顧客CSVを読む取込元。認証はアプリケーションのデフォルト認証情報
+ * Google Drive のフォルダから顧客CSVを読む。認証はアプリケーションのデフォルト認証情報
  * (Cloud Run のサービスアカウント、ローカルは GOOGLE_APPLICATION_CREDENTIALS のサービスアカウントJSON)。
  * 対象フォルダをそのサービスアカウントに閲覧者として共有しておく必要がある。
+ * フォルダID はテナントの取込元の設定(platform.tenants.customer_import_settings)から渡される。
  */
-export class GoogleDriveCustomerCsvSource implements CustomerCsvSourcePort {
+export class GoogleDriveCustomerCsvFolder implements CustomerCsvDriveFolderReader {
   /** googleapis は読み込みが重いため、最初の呼び出しまで import を遅らせる(起動時間を延ばさない)。 */
   private drivePromise: Promise<drive_v3.Drive> | null = null;
-
-  constructor(private readonly options: GoogleDriveCustomerCsvSourceOptions) {}
 
   private drive(): Promise<drive_v3.Drive> {
     this.drivePromise ??= import('googleapis').then(({ google }) =>
@@ -35,10 +31,7 @@ export class GoogleDriveCustomerCsvSource implements CustomerCsvSourcePort {
     return this.drivePromise;
   }
 
-  async listFiles(tenant: CustomerCsvSourceTenant): Promise<CustomerCsvSourceFile[] | null> {
-    const folderId = this.options.folderIdsByTenantSlug[tenant.slug];
-    if (!folderId) return null;
-
+  async listFiles(folderId: string): Promise<CustomerCsvSourceFile[]> {
     const drive = await this.drive();
     const files: CustomerCsvSourceFile[] = [];
     let pageToken: string | undefined;
@@ -59,9 +52,9 @@ export class GoogleDriveCustomerCsvSource implements CustomerCsvSourcePort {
     return files;
   }
 
-  async readFile(_tenant: CustomerCsvSourceTenant, file: CustomerCsvSourceFile): Promise<Buffer> {
+  async readFile(fileId: string): Promise<Buffer> {
     const res = await (await this.drive()).files.get(
-      { fileId: file.id, alt: 'media', supportsAllDrives: true },
+      { fileId, alt: 'media', supportsAllDrives: true },
       { responseType: 'arraybuffer' },
     );
     return Buffer.from(res.data as ArrayBuffer);

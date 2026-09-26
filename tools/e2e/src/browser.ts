@@ -13,13 +13,15 @@ import { type Browser, chromium } from 'playwright-core';
 export async function launchChromium(): Promise<Browser> {
   // 外部への通信は route で全部受けるため、プロキシは使わせない
   const args = ['--no-proxy-server'];
+  // ロケールの無い環境(LANG が空)では Chromium がダウンロードの日本語のファイル名を捨てて「download」にするため、UTF-8 を渡す
+  const env = { ...process.env, LANG: process.env.LANG || 'C.UTF-8' };
   try {
-    return await chromium.launch({ args });
+    return await chromium.launch({ args, env });
   } catch (e) {
     const executablePath = findInstalledChromium();
     if (!executablePath) throw e;
     console.warn(`[e2e] 既定のChromiumが見つからないため ${executablePath} を使います`);
-    return chromium.launch({ args, executablePath });
+    return chromium.launch({ args, env, executablePath });
   }
 }
 

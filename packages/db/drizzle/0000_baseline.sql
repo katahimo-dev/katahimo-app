@@ -226,7 +226,7 @@ CREATE TABLE "customer_source_records" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "customer_source_records_pkey" PRIMARY KEY("tenant_id","id"),
 	CONSTRAINT "customer_source_records_tenant_id_source_external_id_key" UNIQUE("tenant_id","source","external_id"),
-	CONSTRAINT "customer_source_records_source_check" CHECK ("customer_source_records"."source" in ('reserva'))
+	CONSTRAINT "customer_source_records_source_check" CHECK ("customer_source_records"."source" in ('reserva', 'external_api'))
 );
 --> statement-breakpoint
 ALTER TABLE "customer_source_records" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -623,6 +623,7 @@ CREATE TABLE "platform"."tenants" (
 	"business_type" text DEFAULT 'babysitting' NOT NULL,
 	"plan_id" uuid,
 	"calendar_settings" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"customer_import_settings" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"terminated_at" timestamp with time zone,
 	"purge_after" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -998,12 +999,29 @@ CREATE TABLE "import_runs" (
 	"started_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"finished_at" timestamp with time zone,
 	CONSTRAINT "import_runs_pkey" PRIMARY KEY("tenant_id","id"),
-	CONSTRAINT "import_runs_source_check" CHECK ("import_runs"."source" in ('reserva_csv', 'staff_master_csv')),
+	CONSTRAINT "import_runs_source_check" CHECK ("import_runs"."source" in ('reserva_csv', 'staff_master_csv', 'external_api')),
 	CONSTRAINT "import_runs_status_check" CHECK ("import_runs"."status" in ('running', 'applied', 'review_required', 'failed', 'skipped')),
 	CONSTRAINT "import_runs_finished_at_check" CHECK (("import_runs"."status" = 'running') = ("import_runs"."finished_at" is null))
 );
 --> statement-breakpoint
 ALTER TABLE "import_runs" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+CREATE TABLE "integration_api_keys" (
+	"tenant_id" uuid NOT NULL,
+	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
+	"name" text NOT NULL,
+	"customer_source" text NOT NULL,
+	"token_hash" "bytea" NOT NULL,
+	"created_by" text NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_used_at" timestamp with time zone,
+	"revoked_at" timestamp with time zone,
+	CONSTRAINT "integration_api_keys_pkey" PRIMARY KEY("tenant_id","id"),
+	CONSTRAINT "integration_api_keys_tenant_id_token_hash_key" UNIQUE("tenant_id","token_hash"),
+	CONSTRAINT "integration_api_keys_customer_source_check" CHECK ("integration_api_keys"."customer_source" in ('reserva', 'external_api')),
+	CONSTRAINT "integration_api_keys_name_check" CHECK (char_length("integration_api_keys"."name") between 1 and 100)
+);
+--> statement-breakpoint
+ALTER TABLE "integration_api_keys" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "tenant_features" (
 	"tenant_id" uuid NOT NULL,
 	"feature_key" text NOT NULL,
@@ -1162,6 +1180,7 @@ ALTER TABLE "staff_login_emails" ADD CONSTRAINT "staff_login_emails_tenant_id_st
 ALTER TABLE "custom_field_definitions" ADD CONSTRAINT "custom_field_definitions_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "import_runs" ADD CONSTRAINT "import_runs_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "import_runs" ADD CONSTRAINT "import_runs_tenant_id_triggered_by_fkey" FOREIGN KEY ("tenant_id","triggered_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "integration_api_keys" ADD CONSTRAINT "integration_api_keys_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tenant_features" ADD CONSTRAINT "tenant_features_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tenant_secrets" ADD CONSTRAINT "tenant_secrets_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tenant_secrets" ADD CONSTRAINT "tenant_secrets_tenant_id_updated_by_fkey" FOREIGN KEY ("tenant_id","updated_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -1191,11 +1210,13 @@ CREATE INDEX "outbox_messages_completed_at_idx" ON "outbox_messages" USING btree
 CREATE INDEX "rate_limit_buckets_updated_at_idx" ON "platform"."rate_limit_buckets" USING btree ("updated_at");--> statement-breakpoint
 CREATE INDEX "tenant_lifecycle_events_tenant_id_created_at_idx" ON "platform"."tenant_lifecycle_events" USING btree ("tenant_id","created_at");--> statement-breakpoint
 CREATE INDEX "push_subscriptions_tenant_id_staff_id_idx" ON "push_subscriptions" USING btree ("tenant_id","staff_id");--> statement-breakpoint
-CREATE INDEX "care_records_tenant_id_customer_id_occurred_at_id_idx" ON "care_records" USING btree ("tenant_id","customer_id","occurred_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
-CREATE INDEX "care_records_tenant_id_author_staff_id_occurred_at_idx" ON "care_records" USING btree ("tenant_id","author_staff_id","occurred_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "care_records_tenant_id_customer_id_occurred_at_id_idx" ON "care_records" USING btree ("tenant_id","customer_id","occurred_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);--> statement-breakpoint
+CREATE INDEX "care_records_tenant_id_occurred_at_id_idx" ON "care_records" USING btree ("tenant_id","occurred_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);--> statement-breakpoint
+CREATE INDEX "care_records_tenant_id_author_staff_id_occurred_at_idx" ON "care_records" USING btree ("tenant_id","author_staff_id","occurred_at" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_visit_id_idx" ON "care_records" USING btree ("tenant_id","visit_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "receipts_tenant_id_dedupe_hash_key" ON "receipts" USING btree ("tenant_id","dedupe_hash") WHERE dedupe_hash is not null;--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_staff_id_receipted_at_idx" ON "receipts" USING btree ("tenant_id","staff_id","receipted_at");--> statement-breakpoint
+CREATE INDEX "receipts_tenant_id_receipted_at_id_idx" ON "receipts" USING btree ("tenant_id","receipted_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_upload_id_idx" ON "receipts" USING btree ("tenant_id","upload_id");--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_file_id_idx" ON "receipts" USING btree ("tenant_id","file_id");--> statement-breakpoint
 CREATE INDEX "reservation_assignments_tenant_id_reservation_id_idx" ON "reservation_assignments" USING btree ("tenant_id","reservation_id");--> statement-breakpoint
@@ -1210,7 +1231,7 @@ CREATE INDEX "staff_tenant_id_family_name_idx" ON "staff" USING btree ("tenant_i
 CREATE INDEX "staff_tenant_id_family_name_kana_idx" ON "staff" USING btree ("tenant_id","family_name_kana" text_pattern_ops);--> statement-breakpoint
 CREATE UNIQUE INDEX "staff_login_emails_tenant_id_staff_id_primary_key" ON "staff_login_emails" USING btree ("tenant_id","staff_id") WHERE is_primary;--> statement-breakpoint
 CREATE INDEX "staff_login_emails_tenant_id_staff_id_idx" ON "staff_login_emails" USING btree ("tenant_id","staff_id");--> statement-breakpoint
-CREATE INDEX "import_runs_tenant_id_source_started_at_idx" ON "import_runs" USING btree ("tenant_id","source","started_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "import_runs_tenant_id_source_started_at_idx" ON "import_runs" USING btree ("tenant_id","source","started_at" DESC NULLS FIRST);--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "attendance_days" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "attendance_periods" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "travel_legs" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
@@ -1261,6 +1282,7 @@ CREATE POLICY "tenant_isolation" ON "staff_employment_terms" AS PERMISSIVE FOR A
 CREATE POLICY "tenant_isolation" ON "staff_login_emails" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "custom_field_definitions" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "import_runs" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "integration_api_keys" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "tenant_features" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "tenant_secrets" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "tenant_settings" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());

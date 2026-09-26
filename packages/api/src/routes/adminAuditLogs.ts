@@ -12,8 +12,8 @@ import {
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import type { Container } from '../container';
-import { csvLine, UTF8_BOM } from '../http/csv';
-import { requestIdOf, writeStructuredLog } from '../http/requestLog';
+import { type CsvSink, csvLine, writeCsvStream } from '../http/csv';
+import { requestIdOf } from '../http/requestLog';
 import { jsonOk, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
 import { actorOf, requireAdmin } from '../session';
@@ -34,11 +34,6 @@ const CSV_HEADER = [
 
 const DELETED_STAFF = '(削除されたスタッフ)';
 
-/** 書き出しが途中で失敗したときの最後の行(ここまでの行だけが入っている)。 */
-export function exportFailedMarker(requestId: string | null): string {
-  return `※ 書き出しが途中で失敗しました(request id ${requestId ?? '-'})。もう一度ダウンロードしてください`;
-}
-
 function csvRow(entry: AuditLogEntryView, timeZone: string): string {
   return csvLine([
     formatZonedDateTime(entry.createdAt, timeZone),
@@ -55,37 +50,20 @@ function csvRow(entry: AuditLogEntryView, timeZone: string): string {
   ]);
 }
 
-/** CSV を書く先(hono の StreamingApi のうち使う部分)。 */
-export interface CsvSink {
-  readonly aborted: boolean;
-  write(chunk: string): Promise<unknown>;
-}
-
-/**
- * 操作ログの CSV を書く(BOM・見出し・500件ずつの行)。受け取る側が切ったら読むのをやめる。途中で失敗したら
- * (見出しは送った後なので状態コードは変えられない)ERROR を残し、最後の行に失敗の印を書く。
- */
-export async function writeAuditLogCsv(
+/** 操作ログの CSV を書く(BOM・見出し・500件ずつの行。失敗・切断の扱いは writeCsvStream)。 */
+export function writeAuditLogCsv(
   out: CsvSink,
   batches: AsyncIterable<AuditLogEntryView[]>,
   timeZone: string,
   requestId: string | null,
 ): Promise<void> {
-  await out.write(UTF8_BOM + csvLine(CSV_HEADER));
-  try {
-    for await (const batch of batches) {
-      if (out.aborted) return;
-      await out.write(batch.map((entry) => csvRow(entry, timeZone)).join(''));
-    }
-  } catch (error) {
-    writeStructuredLog({
-      severity: 'ERROR',
-      message: '操作ログの CSV の書き出しが途中で失敗しました',
-      requestId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    if (!out.aborted) await out.write(csvLine([exportFailedMarker(requestId)]));
-  }
+  return writeCsvStream(out, {
+    header: CSV_HEADER,
+    batches,
+    toLine: (entry) => csvRow(entry, timeZone),
+    requestId,
+    failureMessage: '操作ログの CSV の書き出しが途中で失敗しました',
+  });
 }
 
 /**

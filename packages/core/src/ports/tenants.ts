@@ -1,3 +1,4 @@
+import type { TenantCustomerImportSettings } from '../domain/customerCsv/importSettings';
 import type { BusinessType, TenantStatus } from '../domain/model';
 import type { TenantCalendarSettings } from '../domain/schedule/calendarPolicy';
 
@@ -42,4 +43,15 @@ export interface TenantProvisioningPort {
 export interface TenantCalendarSettingsStore {
   get(tenantId: string): Promise<TenantCalendarSettings>;
   set(tenantId: string, settings: TenantCalendarSettings): Promise<void>;
+}
+
+/**
+ * テナントの顧客データの取込元の設定の読み書き(運用担当者の CLI `pnpm tenant:customer-source` だけが使う。
+ * MIGRATION_DATABASE_URL の接続で使う)。null は未設定(自動取込の対象外)。
+ */
+export interface TenantCustomerImportSettingsStore {
+  get(tenantId: string): Promise<TenantCustomerImportSettings | null>;
+  /** この Drive のフォルダを取込元にしているテナントの ID(完全一致)。 */
+  findTenantIdsByDriveFolder(driveFolderId: string): Promise<string[]>;
+  set(tenantId: string, settings: TenantCustomerImportSettings | null): Promise<void>;
 }

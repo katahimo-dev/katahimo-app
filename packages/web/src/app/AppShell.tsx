@@ -1,4 +1,4 @@
-import { isAdminRole } from '@katahimo/shared';
+import { canActForOthers } from '@katahimo/shared';
 import { lazy, type ReactNode, Suspense, useEffect, useState } from 'react';
 import { ChangePasswordModal, useSession } from '../features/auth';
 import { CustomerSearchProvider, CustomersTab } from '../features/customers';
@@ -17,11 +17,11 @@ import { useUiConfig } from './uiConfig/useUiConfig';
 // 出勤簿タブは初めて開いたときに作る(GAS版と同じ)ので、JSも分けておき、手が空いたときに先に読む
 const loadAttendance = () => import('../features/attendance');
 const AttendanceTab = lazy(() => loadAttendance().then((m) => ({ default: m.AttendanceTab })));
-// 管理タブは管理者だけが開くので、JSを分けて開いたときに読む
+// 管理タブは管理者・コーディネーターだけが開くので、JSを分けて開いたときに読む
 const AdminTab = lazy(() => import('../features/admin').then((m) => ({ default: m.AdminTab })));
 
 /**
- * ログイン後の画面の骨格(GAS版 #app)。ヘッダー・3つのタブ(管理者は「🛠 管理」を加えた4つ)・下タブ・
+ * ログイン後の画面の骨格(GAS版 #app)。ヘッダー・3つのタブ(管理者・コーディネーターは「🛠 管理」を加えた4つ)・下タブ・
  * 設定まわりのダイアログを置く。
  * 各タブの中身・日報ダイアログは features/ 以下の各機能が持つ。
  */
@@ -65,7 +65,7 @@ function ShellLayout() {
             <AttendanceTab />
           </Suspense>
         </TabPanel>
-        {isAdminRole(user.role) ? (
+        {canActForOthers(user.role) ? (
           <TabPanel tab="admin" id="tabAdmin">
             <Suspense fallback={null}>
               <AdminTab />

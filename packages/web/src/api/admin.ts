@@ -11,16 +11,6 @@ import {
 } from '@katahimo/shared';
 import { api } from './client';
 
-/** 条件のうち値のあるものだけのクエリ文字列(CSV のダウンロードのリンク用)。 */
-function queryString(query: Record<string, string | number | undefined>): string {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== '') params.set(key, String(value));
-  }
-  const qs = params.toString();
-  return qs ? `?${qs}` : '';
-}
-
 /** 管理画面「スタッフ」(doc/04_API仕様.md スタッフ管理)。 */
 export const adminStaffApi = {
   list: (signal?: AbortSignal) =>
@@ -52,6 +42,7 @@ export const auditLogsApi = {
       { ...filters, cursor, limit: 50 },
       { signal },
     ),
-  /** CSV のダウンロード先(同じオリジンの Cookie でそのまま開ける)。 */
-  csvUrl: (filters: AuditLogFilters) => `/api/admin/audit-logs.csv${queryString(filters)}`,
+  /** GET /api/admin/audit-logs.csv: 絞り込んだ条件の全件の CSV(断られたら理由つきのエラー。ファイルにしない) */
+  downloadCsv: (filters: AuditLogFilters) =>
+    api.download('/api/admin/audit-logs.csv', filters, 'text/csv', '操作ログ.csv'),
 };

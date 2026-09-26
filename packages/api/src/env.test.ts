@@ -34,6 +34,16 @@ describe('loadEnv', () => {
     expect(loadEnv(production)).toMatchObject({ SECRET_BOX_PROVIDER: 'gcp', WEB_DIST_DIR: '/app/web' });
   });
 
+  it('ローカル開発用の顧客CSVのフォルダ(CUSTOMER_CSV_LOCAL_DIR)は本番では起動前に落とす(開発では使える)', () => {
+    expect(() => loadEnv({ ...production, CUSTOMER_CSV_LOCAL_DIR: '/tmp/csv' })).toThrow(
+      /CUSTOMER_CSV_LOCAL_DIR/,
+    );
+    expect(loadEnv({ ...production, CUSTOMER_CSV_LOCAL_DIR: '' }).CUSTOMER_CSV_LOCAL_DIR).toBeUndefined();
+    expect(loadEnv({ ...development, CUSTOMER_CSV_LOCAL_DIR: '/tmp/csv' }).CUSTOMER_CSV_LOCAL_DIR).toBe(
+      '/tmp/csv',
+    );
+  });
+
   it('本番で足りない・開発用のままの設定をまとめて起動前に落とす', () => {
     const missing = ['SECRET_BOX_PROVIDER', 'STORAGE_PROVIDER', 'SCHEDULE_PROVIDER'];
     const source = Object.fromEntries(
@@ -50,6 +60,19 @@ describe('loadEnv', () => {
     for (const name of [...missing, 'SESSION_SECRET']) {
       expect(message).toContain(`- ${name}:`);
     }
+  });
+
+  it('ミラーは GAS Bridge の持ち主のテナント(GAS_BRIDGE_TENANT)が無いと起動できない', () => {
+    const bridge = { GAS_BRIDGE_URL: 'https://script.google.com/macros/s/x/exec', GAS_BRIDGE_SECRET: 's' };
+    expect(() => loadEnv({ ...development, ...bridge, MIRROR_TO_GOOGLE_SHEETS: 'true' })).toThrow(
+      /GAS_BRIDGE_TENANT/,
+    );
+    expect(() => loadEnv({ ...development, MIRROR_TO_GOOGLE_SHEETS: 'true' })).toThrow(
+      /MIRROR_TO_GOOGLE_SHEETS/,
+    );
+    expect(
+      loadEnv({ ...development, ...bridge, GAS_BRIDGE_TENANT: 'Cutest', MIRROR_TO_GOOGLE_SHEETS: 'true' }),
+    ).toMatchObject({ GAS_BRIDGE_TENANT: 'cutest', MIRROR_TO_GOOGLE_SHEETS: true });
   });
 
   it('SECRET_BOX_LOCAL_KEY の無いローカル設定は起動できない', () => {

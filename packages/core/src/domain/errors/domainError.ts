@@ -44,6 +44,15 @@ export const STALE_WRITE_MESSAGE =
 export const STALE_PROMPT_MESSAGE =
   '他の管理者が先にこのプロンプトを保存しました。画面を開きなおしてから保存してください。';
 
+/**
+ * 同じテナントの顧客の取込(顧客CSV・外部連携の API)が実行中で、取込のロックを待ちきれなかった(409 conflict)。
+ * ロックの待ちの上限は DB ロールの lock_timeout(API 5秒・ワーカー 10秒)。
+ */
+export const CUSTOMER_IMPORT_BUSY_MESSAGE =
+  '別の顧客の取込が実行中です。しばらくしてから送り直してください。';
+/** そのときの DomainError の reason(ログ用)。 */
+export const CUSTOMER_IMPORT_BUSY_REASON = 'customer_import_in_progress';
+
 export function isDomainError(error: unknown): error is DomainError {
   return error instanceof DomainError;
 }

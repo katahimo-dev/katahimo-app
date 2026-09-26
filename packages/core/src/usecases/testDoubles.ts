@@ -11,11 +11,14 @@ import {
   consumeRateLimit,
   DomainError,
   EMPTY_CALENDAR_SETTINGS,
+  isOutboxTopicEnabled,
+  type OutboxTopicPolicy,
   refundRateLimit,
   STALE_PROMPT_MESSAGE,
   STALE_WRITE_MESSAGE,
 } from '../domain';
-import type { OutboxTopic, TenantSecretName } from '../domain/model';
+import type { TenantCustomerImportSettings } from '../domain/customerCsv/importSettings';
+import type { TenantSecretName } from '../domain/model';
 import type { CareRecordContent } from '../domain/reports/careRecord';
 import type { TenantCalendarSettings } from '../domain/schedule/calendarPolicy';
 import type { AppLogEntry, AppLogPort, AppLogRecord } from '../ports/appLog';
@@ -30,9 +33,9 @@ import type {
 } from '../ports/attendance';
 import type { StaffCalendarRecord } from '../ports/calendars';
 import type {
+  CustomerCsvLocation,
   CustomerCsvSourceFile,
   CustomerCsvSourcePort,
-  CustomerCsvSourceTenant,
 } from '../ports/customerCsvSource';
 import type {
   CareRecipientRecord,
@@ -42,6 +45,7 @@ import type {
   CustomerSourceRecord,
 } from '../ports/customers';
 import type { ImportRunRecord } from '../ports/imports';
+import type { IntegrationApiKeyRecord } from '../ports/integrations';
 import type { MailerPort, MailMessage } from '../ports/mailer';
 import type {
   AccidentReportMirrorPayload,
@@ -67,7 +71,13 @@ import type {
   WebPushTarget,
 } from '../ports/push';
 import type { RateLimiterPort } from '../ports/rateLimiter';
-import type { CareRecordRow, ReceiptRow, ReceiptUploadRow, StoredFileRow } from '../ports/records';
+import type {
+  CareRecordRow,
+  ReceiptListFilter,
+  ReceiptRow,
+  ReceiptUploadRow,
+  StoredFileRow,
+} from '../ports/records';
 import type {
   ScheduleLightResult,
   SchedulePort,
@@ -89,6 +99,7 @@ import type { StoragePort, StoredFile } from '../ports/storage';
 import type {
   ProvisionTenantInput,
   TenantCalendarSettingsStore,
+  TenantCustomerImportSettingsStore,
   TenantDirectoryPort,
   TenantProvisioningPort,
   TenantRecord,
@@ -134,7 +145,8 @@ export interface TenantData {
   segments: (WorkSegmentRow & { staffId: string; businessDate: string })[];
   legs: (TravelLegRow & { staffId: string; businessDate: string })[];
   lockedPeriods: { staffId: string; yearMonth: string }[];
-  careRecords: CareRecordRow[];
+  /** updatedAt は DB の set_updated_at() トリガーの代わり(直接 push した行は occurredAt を使う)。 */
+  careRecords: (CareRecordRow & { updatedAt?: Date })[];
   careRecordRevisions: { careRecordId: string; body: CareRecordContent; changedBy: string | null }[];
   uploads: ReceiptUploadRow[];
   receipts: ReceiptRow[];
@@ -147,6 +159,7 @@ export interface TenantData {
   /** ai_prompt_revisions.created_by(保存・既定に戻したスタッフ)。 */
   aiPromptRevisionAuthors: string[];
   importRuns: (ImportRunRecord & { message: string | null })[];
+  integrationApiKeys: (IntegrationApiKeyRecord & { tokenHash: Uint8Array })[];
   calendars: StaffCalendarRecord[];
   busyBlocks: { staffId: string; start: Date; end: Date }[];
   pushSubscriptions: PushSubscriptionRecord[];
@@ -186,6 +199,7 @@ function emptyTenantData(): TenantData {
     aiPromptRevisions: {},
     aiPromptRevisionAuthors: [],
     importRuns: [],
+    integrationApiKeys: [],
     calendars: [],
     busyBlocks: [],
     pushSubscriptions: [],
@@ -202,14 +216,33 @@ const touchedAt = () => new Date(Date.UTC(2026, 0, 1) + ++pushTouch);
 const sameBytes = (a: Uint8Array | null, b: Uint8Array | null) =>
   a !== null && b !== null && Buffer.from(a).equals(Buffer.from(b));
 
+/** 領収書の一覧の条件に合う行(領収書日時・ID の新しい順)。 */
+function matchingReceipts(data: TenantData, filter: ReceiptListFilter): ReceiptRow[] {
+  return data.receipts
+    .filter(
+      (r) =>
+        r.receiptedAt >= filter.from &&
+        r.receiptedAt < filter.to &&
+        (filter.staffId === undefined || r.staffId === filter.staffId) &&
+        (filter.customerId === undefined || r.customerId === filter.customerId),
+    )
+    .sort(
+      (a, b) => b.receiptedAt.getTime() - a.receiptedAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+    );
+}
+
 /** 全テナントのインメモリの DB。 */
 export class MemoryDatabase {
   readonly tenants = new Map<string, TenantRecord>();
   readonly data = new Map<string, TenantData>();
   /** テナント → カレンダーの設定(platform.tenants.calendar_settings)。 */
   readonly calendarSettings = new Map<string, TenantCalendarSettings>();
-  /** skipOutboxTopics と同じ(ミラーを無効にした環境)。 */
-  skipOutboxTopics = new Set<OutboxTopic>();
+  /** テナント → 顧客データの取込元の設定(platform.tenants.customer_import_settings。無ければ未設定)。 */
+  readonly customerImportSettings = new Map<string, TenantCustomerImportSettings>();
+  /** UoW の outboxPolicy と同じ(null なら全てのトピックを積む)。 */
+  outboxPolicy: OutboxTopicPolicy | null = null;
+  /** 顧客の取込のロック(importRuns.lockTenantCustomerImports)を取ったテナント(呼んだ順)。 */
+  readonly customerImportLocks: string[] = [];
   private seq = 0;
 
   addTenant(input: Partial<TenantRecord> & { slug: string }): TenantRecord {
@@ -396,6 +429,9 @@ export function fakeRepositories(
     },
     async calendarSettings() {
       return structuredClone(db.calendarSettings.get(tenantId) ?? EMPTY_CALENDAR_SETTINGS);
+    },
+    async customerImportSettings() {
+      return structuredClone(db.customerImportSettings.get(tenantId) ?? null);
     },
     staff: {
       async findById(id) {
@@ -755,12 +791,19 @@ export function fakeRepositories(
     careRecords: {
       async findById(id) {
         const c = d().careRecords.find((x) => x.id === id);
-        return c ? structuredClone(c) : null;
+        if (!c) return null;
+        const { updatedAt: _updatedAt, ...row } = c;
+        return structuredClone(row);
       },
       async insert(input) {
-        const row: CareRecordRow = { ...structuredClone(input), rowVersion: 1 };
+        const row: CareRecordRow & { updatedAt?: Date } = {
+          ...structuredClone(input),
+          rowVersion: 1,
+          updatedAt: new Date(),
+        };
         d().careRecords.push(row);
-        return structuredClone(row);
+        const { updatedAt: _updatedAt, ...saved } = row;
+        return structuredClone(saved);
       },
       async update(id, patch, expectedVersion) {
         const c = d().careRecords.find((x) => x.id === id);
@@ -777,8 +820,9 @@ export function fakeRepositories(
         if (bodyChanged && c.status !== 'draft') {
           d().careRecordRevisions.push({ careRecordId: id, body: structuredClone(c.body), changedBy: null });
         }
-        Object.assign(c, structuredClone(patch), { rowVersion: c.rowVersion + 1 });
-        return structuredClone(c);
+        Object.assign(c, structuredClone(patch), { rowVersion: c.rowVersion + 1, updatedAt: new Date() });
+        const { updatedAt: _updatedAt, ...saved } = c;
+        return structuredClone(saved);
       },
       async listByCustomer(customerId, after, limit) {
         return structuredClone(
@@ -793,6 +837,35 @@ export function fakeRepositories(
             )
             .slice(0, limit),
         );
+      },
+      async listByPeriod(filter, after, limit) {
+        return structuredClone(
+          d()
+            .careRecords.filter(
+              (c) =>
+                c.occurredAt.getTime() >= filter.from.getTime() &&
+                c.occurredAt.getTime() < filter.to.getTime() &&
+                (!filter.authorStaffId || c.authorStaffId === filter.authorStaffId) &&
+                (!filter.customerId || c.customerId === filter.customerId) &&
+                (!filter.recordTypes || filter.recordTypes.includes(c.recordType)),
+            )
+            .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime() || (a.id < b.id ? 1 : -1))
+            .filter(
+              (c) =>
+                !after ||
+                c.occurredAt.getTime() < after.occurredAt.getTime() ||
+                (c.occurredAt.getTime() === after.occurredAt.getTime() && c.id < after.id),
+            )
+            .slice(0, limit)
+            .map((c) => ({ ...c, updatedAt: c.updatedAt ?? c.occurredAt })),
+        );
+      },
+      async findListRowById(id) {
+        const c = d().careRecords.find((x) => x.id === id);
+        return c ? structuredClone({ ...c, updatedAt: c.updatedAt ?? c.occurredAt }) : null;
+      },
+      async countRevisions(id) {
+        return d().careRecordRevisions.filter((x) => x.careRecordId === id).length;
       },
     },
     receipts: {
@@ -824,6 +897,55 @@ export function fakeRepositories(
         return structuredClone(
           d().receipts.filter((r) => r.staffId === staffId && r.receiptedAt >= from && r.receiptedAt < to),
         );
+      },
+      async list(filter, after, limit) {
+        return matchingReceipts(d(), filter)
+          .filter(
+            (r) =>
+              !after ||
+              r.receiptedAt.getTime() < after.receiptedAt.getTime() ||
+              (r.receiptedAt.getTime() === after.receiptedAt.getTime() && r.id < after.id),
+          )
+          .slice(0, limit)
+          .map((r) => {
+            const file = d().files.find((f) => f.id === r.fileId);
+            return {
+              id: r.id,
+              uploadId: r.uploadId,
+              staffId: r.staffId,
+              staffName: d().staff.find((x) => x.record.id === r.staffId)?.record.displayName ?? null,
+              customerId: r.customerId,
+              customerDisplayName: r.customerId
+                ? (d().customers.find((c) => c.id === r.customerId)?.displayName ?? null)
+                : null,
+              customerNameText: r.customerNameText,
+              receiptedAt: new Date(r.receiptedAt),
+              amountYen: r.amountYen,
+              storeName: r.storeName,
+              handoffText: d().uploads.find((u) => u.id === r.uploadId)?.handoffText ?? null,
+              contentType: file?.contentType ?? 'application/octet-stream',
+              byteSize: file?.byteSize ?? 0,
+            };
+          });
+      },
+      async summarize(filter) {
+        const rows = matchingReceipts(d(), filter);
+        return {
+          count: rows.length,
+          totalYen: rows.reduce((sum, r) => sum + (r.amountYen ?? 0), 0),
+          noAmountCount: rows.filter((r) => r.amountYen === null).length,
+        };
+      },
+      async findImage(receiptId) {
+        const r = d().receipts.find((x) => x.id === receiptId);
+        const file = r ? d().files.find((f) => f.id === r.fileId) : undefined;
+        if (!r || !file) return null;
+        return {
+          receiptId: r.id,
+          staffId: r.staffId,
+          storageKey: file.storageKey,
+          contentType: file.contentType,
+        };
       },
     },
     storedFiles: {
@@ -914,6 +1036,10 @@ export function fakeRepositories(
       },
     },
     importRuns: {
+      async lockTenantCustomerImports() {
+        // メモリの UoW は並んで走らないため、取ったことだけを残す
+        db.customerImportLocks.push(tenantId);
+      },
       async start(input) {
         d().importRuns.push({
           id: input.id,
@@ -936,6 +1062,40 @@ export function fakeRepositories(
           .importRuns.filter((x) => x.source === source && x.status === 'applied')
           .at(-1);
         return run ? structuredClone(run) : null;
+      },
+    },
+    integrationApiKeys: {
+      async create(input) {
+        const row = {
+          ...structuredClone(input),
+          createdAt: new Date(),
+          lastUsedAt: null,
+          revokedAt: null,
+        };
+        d().integrationApiKeys.push(row);
+        const { tokenHash: _hash, ...record } = row;
+        return structuredClone(record);
+      },
+      async list() {
+        return [...d().integrationApiKeys]
+          .reverse()
+          .map(({ tokenHash: _hash, ...record }) => structuredClone(record));
+      },
+      async findByTokenHash(tokenHash) {
+        const found = d().integrationApiKeys.find((k) => sameBytes(k.tokenHash, tokenHash));
+        if (!found) return null;
+        const { tokenHash: _hash, ...record } = found;
+        return structuredClone(record);
+      },
+      async touch(id, at) {
+        const found = d().integrationApiKeys.find((k) => k.id === id);
+        if (found) found.lastUsedAt = at;
+      },
+      async revoke(id, at) {
+        const found = d().integrationApiKeys.find((k) => k.id === id && k.revokedAt === null);
+        if (!found) return false;
+        found.revokedAt = at;
+        return true;
       },
     },
     staffCalendars: {
@@ -1037,7 +1197,9 @@ export function fakeRepositories(
     },
     outbox: {
       async enqueue(message) {
-        if (db.skipOutboxTopics.has(message.topic)) return false;
+        const slug = async () => db.tenants.get(tenantId)?.slug ?? '';
+        if (db.outboxPolicy && !(await isOutboxTopicEnabled(db.outboxPolicy, message.topic, slug)))
+          return false;
         if (d().outbox.some((m) => m.dedupeKey === message.dedupeKey)) return false;
         d().outbox.push({
           ...structuredClone(message),
@@ -1175,6 +1337,22 @@ export class FakeTenantCalendarSettingsStore implements TenantCalendarSettingsSt
   }
   async set(tenantId: string, settings: TenantCalendarSettings) {
     this.db.calendarSettings.set(tenantId, structuredClone(settings));
+  }
+}
+
+export class FakeTenantCustomerImportSettingsStore implements TenantCustomerImportSettingsStore {
+  constructor(private readonly db: MemoryDatabase) {}
+  async get(tenantId: string) {
+    return structuredClone(this.db.customerImportSettings.get(tenantId) ?? null);
+  }
+  async findTenantIdsByDriveFolder(driveFolderId: string) {
+    return [...this.db.customerImportSettings]
+      .filter(([, settings]) => settings.driveFolderId === driveFolderId)
+      .map(([tenantId]) => tenantId);
+  }
+  async set(tenantId: string, settings: TenantCustomerImportSettings | null) {
+    if (settings) this.db.customerImportSettings.set(tenantId, structuredClone(settings));
+    else this.db.customerImportSettings.delete(tenantId);
   }
 }
 
@@ -1475,23 +1653,24 @@ export class FakeWebPushSender implements WebPushSenderPort {
   }
 }
 
+/** Drive のフォルダID → ファイル名 → 中身(取込元の設定のあるテナントだけ、そのフォルダを読む)。 */
 export class FakeCustomerCsvSource implements CustomerCsvSourcePort {
-  private readonly files = new Map<string, Map<string, Buffer>>();
+  private readonly folders = new Map<string, Map<string, Buffer>>();
 
-  put(tenantSlug: string, name: string, content: Buffer): void {
-    const folder = this.files.get(tenantSlug) ?? new Map<string, Buffer>();
+  put(driveFolderId: string, name: string, content: Buffer): void {
+    const folder = this.folders.get(driveFolderId) ?? new Map<string, Buffer>();
     folder.set(name, content);
-    this.files.set(tenantSlug, folder);
+    this.folders.set(driveFolderId, folder);
   }
 
-  async listFiles(tenant: CustomerCsvSourceTenant): Promise<CustomerCsvSourceFile[] | null> {
-    const folder = this.files.get(tenant.slug);
-    if (!folder) return null;
+  async listFiles(location: CustomerCsvLocation): Promise<CustomerCsvSourceFile[] | null> {
+    if (!location.settings) return null;
+    const folder = this.folders.get(location.settings.driveFolderId) ?? new Map<string, Buffer>();
     return [...folder.keys()].map((name) => ({ id: name, name }));
   }
 
-  async readFile(tenant: CustomerCsvSourceTenant, file: CustomerCsvSourceFile): Promise<Buffer> {
-    const content = this.files.get(tenant.slug)?.get(file.id);
+  async readFile(location: CustomerCsvLocation, file: CustomerCsvSourceFile): Promise<Buffer> {
+    const content = location.settings && this.folders.get(location.settings.driveFolderId)?.get(file.id);
     if (!content) throw new Error(`ファイルがありません: ${file.name}`);
     return content;
   }

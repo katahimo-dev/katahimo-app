@@ -104,10 +104,33 @@ describe('outbox ワーカー', () => {
 
   it('MIRROR が無効ならミラーのトピックは送らずに完了にする(メールは送る)', async () => {
     await saveReport();
-    ctx.deps.mirrorEnabled = false;
+    ctx.deps.mirrorTenantSlug = null;
     expect(await ctx.drain()).toMatchObject({ skipped: 1, done: 0 });
     expect(ctx.sender.dailyReports).toHaveLength(0);
     expect(ctx.data().outbox[0]?.status).toBe('done');
+  });
+
+  it('ミラーするテナント(GAS_BRIDGE_TENANT)以外のミラーは送らずに完了にし、WARN を残す(メールは送る)', async () => {
+    await saveReport();
+    ctx.deps.mirrorTenantSlug = 'cutest';
+    expect(await ctx.drain()).toMatchObject({ skipped: 1, done: 0 });
+    expect(ctx.sender.dailyReports).toHaveLength(0);
+    expect(ctx.appLog.byAction('outbox.mirror_other_tenant_skipped')).toEqual([
+      expect.objectContaining({
+        tenantId: ctx.tenantId,
+        level: 'WARN',
+        details: expect.objectContaining({ topic: 'mirror.care_record', mirrorTenant: 'cutest' }),
+      }),
+    ]);
+  });
+
+  it('UoW はミラーするテナントの時だけミラーのトピックを積む(別のテナントは積まない)', async () => {
+    ctx.db.outboxPolicy = { mirrorTenantSlug: 'cutest', pushEnabled: true };
+    await saveReport();
+    expect(ctx.data().outbox.map((m) => m.topic)).toEqual([]);
+    ctx.db.outboxPolicy = { mirrorTenantSlug: ctx.tenant.slug, pushEnabled: true };
+    await saveReport();
+    expect(ctx.data().outbox.map((m) => m.topic)).toEqual(['mirror.care_record']);
   });
 
   it('領収書の画像が無ければ送らずに WARN を残して完了にする', async () => {

@@ -35,8 +35,8 @@ import {
   InMemoryTtlCache,
   listAvailableGeminiModels,
   NoopReportAiPort,
+  outboxTopicPolicyOf,
   type ScheduleProvider,
-  skippedOutboxTopics,
   WebhookNotifierPort,
 } from '@katahimo/integrations';
 import { sql } from 'drizzle-orm';
@@ -69,7 +69,7 @@ export interface Container {
   /** 「今日/明日の予定」(SCHEDULE_PROVIDER で Google / GAS Bridge / Noop を切り替える)。 */
   schedule: SchedulePort;
   scheduleProvider: ScheduleProvider;
-  /** スタッフの自宅住所のジオコーディング(SCHEDULE_PROVIDER=noop では無し。住所だけを保存する)。 */
+  /** スタッフの自宅住所のジオコーディング(SCHEDULE_PROVIDER=google だけ。それ以外は住所だけを保存する)。 */
   maps?: MapsPort;
   /** 顧客CSVの取込元(Google Drive / ローカルディレクトリ)。管理者の手動取込で使う。 */
   csvSource: CustomerCsvSourcePort;
@@ -99,9 +99,10 @@ function rateLimitPolicyOf(env: Env): RateLimitPolicy {
 }
 
 export function createContainer(env: Env, db: Database): Container {
-  const uow = new DrizzleUnitOfWork(db, { skipOutboxTopics: skippedOutboxTopics(env) });
+  const uow = new DrizzleUnitOfWork(db, { outboxPolicy: outboxTopicPolicyOf(env) });
   const secretBox = createSecretBox(env);
   const appLog = new DrizzleAppLogRepository(db);
+  const tenants = new DrizzleTenantDirectory(db);
   const scheduleServices = createScheduleServices(env, {
     directory: createScheduleDirectory({
       uow,
@@ -111,13 +112,14 @@ export function createContainer(env: Env, db: Database): Container {
     appLog,
     // ルート結果の共有キャッシュ(GAS版 CacheService 相当。プロセス内のため Cloud Run のインスタンス間では共有しない)
     routeCache: new InMemoryTtlCache({ maxEntries: 2000 }),
+    tenants,
   });
   console.info(`予定・ルート計算の実装: ${scheduleServices.provider}`);
 
   const webhookFallback = { report: env.GCHAT_REPORT_WEBHOOK_URL, receipt: env.GCHAT_RECEIPT_WEBHOOK_URL };
   return {
     uow,
-    tenants: new DrizzleTenantDirectory(db),
+    tenants,
     appLog,
     secretBox,
     passwordHasher: argon2PasswordHasher,
@@ -148,9 +150,8 @@ export function createContainer(env: Env, db: Database): Container {
     listGeminiModels: listAvailableGeminiModels,
     schedule: scheduleServices.schedule,
     scheduleProvider: scheduleServices.provider,
-    ...(scheduleServices.provider === 'noop' ? {} : { maps: scheduleServices.maps }),
+    ...(scheduleServices.maps ? { maps: scheduleServices.maps } : {}),
     csvSource: createCustomerCsvSource({
-      driveFolderIdsByTenantSlug: env.CUSTOMER_CSV_DRIVE_FOLDERS,
       ...(env.CUSTOMER_CSV_LOCAL_DIR ? { localDir: env.CUSTOMER_CSV_LOCAL_DIR } : {}),
     }),
     pushPublicKey: env.VAPID_PUBLIC_KEY ?? null,

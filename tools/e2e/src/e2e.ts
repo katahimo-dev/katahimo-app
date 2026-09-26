@@ -1,7 +1,7 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { APIRequestContext, BrowserContext, Page } from 'playwright-core';
+import type { APIRequestContext, BrowserContext, Locator, Page, Response } from 'playwright-core';
 import { ensureApiServer } from './apiServer';
 import { launchChromium } from './browser';
 import { installFontCache } from './fontCache';
@@ -45,6 +45,8 @@ const RECORDS_STAFF = { name: 'e2e 記録ありスタッフ', email: 'e2e-staff-
 const E2E_DIR = resolve(OUT_DIR, 'e2e');
 const VIEWPORT = { width: 390, height: 844 };
 const only = values.only ? new RegExp(values.only) : null;
+/** この回に送った領収書の束(uploadBatchId)。古い領収書の画像の 404 と、この回の領収書の画像の 404 を見分ける */
+const runUploadBatchIds = new Set<string>();
 
 const visible = { visible: true } as const;
 const button = (page: Page, name: string | RegExp) =>
@@ -59,6 +61,21 @@ function assert(condition: unknown, message: string): asserts condition {
 /** お知らせ(トースト)に文言が出るのを待つ */
 async function expectToast(page: Page, text: string | RegExp, timeout = 10_000) {
   await toast(page).filter({ hasText: text }).waitFor({ state: 'visible', timeout });
+}
+
+/**
+ * 保存のボタン(CSV・Excel)を押し、ブラウザが保存したファイルの中身と名前を返す。画面は `api.download()` で受けてから
+ * 保存するため(断られたら理由のお知らせでファイルにしない)、保存できたことのお知らせも待つ。
+ */
+async function clickForDownload(
+  page: Page,
+  target: Locator,
+  toastText: string,
+): Promise<{ buf: Buffer; name: string }> {
+  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 30_000 }), target.click()]);
+  const buf = readFileSync(await download.path());
+  await expectToast(page, toastText);
+  return { buf, name: download.suggestedFilename() };
 }
 
 /**
@@ -126,13 +143,33 @@ function createRunner(results: StepResult[]) {
     n += 1;
     const file = resolve(E2E_DIR, `${String(n).padStart(2, '0')}-${name}.png`);
     const errors: string[] = [];
-    const onConsole = (m: { type(): string; text(): string }) => {
+    /** 404 になった領収書の画像の ID(手順の終わりに、この回の領収書かどうかで判定する) */
+    const missingReceiptImages: string[] = [];
+    /** 画面が読んだ領収書の一覧(ID → uploadBatchId) */
+    const receiptLists: Promise<[string, string][]>[] = [];
+    const onConsole = (m: { type(): string; text(): string; location(): { url: string } }) => {
       // 未ログインでの /api/auth/me 等の 401 は想定どおり(ログイン画面を出すための確認)
-      if (m.type() === 'error' && !/status of 401/.test(m.text())) errors.push(m.text());
+      if (m.type() !== 'error' || /status of 401/.test(m.text())) return;
+      const image = /\/api\/receipts\/([^/]+)\/image$/.exec(m.location().url);
+      if (image?.[1] && /status of 404/.test(m.text())) {
+        missingReceiptImages.push(image[1]);
+        return;
+      }
+      errors.push(m.text());
     };
     const onPageError = (e: Error) => errors.push(e.message);
-    const onResponse = (r: { status(): number; url(): string; request(): { method(): string } }) => {
+    const onResponse = (r: Response) => {
       if (r.status() >= 500) errors.push(`${r.request().method()} ${r.url()} → ${r.status()}`);
+      if (r.ok() && r.request().method() === 'GET' && new URL(r.url()).pathname === '/api/receipts') {
+        receiptLists.push(
+          r
+            .json()
+            .then((body: { receipts: { id: string; uploadBatchId: string }[] }) =>
+              body.receipts.map((x): [string, string] => [x.id, x.uploadBatchId]),
+            )
+            .catch(() => []),
+        );
+      }
     };
     page.on('console', onConsole);
     page.on('pageerror', onPageError);
@@ -140,6 +177,15 @@ function createRunner(results: StepResult[]) {
     try {
       const detail = (await fn()) ?? '';
       await wait(page, 300);
+      if (missingReceiptImages.length > 0) {
+        const batchOf = new Map((await Promise.all(receiptLists)).flat());
+        for (const id of missingReceiptImages) {
+          // 使い回している開発用DBでは、別の環境(ファイル置き場)で送った古い領収書の画像が 404 になる(画面は「画像なし」)。
+          // 許すのはそれだけで、この回に送った領収書・一覧に無い領収書の画像の 404 は不具合として扱う
+          const batch = batchOf.get(id);
+          if (batch === undefined || runUploadBatchIds.has(batch)) errors.push(`領収書の画像が 404: ${id}`);
+        }
+      }
       if (errors.length > 0) throw new Error(`ブラウザのエラー: ${errors.join(' / ')}`);
       results.push({ name, ok: true, detail });
     } catch (e) {
@@ -316,18 +362,22 @@ async function runJourney() {
       return ((await res.json()) as { message?: string }).message ?? '';
     });
 
+    /** この回に送った領収書の束(領収書の一覧の手順で、その画像を開く) */
+    let uploadBatchId: string | null = null;
     await step(page, 'receipt-upload', async () => {
       const jpeg = await makeJpeg(page, `e2e ${Date.now()}`);
       await page
         .locator('#galleryInput')
         .setInputFiles({ name: 'receipt.jpg', mimeType: 'image/jpeg', buffer: jpeg });
       await wait(page, 1500);
-      const { message, uploadedCount } = await clickForResponse<{ message: string; uploadedCount: number }>(
-        page,
-        'POST',
-        '/api/receipts',
-        () => button(page, 'この領収書を送る').click(),
-      );
+      const uploaded = await clickForResponse<{
+        message: string;
+        uploadedCount: number;
+        uploadBatchId: string | null;
+      }>(page, 'POST', '/api/receipts', () => button(page, 'この領収書を送る').click());
+      const { message, uploadedCount } = uploaded;
+      uploadBatchId = uploaded.uploadBatchId;
+      if (uploadBatchId) runUploadBatchIds.add(uploadBatchId);
       assert(uploadedCount === 1, `領収書が登録されない: ${message}`);
       await expectToast(page, message);
       return message;
@@ -344,12 +394,16 @@ async function runJourney() {
         .locator('#galleryInput')
         .setInputFiles({ name: 'receipt2.jpg', mimeType: 'image/jpeg', buffer: jpeg });
       await wait(page, 1500);
-      const { message, uploadedCount } = await clickForResponse<{ message: string; uploadedCount: number }>(
-        page,
-        'POST',
-        '/api/receipts',
-        () => button(page, 'この領収書を送る').click(),
-      );
+      const {
+        message,
+        uploadedCount,
+        uploadBatchId: standaloneBatchId,
+      } = await clickForResponse<{
+        message: string;
+        uploadedCount: number;
+        uploadBatchId: string | null;
+      }>(page, 'POST', '/api/receipts', () => button(page, 'この領収書を送る').click());
+      if (standaloneBatchId) runUploadBatchIds.add(standaloneBatchId);
       assert(uploadedCount === 1, `領収書が登録されない: ${message}`);
       await expectToast(page, message);
       return message;
@@ -440,6 +494,83 @@ async function runJourney() {
         .innerText();
       assert(text.includes('領収書'), '今月のまとめに領収書の欄が無い');
       return undefined;
+    });
+
+    await step(page, 'attendance-monthly-excel', async () => {
+      const dialog = page.getByRole('dialog').filter({ has: page.locator('#attendanceMonthlyMonth') });
+      const saved: string[] = [];
+      for (const name of ['⬇ Excelで保存', '⬇ 全員分をExcelで保存']) {
+        const [download] = await Promise.all([
+          page.waitForEvent('download', { timeout: 30_000 }),
+          dialog.getByRole('button', { name }).click(),
+        ]);
+        const path = await download.path();
+        const buf = readFileSync(path);
+        // .xlsx は zip(先頭が PK)
+        assert(buf.subarray(0, 2).toString('latin1') === 'PK', `${name} のファイルが .xlsx でない`);
+        assert(
+          download.suggestedFilename().endsWith('.xlsx'),
+          `${name} のファイル名: ${download.suggestedFilename()}`,
+        );
+        saved.push(`${download.suggestedFilename()}(${buf.length}バイト)`);
+        await expectToast(page, 'Excelファイルを保存しました');
+      }
+      return saved.join(' / ');
+    });
+
+    // 今月のまとめから領収書の一覧を開き、この回に送った領収書の画像(サムネイル・拡大)が API から読めることを確かめる
+    let adminReceiptId: string | null = null;
+    await step(page, 'attendance-receipts', async () => {
+      const month = today.slice(0, 7);
+      const listed = page.waitForResponse(
+        (r) => new URL(r.url()).pathname === '/api/receipts' && r.request().method() === 'GET',
+        { timeout: 20_000 },
+      );
+      await button(page, '🧾 領収書の一覧・画像を見る').click();
+      const res = await listed;
+      assert(res.ok(), `GET /api/receipts が ${res.status()}`);
+      const { summary } = (await res.json()) as { summary: { count: number } };
+      assert(summary.count >= 2, `今月の領収書が一覧に出ない: ${summary.count}件`);
+      // この回に送った領収書の ID(一覧は新しい順。開発用DBに古い分が多くても探せるように API で引く)
+      const mine = await page.request.get(`${WEB_URL}/api/receipts?month=${month}&limit=200`);
+      const { receipts } = (await mine.json()) as { receipts: { id: string; uploadBatchId: string }[] };
+      adminReceiptId = receipts.find((r) => r.uploadBatchId === uploadBatchId)?.id ?? null;
+      assert(adminReceiptId, 'この回に送った領収書が一覧に無い');
+
+      const dialog = page.getByRole('dialog').filter({ has: page.locator('#receiptListMonth') });
+      const list = dialog.getByRole('list', { name: '領収書の一覧' });
+      await list.waitFor({ timeout: 10_000 });
+      const thumbnailSelector = `img[src="/api/receipts/${adminReceiptId}/image"]`;
+      const thumbnail = list.locator(thumbnailSelector);
+      for (let i = 0; i < 5 && (await thumbnail.count()) === 0; i += 1) {
+        await dialog.getByRole('button', { name: 'もっと見る' }).click();
+        await wait(page, 800);
+      }
+      await thumbnail.scrollIntoViewIfNeeded();
+      const loaded = (el: Element | null) =>
+        el instanceof HTMLImageElement && el.complete && el.naturalWidth > 0;
+      await page.waitForFunction(loaded, await thumbnail.elementHandle(), { timeout: 10_000 });
+      await list
+        .getByRole('button')
+        .filter({ has: page.locator(thumbnailSelector) })
+        .click();
+      const viewer = page.locator('[role="dialog"][aria-labelledby="receiptImageTitle"]');
+      await viewer.waitFor({ timeout: 10_000 });
+      const large = viewer.getByRole('img', { name: '領収書の画像', exact: true });
+      await page.waitForFunction(loaded, await large.elementHandle(), { timeout: 10_000 });
+      await viewer.getByRole('button', { name: '閉じる' }).last().click();
+      await wait(page, 300);
+      // 「⬇ CSVで保存」(表示しているスタッフの月の全件)
+      const csv = await clickForDownload(
+        page,
+        dialog.getByRole('button', { name: '⬇ CSVで保存' }),
+        'CSVファイルを保存しました',
+      );
+      assert(csv.name.endsWith('.csv'), `領収書のCSVのファイル名: ${csv.name}`);
+      assert(csv.buf.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), '領収書のCSVの先頭にBOMが無い');
+      await dialog.getByRole('button', { name: '閉じる' }).last().click();
+      await wait(page, 300);
+      return `${summary.count}件`;
     });
 
     await step(page, 'settings-text-size', async () => {
@@ -682,9 +813,12 @@ async function runJourney() {
     });
 
     await step(page, 'admin-logs-csv', async () => {
-      const res = await page.request.get(`${WEB_URL}/api/admin/audit-logs.csv`);
-      assert(res.ok(), `GET /api/admin/audit-logs.csv が ${res.status()}`);
-      const buf = await res.body();
+      const { buf, name } = await clickForDownload(
+        page,
+        page.getByRole('button', { name: '⬇ CSVで保存' }),
+        'CSVファイルを保存しました',
+      );
+      assert(name.endsWith('.csv'), `操作ログのCSVのファイル名: ${name}`);
       assert(buf.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), 'CSVの先頭にBOMが無い');
       const firstLine = buf.toString('utf8').split('\r\n')[0] ?? '';
       assert(
@@ -692,6 +826,50 @@ async function runJourney() {
         `CSVのヘッダーが想定と違う: ${firstLine}`,
       );
       return `${buf.length}バイト`;
+    });
+
+    await step(page, 'admin-reports-list', async () => {
+      await page.getByRole('tab', { name: '📋 報告一覧' }).click();
+      await wait(page, 600);
+      const list = page.getByRole('list', { name: '報告一覧' });
+      await list.waitFor({ timeout: 10_000 });
+      await wait(page, 500);
+      const text = await list.innerText();
+      assert(text.includes('公園で外遊び(e2e)'), '報告一覧に今日保存した日報が出ない');
+      return undefined;
+    });
+
+    await step(page, 'admin-reports-detail', async () => {
+      await page
+        .getByRole('list', { name: '報告一覧' })
+        .getByRole('button', { name: /公園で外遊び\(e2e\)/ })
+        .first()
+        .click();
+      const dialog = page.getByRole('dialog', { name: '報告の中身' });
+      await dialog.getByText('本日もありがとうございました(e2e)').waitFor({ timeout: 10_000 });
+      await dialog.getByRole('button', { name: '閉じる' }).last().click();
+      await wait(page, 500);
+      return undefined;
+    });
+
+    await step(page, 'admin-reports-csv', async () => {
+      const { buf, name } = await clickForDownload(
+        page,
+        page.getByRole('button', { name: '⬇ 日報のCSV' }),
+        'CSVファイルを保存しました',
+      );
+      assert(name.endsWith('.csv'), `日報のCSVのファイル名: ${name}`);
+      assert(buf.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), 'CSVの先頭にBOMが無い');
+      const [header = '', ...rows] = buf.toString('utf8').trimEnd().split('\r\n');
+      assert(
+        header.includes('事務局に送る文') && header.includes('記録ID'),
+        `CSVのヘッダーが想定と違う: ${header}`,
+      );
+      assert(
+        rows.some((r) => r.includes('本日もありがとうございました(e2e)')),
+        'CSVに今日保存した日報が無い',
+      );
+      return `${rows.length}行`;
     });
 
     // 一般スタッフの用意(管理者のCookieで)
@@ -765,10 +943,15 @@ async function runJourney() {
           ],
           ['GET /api/settings/admin', req.get(`${WEB_URL}/api/settings/admin`)],
           ['GET /api/admin/audit-logs', req.get(`${WEB_URL}/api/admin/audit-logs`)],
+          ['GET /api/reports/export.csv', req.get(`${WEB_URL}/api/reports/export.csv?sheet=daily`)],
           ['DELETE /api/admin/staff/:id', req.delete(`${WEB_URL}/api/admin/staff/${staffId}`)],
           [
             'POST /api/admin/customers/import',
             req.post(`${WEB_URL}/api/admin/customers/import`, { data: {} }),
+          ],
+          [
+            'GET /api/attendance/export/all',
+            req.get(`${WEB_URL}/api/attendance/export/all?month=${today.slice(0, 7)}`),
           ],
           [
             'POST /api/attendance/day/aggregate/refresh',
@@ -794,6 +977,25 @@ async function runJourney() {
           `他人の staffId で他人の出勤簿が見えた: ${attendance.staffId}`,
         );
         return `${statuses.join(', ')}; staffId 指定は無視(本人)`;
+      });
+
+      await step(staffPage, 'staff-receipts-own-only', async () => {
+        const req = staffPage.request;
+        const month = today.slice(0, 7);
+        const all = await req.get(`${WEB_URL}/api/receipts?month=${month}&allStaff=true`);
+        assert(all.status() === 403, `一般スタッフの全員分の領収書が ${all.status()}`);
+        const csv = await req.get(`${WEB_URL}/api/receipts/csv?month=${month}`);
+        assert(csv.status() === 403, `一般スタッフの領収書のCSVが ${csv.status()}`);
+        // 他人の staffId を指定しても本人の一覧になる(admin-vs-self)
+        const own = await req.get(`${WEB_URL}/api/receipts?month=${month}&staffId=${adminMe.staff.staffId}`);
+        assert(own.ok(), `GET /api/receipts が ${own.status()}`);
+        const { staff } = (await own.json()) as { staff: { id: string } | null };
+        assert(staff?.id === staffId, `他人の staffId で他人の領収書が見えた: ${staff?.id}`);
+        if (adminReceiptId) {
+          const image = await req.get(`${WEB_URL}/api/receipts/${adminReceiptId}/image`);
+          assert(image.status() === 403, `他人の領収書の画像が ${image.status()}`);
+        }
+        return adminReceiptId ? '全員分・CSV・他人の画像は 403' : '全員分・CSV は 403(画像は未確認)';
       });
 
       await step(staffPage, 'staff-logout', async () => {

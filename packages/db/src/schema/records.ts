@@ -80,13 +80,19 @@ export const careRecords = pgTable(
     index('care_records_tenant_id_customer_id_occurred_at_id_idx').on(
       t.tenantId,
       t.customerId,
-      t.occurredAt.desc(),
-      t.id.desc(),
+      t.occurredAt.desc().nullsFirst(),
+      t.id.desc().nullsFirst(),
+    ),
+    // テナント全体の報告の一覧(新しい順・keyset(occurred_at, id))
+    index('care_records_tenant_id_occurred_at_id_idx').on(
+      t.tenantId,
+      t.occurredAt.desc().nullsFirst(),
+      t.id.desc().nullsFirst(),
     ),
     index('care_records_tenant_id_author_staff_id_occurred_at_idx').on(
       t.tenantId,
       t.authorStaffId,
-      t.occurredAt.desc(),
+      t.occurredAt.desc().nullsFirst(),
     ),
     index('care_records_tenant_id_visit_id_idx').on(t.tenantId, t.visitId),
     check('care_records_record_type_check', oneOf(t.recordType, CARE_RECORD_TYPES)),
@@ -209,6 +215,12 @@ export const receipts = pgTable(
       .on(t.tenantId, t.dedupeHash)
       .where(sql`dedupe_hash is not null`),
     index('receipts_tenant_id_staff_id_receipted_at_idx').on(t.tenantId, t.staffId, t.receiptedAt),
+    // テナント全体の領収書の一覧(月の範囲・新しい順・keyset(receipted_at, id))
+    index('receipts_tenant_id_receipted_at_id_idx').on(
+      t.tenantId,
+      t.receiptedAt.desc().nullsFirst(),
+      t.id.desc().nullsFirst(),
+    ),
     index('receipts_tenant_id_upload_id_idx').on(t.tenantId, t.uploadId),
     index('receipts_tenant_id_file_id_idx').on(t.tenantId, t.fileId),
     check('receipts_amount_yen_check', sql`${t.amountYen} >= 0`),

@@ -1,5 +1,12 @@
 import { AUDIT_LOG_DEFAULT_RANGE_DAYS, AUDIT_LOG_MAX_RANGE_DAYS } from '@katahimo/shared';
-import { addDays, countDaysInclusive, invalid, zonedBusinessDate, zonedDayRange } from '../domain';
+import {
+  addDays,
+  countDaysInclusive,
+  decodeKeysetCursor,
+  invalid,
+  zonedBusinessDate,
+  zonedDayRange,
+} from '../domain';
 import type { ActorType, AppLogLevel } from '../domain/model';
 import type { AppLogFilter, AppLogPort, AppLogPosition, AppLogRecord } from '../ports/appLog';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
@@ -90,21 +97,9 @@ export function encodeAuditLogCursor(position: AppLogPosition): string {
 }
 
 export function decodeAuditLogCursor(cursor: string): AppLogPosition {
-  try {
-    const decoded: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-    if (
-      Array.isArray(decoded) &&
-      decoded.length === 2 &&
-      typeof decoded[0] === 'string' &&
-      !Number.isNaN(Date.parse(decoded[0])) &&
-      typeof decoded[1] === 'string' &&
-      /^[0-9a-f-]{36}$/i.test(decoded[1])
-    ) {
-      return { at: decoded[0], id: decoded[1] };
-    }
-  } catch {
-    // 下の検証エラーにする
-  }
+  // 時刻は DB の文字列のまま返す(マイクロ秒まで保つ)
+  const decoded = decodeKeysetCursor(cursor);
+  if (decoded) return { at: decoded.atText, id: decoded.id };
   throw invalid(
     '続きの位置の指定が正しくありません。最初から読み込み直してください',
     undefined,

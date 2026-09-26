@@ -1,8 +1,12 @@
 import {
+  CUSTOMER_IMPORT_BUSY_MESSAGE,
+  CUSTOMER_IMPORT_BUSY_REASON,
   conflict,
   type ImportSource,
+  isOutboxTopicEnabled,
   newId,
   type OutboxTopic,
+  type OutboxTopicPolicy,
   STALE_PROMPT_MESSAGE,
   type TenantSecretName,
 } from '@katahimo/core/domain';
@@ -22,6 +26,7 @@ import type {
   TenantSettingsRepository,
 } from '@katahimo/core/ports';
 import { and, asc, desc, eq, max, sql } from 'drizzle-orm';
+import { LOCK_NOT_AVAILABLE, pgErrorOf } from '../../errors';
 import {
   aiPromptRevisions,
   aiPrompts,
@@ -185,6 +190,20 @@ export class DrizzleAiPromptRepository extends TenantBound implements AiPromptRe
 }
 
 export class DrizzleImportRunRepository extends TenantBound implements ImportRunRepository {
+  async lockTenantCustomerImports(): Promise<void> {
+    try {
+      await this.tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`customer_import:${this.tenantId}`}, 0))`,
+      );
+    } catch (error) {
+      // 他の取込が lock_timeout(API 5秒・ワーカー 10秒)より長くロックを持っている。送り直せば通るため conflict にする
+      if (pgErrorOf(error)?.code === LOCK_NOT_AVAILABLE) {
+        throw conflict(CUSTOMER_IMPORT_BUSY_MESSAGE, undefined, CUSTOMER_IMPORT_BUSY_REASON);
+      }
+      throw error;
+    }
+  }
+
   async start(input: {
     id: string;
     source: ImportSource;
@@ -243,13 +262,16 @@ export class DrizzleOutboxWriter extends TenantBound implements OutboxWriter {
   constructor(
     tx: ConstructorParameters<typeof TenantBound>[0],
     tenantId: string,
-    private readonly skipTopics: ReadonlySet<OutboxTopic>,
+    /** 積むトピックの規則(null なら全て積む)。 */
+    private readonly policy: OutboxTopicPolicy | null,
+    private readonly tenantSlug: () => Promise<string>,
   ) {
     super(tx, tenantId);
   }
 
   async enqueue(message: OutboxMessageInput): Promise<boolean> {
-    if (this.skipTopics.has(message.topic)) return false;
+    if (this.policy && !(await isOutboxTopicEnabled(this.policy, message.topic, this.tenantSlug)))
+      return false;
     const inserted = await this.tx
       .insert(outboxMessages)
       .values({
