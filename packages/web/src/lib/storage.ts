@@ -7,7 +7,7 @@
  *
  * GAS版にあってこちらで使わないもの:
  * - `GAS_AUTH_TOKEN` / `GAS_STAFF_ADMIN`: ログインはhttpOnly Cookieになったため不要。
- *   管理者かどうかは GET /api/auth/me の応答(isAdmin)で判断する。
+ *   役割は GET /api/auth/me の応答(role)で判断する(isAdminRole / canActForOthers)。
  * - `GAS_CUSTOMER_DATA_V2` / 各種2時間キャッシュ: サーバー側・TanStack Queryのキャッシュで代替する。
  */
 export const STORAGE_KEYS = {

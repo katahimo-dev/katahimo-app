@@ -3,6 +3,7 @@
 GAS版 `gas-childcare-visit-app` の画面(`legacy/gas-childcare-visit-app/gas-childcare-visit-app/index.html`)を、
 見た目・文言・操作の流れを変えずに React + TypeScript で作り直したもの。**GAS版が正**であり、迷ったら
 GAS版のマークアップ・クラス名・文言・`<script>` の処理をそのまま再現する(`tools/gas-preview` で並べて撮影して確かめる)。
+画面ごとの振る舞い・業務ルール・権限は [`doc/02_機能仕様.md`](../../doc/02_機能仕様.md)、API は [`doc/04_API仕様.md`](../../doc/04_API仕様.md)。
 
 ## 動かし方
 
@@ -24,7 +25,7 @@ pnpm vitest run --project web              # 画面のテストだけ(jsdom)
 
 ### テスト
 
-`vitest.config.ts`(このフォルダ)が画面のテストのまとまり(`web`)で、ルートの `vitest.workspace.ts` から読まれる
+`vitest.config.ts`(このフォルダ)が画面のテストのまとまり(`web`)で、ルートの `vitest.config.ts`(`test.projects`)から読まれる
 (`pnpm test` でサーバー側のテストと一緒に動く)。`src/**/*.test.{ts,tsx}` を jsdom の上で動かし、部品・フックは
 `@testing-library/react`(`render` / `renderHook`)で確かめる。`src/test/providers.tsx` に QueryClient・確認ダイアログ・
 ログイン中のスタッフで包む `createWrapper()` と、返事の順番を決められる `deferred()` がある。APIは `vi.mock('…/api/…')`
@@ -57,7 +58,7 @@ GAS版は1法人専用のためログイン画面に法人を選ぶ欄が無い�
 src/
   main.tsx                 入口(描画前に文字の大きさを反映)
   styles/index.css         Tailwind + GAS版の<style>の移植
-  app/                     画面の骨格(全機能で共有。変更は土台の担当と相談)
+  app/                     画面の骨格(全機能で共有)
     App.tsx                Provider の組み立て(エラーの受け止め / Query / 文字の大きさ / 確認ダイアログ / ログイン / トースト / 新しい版のお知らせ)
     AppShell.tsx           ヘッダー・3つのタブ・下タブ・設定ダイアログ
     Header.tsx, BottomNav.tsx, homeTabs.tsx(useHomeTabs)
@@ -70,36 +71,30 @@ src/
     client.ts              共通の fetch(zodで応答を検証、エラーの種類分け)
     queryKeys.ts           機能をまたいで無効化するクエリキー
     auth.ts, settings.ts, staff.ts, system.ts
-  features/                機能ごとのフォルダ(担当ごとに分かれて作業する)
+  features/                機能ごとのフォルダ
     auth/                  ログイン・パスワード再設定・パスワード変更・セッション
     settings/              設定ダイアログ
-    schedule/              「📅 今日の予定」タブ            ← 予定・お客様の担当
-    customers/             「👪 お客様」タブ・お客様の情報/これまでの記録  ← 予定・お客様の担当
-    report/                日報・事故報告・領収書ダイアログ    ← 日報の担当
-    attendance/            「🕒 出勤簿」タブとその中のダイアログ ← 出勤簿の担当
+    schedule/              「📅 今日の予定」タブ
+    customers/             「👪 お客様」タブ・お客様の情報/これまでの記録
+    report/                日報・事故報告・領収書ダイアログ
+    attendance/            「🕒 出勤簿」タブとその中のダイアログ
   lib/                     画面に依存しない小さな処理(storage / date / recentCustomers / textSize / tenant / messages / idle)
   ui/                      共通の部品(トースト・確認ダイアログ・ダイアログの外側 Modal・読み込み中・0件表示・ErrorBoundary)
   test/                    テストの共通部品(providers.tsx・setup.ts)
 ```
 
-## 機能ごとの担当(並行して作業するときのファイルの持ち分)
+## 機能どうしのつなぎ目
 
-| 担当 | 持ち分(自由に作り直してよい) | 入口(AppShell が import する。名前を変えない) |
-| --- | --- | --- |
-| 予定・お客様 | `src/features/schedule/**`、`src/features/customers/**`、`src/api/schedule.ts`、`src/api/customers.ts`、`tools/gas-preview/src/shots/schedule.ts`・`customers.ts` | `ScheduleTab`、`CustomersTab` |
-| 日報 | `src/features/report/**`、`src/api/reports.ts`、`src/api/receipts.ts`、`tools/gas-preview/src/shots/report.ts` | `ReportModalProvider`、`useReportModal` |
-| 出勤簿 | `src/features/attendance/**`、`src/api/attendance.ts`、`src/api/calendarSync.ts`、`tools/gas-preview/src/shots/attendance.ts` | `AttendanceTab` |
-
-- 他の担当のフォルダは編集しない。共有部分(`app/`・`api/client.ts`・`api/queryKeys.ts`・`lib/`・`ui/`・
-  `tools/gas-preview` の共通部分)に手を入れる必要が出たら、最小限の追加にとどめ、既存の関数の形は変えない。
-- `tools/gas-preview/src/webMock.ts`(新アプリ用APIモック)・`fixtures.ts` は全員が追記する。追記は自分の
-  APIのハンドラーをまとまりで足すだけにし、他の担当の部分は書きかえない。
+- 各タブの入口は `AppShell` が import する(`ScheduleTab`・`CustomersTab`・`AttendanceTab`、日報は `ReportModalProvider` / `useReportModal`)。
+  名前を変えるときは `AppShell` も直す。
 - **予定→日報**: 予定・お客様タブから日報を開くときは `useReportModal().openReport({ customerId, customerName })`、
-  お客様に関係ない領収書は `openStandaloneReceipt()`。この形を変えるときは両担当で相談する。
+  お客様に関係ない領収書は `openStandaloneReceipt()`。
 - **予定→お客様タブへの移動**(GAS版 `jumpToCustomerFromSchedule`)は `useHomeTabs().switchTab('visitors')` を使い、
   検索欄への受け渡しは `features/customers` の中で用意する。
 - 出勤簿タブはGAS版と同じく**初めて開いたときに作られる**(`AttendanceTab` の初回描画 = GAS版 `initPastScheduleTab`)。
   タブを切り替えても作り直さない(隠すだけ)ので、入力途中の値は残る。
+- 共有部分(`app/`・`api/client.ts`・`api/queryKeys.ts`・`lib/`・`ui/`)は全機能が使う。既存の関数の形を変えるときは使っている所を全て直す。
+- 見比べのモック(`tools/gas-preview/src/webMock.ts`・`fixtures.ts`)は機能ごとのまとまりで足す。
 
 ## 書き方の決まり
 
@@ -140,11 +135,12 @@ src/
   - 読み込みの失敗は1回だけ読み直す。ただしサーバーが理由を付けて断った失敗(4xx)は読み直さない(`app/queryClient.ts`)。
   - 起動時に `/api/auth/me` が通信の失敗だったときは、ログイン画面ではなく「うまくいきませんでした…」+「もう一度読み込む」を
     出す(ログインしていないと決めるのは 401 のときだけ)。
-- **ログイン中の人**: `useSession().user`(`staffId` / `name` / `isAdmin`)。管理者向けの表示の出し分けは `user.isAdmin`。
+- **ログイン中の人**: `useSession().user`(`staffId` / `name` / `role`)。管理者向けの表示の出し分けは `isAdminRole(user.role)`、
+  他のスタッフを選べるか(表示するスタッフ)は `canActForOthers(user.role)`(`@katahimo/shared`)。
   その人の localStorage の値のキーには `useSession().storageScope` を使う(下の「localStorage のキー」)。
-- **管理者の「表示するスタッフ」**: タブの一番上に `<AdminTargetStaffSelect id="…" />` を置き、APIには
+- **管理者・コーディネーターの「表示するスタッフ」**: タブの一番上に `<AdminTargetStaffSelect id="…" />` を置き、APIには
   `useAdminTargetStaff().requestStaffId` を `staffId` として渡し、クエリキーにも入れる(選び直すと自動で読み直される)。
-  管理者以外は `undefined`(= 本人。サーバーも管理者以外の staffId は無視する)。
+  管理者・コーディネーター以外は `undefined`(= 本人。サーバーも一般スタッフの staffId は無視する)。
 - **顧客データのクエリ**は `queryKeys.customers.all` で始まるキーにする(新しい顧客CSVが取り込まれたとき、版数の監視が
   まとめて読み直すため)。
 - **localStorage**: キーは `src/lib/storage.ts` の `STORAGE_KEYS` に足してから使う。GAS版と同じ意味の値はGAS版と同じキー名。

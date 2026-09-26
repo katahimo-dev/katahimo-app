@@ -5,7 +5,7 @@ import { logJson } from './log';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * スタッフのGoogleカレンダーの free/busy を staff_busy_blocks に同期する(将来のマッチング用、doc/10)。
+ * スタッフのGoogleカレンダーの free/busy を staff_busy_blocks に同期する(将来のマッチング用、doc/10_マッチング拡張設計.md)。
  * GAS版に相当する機能は無く、既定ではスケジュール登録していない(必要になったら Cloud Scheduler に登録する)。
  */
 export async function runSyncBusyBlocksJob(

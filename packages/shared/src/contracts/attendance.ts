@@ -5,7 +5,7 @@ import { businessDateSchema, idSchema, yearMonthSchema } from './common';
  * 出勤簿1日分の入力列のキー(出勤簿スプレッドシートの列記号)。
  *
  * attendance_days.row_data のJSONキー・APIのrowDataキー・GAS版Bridge.jsへのミラーペイロードの
- * キーはすべてこの列記号で統一している(doc/09 4.1節)。各列が業務上何を意味するか
+ * キーはすべてこの列記号で統一している(doc/03_データベース設計.md 3.3)。各列が業務上何を意味するか
  * (訪問#1の始業時刻、#1→#2の移動距離…)の対応づけは packages/core/src/domain/attendance/sheetLayout.ts
  * だけが持ち、業務ロジックはそちらの名前付き定義を経由して列にアクセスする。
  */

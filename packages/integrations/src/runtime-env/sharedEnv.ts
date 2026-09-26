@@ -47,7 +47,7 @@ export const sharedEnvShape = {
   LOCAL_RECEIPT_STORAGE_DIR: z.string().default('./data/receipts'),
   GCS_BUCKET: z.preprocess(emptyToUndefined, z.string().optional()),
 
-  // ── 予定・ルート計算(doc/api/schedule-route.md) ──
+  // ── 予定・ルート計算(doc/05_バッチ・外部連携.md 4章) ──
   // google: Google Calendar API + Google Maps Platform / gas_bridge: GAS版 Web App / noop: 常に予定なし。
   // 未指定なら設定されている資格情報から選ぶ(selectScheduleProvider)。
   SCHEDULE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(SCHEDULE_PROVIDERS).optional()),
@@ -64,7 +64,6 @@ export const sharedEnvShape = {
 
   // スプレッドシートへのミラー。false ならミラーのトピックを outbox に積まず(API)、残っていても送らない(ワーカー)。
   MIRROR_TO_GOOGLE_SHEETS: booleanFlag,
-  MIRROR_TO_GOOGLE_CALENDAR: booleanFlag,
 
   // 顧客CSV(RESERVA「Kokyaku_YYYYMMDDHHmm_N.csv」)の取込元。
   // CUSTOMER_CSV_DRIVE_FOLDERS: {"テナントslug": "DriveフォルダID"} の JSON。

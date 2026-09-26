@@ -102,7 +102,7 @@ locals {
       timeout         = "1800s"
       schedule        = "0 4 * * *"
     }
-    # 将来のマッチング用(doc/10)。既定では定期実行しない
+    # 将来のマッチング用(doc/10_マッチング拡張設計.md)。既定では定期実行しない
     sync-busy-blocks = {
       args            = ["dist/sync-busy-blocks.js"]
       service_account = google_service_account.worker.email

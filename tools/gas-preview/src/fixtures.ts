@@ -393,7 +393,7 @@ export function customerReports(customerId: string, today: string): FixtureRepor
 /**
  * 新アプリのサーバーは APIキー・Webhook URL を伏せ字にして返す(packages/core/src/usecases/settings.ts の
  * maskApiKey / maskWebhookUrl と同じ形。GAS版は平文を返していた)。見比べでは、GAS版のモックにも同じ伏せ字の値を
- * 返させて、伏せ字以外の見た目を比べる(README「分かっている違い」)。
+ * 返させて、伏せ字以外の見た目を比べる(tools/gas-preview/README.md「分かっている違い」)。
  */
 const MASK = SECRET_MASK_CHAR.repeat(8);
 

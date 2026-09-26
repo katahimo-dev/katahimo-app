@@ -1,5 +1,5 @@
 /**
- * 退職日の判定。退職日(retirement_date、JSTの業務日 'YYYY-MM-DD')の当日以降はログインできない
+ * 退職日の判定。退職日(staff.retired_on、JSTの業務日 'YYYY-MM-DD')の当日以降はログインできない
  * (GAS版Auth.js verifyLogin/checkSessionの `retireDate <= today` と同じ規則)。
  *
  * GAS版は `new Date(退職日)` と `today.setHours(0,0,0,0)` をスクリプトのタイムゾーン(JST)で

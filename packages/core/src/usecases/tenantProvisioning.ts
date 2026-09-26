@@ -1,8 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { invalid, newId } from '../domain';
-import type { BusinessType } from '../domain/model';
+import { checkPasswordPolicy, PASSWORD_POLICY_MESSAGES } from '@katahimo/shared';
+import { invalid, newId, normalizeEmailForIndex } from '../domain';
+import type { BusinessType, StaffRole } from '../domain/model';
+import type { AppLogPort } from '../ports/appLog';
 import type { KeyManagementPort } from '../ports/kms';
 import type { TenantDirectoryPort, TenantProvisioningPort, TenantRecord } from '../ports/tenants';
+import type { StaffRegistrationDeps } from './auth/deps';
+import { registerStaff } from './auth/staffRegistration';
 
 export interface TenantProvisioningDeps {
   tenants: TenantDirectoryPort;
@@ -46,4 +50,75 @@ export async function provisionTenant(
   const tenant = await deps.tenants.findById(id);
   if (!tenant) throw new Error(`作成したテナントを読めません(id=${id})`);
   return { tenant, created: true };
+}
+
+export interface TenantBootstrapDeps extends TenantProvisioningDeps, StaffRegistrationDeps {
+  appLog: AppLogPort;
+}
+
+export interface BootstrapTenantRequest extends ProvisionTenantRequest {
+  admin: {
+    email: string;
+    name: string;
+    /** 省略時はパスワード未設定で作る(本人がログイン画面の「パスワードを忘れた方」から設定する)。 */
+    initialPassword?: string;
+  };
+}
+
+export interface BootstrapTenantResult {
+  tenant: TenantRecord;
+  tenantCreated: boolean;
+  admin: { staffId: string; created: boolean; role: StaffRole };
+}
+
+/**
+ * 本番のテナントと最初の管理者を作る(運用の CLI `tenant:create`)。何度流してもよい: テナントは slug で、
+ * 管理者はログインメールで既存を探し、あればそのまま返す(既存のスタッフの権限・パスワードは変えない)。
+ * 作ったものは SECURITY の操作ログに残す(操作者は system)。
+ */
+export async function bootstrapTenant(
+  deps: TenantBootstrapDeps,
+  request: BootstrapTenantRequest,
+): Promise<BootstrapTenantResult> {
+  const email = normalizeEmailForIndex(request.admin.email);
+  if (!/^[^\s@]+@[^\s@]+$/.test(email)) throw invalid('管理者のメールアドレスが正しくありません');
+  const adminName = request.admin.name.trim();
+  if (!adminName) throw invalid('管理者の氏名を入れてください');
+  const password = request.admin.initialPassword;
+  if (password !== undefined) {
+    const violation = checkPasswordPolicy(password);
+    if (violation) throw invalid(PASSWORD_POLICY_MESSAGES[violation]);
+  }
+
+  const { tenant, created: tenantCreated } = await provisionTenant(deps, request);
+  if (tenantCreated) {
+    await deps.appLog.write({
+      tenantId: tenant.id,
+      level: 'SECURITY',
+      action: 'tenant.provisioned',
+      actorType: 'system',
+      details: { slug: tenant.slug },
+    });
+  }
+
+  const existing = await deps.uow.run(tenant.id, (r) => r.staff.findByLoginEmail(email));
+  if (existing) {
+    return { tenant, tenantCreated, admin: { staffId: existing.id, created: false, role: existing.role } };
+  }
+  const admin = await registerStaff(deps, {
+    tenantId: tenant.id,
+    name: adminName,
+    email,
+    role: 'admin',
+    ...(password !== undefined ? { password } : {}),
+  });
+  await deps.appLog.write({
+    tenantId: tenant.id,
+    level: 'SECURITY',
+    action: 'staff.admin.bootstrapped',
+    actorType: 'system',
+    targetStaffId: admin.id,
+    details: { passwordSet: password !== undefined },
+  });
+  return { tenant, tenantCreated, admin: { staffId: admin.id, created: true, role: admin.role } };
 }

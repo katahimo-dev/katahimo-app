@@ -1,8 +1,8 @@
 /**
  * outboxから取り出したミラージョブ1件を、実際にGoogleスプレッドシート/Driveへ反映するポート。
  *
- * MirrorPort(./mirror.ts)が「積む」側なのに対し、こちらは「送る」側。ペイロードは
- * ワーカー側のusecase(usecases/mirrorWorker.ts)がDBから最新値を読み直し・復号・
+ * 積む側(書き込みと同じ Unit of Work で outbox_messages に積む)に対し、こちらは「送る」側。ペイロードは
+ * ワーカー側のusecase(usecases/outboxWorker.ts)がDBから最新値を読み直し・復号・
  * スタッフ/顧客名の解決まで済ませた後の、GAS側の列にそのまま書き込める形にしてある
  * (GAS側の分類・整形ロジックをこちらで再実装しないため)。
  *
@@ -79,7 +79,7 @@ export interface AttendanceDayMirrorPayload {
   values: Record<string, string>;
   /**
    * values の列のうち、手で変更された列(実体の overridden_fields)。GAS側が対応すればこの列のセル背景を
-   * #fce4e4 にできる(GAS版 updatePastSchedule と同じ強調表示。doc/api/attendance-batch.md 参照)。
+   * #fce4e4 にできる(GAS版 updatePastSchedule と同じ強調表示。doc/05_バッチ・外部連携.md 9章)。
    */
   highlightColumns: string[];
 }

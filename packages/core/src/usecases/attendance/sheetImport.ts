@@ -25,7 +25,7 @@ export interface AttendanceSheetImportResult {
 
 /**
  * 既存の出勤簿の行を、1日ずつ実体(attendance_days・visits・work_segments・travel_legs)に取り込む(本番への切り替え前に、
- * 当月分の出勤簿の内容を DB に揃えるための運用の処理。doc/11 §7)。
+ * 当月分の出勤簿の内容を DB に揃えるための運用の処理。doc/09_移行計画.md 2.3)。
  * - 1日ずつ別のトランザクション(1日の失敗で他の日を止めない)。値の変わった列だけを書き、変更前の値を
  *   entity_changes(change_source = 'import')に残す。同じ内容の再実行は何も書かない(冪等)。
  * - 画面の手入力と違い当月の編集期限は掛けない(締めた月は DB のトリガーが拒否し、failed に入る)。

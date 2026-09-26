@@ -30,6 +30,7 @@ GAS版の画面(`legacy/gas-childcare-visit-app/gas-childcare-visit-app/index.ht
 # 全場面を撮る → tools/gas-preview/out/<場面>.png(GAS版 | 新アプリ | 差分 の3列)
 # 新アプリの Vite もこのコマンドが起動して、終わったら止める(mock モードなら API サーバーは不要)
 pnpm --filter @katahimo/gas-preview shoot
+pnpm preview:shoot                                   # ルートからはこれでもよい(引数は -- の後に)
 
 # すでに動いている開発サーバーを使う(pnpm --filter @katahimo/web dev を別のターミナルで起動しておく)
 pnpm --filter @katahimo/gas-preview shoot -- --web-url http://127.0.0.1:5173
@@ -67,8 +68,7 @@ Chromium はこの環境に入っているもの(`PLAYWRIGHT_BROWSERS_PATH`、�
 
 ## 場面を足す
 
-`src/shots/<機能>.ts` に `Shot` の配列を書き、`src/shots/index.ts` に1行足す(機能ごとにファイルを分け、
-担当ごとに自分のファイルだけを編集する)。
+`src/shots/<機能>.ts` に `Shot` の配列を書き、`src/shots/index.ts` に1行足す(機能ごとにファイルを分ける)。
 
 ```ts
 import { type Shot, visible } from './types';
@@ -126,7 +126,7 @@ export const scheduleShots: Shot[] = [
 (1つでも失敗すると終了コード1)。手順の中で出たブラウザのエラー・5xx 応答も失敗として数える。
 
 ```bash
-# 前提: pnpm db:migrate && pnpm db:seed 済み。API(--api-url、既定 :8080)が動いていなければこのコマンドが起動し、
+# 前提: pnpm db:migrate && pnpm db:seed 済み(ルートからは pnpm preview:e2e でもよい)。API(--api-url、既定 :8080)が動いていなければこのコマンドが起動し、
 # 新アプリの Vite もこのコマンドの中で起動する(終わったら両方止める)
 pnpm --filter @katahimo/gas-preview e2e      # または cd tools/gas-preview && npx tsx src/e2e.ts
 # 本番ビルド(API が WEB_DIST_DIR のWeb画面を配信)で確かめる

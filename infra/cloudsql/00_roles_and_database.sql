@@ -9,7 +9,7 @@
 --     -v worker_password="$KATAHIMO_WORKER_PASSWORD" \
 --     -f infra/cloudsql/00_roles_and_database.sql
 --
--- (接続は Cloud SQL Auth Proxy 経由。doc/11_GCPデプロイ手順.md 「4. ロールの作成」)
+-- (接続は Cloud SQL Auth Proxy 経由。doc/07_インフラ・運用.md 3.2)
 -- 再実行すると3つのログインロールのパスワードを与えた値に設定し直す(パスワードのローテーションにも使える)。
 --
 -- ロール:

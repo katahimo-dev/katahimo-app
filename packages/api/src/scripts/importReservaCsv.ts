@@ -8,6 +8,7 @@ import { closeDatabase, createDatabase } from '@katahimo/db';
 import { applyReservaImport, parseReservaCsv } from '@katahimo/ingestion';
 import { createContainer } from '../container';
 import { loadEnv } from '../env';
+import { cliArgs, resolveInputPath } from './cliArgs';
 
 /**
  * RESERVA の顧客CSVを取り込む操作スクリプト。
@@ -17,16 +18,16 @@ import { loadEnv } from '../env';
  * 割合が閾値を超える場合は --force を付けない限り適用しない(packages/ingestion/src/reservaCsv/plan.ts)。
  */
 async function main() {
-  // pnpm 11 は `pnpm … import:reserva -- <引数>` の `--` もそのまま渡すため取り除く
-  const [tenantSlug, csvPath, ...rest] = process.argv.slice(2).filter((a) => a !== '--');
+  const [tenantSlug, csvArg, ...rest] = cliArgs();
   const force = rest.includes('--force');
-  if (!tenantSlug || !csvPath) {
+  if (!tenantSlug || !csvArg) {
     console.error(
       '使い方: pnpm --filter @katahimo/api import:reserva -- <tenantSlug> <CSVファイルパス> [--force]',
     );
     process.exit(1);
   }
 
+  const csvPath = resolveInputPath(csvArg);
   const env = loadEnv();
   const db = createDatabase(env.DATABASE_URL, { max: 2 });
   try {

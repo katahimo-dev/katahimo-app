@@ -1,5 +1,5 @@
 # Cloud Build: イメージのビルド・push → マイグレーション(Cloud Run Job)→ デプロイ。
-# 前提: infra/gcp(Terraform)を deploy_workloads=true で apply 済み。手順は doc/11_GCPデプロイ手順.md。
+# 前提: infra/gcp(Terraform)を deploy_workloads=true で apply 済み。手順は doc/07_インフラ・運用.md。
 #
 # 実行SAは katahimo-deployer(infra/gcp/iam.tf)。GitHub トリガー(main への push)ならトリガーの
 # 「サービスアカウント」に指定し、手元から実行する場合は:
@@ -66,7 +66,7 @@ steps:
     waitFor: [build-worker]
 
   # マイグレーション(失敗したらここで止まり、デプロイしない)。_DEPLOY=false ならイメージの push だけで終える
-  # (初回、Terraform で Cloud Run を作る前にイメージを用意するとき。doc/11 「3.7」)。
+  # (初回、Terraform で Cloud Run を作る前にイメージを用意するとき。doc/07_インフラ・運用.md 3.5)。
   - id: migrate
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash

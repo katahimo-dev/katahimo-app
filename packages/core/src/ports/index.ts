@@ -2,7 +2,6 @@ export * from './ai';
 export * from './appLog';
 export * from './attendance';
 export * from './cache';
-export * from './calendar';
 export * from './calendars';
 export * from './crypto';
 export * from './customerCsvSource';

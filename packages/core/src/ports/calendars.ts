@@ -20,7 +20,7 @@ export interface BusyBlockInput {
   externalEventId?: string | null;
 }
 
-/** 予定あり時間帯のキャッシュ(マッチング用、doc/10)。 */
+/** 予定あり時間帯のキャッシュ(マッチング用、doc/10_マッチング拡張設計.md)。 */
 export interface StaffBusyBlockRepository {
   /** window に重なる source の既存行を消し、blocks で置き換える。 */
   replaceInWindow(

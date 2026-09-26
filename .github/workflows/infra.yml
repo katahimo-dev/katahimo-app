@@ -1,6 +1,6 @@
 # Terraform(infra/gcp)の書式・構文チェック。GCP には接続しない(backend なしで init し、plan / apply はしない)。
 # プロバイダーの版とハッシュは infra/gcp/.terraform.lock.hcl に固定しており、-lockfile=readonly でそれと
-# 違うものを入れようとしたら失敗させる(版を上げるときは doc/11 「Terraform のロックファイル」の手順で更新する)。
+# 違うものを入れようとしたら失敗させる(版を上げるときは doc/07_インフラ・運用.md 9.3の手順で更新する)。
 name: infra
 
 on:

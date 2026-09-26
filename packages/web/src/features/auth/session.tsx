@@ -50,7 +50,7 @@ export const sessionHint = {
 };
 
 interface SessionContextValue {
-  /** ログイン中のスタッフ(isAdmin で管理者向けの表示を出し分ける) */
+  /** ログイン中のスタッフ(role を isAdminRole / canActForOthers に渡して表示を出し分ける) */
   user: SessionUser;
   /** この人の localStorage の値のキーに使う(lib/storage.ts の userStorageKey) */
   storageScope: UserStorageScope;

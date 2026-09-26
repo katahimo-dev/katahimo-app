@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
  * (スタッフごとの個別ソルトではない)。新システムは新規パスワードにargon2idを使うが、
  * 移行期は「既存パスワードのまま変更なしでログインできる」ことが要件のため、
  * ログイン時にこの関数で検証し、成功したらargon2idへサイレント再ハッシュする
- * (packages/core/src/usecases/auth.ts の login() 参照)。
+ * (packages/core/src/usecases/auth/login.ts の login() 参照)。
  *
  * 移植時、GAS版のcomputeHashをNode上でそのまま実行した結果と本実装の出力が一致することを
  * 確認済み(CLAUDE.mdのLogic verificationに基づく検証手法)。

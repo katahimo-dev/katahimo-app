@@ -1,5 +1,5 @@
 # CI: lint / 型検査 / マイグレーション(差分チェック含む)/ テスト / ビルド、と GAS版との見比べ・通し確認。
-# 必要な設定(README「CI とブランチ保護」):
+# 必要な設定(doc/07_インフラ・運用.md 9章):
 #   secrets.SUBMODULE_TOKEN … katahimo-dev/gas-childcare-visit-app を読めるトークン(fine-grained PAT の
 #                             Contents: Read-only 等)。未設定でも CI は通り、GAS版との一致テストだけがスキップされる。
 name: CI

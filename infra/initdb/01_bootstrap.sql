@@ -24,7 +24,7 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 --   statement_timeout                    … 1つの文の上限(暴走した問い合わせで接続を占有しない)
 --   lock_timeout                         … 行ロック・アドバイザリロックを待つ上限(待ちの連鎖で詰まらない)
 --   idle_in_transaction_session_timeout  … トランザクションを開けたまま何もしない接続を切る(プールの枯渇を防ぐ)
--- 値を変えるときは infra/cloudsql/01_bootstrap.sql・doc/09 「ロールと権限」も直す。
+-- 値を変えるときは infra/cloudsql/01_bootstrap.sql・doc/03_データベース設計.md 5章も直す。
 SELECT format('ALTER ROLE %I IN DATABASE %I SET %s = %L', role, current_database(), setting, value)
 FROM (VALUES
   ('katahimo_app', 'statement_timeout', '15s'),

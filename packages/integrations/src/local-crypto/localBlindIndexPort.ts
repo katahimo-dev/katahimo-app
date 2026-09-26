@@ -6,7 +6,7 @@ import type { BlindIndexPort, BlindIndexPurpose } from '@katahimo/core/ports';
 export const BLIND_INDEX_KEY_VERSION = 1;
 
 /**
- * BlindIndexPort の実装(本番もこれを使う。鍵は LOCAL_DEV_MASTER_KEY = Secret Manager の katahimo-blind-index-key)。
+ * BlindIndexPort の実装(本番もこれを使う。鍵は BLIND_INDEX_MASTER_KEY = Secret Manager の katahimo-blind-index-key)。
  * テナント・用途ごとの鍵をマスターキーから HKDF-SHA256 で導出する(info にテナントIDと用途)。暗号化の鍵
  * (DEK / KEK)とは別の系統にし、一方の漏洩だけでは他方に届かないようにする。値は [鍵の版(1バイト)] | HMAC-SHA256。
  */

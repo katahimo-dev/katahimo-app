@@ -12,7 +12,7 @@ export type Executor = Database | Tx;
 
 /**
  * 接続プールを作る。Cloud SQL の Unix ソケット形式の URL(`?host=/cloudsql/...`)にも対応する
- * (connection.ts)。プールの大きさは DB_POOL_MAX 等で調整する(doc/11 「接続数の見積もり」)。
+ * (connection.ts)。プールの大きさは DB_POOL_MAX 等で調整する(doc/07_インフラ・運用.md 2.1)。
  */
 export function createDatabase(
   connectionString: string,

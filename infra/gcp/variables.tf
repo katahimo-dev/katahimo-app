@@ -56,7 +56,7 @@ variable "sql_deletion_protection" {
 
 # ── アプリの設定(秘密でないもの) ───────────────────────────────
 variable "schedule_provider" {
-  description = "SCHEDULE_PROVIDER(google / gas_bridge / noop)。doc/api/schedule-route.md"
+  description = "SCHEDULE_PROVIDER(google / gas_bridge / noop)。doc/05_バッチ・外部連携.md"
   type        = string
   default     = "google"
 }
@@ -153,7 +153,7 @@ variable "outbox_poller_enabled" {
 variable "scheduler_paused" {
   description = <<-EOT
     夜間ジョブの Cloud Scheduler を一時停止状態で作るか。GAS版の同じ時限トリガー(Triggers.js)を止める
-    切替日まで true にしておき、二重反映・二重取込を防ぐ(doc/11 「7. GAS版からの切替」)。
+    切替日まで true にしておき、二重反映・二重取込を防ぐ(doc/09_移行計画.md)。
   EOT
   type        = bool
   default     = true

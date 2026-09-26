@@ -9,23 +9,21 @@ import { closeDatabase, createDatabase } from '@katahimo/db';
 import { parseAttendanceSheetCsv } from '@katahimo/ingestion';
 import { createContainer } from '../container';
 import { loadEnv } from '../env';
+import { cliArgs, resolveInputPath, takeOption } from './cliArgs';
 
 /**
  * 既存の個別出勤簿(月のシート)を CSV に書き出したものを、スタッフの出勤簿(attendance_days 等)に取り込む
- * (本番への切り替え前に、当月分の出勤簿の内容を DB に揃える。doc/11 §7)。1日ずつ差分で書き、同じ内容の
+ * (本番への切り替え前に、当月分の出勤簿の内容を DB に揃える。doc/09_移行計画.md)。1日ずつ差分で書き、同じ内容の
  * 再実行は何も書かない。スプレッドシートへのミラーは積まない。
  *
  * 使い方: pnpm --filter @katahimo/api import:attendance -- <tenantSlug> <スタッフのログインメール> <CSVファイルパス> [--year YYYY]
  * (--year は A列の日付に年が無い表記('9/1' 等)の場合の年)
  */
 async function main() {
-  const args = process.argv.slice(2).filter((a) => a !== '--');
-  const yearIndex = args.indexOf('--year');
-  const year = yearIndex >= 0 ? Number(args[yearIndex + 1]) : undefined;
-  const [tenantSlug, email, csvPath] = args.filter(
-    (_, i) => yearIndex < 0 || (i !== yearIndex && i !== yearIndex + 1),
-  );
-  if (!tenantSlug || !email || !csvPath || (year !== undefined && !Number.isInteger(year))) {
+  const { rest, value: yearArg } = takeOption(cliArgs(), '--year');
+  const year = yearArg === undefined ? undefined : Number(yearArg);
+  const [tenantSlug, email, csvArg] = rest;
+  if (!tenantSlug || !email || !csvArg || (year !== undefined && !Number.isInteger(year))) {
     console.error(
       '使い方: pnpm --filter @katahimo/api import:attendance -- <tenantSlug> <スタッフのログインメール> <CSVファイルパス> [--year YYYY]',
     );
@@ -43,7 +41,10 @@ async function main() {
     );
     if (!staff) throw new Error(`スタッフが見つかりません: ${email}`);
 
-    const parsed = parseAttendanceSheetCsv(readFileSync(csvPath, 'utf8'), year === undefined ? {} : { year });
+    const parsed = parseAttendanceSheetCsv(
+      readFileSync(resolveInputPath(csvArg), 'utf8'),
+      year === undefined ? {} : { year },
+    );
     console.log(
       `[import] ${staff.displayName}: CSVから ${parsed.rows.length} 日分を読みました(日付でない行 ${parsed.ignoredRowCount} 行は読み飛ばし)`,
     );
