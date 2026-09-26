@@ -196,7 +196,7 @@ export class DrizzleImportRunRepository extends TenantBound implements ImportRun
         sql`select pg_advisory_xact_lock(hashtextextended(${`customer_import:${this.tenantId}`}, 0))`,
       );
     } catch (error) {
-      // 他の取込が lock_timeout(API 5秒・ワーカー 10秒)より長くロックを持っている。500 にせず、送り直せば通る 409 にする
+      // 他の取込が lock_timeout(API 5秒・ワーカー 10秒)より長くロックを持っている。送り直せば通るため conflict にする
       if (pgErrorOf(error)?.code === LOCK_NOT_AVAILABLE) {
         throw conflict(CUSTOMER_IMPORT_BUSY_MESSAGE, undefined, CUSTOMER_IMPORT_BUSY_REASON);
       }

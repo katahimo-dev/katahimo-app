@@ -51,7 +51,7 @@ describe('api client', () => {
 
   it('本文を読み終える前に取り消された読み込みは中断のまま投げ、契約の食い違いとして記録しない', async () => {
     // 応答の頭が届いた後に signal が中断されると、本文の読み込み(res.json())が AbortError になる
-    // (TanStack Query が保存後の読み直しのために、読み込み中の前の分を取り消したとき。CI の e2e で起きた)
+    // (TanStack Query が保存後の読み直しのために、読み込み中の前の分を取り消したとき)
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const controller = new AbortController();
     vi.stubGlobal(
