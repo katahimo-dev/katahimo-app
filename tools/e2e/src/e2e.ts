@@ -396,7 +396,8 @@ async function runJourney() {
         .locator('#galleryInput')
         .setInputFiles({ name: 'receipt2.jpg', mimeType: 'image/jpeg', buffer: jpeg });
       await wait(page, 1500);
-      // 研修の同行などで出た駐車場代: 会社負担(お客様に請求しない)にして送る
+      // 研修の同行などで出た駐車場代: 会社負担(お客様に請求しない)にして送る(金額は取消で合計から外れることを確かめるため)
+      await page.getByLabel('金額（円）').fill('500');
       const companyPaid = page.getByRole('checkbox', { name: '会社負担(お客様に請求しない)' });
       assert(!(await companyPaid.isChecked()), '会社負担が最初から付いている');
       await companyPaid.check();
@@ -629,6 +630,11 @@ async function runJourney() {
       );
       const after = await summaryOf();
       assert(after.summary.count === before.summary.count - 1, '取消した領収書が件数から外れない');
+      assert(after.summary.totalYen === before.summary.totalYen - 500, '取消した領収書が合計から外れない');
+      assert(
+        after.summary.companyPaidYen === before.summary.companyPaidYen - 500,
+        '取消した会社負担の領収書が会社負担の合計から外れない',
+      );
       assert(after.summary.cancelledCount === before.summary.cancelledCount + 1, '取消の件数が増えない');
       await dialog.getByRole('button', { name: '閉じる' }).last().click();
       await wait(page, 300);
