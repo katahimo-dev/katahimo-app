@@ -21,7 +21,7 @@ interface BridgeWriteResult {
  * 構造をそのまま知っている)に置き、こちらはペイロードを渡すだけにする。
  *
  * Bridge.js側の書き込みaction(writeDailyReport/writeAccidentReport/writeReceipt/
- * writeAttendanceDay/writeAttendanceAggregate)の仕様は doc/api/attendance-batch.md を参照
+ * writeAttendanceDay/writeAttendanceAggregate)の仕様は doc/05_バッチ・外部連携.md 9章を参照
  * (writeAttendanceDay の highlightColumns 対応はGAS側の変更が必要)。
  * 失敗(success=false・HTTPエラー・タイムアウト)は例外にし、outboxワーカーの再試行に任せる。
  */

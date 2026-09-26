@@ -11,7 +11,7 @@ import {
 } from '@katahimo/shared';
 import { api } from './client';
 
-/** 認証API(doc/api/auth-reports-settings.md「認証 /api/auth」)。 */
+/** 認証API(doc/04_API仕様.md 2.2)。 */
 export const authApi = {
   /** GET /api/auth/me。未ログイン(401)はセッション切れ扱いにせず呼び出し側で判断する。 */
   me: (signal?: AbortSignal) =>

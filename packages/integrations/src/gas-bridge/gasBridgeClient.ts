@@ -17,7 +17,7 @@ export const GAS_BRIDGE_SECRET_HEADER = 'X-Katahimo-Bridge-Secret';
  *
  * 共有シークレットはヘッダー(GAS_BRIDGE_SECRET_HEADER)とURLクエリ(secret)の両方に付ける。Apps Script の
  * Web App(doGet/doPost の e)はリクエストヘッダーを読めないため、Bridge.js は今もクエリの secret で認証
- * しており、クエリは外せない。POST 本体で受け取るよう Bridge.js を変えたら(doc/api/attendance-batch.md
+ * しており、クエリは外せない。POST 本体で受け取るよう Bridge.js を変えたら(doc/05_バッチ・外部連携.md 9章
  * 「Bridge.js 側の変更」)、クエリの secret は POST から外す。URL(シークレットを含む)はログ・例外の
  * メッセージに入れないこと。
  */

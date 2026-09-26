@@ -1,4 +1,4 @@
-# Cloud Monitoring のアラート・外形監視と、請求の予算アラート(doc/11 「5. 運用」の「監視・アラート」)。
+# Cloud Monitoring のアラート・外形監視と、請求の予算アラート(doc/07_インフラ・運用.md 6章)。
 # 通知先は var.alert_emails(メール)。空でもアラート自体は作り、コンソールのインシデント一覧で見える。
 #
 # アラートの条件は指標(メトリクス)の名前とラベルで書くため、Cloud Run・Cloud SQL が無い段階
@@ -73,7 +73,7 @@ resource "google_monitoring_alert_policy" "api_5xx" {
     content   = <<-EOT
       katahimo-api が 5xx を返している。Cloud Logging で
       `resource.type="cloud_run_revision" AND resource.labels.service_name="katahimo-api" AND severity>=ERROR`
-      を確認する。直前のデプロイが原因ならリビジョンを戻す(doc/11 「5. 運用 > ロールバック」)。
+      を確認する。直前のデプロイが原因ならリビジョンを戻す(doc/07_インフラ・運用.md 8.2)。
     EOT
   }
 
@@ -210,7 +210,7 @@ resource "google_monitoring_alert_policy" "sql" {
     content   = <<-EOT
       Cloud SQL(${var.sql_instance_name})の資源が逼迫している。CPU は Query Insights で重いクエリを確認し、
       恒常的なら sql_tier を上げる。ディスクは自動拡張される(disk_autoresize)が、急増していれば原因を調べる。
-      接続数は doc/11 「接続数の見積もり」(api_max_instances × api_db_pool_max 等)を見直す。
+      接続数は doc/07_インフラ・運用.md 2.1(api_max_instances × api_db_pool_max 等)を見直す。
     EOT
   }
 
@@ -293,7 +293,7 @@ resource "google_monitoring_alert_policy" "uptime" {
 
 # ── 予算(請求先アカウント単位の設定。billing_account_id を指定したときだけ作る) ──
 # 作業者に請求先アカウントの「請求先アカウント管理者」または「予算管理者」相当の権限が要る。
-# ユーザーの ADC で apply する場合は割り当てプロジェクトの指定が必要(doc/11 「3.1」)。
+# ユーザーの ADC で apply する場合は割り当てプロジェクトの指定が必要(doc/07_インフラ・運用.md 3.1)。
 data "google_project" "current" {
   count = var.billing_account_id != "" ? 1 : 0
 }

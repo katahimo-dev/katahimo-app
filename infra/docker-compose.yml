@@ -1,6 +1,6 @@
 # ローカル開発用 PostgreSQL。
 # 開発マシンに PostgreSQL が直接インストール済みの場合はこれを使わず、infra/initdb の SQL を psql で流すだけでよい
-# (README 参照)。初回の起動で infra/initdb/docker-init.sh がロール(katahimo_owner / katahimo_migrator /
+# (doc/08_開発ガイド.md 1.1)。初回の起動で infra/initdb/docker-init.sh がロール(katahimo_owner / katahimo_migrator /
 # katahimo_app / katahimo_worker / katahimo_readonly)と katahimo_dev を作る。
 # PostgreSQL のメジャーバージョンは本番の Cloud SQL(infra/gcp の sql_database_version = POSTGRES_17)と
 # CI(.github/workflows/ci.yml)に合わせる。上げるときは3か所を揃える。

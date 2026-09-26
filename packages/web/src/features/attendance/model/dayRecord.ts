@@ -3,7 +3,7 @@ import type { AttendanceColumnKey, AttendanceRowDataInput } from '@katahimo/shar
 /**
  * 出勤簿1日分(API の rowData)を画面で使う名前付きの形にする。
  *
- * API の rowData は出勤簿スプレッドシートの列記号(C/D/E…)をキーにしている(doc/09 4.1節)。
+ * API の rowData は出勤簿スプレッドシートの列記号(C/D/E…)をキーにしている(doc/03_データベース設計.md 3.3)。
  * 画面の部品が列記号を直接書かなくて済むよう、列記号との対応はこのファイルだけに書く
  * (列の意味は packages/core/src/domain/attendance/sheetLayout.ts と同じ。GAS版
  * PAST_SCHEDULE_SLOT_DEFS / PAST_SCHEDULE_MOVE_COLS)。

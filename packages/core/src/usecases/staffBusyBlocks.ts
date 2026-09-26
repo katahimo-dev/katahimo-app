@@ -20,7 +20,7 @@ const FREE_BUSY_BATCH_SIZE = 50;
 
 /**
  * 在籍スタッフのカレンダー(staff_calendars)の free/busy を取得し、window 内の staff_busy_blocks
- * (source='google_calendar')を置き換える(マッチング用、doc/10)。予定のタイトル・場所は取得も保存もしない。
+ * (source='google_calendar')を置き換える(マッチング用、doc/10_マッチング拡張設計.md)。予定のタイトル・場所は取得も保存もしない。
  * 1人の失敗(カレンダー未共有等)で他のスタッフは止めない。同期の結果はカレンダーごとに記録する。
  */
 export async function syncStaffBusyBlocks(

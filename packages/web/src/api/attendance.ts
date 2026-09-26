@@ -8,7 +8,7 @@ import {
 import { api } from './client';
 
 /**
- * 出勤簿のAPI(doc/api/attendance-batch.md)。`staffId` は管理者が他のスタッフを見るときだけ渡す
+ * 出勤簿のAPI(doc/04_API仕様.md 2.5)。`staffId` は管理者が他のスタッフを見るときだけ渡す
  * (管理者以外は undefined = 本人。サーバーも管理者以外の staffId は無視する)。
  */
 export const attendanceApi = {

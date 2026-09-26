@@ -1,7 +1,7 @@
 import { calendarSyncApplyResponseSchema, calendarSyncPreviewResponseSchema } from '@katahimo/shared';
 import { api } from './client';
 
-/** カレンダー → 出勤簿の反映(doc/api/attendance-batch.md「カレンダー → 出勤簿」)。 */
+/** カレンダー → 出勤簿の反映(doc/02_機能仕様.md 8.4・doc/04_API仕様.md 2.5)。 */
 export const calendarSyncApi = {
   /** GET /api/attendance/day/calendar-sync/preview: 書き込まずに差分だけを見る。GAS版 previewCalendarSyncForStaffOnDate。 */
   preview: (params: { date: string; staffId?: string }, signal?: AbortSignal) =>

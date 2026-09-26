@@ -54,7 +54,7 @@ export const serviceItems = pgTable(
 ).enableRLS();
 
 /**
- * 予約(需要)。実績は visits に分ける(doc/07 第5章)。scheduled_period は `[開始, 終了)`、business_date は
+ * 予約(需要)。実績は visits に分ける(doc/10_マッチング拡張設計.md)。scheduled_period は `[開始, 終了)`、business_date は
  * テナントのタイムゾーンでの業務日。外部の予定(RESERVA 等)とは (external_source, external_id) で対応づける。
  */
 export const reservations = pgTable(

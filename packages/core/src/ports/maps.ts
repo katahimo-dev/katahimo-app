@@ -6,7 +6,7 @@ import type { TravelModeCode } from '../domain/model';
  * GAS版は Maps.newGeocoder() / Maps.newDirectionFinder() (APIキー不要のGAS内蔵サービス)を
  * 使っていたが、サーバー実装では Google Maps Platform の Geocoding API と Routes API になる。
  * 2025年3月以降の新規GCPプロジェクトではレガシーのDirections APIを有効化できないため、
- * 経路計算は Routes API 前提(doc/07 第10.3章)。
+ * 経路計算は Routes API 前提(Directions API は新規に有効化できないため。doc/05_バッチ・外部連携.md 4.5)。
  */
 export interface LatLng {
   lat: number;

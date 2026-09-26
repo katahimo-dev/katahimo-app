@@ -2,7 +2,7 @@
  * 「今日/明日の予定」閲覧のポート。GAS版RouteSearch.jsのgetScheduleForStaffOnDate/
  * getScheduleWithRouteForStaffOnDateに対応する。
  *
- * 実装は2つあり、環境変数 SCHEDULE_PROVIDER で切り替える(doc/api/schedule-route.md)。
+ * 実装は2つあり、環境変数 SCHEDULE_PROVIDER で切り替える(doc/05_バッチ・外部連携.md 4章)。
  * - GoogleSchedulePort(packages/integrations/src/google-schedule): Google Calendar API +
  *   Google Maps Platform を直接呼び、domain/schedule のGAS移植ロジックで計算する。
  * - GasBridgeSchedulePort: 稼働中のGAS版Web App(Bridge.js)に計算ごと委ねる(移行期の実装)。

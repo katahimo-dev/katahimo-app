@@ -79,7 +79,7 @@ export interface AttendanceDayMirrorPayload {
   values: Record<string, string>;
   /**
    * values の列のうち、手で変更された列(実体の overridden_fields)。GAS側が対応すればこの列のセル背景を
-   * #fce4e4 にできる(GAS版 updatePastSchedule と同じ強調表示。doc/api/attendance-batch.md 参照)。
+   * #fce4e4 にできる(GAS版 updatePastSchedule と同じ強調表示。doc/05_バッチ・外部連携.md 9章)。
    */
   highlightColumns: string[];
 }

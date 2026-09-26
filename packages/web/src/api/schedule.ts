@@ -8,7 +8,7 @@ export interface ScheduleRequest {
   staffId?: string;
 }
 
-/** 「今日/明日の予定」API(doc/api/schedule-route.md)。 */
+/** 「今日/明日の予定」API(doc/04_API仕様.md 2.4)。 */
 export const scheduleApi = {
   /** GET /api/schedule: ルートなしの予定(GAS版 getScheduleForDate)。ルートの自動取得に失敗したときに使う。 */
   get: ({ date, staffId }: ScheduleRequest, signal?: AbortSignal) =>

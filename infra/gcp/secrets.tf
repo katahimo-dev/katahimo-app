@@ -1,6 +1,6 @@
 # Secret Manager。Terraform は入れ物とアクセス権だけを作り、値(バージョン)は
 #   printf '%s' "$VALUE" | gcloud secrets versions add <名前> --data-file=-
-# で登録する(値を state に残さないため。doc/11 「5. シークレットの登録」)。
+# で登録する(値を state に残さないため。doc/07_インフラ・運用.md 3.3)。
 #
 # LOCAL_DEV_KEK は本番では使わない(KMS_PROVIDER=gcp、Cloud KMS の tenant-kek を使う)。
 # BLIND_INDEX_MASTER_KEY はブラインドインデックスの HMAC のマスター鍵(データの暗号化鍵とは別)。

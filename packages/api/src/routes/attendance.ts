@@ -29,7 +29,7 @@ import { jsonOk, parseJsonBody, parseQuery } from '../http/responses';
 import { actorOf, requireSession, type SessionEnv, targetStaffIdOf } from '../session';
 
 /**
- * 出勤簿(過去の予定タブ)の API。GAS版 PastSchedule.js の各関数に対応する(doc/api/attendance-batch.md)。
+ * 出勤簿(過去の予定タブ)の API。GAS版 PastSchedule.js の各関数に対応する(doc/04_API仕様.md 2.5)。
  * 対象スタッフは一般スタッフなら常に本人、管理者・コーディネーターだけが staffId で他のスタッフを指定できる。
  * usecase の DomainError(locked・conflict 等)は app.onError が応答にする。
  */

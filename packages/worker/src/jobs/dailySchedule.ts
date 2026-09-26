@@ -17,7 +17,7 @@ export function nextJstOccurrence(now: Date, hour: number, minute: number): Date
 
 /**
  * ローカル開発用の簡易スケジューラ: 毎日 JST の hour:minute に task を実行する。
- * 本番は Cloud Scheduler → Cloud Run Jobs で動かす(doc/api/attendance-batch.md)。戻り値で停止できる。
+ * 本番は Cloud Scheduler → Cloud Run Jobs で動かす(doc/05_バッチ・外部連携.md 3章)。戻り値で停止できる。
  */
 export function scheduleDailyJst(hour: number, minute: number, task: () => Promise<void>): () => void {
   let timer: NodeJS.Timeout | undefined;

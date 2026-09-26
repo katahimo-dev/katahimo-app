@@ -6,7 +6,7 @@
 #            docker run katahimo-worker                      # 常駐ポーラー
 #            docker run katahimo-worker db/dist/migrate.js   # マイグレーション
 #            docker run katahimo-worker dist/nightly-calendar-sync.js [YYYY-MM-DD]
-# 手順と構成は doc/11_GCPデプロイ手順.md。
+# 手順と構成は doc/07_インフラ・運用.md。
 
 # ── ベースイメージ ────────────────────────────────────────────
 # 再現できるビルドのためダイジェストで固定する(タグは読む人のための目印)。ダイジェストの更新は

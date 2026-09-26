@@ -8,7 +8,7 @@ import { currentTime } from './requestMeta';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** 保存期間(日)。変えるときは doc/09 の保存期間の表も直す。 */
+/** 保存期間(日)。変えるときは doc/03_データベース設計.md 9章の保存期間の表も直す。 */
 export const RETENTION_DAYS = {
   /** 失効・期限切れのセッション。 */
   sessions: 30,

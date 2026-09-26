@@ -7,7 +7,7 @@ export interface SplitName {
    * 区切り(空白)が見つからず分割できなかった場合true。
    * 現行データ(顧客DB_New等)は「姓 名」の間に必ず空白が入っている保証がないため、
    * 移行時の取込ではisAmbiguous=trueの行を人手レビュー対象にする
-   * (doc/07 第8章、取込パイプラインの安全装置と同じ考え方)。
+   * (取込の安全装置と同じ考え方)。
    */
   isAmbiguous: boolean;
 }
