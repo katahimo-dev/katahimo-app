@@ -52,13 +52,34 @@ describe('applyCustomerSnapshot(取込の差分適用)', () => {
     expect(await apply(snapshot({ attributes: { gender: '女性', member_type: '一般' } }))).toBe('unchanged');
   });
 
-  it('緯度経度は数値で持ち、読めない値は緯度経度なし(区画も無し)にする', async () => {
+  it('緯度経度は数値で持ち、読めない値は緯度経度なし(区画も無し)にする。表記はそのまま残す', async () => {
     await apply(snapshot());
-    expect(ctx.data().addresses[0]).toMatchObject({ geo: { lat: 35.66, lng: 139.7 }, geoCell: 'xn76fg' });
-    expect(await apply(snapshot({ home: { addressLine: '渋谷1-2-3', city: '渋谷区', latLng: 'abc' } }))).toBe(
-      'updated',
+    expect(ctx.data().addresses[0]).toMatchObject({
+      geo: { lat: 35.66, lng: 139.7 },
+      latLngText: '35.66,139.70',
+      geoCell: 'xn76fg',
+    });
+    const home = (latLng: string) => snapshot({ home: { addressLine: '渋谷1-2-3', city: '渋谷区', latLng } });
+    expect(await apply(home('abc'))).toBe('updated');
+    expect(ctx.data().addresses[0]).toMatchObject({ geo: null, latLngText: 'abc', geoCell: null });
+    // 片方が空の値を 0 として持たない
+    for (const latLng of ['35.68,', ' , ']) {
+      await apply(home(latLng));
+      expect(ctx.data().addresses[0]?.geo).toBeNull();
+    }
+    await apply(home('35.68°,139.76'));
+    expect(ctx.data().addresses[0]?.geo).toEqual({ lat: 35.68, lng: 139.76 });
+    await apply(home('35.6810，139.7670'));
+    expect(ctx.data().addresses[0]?.geo).toEqual({ lat: 35.681, lng: 139.767 });
+  });
+
+  it('詳細の緯度・経度は取込元の表記のまま返す(GAS版と同じ)', async () => {
+    await apply(
+      snapshot({ home: { addressLine: '渋谷1-2-3', city: '渋谷区', latLng: '35.6810, 139.7670' } }),
     );
-    expect(ctx.data().addresses[0]).toMatchObject({ geo: null, geoCell: null });
+    const { actor } = await ctx.addStaff('山田 太郎', 'taro@example.com');
+    const id = ctx.data().customers[0]?.id ?? '';
+    expect((await getCustomerDetail(ctx.deps, actor, id)).latLng).toBe('35.6810, 139.7670');
   });
 
   it('変わった子どもだけを更新し、ID を保つ。取込元から消えた子どもはアーカイブする', async () => {
@@ -130,7 +151,7 @@ describe('顧客の一覧・検索・詳細', () => {
       memo: '玄関は裏口',
       emergencyContact: '090-9999-0000',
       emergencyContactRelation: '父',
-      latLng: '35.66,139.7',
+      latLng: '35.66,139.70',
       memberType: '一般',
       archivedAt: null,
     });

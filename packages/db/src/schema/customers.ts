@@ -110,8 +110,8 @@ export const customerSourceRecords = pgTable(
 /**
  * 住所。kind: home(自宅。期間の重なる自宅は EXCLUDE で禁止)/ secondary(単身赴任先等の期間限定の住所、
  * GAS版の「住所2」)/ visit(訪問先が自宅以外の場合)。address_line は取込元の住所文字列のまま
- * (prefecture・city は検索・絞り込み用に取り出した値)。緯度経度は lat / lng(ルート計算に使う)、粗い区画
- * (geohash 6文字)は geo_cell。
+ * (prefecture・city は検索・絞り込み用に取り出した値)。緯度経度は lat / lng(ルート計算に使う)、取込元の表記は
+ * lat_lng_text(画面に出す)、粗い区画(geohash 6文字)は geo_cell。
  * valid は `[開始日, 終了日の翌日)`(無期限は上限なし)。
  */
 export const customerAddresses = pgTable(
@@ -130,6 +130,8 @@ export const customerAddresses = pgTable(
     parkingDetail: text(),
     lat: doublePrecision(),
     lng: doublePrecision(),
+    /** 取込元の「緯度・経度」の表記のまま(画面にはこれを出す)。読めない表記も残し、lat / lng は null にする。 */
+    latLngText: text(),
     geoCell: text(),
     valid: daterange().notNull().default(sql`'(,)'::daterange`),
     isPrimary: boolean().notNull().default(false),

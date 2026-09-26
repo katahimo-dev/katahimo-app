@@ -152,6 +152,7 @@ CREATE TABLE "customer_addresses" (
 	"parking_detail" text,
 	"lat" double precision,
 	"lng" double precision,
+	"lat_lng_text" text,
 	"geo_cell" text,
 	"valid" daterange DEFAULT '(,)'::daterange NOT NULL,
 	"is_primary" boolean DEFAULT false NOT NULL,

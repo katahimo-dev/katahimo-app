@@ -1,4 +1,4 @@
-import type { CustomerDetailView, FamilyMemberView } from '@katahimo/shared';
+import { type CustomerDetailView, type FamilyMemberView, parseLatLngText } from '@katahimo/shared';
 import { jstDateString, jstHHmm } from '../../lib/date';
 import { mapsLatLngSearchUrl, mapsSearchUrl } from '../../lib/mapsUrl';
 
@@ -46,16 +46,6 @@ function splitName(name: string): [string, string] {
   return m ? [m[1] ?? '', m[2] ?? ''] : [trimmed, ''];
 }
 
-/** '35.63,139.64' → 緯度経度。読み取れなければ null */
-export function parseLatLng(value: string | null): { lat: number; lng: number } | null {
-  if (!value) return null;
-  const m = value.match(/^\s*(-?\d+(?:\.\d+)?)\s*[,，\s]\s*(-?\d+(?:\.\d+)?)\s*$/);
-  if (!m) return null;
-  const lat = Number(m[1]);
-  const lng = Number(m[2]);
-  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
-}
-
 /** GAS版と同じ列名・並び順(RESERVAの顧客CSVの列の順) */
 const COLUMNS: Array<[string, (c: Detail) => string]> = [
   ['姓', (c) => splitName(c.name)[0]],
@@ -94,7 +84,7 @@ const COLUMNS: Array<[string, (c: Detail) => string]> = [
 export function detailAction(key: string, value: string, customer: Detail): DetailAction | null {
   if (!value) return null;
   if (key.includes('住所') && !key.includes('2')) {
-    const latLng = parseLatLng(customer.latLng);
+    const latLng = parseLatLngText(customer.latLng);
     return {
       kind: 'map',
       href: latLng ? mapsLatLngSearchUrl(latLng.lat, latLng.lng) : mapsSearchUrl(value),

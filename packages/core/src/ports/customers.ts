@@ -93,6 +93,8 @@ export interface CustomerAddressRecord {
   parkingArea: string | null;
   parkingDetail: string | null;
   geo: GeoPoint | null;
+  /** 取込元の「緯度・経度」の表記のまま(画面にはこれを出す。読めない表記も残す)。 */
+  latLngText: string | null;
   geoCell: string | null;
   valid: DateRangeValue;
   isPrimary: boolean;

@@ -66,6 +66,7 @@ describe('テナントの分離(RLS)', () => {
         parkingArea: null,
         parkingDetail: null,
         geo: null,
+        latLngText: null,
         geoCell: null,
         valid: { start: null, end: null },
         isPrimary: true,

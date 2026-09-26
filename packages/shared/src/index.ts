@@ -19,3 +19,4 @@ export * from './contracts/uiConfig';
 export * from './defaults/aiPrompts';
 export * from './defaults/assessments';
 export * from './defaults/passwordPolicy';
+export * from './geo/latLng';

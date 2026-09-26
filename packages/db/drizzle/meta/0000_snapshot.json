@@ -1163,6 +1163,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "lat_lng_text": {
+          "name": "lat_lng_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "geo_cell": {
           "name": "geo_cell",
           "type": "text",

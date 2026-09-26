@@ -221,6 +221,7 @@ const addressColumns = {
   parkingDetail: customerAddresses.parkingDetail,
   lat: customerAddresses.lat,
   lng: customerAddresses.lng,
+  latLngText: customerAddresses.latLngText,
   geoCell: customerAddresses.geoCell,
   valid: customerAddresses.valid,
   isPrimary: customerAddresses.isPrimary,

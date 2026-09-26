@@ -1,6 +1,6 @@
 import type { CustomerDetailView } from '@katahimo/shared';
 import { describe, expect, it } from 'vitest';
-import { buildDetailRows, buildFamilyRows, parseLatLng } from './customerDetailRows';
+import { buildDetailRows, buildFamilyRows } from './customerDetailRows';
 import { filterCustomers } from './customerFilter';
 import { historyBadge, ratingStars, splitHistoryTimestamp } from './historyFormat';
 
@@ -110,10 +110,13 @@ describe('buildDetailRows', () => {
     expect(noLatLng.find((r) => r.key === 'メールアドレス')?.action).toBeNull();
   });
 
-  it('緯度経度の読み取り', () => {
-    expect(parseLatLng('35.1, 139.2')).toEqual({ lat: 35.1, lng: 139.2 });
-    expect(parseLatLng('abc')).toBeNull();
-    expect(parseLatLng(null)).toBeNull();
+  it('緯度・経度の行は取込元の表記のまま出し、地図はその場所を開く(読めない表記は住所で検索)', () => {
+    const rows = buildDetailRows(detail({ latLng: '35.6810, 139.7670' }));
+    expect(rows.find((r) => r.key === '緯度・経度')?.value).toBe('35.6810, 139.7670');
+    expect(rows.find((r) => r.key === '住所')?.action?.href).toContain('35.681');
+    const unreadable = buildDetailRows(detail({ latLng: '35.68,' }));
+    expect(unreadable.find((r) => r.key === '緯度・経度')?.value).toBe('35.68,');
+    expect(unreadable.find((r) => r.key === '住所')?.action?.href).toContain('maps/search/?api=1&query=%E6');
   });
 });
 

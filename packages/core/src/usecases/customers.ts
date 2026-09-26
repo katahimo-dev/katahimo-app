@@ -1,13 +1,12 @@
+import { parseLatLngText } from '@katahimo/shared';
 import {
   addIsoDays,
   formatBirthDate,
-  formatGeoPoint,
   type GeoPoint,
   geoCellOf,
   newId,
   normalizeStaffName,
   notFound,
-  parseGeoPoint,
 } from '../domain';
 import type { CustomerSource } from '../domain/model';
 import type {
@@ -149,7 +148,8 @@ export async function getCustomerDetail(
     address2: secondary?.addressLine ?? null,
     address2StartDate: secondary?.valid.start ?? null,
     address2EndDate: secondary?.valid.end ? addIsoDays(secondary.valid.end, -1) : null,
-    latLng: home?.geo ? formatGeoPoint(home.geo) : null,
+    // GAS版と同じく取込元の表記のまま出す
+    latLng: home?.latLngText ?? null,
     memberType: attr('member_type'),
     memberStatus: attr('member_status'),
     paymentMethod: attr('payment_method'),
@@ -180,7 +180,7 @@ export interface CustomerSnapshotAddress {
   city?: string | null;
   parkingArea?: string | null;
   parkingDetail?: string | null;
-  /** 'lat,lng'(読めない値は緯度経度なしとして保存する)。 */
+  /** 取込元の「緯度・経度」の表記(表記はそのまま残し、読めなければ緯度経度なしとして持つ。@katahimo/shared parseLatLngText)。 */
   latLng?: string | null;
 }
 
@@ -301,7 +301,8 @@ async function syncAddress(
     return true;
   }
   const id = existing?.id ?? newId();
-  const geo = parseGeoPoint(next.latLng);
+  const geo = parseLatLngText(next.latLng);
+  const latLngText = next.latLng?.trim() || null;
   const valid = {
     start: next.validFrom ?? null,
     end: next.validTo ? addIsoDays(next.validTo, 1) : null,
@@ -316,6 +317,7 @@ async function syncAddress(
     parkingArea: next.parkingArea ?? null,
     parkingDetail: next.parkingDetail ?? null,
     geo,
+    latLngText,
     geoCell: geoCellOf(geo),
     valid,
     isPrimary: kind === 'home',
@@ -326,6 +328,7 @@ async function syncAddress(
   }
   const changed =
     !sameGeo(existing.geo, geo) ||
+    !same(existing.latLngText, latLngText) ||
     !same(existing.prefecture, fields.prefecture) ||
     !same(existing.city, fields.city) ||
     existing.addressLine !== fields.addressLine ||
