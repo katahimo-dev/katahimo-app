@@ -4,6 +4,7 @@ import {
   canCheckReceiptDuplicate,
   normalizeAmount,
   normalizeText,
+  receiptDedupeHash,
 } from './receiptDedupe';
 
 describe('normalizeAmount', () => {
@@ -49,5 +50,14 @@ describe('buildReceiptDedupeKey', () => {
         storeName: ' コンビニ ',
       }),
     ).toBe('2026/08/28 12:00:00||s1||c1||1000||コンビニ');
+  });
+});
+
+describe('receiptDedupeHash', () => {
+  it('同じキーは同じ値(SHA-256 の32バイト)、違うキーは違う値', () => {
+    const key = '2026/08/28 12:00:00||s1||c1||1000||コンビニ';
+    expect(receiptDedupeHash(key)).toHaveLength(32);
+    expect(Buffer.from(receiptDedupeHash(key)).equals(Buffer.from(receiptDedupeHash(key)))).toBe(true);
+    expect(Buffer.from(receiptDedupeHash(key)).equals(Buffer.from(receiptDedupeHash(`${key} `)))).toBe(false);
   });
 });

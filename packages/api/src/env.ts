@@ -2,6 +2,8 @@ import {
   emptyToUndefined,
   optionalPositiveInt,
   parseEnvOrThrow,
+  SECRET_BOX_PROVIDERS,
+  secretBoxEnvProblems,
   sharedEnvProblems,
   sharedEnvShape,
 } from '@katahimo/integrations';
@@ -21,11 +23,17 @@ const envSchema = z.object({
   // ビルド済み Web 画面(packages/web の dist)を同じサービスから配信する場合のディレクトリ(本番コンテナ)。
   WEB_DIST_DIR: z.preprocess(emptyToUndefined, z.string().optional()),
 
-  // ブラインドインデックス(領収書の重複判定)のマスター鍵。32バイト(64桁hex)。テナント・用途ごとの鍵は
-  // HKDF で導出する。データの暗号化鍵(KEK/DEK)とは別の値にすること。値を変えると既存のインデックスが引けなくなる。
-  BLIND_INDEX_MASTER_KEY: z
-    .string()
-    .regex(/^[0-9a-f]{64}$/i, 'BLIND_INDEX_MASTER_KEY は32バイト(64桁の16進数)にしてください'),
+  // テナントの秘密値(Gemini API キー・Google Chat の Webhook URL)の封に使う鍵。local: SECRET_BOX_LOCAL_KEY
+  // (開発用、32バイト=64桁hex) / gcp: Cloud KMS の鍵 SECRET_BOX_KMS_KEY(本番は必須)。
+  SECRET_BOX_PROVIDER: z.preprocess(emptyToUndefined, z.enum(SECRET_BOX_PROVIDERS).default('local')),
+  SECRET_BOX_LOCAL_KEY: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^[0-9a-f]{64}$/i, 'SECRET_BOX_LOCAL_KEY は32バイト(64桁の16進数)にしてください')
+      .optional(),
+  ),
+  SECRET_BOX_KMS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // 移行期のみ必要: GAS版 Script Properties の AUTH_SALT と同じ値(GAS版のパスワードのままのログインに使う)。
   LEGACY_AUTH_SALT: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -60,7 +68,7 @@ export function trustedProxyHops(env: Pick<Env, 'NODE_ENV' | 'TRUSTED_PROXY_HOPS
 }
 
 function checkCombinations(env: Env): string[] {
-  const problems = sharedEnvProblems(env);
+  const problems = [...sharedEnvProblems(env), ...secretBoxEnvProblems(env, env.NODE_ENV === 'production')];
   if (
     env.NODE_ENV === 'production' &&
     (env.SESSION_SECRET.length < 32 || env.SESSION_SECRET === 'change-me-in-production')

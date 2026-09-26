@@ -9,9 +9,7 @@ import { loadDotenv } from './loadDotenv';
 loadDotenv();
 const env = loadEnv();
 const db = createDatabase(env.DATABASE_URL);
-// テナントの鍵の読み込み専用のプール(UoW のトランザクションが db のプールを使い切っていても鍵を読める)
-const keyDb = createDatabase(env.DATABASE_URL, { max: 1 });
-const app = createApp({ env, container: createContainer(env, db, keyDb) });
+const app = createApp({ env, container: createContainer(env, db) });
 
 const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   writeStructuredLog({
@@ -35,7 +33,7 @@ function shutdown(signal: NodeJS.Signals): void {
   }, SHUTDOWN_TIMEOUT_MS);
   forced.unref();
   server.close(() => {
-    Promise.all([closeDatabase(db, 3), closeDatabase(keyDb, 3)])
+    closeDatabase(db, 3)
       .catch((e: unknown) =>
         writeStructuredLog({ severity: 'ERROR', message: 'DB の切断に失敗しました', error: String(e) }),
       )

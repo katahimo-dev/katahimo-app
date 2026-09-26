@@ -11,24 +11,20 @@ import {
   normalizeText,
   notFound,
   outboxDedupeKey,
-  ENCRYPTION_PURPOSES as P,
   parseJstTimestamp,
+  receiptDedupeHash,
   resolveTargetStaffId,
 } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
-import type { BlindIndexPort, CryptoPort } from '../ports/crypto';
 import type { NotifierPort } from '../ports/notifier';
 import type { StoragePort } from '../ports/storage';
 import type { UnitOfWorkPort } from '../ports/unitOfWork';
-import { encryptOptional } from './cipher';
 import { notifyWithLog } from './notify';
 import type { Actor, Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
 
 export interface ReceiptDeps extends Clock {
   uow: UnitOfWorkPort;
-  crypto: CryptoPort;
-  blindIndex: BlindIndexPort;
   storage: StoragePort;
   notifier: NotifierPort;
   appLog: AppLogPort;
@@ -88,9 +84,9 @@ export function parseAmountYen(value: string | number | null | undefined): numbe
  * - 担当スタッフは、他人を扱えないロールでは本人に固定する(CLAUDE.md の admin-vs-self)。
  * - 画像は先にファイル置き場へ保存し、1トランザクションで stored_files・receipt_uploads・receipts・outbox を書く。
  *   トランザクションが失敗したら保存した画像を消す。
- * - 「スタッフ・顧客・日時・金額・店名」が既存の登録と一致する画像は重複として登録しない。判定は dedupe_bidx の
+ * - 「スタッフ・顧客・日時・金額・店名」が既存の登録と一致する画像は重複として登録しない。判定は dedupe_hash の
  *   部分UNIQUE と INSERT … ON CONFLICT DO NOTHING で行い、同時の登録でも1件だけが残る。金額か店名が未入力の画像は
- *   判定しない。同じ操作の中の同じ内容(往復の運賃等)は全て登録する(dedupe_bidx を持つのは束の最初の1枚だけ)。
+ *   判定しない。同じ操作の中の同じ内容(往復の運賃等)は全て登録する(dedupe_hash を持つのは束の最初の1枚だけ)。
  *   最初の1枚が既存と重複したら、同じ内容の残りの画像も全て重複にする(GAS版と同じく、同じ束を送り直しても
  *   1枚も増えない)。
  * - 1件以上登録できたら Google Chat へ通知する(GAS版 sendReceiptNotification)。
@@ -118,37 +114,33 @@ export async function uploadReceipts(
   const staffId = resolveTargetStaffId(actor, input.requestedStaffId);
 
   const seenKeys = new Set<string>();
-  const candidates = await Promise.all(
-    input.images.map(async (img, index) => {
-      const timestamp = normalizeText(img.receiptDate) || input.fallbackTimestamp;
-      const key = canCheckReceiptDuplicate({ amount: img.amount, storeName: img.storeName })
-        ? buildReceiptDedupeKey({
-            timestamp,
-            staffId,
-            customerId: input.customerId ?? '',
-            amount: img.amount,
-            storeName: img.storeName,
-          })
-        : null;
-      return { index, img, timestamp, key };
-    }),
-  );
-  const withIndexes = await Promise.all(
-    candidates.map(async (c) => {
-      // 同じ操作の中の2枚目以降の同じ内容は判定しない(全て登録する)
-      const first = c.key !== null && !seenKeys.has(c.key);
-      if (c.key) seenKeys.add(c.key);
-      return {
-        ...c,
-        fileId: newId(),
-        receiptId: newId(),
-        dedupeBidx: first && c.key ? await deps.blindIndex.compute(tenantId, 'receipts.dedupe', c.key) : null,
-      };
-    }),
-  );
+  const withKeys = input.images.map((img, index) => {
+    const timestamp = normalizeText(img.receiptDate) || input.fallbackTimestamp;
+    const key = canCheckReceiptDuplicate({ amount: img.amount, storeName: img.storeName })
+      ? buildReceiptDedupeKey({
+          timestamp,
+          staffId,
+          customerId: input.customerId ?? '',
+          amount: img.amount,
+          storeName: img.storeName,
+        })
+      : null;
+    // 同じ操作の中の2枚目以降の同じ内容は判定しない(全て登録する)
+    const first = key !== null && !seenKeys.has(key);
+    if (key) seenKeys.add(key);
+    return {
+      index,
+      img,
+      timestamp,
+      key,
+      fileId: newId(),
+      receiptId: newId(),
+      dedupeHash: first && key ? receiptDedupeHash(key) : null,
+    };
+  });
 
   const stored = await Promise.all(
-    withIndexes.map(async (c) => {
+    withKeys.map(async (c) => {
       const image = decoded[c.index] as Extract<(typeof decoded)[number], { ok: true }>;
       const storageKey = `${tenantId}/receipts/${c.fileId}.${image.extension}`;
       await deps.storage.put(storageKey, image.contentType, image.bytes);
@@ -157,13 +149,6 @@ export async function uploadReceipts(
   );
   const uploadId = newId();
   const handoffText = input.handoffText.trim();
-  const handoffEnc = await encryptOptional(
-    deps.crypto,
-    tenantId,
-    P.receiptHandoffText,
-    uploadId,
-    handoffText,
-  );
 
   let outcome: {
     staffName: string;
@@ -187,7 +172,7 @@ export async function uploadReceipts(
           staffId,
           customerId: customer?.id ?? null,
           customerNameText,
-          handoffTextEnc: handoffEnc,
+          handoffText: handoffText || null,
           createdBy: actor.staffId,
         });
         const registered: typeof stored = [];
@@ -221,14 +206,8 @@ export async function uploadReceipts(
               parseJstTimestamp(input.fallbackTimestamp) ??
               currentTime(deps),
             amountYen: parseAmountYen(c.img.amount),
-            storeNameEnc: await encryptOptional(
-              deps.crypto,
-              tenantId,
-              P.receiptStoreName,
-              c.receiptId,
-              normalizeText(c.img.storeName),
-            ),
-            dedupeBidx: c.dedupeBidx,
+            storeName: normalizeText(c.img.storeName) || null,
+            dedupeHash: c.dedupeHash,
           });
           if (!inserted) {
             await r.storedFiles.delete(c.fileId);

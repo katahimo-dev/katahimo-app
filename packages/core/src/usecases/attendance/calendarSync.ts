@@ -185,11 +185,11 @@ export async function syncStaffDayFromCalendar(
       }
       const timeZone = (await r.tenant()).timezone;
       const rows = await r.attendance.lockDay(target.staffId, date, newId());
-      const current = await toSheetDay(deps.crypto, r.tenantId, timeZone, rows);
+      const current = toSheetDay(timeZone, rows);
       const computed = await computeSync(r, current, calendar);
       const saved = await writeSheetDiff(
         r,
-        { crypto: deps.crypto, timeZone, changedBy: actor.staffId, changeSource: 'calendar_sync' },
+        { timeZone, changedBy: actor.staffId, changeSource: 'calendar_sync' },
         rows,
         current,
         computed.next,
@@ -254,7 +254,7 @@ export async function previewCalendarSync(
     const computed = await deps.uow.run(actor.tenantId, async (r) => {
       const timeZone = (await r.tenant()).timezone;
       const rows = await r.attendance.loadDay(target.staffId, date);
-      return computeSync(r, await toSheetDay(deps.crypto, r.tenantId, timeZone, rows), calendar);
+      return computeSync(r, toSheetDay(timeZone, rows), calendar);
     });
     // 予定の取得(Maps の計算を伴う)はコストがあるため、他スタッフ分の操作は記録する
     await logCrossStaffRead(deps.appLog, actor, target, 'attendance.calendar_sync.preview', {

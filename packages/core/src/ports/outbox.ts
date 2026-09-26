@@ -70,8 +70,8 @@ export interface EntityChangeInput {
   changedBy: string | null;
   changeSource: ChangeSource;
   changedFields: string[];
-  /** 変更前の値(JSON を entity_changes.before の用途・この行のIDで暗号化したもの)。 */
-  beforeEnc: Uint8Array | null;
+  /** 変更前の値(更新は変わった項目、削除は全項目)。 */
+  before: Record<string, unknown> | null;
 }
 
 /** 実体の変更履歴(追記のみ)。 */

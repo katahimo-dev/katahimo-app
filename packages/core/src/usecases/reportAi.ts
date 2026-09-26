@@ -8,7 +8,7 @@ import type {
   ReportAiPortFactory,
 } from '../ports/ai';
 import type { AppLogPort } from '../ports/appLog';
-import type { CryptoPort } from '../ports/crypto';
+import type { SecretBoxPort } from '../ports/secretBox';
 import type { AiPromptDeps } from './aiPrompts';
 import { resolvePromptBody } from './aiPrompts';
 import { readTenantSecret } from './settings';
@@ -16,7 +16,7 @@ import { readTenantSecret } from './settings';
 export interface ReportAiDeps extends AiPromptDeps {
   /** テナントが独自の Gemini API キーを設定していない場合に使うフォールバック(.env の設定か Noop)。 */
   reportAi: ReportAiPort;
-  crypto: CryptoPort;
+  secretBox: SecretBoxPort;
   reportAiFactory: ReportAiPortFactory;
   appLog: AppLogPort;
 }
@@ -31,10 +31,10 @@ export interface ReportAiCaller {
  * 設定(deps.reportAi、未設定なら Noop)にする。
  */
 async function resolveReportAiPort(deps: ReportAiDeps, tenantId: string): Promise<ReportAiPort> {
-  const { apiKey, settings } = await deps.uow.run(tenantId, async (r) => ({
-    apiKey: await readTenantSecret(deps.crypto, r, 'gemini_api_key'),
-    settings: await r.settings.get(),
-  }));
+  const [apiKey, settings] = await Promise.all([
+    readTenantSecret(deps, tenantId, 'gemini_api_key'),
+    deps.uow.run(tenantId, (r) => r.settings.get()),
+  ]);
   if (!apiKey) return deps.reportAi;
   return deps.reportAiFactory.create({
     apiKey,

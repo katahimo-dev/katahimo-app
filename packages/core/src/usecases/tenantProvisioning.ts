@@ -1,9 +1,7 @@
-import { randomBytes } from 'node:crypto';
 import { checkPasswordPolicy, PASSWORD_POLICY_MESSAGES } from '@katahimo/shared';
 import { invalid, newId, normalizeEmailForIndex } from '../domain';
 import type { BusinessType, StaffRole } from '../domain/model';
 import type { AppLogPort } from '../ports/appLog';
-import type { KeyManagementPort } from '../ports/kms';
 import type { TenantDirectoryPort, TenantProvisioningPort, TenantRecord } from '../ports/tenants';
 import type { StaffRegistrationDeps } from './auth/deps';
 import { registerStaff } from './auth/staffRegistration';
@@ -11,7 +9,6 @@ import { registerStaff } from './auth/staffRegistration';
 export interface TenantProvisioningDeps {
   tenants: TenantDirectoryPort;
   provisioning: TenantProvisioningPort;
-  kms: KeyManagementPort;
 }
 
 export interface ProvisionTenantRequest {
@@ -22,9 +19,8 @@ export interface ProvisionTenantRequest {
 }
 
 /**
- * テナントを作る(運用の CLI・シード)。最初のデータ暗号化鍵(DEK)をここで作って KMS でラップし、
- * platform.provision_tenant() がテナント・鍵・設定をまとめて作る。DEK のラップの AAD にテナントIDを含めるため、
- * テナントIDはここで採番する。同じ slug が既にあればそのテナントを返す(何度流してもよい)。
+ * テナントを作る(運用の CLI・シード)。platform.provision_tenant() がテナント・設定・ライフサイクルの記録を
+ * まとめて作る。同じ slug が既にあればそのテナントを返す(何度流してもよい)。
  */
 export async function provisionTenant(
   deps: TenantProvisioningDeps,
@@ -37,15 +33,12 @@ export async function provisionTenant(
   const existing = await deps.tenants.findBySlug(slug);
   if (existing) return { tenant: existing, created: false };
   const id = newId();
-  const wrapped = await deps.kms.wrap(randomBytes(32), id);
   await deps.provisioning.provision({
     id,
     slug,
     name: request.name,
     timezone: request.timezone ?? 'Asia/Tokyo',
     businessType: request.businessType ?? 'babysitting',
-    wrappedDek: wrapped.wrapped,
-    kekKeyName: wrapped.kekKeyName,
   });
   const tenant = await deps.tenants.findById(id);
   if (!tenant) throw new Error(`作成したテナントを読めません(id=${id})`);

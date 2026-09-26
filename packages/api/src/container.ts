@@ -1,14 +1,12 @@
 import type {
   AppLogPort,
-  AuditLogPort,
-  BlindIndexPort,
-  CryptoPort,
   CustomerCsvSourcePort,
   NotifierPort,
   RateLimiterPort,
   ReportAiPort,
   ReportAiPortFactory,
   SchedulePort,
+  SecretBoxPort,
   StoragePort,
   TenantDirectoryPort,
   UnitOfWorkPort,
@@ -25,19 +23,15 @@ import { DrizzleUnitOfWork } from '@katahimo/db';
 import {
   DrizzleAppLogRepository,
   DrizzleRateLimiter,
-  DrizzleTenantDataKeyReader,
   DrizzleTenantDirectory,
 } from '@katahimo/db/repositories';
 import {
-  ConsoleAuditLogPort,
   createCustomerCsvSource,
-  createKeyManagementPort,
   createScheduleServices,
+  createSecretBox,
   createStoragePort,
   GeminiAiPort,
   InMemoryTtlCache,
-  LocalBlindIndexPort,
-  LocalCryptoPort,
   listAvailableGeminiModels,
   NoopReportAiPort,
   type ScheduleProvider,
@@ -57,9 +51,8 @@ export interface Container {
   uow: UnitOfWorkPort;
   tenants: TenantDirectoryPort;
   appLog: AppLogPort;
-  audit: AuditLogPort;
-  crypto: CryptoPort;
-  blindIndex: BlindIndexPort;
+  /** テナントの秘密値(tenant_secrets)の封と開封(本番は Cloud KMS)。 */
+  secretBox: SecretBoxPort;
   passwordHasher: PasswordHasherPort;
   storage: StoragePort;
   notifier: NotifierPort;
@@ -100,20 +93,13 @@ function rateLimitPolicyOf(env: Env): RateLimitPolicy {
   });
 }
 
-/**
- * keyDb はテナントの鍵(tenant_data_keys)の読み込み専用の小さなプール(省略時は db)。サーバーは専用のプールを
- * 渡す(トランザクションの途中で鍵の読み直しが要っても、db のプールの空きを待ち合って詰まらないように)。
- */
-export function createContainer(env: Env, db: Database, keyDb: Database = db): Container {
-  const crypto = new LocalCryptoPort(new DrizzleTenantDataKeyReader(keyDb), createKeyManagementPort(env));
-  const uow = new DrizzleUnitOfWork(db, { skipOutboxTopics: skippedOutboxTopics(env), crypto });
-  const audit = new ConsoleAuditLogPort();
+export function createContainer(env: Env, db: Database): Container {
+  const uow = new DrizzleUnitOfWork(db, { skipOutboxTopics: skippedOutboxTopics(env) });
+  const secretBox = createSecretBox(env);
   const appLog = new DrizzleAppLogRepository(db);
   const scheduleServices = createScheduleServices(env, {
     directory: createScheduleDirectory({
       uow,
-      crypto,
-      audit,
       // 顧客・スタッフのマスタ(テナント × 顧客データの版数)。顧客CSVの取込で版数が変わると読み直す
       cache: new InMemoryTtlCache({ maxEntries: 200 }),
     }),
@@ -128,16 +114,14 @@ export function createContainer(env: Env, db: Database, keyDb: Database = db): C
     uow,
     tenants: new DrizzleTenantDirectory(db),
     appLog,
-    audit,
-    crypto,
-    blindIndex: new LocalBlindIndexPort(env.BLIND_INDEX_MASTER_KEY),
+    secretBox,
     passwordHasher: argon2PasswordHasher,
     storage: createStoragePort(env),
     notifier: new WebhookNotifierPort({
       // テナントが管理者設定で保存した URL(tenant_secrets)を優先し、無ければ .env の既定
       async resolve(tenantId, channel) {
         const name = channel === 'report' ? 'gchat_report_webhook' : 'gchat_receipt_webhook';
-        const saved = await uow.run(tenantId, (r) => readTenantSecret(crypto, r, name));
+        const saved = await readTenantSecret({ uow, secretBox }, tenantId, name);
         return saved || webhookFallback[channel];
       },
     }),

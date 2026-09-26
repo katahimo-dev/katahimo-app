@@ -93,7 +93,7 @@ describe('AIプロンプト・UI設定', () => {
     const deps: ReportAiDeps = {
       uow,
       reportAi: port,
-      crypto: ctx.crypto,
+      secretBox: ctx.secretBox,
       reportAiFactory: { create: () => port },
       appLog,
     };

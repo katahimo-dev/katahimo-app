@@ -3,7 +3,6 @@ import { sql } from 'drizzle-orm';
 import { check, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, idColumn, oneOf, tenantIdColumn } from './_columns';
 import { tenantScoped } from './_helpers';
-import { bytea } from './_types';
 
 /**
  * トランザクショナル・アウトボックス。ドメインの書き込みと同じトランザクションで積み、ワーカーが
@@ -52,8 +51,7 @@ export const outboxMessages = pgTable(
 
 /**
  * 実体の変更履歴(追記のみ。アプリロールは SELECT / INSERT だけ)。誰が・何で(手入力・カレンダー反映・
- * 取込・システム)・どの項目を変えたかと、変更前の値(暗号化。AAD は entity_changes.before と
- * この行のID。元の行の暗号文をそのまま写さず、履歴の用途で暗号化し直す)。
+ * 取込・システム)・どの項目を変えたかと、変更前の値(before。更新は変わった項目、削除は全項目)。
  */
 export const entityChanges = pgTable(
   'entity_changes',
@@ -65,7 +63,7 @@ export const entityChanges = pgTable(
     changedBy: uuid(),
     changeSource: text({ enum: CHANGE_SOURCES }).notNull(),
     changedFields: text().array().notNull(),
-    beforeEnc: bytea(),
+    before: jsonb().$type<Record<string, unknown>>(),
     createdAt: createdAt(),
   },
   (t) => [

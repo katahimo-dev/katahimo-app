@@ -6,7 +6,7 @@ import { customType } from 'drizzle-orm/pg-core';
  * 読み出し時の無限大の境界(`[x,)` 等)は null で表す。
  */
 
-/** 暗号文・ハッシュ(*_enc・*_hash・*_bidx)。postgres.js は Buffer で返す。 */
+/** ハッシュ(*_hash)・秘密値の暗号文(tenant_secrets.sealed_value)・ファイルの SHA-256。postgres.js は Buffer で返す。 */
 export const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
   dataType() {
     return 'bytea';

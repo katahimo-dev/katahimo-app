@@ -2,6 +2,7 @@ import {
   AI_PROMPT_KINDS,
   CARE_RECORD_STATUSES,
   CARE_RECORD_TYPES,
+  type CareRecordContent,
   STORED_FILE_PURPOSES,
 } from '@katahimo/core/domain';
 import { sql } from 'drizzle-orm';
@@ -11,6 +12,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   smallint,
@@ -36,8 +38,8 @@ import { careRecipients, customers } from './customers';
 import { staff } from './staff';
 
 /**
- * 記録(保育日報・事故報告・ヒヤリハット)。本文は record_type ごとの型つき JSON(body_schema_ver で版を
- * 管理)を1本で暗号化する(AAD に行ID)。並び替え・集計に使う日時・評価は平文。
+ * 記録(保育日報・事故報告・ヒヤリハット)。本文 body は record_type ごとの型つき JSON(body_schema_ver で版を
+ * 管理。形は core/domain/reports/types.ts)。並び替え・集計に使う日時・評価は列に持つ。
  * PSI/ES の評価(risk_rating / es_rating)は日報だけが持つ。
  * 提出済み(submitted / locked)の記録の本文が変わると、トリガー(care_records_route_revision)が変更前の
  * 本文を care_record_revisions に写す。locked の記録の本文は変更できない。
@@ -57,7 +59,7 @@ export const careRecords = pgTable(
     servicePeriod: tstzrange(),
     riskRating: smallint(),
     esRating: smallint(),
-    bodyEnc: bytea().notNull(),
+    body: jsonb().$type<CareRecordContent>().notNull(),
     bodySchemaVer: smallint().notNull().default(1),
     aiGenerated: boolean().notNull().default(false),
     aiModel: text(),
@@ -100,8 +102,7 @@ export const careRecords = pgTable(
 ).enableRLS();
 
 /**
- * 記録の本文の変更履歴(追記のみ。アプリロールは SELECT / INSERT だけ)。トリガーが変更前の暗号文を
- * そのまま写すため、復号の AAD は元の記録(care_records.body・記録のID)のもの。
+ * 記録の本文の変更履歴(追記のみ。アプリロールは SELECT / INSERT だけ)。トリガーが変更前の本文と版を写す。
  * 記録への参照は no action(履歴のある記録は消せない。記録と一緒に履歴が消えないようにする)。テナントの
  * 消去(platform.purge_tenant)は tenant_id の cascade で記録と履歴を同じ文で消すため妨げない。
  */
@@ -112,7 +113,7 @@ export const careRecordRevisions = pgTable(
     id: idColumn(),
     careRecordId: uuid().notNull(),
     revisionNo: integer().notNull(),
-    bodyEnc: bytea().notNull(),
+    body: jsonb().$type<CareRecordContent>().notNull(),
     bodySchemaVer: smallint().notNull(),
     /** 変更したスタッフ(セッションの app.actor_staff_id。無ければ null)。 */
     changedBy: uuid(),
@@ -156,7 +157,7 @@ export const storedFiles = pgTable(
   ],
 ).enableRLS();
 
-/** 領収書の1回の登録操作(複数枚の束)。申し送りはここに1つだけ持つ。 */
+/** 領収書の1回の登録操作(複数枚の束)。申し送り(handoff_text)はここに1つだけ持つ。 */
 export const receiptUploads = pgTable(
   'receipt_uploads',
   {
@@ -165,7 +166,7 @@ export const receiptUploads = pgTable(
     staffId: uuid().notNull(),
     customerId: uuid(),
     customerNameText: text(),
-    handoffTextEnc: bytea(),
+    handoffText: text(),
     createdBy: uuid().notNull(),
     createdAt: createdAt(),
   },
@@ -178,8 +179,8 @@ export const receiptUploads = pgTable(
 ).enableRLS();
 
 /**
- * 領収書1枚。金額は平文の整数(円)、店名は暗号化。重複の判定は dedupe_bidx(スタッフ・顧客・日時・
- * 金額・店名のブラインドインデックス)の部分UNIQUE で、INSERT … ON CONFLICT DO NOTHING が
+ * 領収書1枚。金額は整数(円)。重複の判定は dedupe_hash(スタッフ・顧客・日時・金額・店名を正規化した
+ * キーの SHA-256。core/domain/reports/receiptDedupe.ts)の部分UNIQUE で、INSERT … ON CONFLICT DO NOTHING が
  * 同時の登録でも原子的に重複を弾く。
  */
 export const receipts = pgTable(
@@ -194,8 +195,8 @@ export const receipts = pgTable(
     customerNameText: text(),
     receiptedAt: timestamp({ withTimezone: true }).notNull(),
     amountYen: integer(),
-    storeNameEnc: bytea(),
-    dedupeBidx: bytea(),
+    storeName: text(),
+    dedupeHash: bytea(),
     createdAt: createdAt(),
   },
   (t) => [
@@ -204,9 +205,9 @@ export const receipts = pgTable(
     tenantRef('receipts', 'file_id', t, t.fileId, storedFiles),
     tenantRef('receipts', 'staff_id', t, t.staffId, staff),
     tenantRef('receipts', 'customer_id', t, t.customerId, customers),
-    uniqueIndex('receipts_tenant_id_dedupe_bidx_key')
-      .on(t.tenantId, t.dedupeBidx)
-      .where(sql`dedupe_bidx is not null`),
+    uniqueIndex('receipts_tenant_id_dedupe_hash_key')
+      .on(t.tenantId, t.dedupeHash)
+      .where(sql`dedupe_hash is not null`),
     index('receipts_tenant_id_staff_id_receipted_at_idx').on(t.tenantId, t.staffId, t.receiptedAt),
     index('receipts_tenant_id_upload_id_idx').on(t.tenantId, t.uploadId),
     index('receipts_tenant_id_file_id_idx').on(t.tenantId, t.fileId),

@@ -4,7 +4,7 @@ import { config } from 'dotenv';
 
 /**
  * モノレポのルート .env を読み込む(packages/api/src/loadDotenv.tsと同じ挙動)。
- * ワーカーはAPIサーバーと同じ .env(DATABASE_URL・LOCAL_DEV_KEK等)を共有する想定。
+ * ワーカーはAPIサーバーと同じ .env(DATABASE_URL・STORAGE_PROVIDER等)を共有する想定。
  */
 export function loadDotenv(startDir: string = process.cwd()): void {
   let dir = startDir;

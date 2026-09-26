@@ -1,10 +1,9 @@
 import { SECRET_MASK_CHAR } from '@katahimo/shared';
 import type { TenantSecretName } from '../domain/model';
 import { isGoogleChatWebhookUrl } from '../domain/notifications';
-import { ENCRYPTION_PURPOSES as P } from '../domain/pii';
 import type { AppLogPort } from '../ports/appLog';
-import type { CryptoPort } from '../ports/crypto';
-import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
+import type { SecretBoxPort } from '../ports/secretBox';
+import type { UnitOfWorkPort } from '../ports/unitOfWork';
 import type { Actor } from './requestMeta';
 
 export interface GeminiModelInfo {
@@ -12,9 +11,13 @@ export interface GeminiModelInfo {
   displayName: string;
 }
 
-export interface SettingsDeps {
+/** テナントの秘密値(tenant_secrets)を読み書きする usecase の依存。 */
+export interface TenantSecretDeps {
   uow: UnitOfWorkPort;
-  crypto: CryptoPort;
+  secretBox: SecretBoxPort;
+}
+
+export interface SettingsDeps extends TenantSecretDeps {
   appLog: AppLogPort;
   /** Gemini ListModels(@katahimo/integrationsのlistAvailableGeminiModels)。失敗時は例外を投げる。 */
   listGeminiModels: (apiKey: string) => Promise<GeminiModelInfo[]>;
@@ -23,30 +26,48 @@ export interface SettingsDeps {
 /** 設定を操作した管理者(ログ記録用。権限確認はAPIルート側で済ませてから呼ぶ)。 */
 export type SettingsActor = Actor;
 
-/** テナントの秘密値を復号して読む(無ければ空文字)。 */
-export async function readTenantSecret(
-  crypto: CryptoPort,
-  r: TenantRepositories,
-  name: TenantSecretName,
-): Promise<string> {
-  const secret = await r.secrets.get(name);
-  return secret
-    ? crypto.decrypt({ tenantId: r.tenantId, purpose: P.tenantSecretValue, rowId: name }, secret.valueEnc)
-    : '';
+/**
+ * テナントの秘密値を読む(無ければ空文字)。暗号文は1トランザクションで読み、開封(本番は Cloud KMS の呼び出し)は
+ * トランザクションの外で行う。
+ */
+export async function readTenantSecrets<N extends TenantSecretName>(
+  deps: TenantSecretDeps,
+  tenantId: string,
+  names: readonly N[],
+): Promise<Record<N, string>> {
+  const sealed = await deps.uow.run(tenantId, (r) => Promise.all(names.map((name) => r.secrets.get(name))));
+  const values = await Promise.all(
+    names.map((name, i) => {
+      const secret = sealed[i];
+      return secret ? deps.secretBox.open(tenantId, name, secret.sealedValue) : '';
+    }),
+  );
+  return Object.fromEntries(names.map((name, i) => [name, values[i]])) as Record<N, string>;
 }
 
-async function writeTenantSecret(
-  deps: SettingsDeps,
-  r: TenantRepositories,
-  actor: SettingsActor,
+export async function readTenantSecret(
+  deps: TenantSecretDeps,
+  tenantId: string,
   name: TenantSecretName,
-  value: string,
+): Promise<string> {
+  return (await readTenantSecrets(deps, tenantId, [name]))[name];
+}
+
+/** 秘密値を封をして保存する(封はトランザクションの外、書き込みは1トランザクション)。 */
+async function writeTenantSecrets(
+  deps: TenantSecretDeps,
+  actor: SettingsActor,
+  values: Partial<Record<TenantSecretName, string>>,
 ): Promise<void> {
-  const valueEnc = await deps.crypto.encrypt(
-    { tenantId: r.tenantId, purpose: P.tenantSecretValue, rowId: name },
-    value,
+  const entries = Object.entries(values) as [TenantSecretName, string][];
+  const sealed = await Promise.all(
+    entries.map(
+      async ([name, value]) => [name, await deps.secretBox.seal(actor.tenantId, name, value)] as const,
+    ),
   );
-  await r.secrets.put(name, valueEnc, actor.staffId);
+  await deps.uow.run(actor.tenantId, async (r) => {
+    for (const [name, value] of sealed) await r.secrets.put(name, value, actor.staffId);
+  });
 }
 
 /** GAS版GeminiReport.jsのGEMINI_MODEL_REPORT_DEFAULT/GEMINI_MODEL_OCR_DEFAULTと同じ値。 */
@@ -133,15 +154,17 @@ const PARTIALLY_MASKED_MESSAGE =
  * 返さず伏せ字にする(画面から漏れても使えないようにするため。「表示」を押しても伏せ字が見えるだけ)。
  */
 export async function getAdminSettings(deps: SettingsDeps, actor: SettingsActor): Promise<AdminSettingsView> {
-  const { row, geminiApiKey, gchatReportWebhookUrl, gchatReceiptWebhookUrl } = await deps.uow.run(
-    actor.tenantId,
-    async (r) => ({
-      row: await r.settings.get(),
-      geminiApiKey: await readTenantSecret(deps.crypto, r, 'gemini_api_key'),
-      gchatReportWebhookUrl: await readTenantSecret(deps.crypto, r, 'gchat_report_webhook'),
-      gchatReceiptWebhookUrl: await readTenantSecret(deps.crypto, r, 'gchat_receipt_webhook'),
-    }),
-  );
+  const [row, secrets] = await Promise.all([
+    deps.uow.run(actor.tenantId, (r) => r.settings.get()),
+    readTenantSecrets(deps, actor.tenantId, [
+      'gemini_api_key',
+      'gchat_report_webhook',
+      'gchat_receipt_webhook',
+    ]),
+  ]);
+  const geminiApiKey = secrets.gemini_api_key;
+  const gchatReportWebhookUrl = secrets.gchat_report_webhook;
+  const gchatReceiptWebhookUrl = secrets.gchat_receipt_webhook;
   return {
     geminiApiKey: maskApiKey(geminiApiKey),
     geminiApiKeySet: geminiApiKey !== '',
@@ -172,24 +195,18 @@ export async function saveGeminiApiKey(
       message: 'APIキーが空です。空のまま保存すると既存のキーが失われるため、保存を中止しました。',
     };
   }
-  const result = await deps.uow.run(actor.tenantId, async (r): Promise<SaveSettingsResult | 'saved'> => {
-    const current = await readTenantSecret(deps.crypto, r, 'gemini_api_key');
-    const input = resolveSecretInput(trimmed, maskApiKey(current));
-    if (input.kind === 'partially_masked') {
-      return { ok: false, reason: 'partially_masked', message: PARTIALLY_MASKED_MESSAGE };
-    }
-    if (input.kind === 'unchanged' || input.value === current) {
-      return { ok: true, changed: false, message: 'Gemini APIキーは変更ありません。' };
-    }
-    await writeTenantSecret(deps, r, actor, 'gemini_api_key', trimmed);
-    return 'saved';
-  });
-  if (result !== 'saved') {
-    if (!result.ok) {
-      await writeLog(deps, actor, 'WARN', 'settings.gemini_api_key.save_rejected', { reason: result.reason });
-    }
-    return result;
+  const current = await readTenantSecret(deps, actor.tenantId, 'gemini_api_key');
+  const input = resolveSecretInput(trimmed, maskApiKey(current));
+  if (input.kind === 'partially_masked') {
+    await writeLog(deps, actor, 'WARN', 'settings.gemini_api_key.save_rejected', {
+      reason: 'partially_masked',
+    });
+    return { ok: false, reason: 'partially_masked', message: PARTIALLY_MASKED_MESSAGE };
   }
+  if (input.kind === 'unchanged' || input.value === current) {
+    return { ok: true, changed: false, message: 'Gemini APIキーは変更ありません。' };
+  }
+  await writeTenantSecrets(deps, actor, { gemini_api_key: trimmed });
   await writeLog(deps, actor, 'SECURITY', 'settings.gemini_api_key.changed');
   return { ok: true, changed: true, message: 'Gemini APIキーを保存しました。' };
 }
@@ -239,9 +256,13 @@ export async function saveGoogleChatWebhookSettings(
   receiptWebhookUrl: string | undefined,
 ): Promise<SaveSettingsResult> {
   let invalidChannels: string[] = [];
-  const result = await deps.uow.run(actor.tenantId, async (r): Promise<SaveSettingsResult | 'saved'> => {
-    const currentReport = await readTenantSecret(deps.crypto, r, 'gchat_report_webhook');
-    const currentReceipt = await readTenantSecret(deps.crypto, r, 'gchat_receipt_webhook');
+  const current = await readTenantSecrets(deps, actor.tenantId, [
+    'gchat_report_webhook',
+    'gchat_receipt_webhook',
+  ]);
+  const result = ((): SaveSettingsResult | Partial<Record<TenantSecretName, string>> => {
+    const currentReport = current.gchat_report_webhook;
+    const currentReceipt = current.gchat_receipt_webhook;
     const reportInput = resolveSecretInput(reportWebhookUrl, maskWebhookUrl(currentReport));
     const receiptInput = resolveSecretInput(receiptWebhookUrl, maskWebhookUrl(currentReceipt));
     if (reportInput.kind === 'partially_masked' || receiptInput.kind === 'partially_masked') {
@@ -272,13 +293,12 @@ export async function saveGoogleChatWebhookSettings(
           'Webhook URLが正しくありません。Google Chat の Webhook URL(https://chat.googleapis.com/v1/spaces/...)を入力してください。',
       };
     }
-    if (nextReport !== currentReport)
-      await writeTenantSecret(deps, r, actor, 'gchat_report_webhook', nextReport);
-    if (nextReceipt !== currentReceipt)
-      await writeTenantSecret(deps, r, actor, 'gchat_receipt_webhook', nextReceipt);
-    return 'saved';
-  });
-  if (result !== 'saved') {
+    return {
+      ...(nextReport !== currentReport ? { gchat_report_webhook: nextReport } : {}),
+      ...(nextReceipt !== currentReceipt ? { gchat_receipt_webhook: nextReceipt } : {}),
+    };
+  })();
+  if ('ok' in result) {
     if (!result.ok) {
       await writeLog(deps, actor, 'WARN', 'settings.gchat_webhooks.save_rejected', {
         reason: result.reason,
@@ -287,6 +307,7 @@ export async function saveGoogleChatWebhookSettings(
     }
     return result;
   }
+  await writeTenantSecrets(deps, actor, result);
   await writeLog(deps, actor, 'SECURITY', 'settings.gchat_webhooks.changed');
   return { ok: true, changed: true, message: 'Webhook URLを保存しました。' };
 }
@@ -306,7 +327,7 @@ export async function listGeminiModelsForAdmin(
 ): Promise<ListGeminiModelsResult> {
   let apiKey = apiKeyOverride?.trim() ?? '';
   if (!apiKey || isMaskedInput(apiKey)) {
-    apiKey = await deps.uow.run(actor.tenantId, (r) => readTenantSecret(deps.crypto, r, 'gemini_api_key'));
+    apiKey = await readTenantSecret(deps, actor.tenantId, 'gemini_api_key');
   }
   if (!apiKey) {
     return {

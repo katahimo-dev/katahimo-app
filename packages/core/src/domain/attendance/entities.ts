@@ -2,7 +2,7 @@ import type { TravelLegKind, VisitSource, VisitStatus, WeatherCode } from '../mo
 
 /**
  * 勤怠1日分の実体(タイムゾーンに依存しない形)。時刻は業務日の 0:00 からの分(翌日にまたがる終了は
- * 1440 以上)。暗号化される値(訪問先の表示名・作業内容・備考)は復号済みの平文。
+ * 1440 以上)。
  * DB の行(ports/attendance.ts)との変換は usecases/attendance/records.ts、出勤簿の列(C/D/E…)との変換は
  * sheetLayout.ts の projectDay / applyRowEdit が行う。
  */

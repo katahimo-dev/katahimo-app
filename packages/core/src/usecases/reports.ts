@@ -15,7 +15,6 @@ import {
   newId,
   notFound,
   outboxDedupeKey,
-  ENCRYPTION_PURPOSES as P,
   parseCareRecordBody,
   parseTimeToMinutes,
   recordTypeOfAccidentReport,
@@ -26,21 +25,17 @@ import {
 } from '../domain';
 import type { AccidentReportContent, DailyReportContent } from '../domain/reports/types';
 import type { AppLogPort } from '../ports/appLog';
-import type { AuditLogPort, CryptoPort } from '../ports/crypto';
 import type { NotifierPort } from '../ports/notifier';
 import type { CareRecordRow } from '../ports/records';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
-import { DecryptSession } from './cipher';
 import { notifyWithLog } from './notify';
 import type { Actor, Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
 
 export interface ReportDeps extends Clock {
   uow: UnitOfWorkPort;
-  crypto: CryptoPort;
   notifier: NotifierPort;
   appLog: AppLogPort;
-  audit?: AuditLogPort;
 }
 
 /** 保存・上書きの共通入力。担当スタッフはクライアントの申告ではなく actor と既存の記録から決める。 */
@@ -146,18 +141,13 @@ async function logDenied(
  * スプレッドシートへのミラーを同じトランザクションで積む(版ごとに1回)。
  */
 async function persist(
-  deps: ReportDeps,
   r: TenantRepositories,
   write: ResolvedWrite,
-  record: Omit<CareRecordRow, 'id' | 'rowVersion' | 'bodyEnc' | 'status' | 'retainUntil'> & { body: object },
+  record: Omit<CareRecordRow, 'id' | 'rowVersion' | 'status' | 'retainUntil'>,
   rowVersion: number | undefined,
 ): Promise<CareRecordRow> {
   const id = write.existing?.id ?? newId();
   const { body, ...fields } = record;
-  const bodyEnc = await deps.crypto.encrypt(
-    { tenantId: r.tenantId, purpose: P.careRecordBody, rowId: id },
-    JSON.stringify(body),
-  );
   const retainUntil = addIsoDays(zonedBusinessDate(record.occurredAt, write.timeZone), write.retentionDays);
   const saved = write.existing
     ? await r.careRecords.update(
@@ -168,13 +158,13 @@ async function persist(
           servicePeriod: fields.servicePeriod,
           riskRating: fields.riskRating,
           esRating: fields.esRating,
-          bodyEnc,
+          body,
           bodySchemaVer: CARE_RECORD_BODY_SCHEMA_VERSION,
           aiGenerated: fields.aiGenerated,
         },
         rowVersion,
       )
-    : await r.careRecords.insert({ ...fields, id, status: 'submitted', bodyEnc, retainUntil });
+    : await r.careRecords.insert({ ...fields, id, status: 'submitted', body, retainUntil });
   await r.outbox.enqueue({
     topic: 'mirror.care_record',
     aggregateType: 'care_record',
@@ -260,7 +250,6 @@ export async function saveDailyReport(
           ? zonedInstant(input.reportDate, startMinutes ?? 0, write.timeZone)
           : now;
         const saved = await persist(
-          deps,
           r,
           write,
           {
@@ -372,7 +361,6 @@ export async function saveAccidentReport(
       async (r) => {
         const write = await resolveWrite(r, actor, 'accident', input);
         const saved = await persist(
-          deps,
           r,
           write,
           {
@@ -505,14 +493,9 @@ export async function getCustomerHistory(
     return { rows, staffNames };
   });
   const page = rows.slice(0, limit);
-  const d = new DecryptSession(deps.crypto, actor.tenantId);
   const items: HistoryItem[] = [];
   for (const row of page) {
-    const body = parseCareRecordBody(
-      row.recordType,
-      await d.decrypt(P.careRecordBody, row.id, row.bodyEnc),
-      row.bodySchemaVer,
-    );
+    const body = parseCareRecordBody(row.recordType, row.body, row.bodySchemaVer);
     const base = {
       id: row.id,
       occurredAtIso: row.occurredAt.toISOString(),
@@ -541,7 +524,6 @@ export async function getCustomerHistory(
       });
     }
   }
-  d.flush(deps.audit, 'care_record.history', actor.staffId);
   const last = page.at(-1);
   return {
     items,

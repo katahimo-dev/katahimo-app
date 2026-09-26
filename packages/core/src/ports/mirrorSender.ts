@@ -2,7 +2,7 @@
  * outboxから取り出したミラージョブ1件を、実際にGoogleスプレッドシート/Driveへ反映するポート。
  *
  * 積む側(書き込みと同じ Unit of Work で outbox_messages に積む)に対し、こちらは「送る」側。ペイロードは
- * ワーカー側のusecase(usecases/outboxWorker.ts)がDBから最新値を読み直し・復号・
+ * ワーカー側のusecase(usecases/outboxWorker.ts)がDBから最新値を読み直し・
  * スタッフ/顧客名の解決まで済ませた後の、GAS側の列にそのまま書き込める形にしてある
  * (GAS側の分類・整形ロジックをこちらで再実装しないため)。
  *

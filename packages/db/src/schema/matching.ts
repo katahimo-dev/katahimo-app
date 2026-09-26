@@ -29,7 +29,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { constraintName, createdAt, idColumn, oneOf, tenantIdColumn, updatedAt } from './_columns';
 import { tenantFk, tenantIsolation, tenantRef, tenantScoped } from './_helpers';
-import { bytea, daterange, tstzrange } from './_types';
+import { daterange, tstzrange } from './_types';
 import { customers } from './customers';
 import { storedFiles } from './records';
 import { reservations } from './services';
@@ -81,7 +81,7 @@ export const staffAttributes = pgTable(
     verifiedAt: timestamp({ withTimezone: true }),
     verifiedBy: uuid(),
     evidenceFileId: uuid(),
-    noteEnc: bytea(),
+    note: text(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -135,7 +135,7 @@ export const customerStaffAffinities = pgTable(
     score: smallint().notNull().default(0),
     isNg: boolean().notNull().default(false),
     source: text({ enum: AFFINITY_SOURCES }).notNull().default('manual'),
-    noteEnc: bytea(),
+    note: text(),
     updatedBy: uuid(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -186,7 +186,7 @@ export const staffWeeklyAvailability = pgTable(
   ],
 ).enableRLS();
 
-/** 日単位・時間帯単位の例外(休み・臨時の勤務)。理由は健康情報を含みうるため暗号化。 */
+/** 日単位・時間帯単位の例外(休み・臨時の勤務)。reason は健康情報を含みうる(一覧では出さない)。 */
 export const staffAvailabilityExceptions = pgTable(
   'staff_availability_exceptions',
   {
@@ -195,7 +195,7 @@ export const staffAvailabilityExceptions = pgTable(
     staffId: uuid().notNull(),
     period: tstzrange().notNull(),
     kind: text({ enum: AVAILABILITY_EXCEPTION_KINDS }).notNull(),
-    reasonEnc: bytea(),
+    reason: text(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

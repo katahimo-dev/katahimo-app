@@ -6,7 +6,6 @@ import { randomBytes } from 'node:crypto';
 import { bootstrapTenant } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import { DrizzleTenantDirectory, DrizzleTenantProvisioning } from '@katahimo/db/repositories';
-import { createKeyManagementPort } from '@katahimo/integrations';
 import { createContainer } from '../container';
 import { loadEnv } from '../env';
 import { cliArgs, takeOption } from './cliArgs';
@@ -17,8 +16,8 @@ const USAGE =
 
 /**
  * 本番のテナント(法人)と最初の管理者を作る運用スクリプト(何度流してもよい。doc/07_インフラ・運用.md)。
- * テナントは platform.provision_tenant()(所有者の権限。MIGRATION_DATABASE_URL の接続)で作り、最初の DEK は
- * KMS_PROVIDER の KEK でラップする。管理者はアプリの接続(DATABASE_URL、RLS の中)で作る。
+ * テナントは platform.provision_tenant()(所有者の権限。MIGRATION_DATABASE_URL の接続)で作り、
+ * 管理者はアプリの接続(DATABASE_URL、RLS の中)で作る。
  *
  * 管理者のパスワードは既定では未設定(本人がログイン画面の「パスワードを忘れた方」で設定する。メールはワーカーが
  * 送る)。--initial-password を付けると初期パスワードを作って1回だけ表示する(本人に安全な方法で伝え、
@@ -54,7 +53,6 @@ async function main() {
         ...container,
         tenants: new DrizzleTenantDirectory(ownerDb),
         provisioning: new DrizzleTenantProvisioning(ownerDb),
-        kms: createKeyManagementPort(env),
       },
       {
         slug,

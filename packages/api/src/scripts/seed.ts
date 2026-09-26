@@ -8,7 +8,6 @@ import type { CustomerSnapshot } from '@katahimo/core/usecases';
 import { applyCustomerSnapshot, provisionTenant, registerStaff } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import { DrizzleTenantDirectory, DrizzleTenantProvisioning } from '@katahimo/db/repositories';
-import { createKeyManagementPort } from '@katahimo/integrations';
 import { createContainer } from '../container';
 import { loadEnv } from '../env';
 
@@ -68,7 +67,6 @@ async function main() {
       {
         tenants: new DrizzleTenantDirectory(ownerDb),
         provisioning: new DrizzleTenantProvisioning(ownerDb),
-        kms: createKeyManagementPort(env),
       },
       DEMO_TENANT,
     );
@@ -89,9 +87,7 @@ async function main() {
     const outcomes = await container.uow.run(tenant.id, async (r) => {
       const results: string[] = [];
       for (const customer of DEMO_CUSTOMERS) {
-        results.push(
-          await applyCustomerSnapshot({ crypto: container.crypto, runId: null }, r, customer, new Date()),
-        );
+        results.push(await applyCustomerSnapshot({ runId: null }, r, customer, new Date()));
       }
       if (results.some((o) => o !== 'unchanged')) await r.settings.bumpCustomerDataVersion();
       return results;

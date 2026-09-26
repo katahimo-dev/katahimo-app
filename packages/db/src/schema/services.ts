@@ -26,7 +26,7 @@ import {
   updatedAt,
 } from './_columns';
 import { tenantFk, tenantIsolation, tenantRef, tenantScoped } from './_helpers';
-import { bytea, tstzrange } from './_types';
+import { tstzrange } from './_types';
 import { careRecipients, customerAddresses, customerRecurringSlots, customers } from './customers';
 import { matchingRuns } from './matching';
 import { staff } from './staff';
@@ -70,7 +70,7 @@ export const reservations = pgTable(
     scheduledPeriod: tstzrange().notNull(),
     businessDate: date().notNull(),
     requiredStaffCount: smallint().notNull().default(1),
-    notesEnc: bytea(),
+    notes: text(),
     externalSource: text(),
     externalId: text(),
     rowVersion: rowVersion(),

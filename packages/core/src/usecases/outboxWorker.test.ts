@@ -33,7 +33,7 @@ describe('outbox ワーカー', () => {
     customerId = await ctx.addCustomer('佐藤 花子', 'R-001');
   });
 
-  it('日報のミラーは DB から読み直して復号し、RESERVA の顧客IDで送る', async () => {
+  it('日報のミラーは DB から読み直し、RESERVA の顧客IDで送る', async () => {
     const saved = await saveReport();
     expect(await ctx.drain()).toMatchObject({ done: 1 });
     expect(ctx.sender.dailyReports).toEqual([

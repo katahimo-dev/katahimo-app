@@ -1,3 +1,4 @@
+import type { GeoPoint } from '../domain/geo';
 import type { Gender, StaffRole, TravelModeCode } from '../domain/model';
 
 /** スタッフ(一覧・画面・権限の判定に使う形。認証情報は含めない)。 */
@@ -56,7 +57,7 @@ export interface StaffRouteProfile {
   id: string;
   displayName: string;
   homeAddress: string | null;
-  homeGeoEnc: Uint8Array | null;
+  homeGeo: GeoPoint | null;
   travelMode: TravelModeCode | null;
   /** 予定を読む Google カレンダー(staff_calendars の purpose = 'schedule')。 */
   scheduleCalendarId: string | null;
@@ -129,8 +130,8 @@ export interface PasswordResetCodeRecord {
   usedAt: Date | null;
   attemptCount: number;
   maxAttempts: number;
-  /** メール送信待ちのコード(暗号化済み)。送信後・使用後は null。 */
-  mailCodeEnc: Uint8Array | null;
+  /** メール送信待ちのコード。送信後・使用後は null。 */
+  mailCode: string | null;
 }
 
 export interface NewPasswordResetCodeInput {
@@ -140,7 +141,7 @@ export interface NewPasswordResetCodeInput {
   sentToEmail: string;
   expiresAt: Date;
   maxAttempts: number;
-  mailCodeEnc: Uint8Array;
+  mailCode: string;
 }
 
 /**

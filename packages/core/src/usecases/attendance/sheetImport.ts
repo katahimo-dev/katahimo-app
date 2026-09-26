@@ -45,12 +45,7 @@ export async function importAttendanceSheetRows(
     try {
       const written = await deps.uow.run(tenantId, async (r) => {
         const timeZone = (await r.tenant()).timezone;
-        const preview = await toSheetDay(
-          deps.crypto,
-          tenantId,
-          timeZone,
-          await r.attendance.loadDay(staffId, row.businessDate),
-        );
+        const preview = toSheetDay(timeZone, await r.attendance.loadDay(staffId, row.businessDate));
         // 読めないセルを除いてから当てる(そのセルだけ飛ばす)
         for (;;) {
           try {
@@ -72,15 +67,9 @@ export async function importAttendanceSheetRows(
           }
         }
         const locked = await r.attendance.lockDay(staffId, row.businessDate, newId());
-        const current = await toSheetDay(deps.crypto, tenantId, timeZone, locked);
+        const current = toSheetDay(timeZone, locked);
         const { next } = applyRowEdit(current, patch, { source: 'import', newId });
-        await writeSheetDiff(
-          r,
-          { crypto: deps.crypto, timeZone, changedBy: null, changeSource: 'import' },
-          locked,
-          current,
-          next,
-        );
+        await writeSheetDiff(r, { timeZone, changedBy: null, changeSource: 'import' }, locked, current, next);
         return true;
       });
       if (written) result.imported++;

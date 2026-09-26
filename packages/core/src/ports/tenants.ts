@@ -1,4 +1,4 @@
-import type { BusinessType, DataKeyState, TenantStatus } from '../domain/model';
+import type { BusinessType, TenantStatus } from '../domain/model';
 
 export interface TenantRecord {
   id: string;
@@ -27,23 +27,9 @@ export interface ProvisionTenantInput {
   name: string;
   timezone: string;
   businessType: BusinessType;
-  wrappedDek: Uint8Array;
-  kekKeyName: string;
 }
 
 /** テナントの作成(platform.provision_tenant()。運用の CLI・シードだけが使う)。 */
 export interface TenantProvisioningPort {
   provision(input: ProvisionTenantInput): Promise<void>;
-}
-
-export interface TenantDataKeyRecord {
-  version: number;
-  wrappedDek: Uint8Array;
-  kekKeyName: string;
-  state: Exclude<DataKeyState, 'destroyed'>;
-}
-
-/** 復号に使える DEK(active / decrypt_only)の読み出し(CryptoPort 実装が使う。テナントの RLS の中で読む)。 */
-export interface TenantDataKeyReaderPort {
-  listUsable(tenantId: string): Promise<TenantDataKeyRecord[]>;
 }

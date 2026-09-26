@@ -17,7 +17,7 @@ const dayColumns = {
   staffId: attendanceDays.staffId,
   businessDate: attendanceDays.businessDate,
   shoppingErrandCount: attendanceDays.shoppingErrandCount,
-  remarksEnc: attendanceDays.remarksEnc,
+  remarks: attendanceDays.remarks,
   overriddenFields: attendanceDays.overriddenFields,
   rowVersion: attendanceDays.rowVersion,
 };
@@ -32,7 +32,7 @@ const visitColumns = {
   status: visits.status,
   source: visits.source,
   externalEventId: visits.externalEventId,
-  labelEnc: visits.labelEnc,
+  label: visits.label,
   overriddenFields: visits.overriddenFields,
 };
 
@@ -41,7 +41,7 @@ const segmentColumns = {
   businessDate: workSegments.businessDate,
   seq: workSegments.seq,
   period: workSegments.period,
-  descriptionEnc: workSegments.descriptionEnc,
+  description: workSegments.description,
   overriddenFields: workSegments.overriddenFields,
 };
 

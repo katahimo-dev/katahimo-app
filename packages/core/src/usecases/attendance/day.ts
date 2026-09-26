@@ -52,7 +52,7 @@ export async function buildDayView(
   today: string,
 ): Promise<AttendanceDayView> {
   const timeZone = (await r.tenant()).timezone;
-  const sheet = await toSheetDay(deps.crypto, r.tenantId, timeZone, rows);
+  const sheet = toSheetDay(timeZone, rows);
   const projection = projectDay(sheet);
   if (projection.hiddenVisitCount > 0) {
     await deps.appLog.write({
@@ -139,7 +139,7 @@ export async function updateAttendanceDay(
         const timeZone = (await r.tenant()).timezone;
         // 変更が無ければ何も書かない(入れ物の行も作らない)。変更があるときだけ行を押さえて読み直してから書く
         const preview = await r.attendance.loadDay(target.staffId, businessDate);
-        const previewSheet = await toSheetDay(deps.crypto, r.tenantId, timeZone, preview);
+        const previewSheet = toSheetDay(timeZone, preview);
         if (applyRowEdit(previewSheet, patch, { source: 'user', newId }).changes.length === 0) {
           return { target, changes: [], attendance: await buildDayView(deps, r, target, preview, today) };
         }
@@ -153,11 +153,11 @@ export async function updateAttendanceDay(
             'stale_row_version',
           );
         }
-        const current = await toSheetDay(deps.crypto, r.tenantId, timeZone, rows);
+        const current = toSheetDay(timeZone, rows);
         const { next, changes } = applyRowEdit(current, patch, { source: 'user', newId });
         const saved = await writeSheetDiff(
           r,
-          { crypto: deps.crypto, timeZone, changedBy: actor.staffId, changeSource: 'user' },
+          { timeZone, changedBy: actor.staffId, changeSource: 'user' },
           rows,
           current,
           next,

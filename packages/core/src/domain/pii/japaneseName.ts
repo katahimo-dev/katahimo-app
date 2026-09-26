@@ -15,10 +15,8 @@ export interface SplitName {
 /**
  * 「姓 名」形式の氏名を、最初の空白(全角/半角)で姓と名に分割する。
  *
- * 現場スタッフが「苗字だけで顧客を検索する」運用があるため、氏名全体のブラインドインデックスとは
- * 別に、姓だけのブラインドインデックスを持たせる必要がある。この関数はその下ごしらえ。
- * 部分一致/前方一致(例:「佐」で「佐藤」にヒット)は等値ベースのブラインドインデックスでは
- * 実現できないが、「姓トークン単位の完全一致」であればこの分割で十分満たせる。
+ * 現場スタッフが「苗字だけで顧客を検索する」運用があるため、表示名とは別に姓(customers.family_name)を
+ * 持たせる。この関数はその下ごしらえ。
  */
 export function splitJapaneseFullName(rawFullName: string): SplitName {
   const normalized = rawFullName.normalize('NFKC').trim();

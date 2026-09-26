@@ -1,5 +1,4 @@
 import type { AppLogPort } from '../../ports/appLog';
-import type { CryptoPort } from '../../ports/crypto';
 import type { RateLimiterPort } from '../../ports/rateLimiter';
 import type { TenantDirectoryPort } from '../../ports/tenants';
 import type { UnitOfWorkPort } from '../../ports/unitOfWork';
@@ -39,8 +38,6 @@ export interface LoginDeps extends AuthDeps {
 }
 
 export interface PasswordResetDeps extends LoginDeps {
-  /** 送信待ちのコードの暗号化。 */
-  crypto: CryptoPort;
   /**
    * 再設定コードのハッシュ(HMAC)に使うサーバー側の秘密値(SESSION_SECRET から HKDF で導出した専用の鍵)。
    * 6桁のコードは総当たりが容易なため、DBが漏れてもこの値が無ければハッシュからコードを逆算できない。

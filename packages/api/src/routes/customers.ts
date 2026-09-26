@@ -39,8 +39,8 @@ export function createCustomerRoutes(container: Container) {
   });
 
   /**
-   * 顧客1件の全項目(子ども・アレルギー・緊急連絡先を含む)を復号して返す。要配慮情報を含むため閲覧を INFO ログに
-   * 残す(誰がどの顧客の詳細を開いたかを後から追えるように)。復号の監査は usecase が1件にまとめる。
+   * 顧客1件の全項目(子ども・アレルギー・緊急連絡先を含む)を返す。要配慮情報を含むため閲覧を INFO ログに
+   * 残す(誰がどの顧客の詳細を開いたかを後から追えるように)。
    */
   app.get('/:id', async (c) => {
     const id = idSchema.safeParse(c.req.param('id'));

@@ -9,7 +9,7 @@ export const receiptTimestampSchema = z
 /** 1回の登録で送れる領収書画像の枚数(GAS版と同じ6枚)。 */
 export const RECEIPT_MAX_IMAGES = 6;
 /**
- * 領収書画像1枚の大きさの上限(復号後のバイト数)。画面は長い辺1200px・JPEG品質0.7に縮めてから送るため
+ * 領収書画像1枚の大きさの上限(デコード後のバイト数)。画面は長い辺1200px・JPEG品質0.7に縮めてから送るため
  * 通常は数百KB。種類は JPEG・PNG・WebP だけ(サーバーが中身の先頭バイトで判定する)。
  */
 export const RECEIPT_IMAGE_MAX_BYTES = 1.5 * 1024 * 1024;

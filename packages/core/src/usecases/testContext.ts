@@ -12,9 +12,6 @@ import type { Actor } from './requestMeta';
 import type { TenantData } from './testDoubles';
 import {
   FakeAppLogPort,
-  FakeAuditLogPort,
-  FakeBlindIndexPort,
-  FakeCryptoPort,
   FakeMailerPort,
   FakeMirrorSenderPort,
   FakeNotifierPort,
@@ -22,6 +19,7 @@ import {
   FakePasswordHasherPort,
   FakeRateLimiter,
   FakeSchedulePort,
+  FakeSecretBox,
   FakeStoragePort,
   FakeTenantDirectory,
   FakeUnitOfWork,
@@ -35,8 +33,7 @@ export function createTestContext(options: { now?: string; mirrorEnabled?: boole
   const now = () => clock.now;
   const uow = new FakeUnitOfWork(db);
   const appLog = new FakeAppLogPort();
-  const audit = new FakeAuditLogPort();
-  const crypto = new FakeCryptoPort();
+  const secretBox = new FakeSecretBox();
   const mailer = new FakeMailerPort();
   const notifier = new FakeNotifierPort();
   const storage = new FakeStoragePort();
@@ -51,9 +48,7 @@ export function createTestContext(options: { now?: string; mirrorEnabled?: boole
     uow,
     tenants,
     appLog,
-    audit,
-    crypto,
-    blindIndex: new FakeBlindIndexPort(),
+    secretBox,
     mailer,
     notifier,
     storage,
@@ -79,8 +74,7 @@ export function createTestContext(options: { now?: string; mirrorEnabled?: boole
     deps,
     uow,
     appLog,
-    audit,
-    crypto,
+    secretBox,
     mailer,
     notifier,
     storage,
@@ -112,7 +106,7 @@ export function createTestContext(options: { now?: string; mirrorEnabled?: boole
       const [familyName = '', givenName = ''] = name.split(' ');
       await uow.run(tenant.id, (r) =>
         applyCustomerSnapshot(
-          { crypto, runId: null },
+          { runId: null },
           r,
           {
             source: 'reserva',

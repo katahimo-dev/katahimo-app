@@ -1,3 +1,4 @@
+import type { GeoPoint } from '../domain/geo';
 import type { AddressKind, ArchiveReason, CustomerSource, Gender } from '../domain/model';
 
 /** 日付の範囲 `[start, end)`('YYYY-MM-DD'。null は無限)。 */
@@ -15,9 +16,9 @@ export interface CustomerRecord {
   givenNameKana: string | null;
   email: string | null;
   phone: string | null;
-  memoEnc: Uint8Array | null;
-  benefitMemberIdEnc: Uint8Array | null;
-  evacuationSiteEnc: Uint8Array | null;
+  memo: string | null;
+  benefitMemberId: string | null;
+  evacuationSite: string | null;
   archivedAt: Date | null;
   archiveReason: ArchiveReason | null;
   rowVersion: number;
@@ -32,9 +33,9 @@ export interface NewCustomerInput {
   givenNameKana?: string | null;
   email?: string | null;
   phone?: string | null;
-  memoEnc?: Uint8Array | null;
-  benefitMemberIdEnc?: Uint8Array | null;
-  evacuationSiteEnc?: Uint8Array | null;
+  memo?: string | null;
+  benefitMemberId?: string | null;
+  evacuationSite?: string | null;
 }
 
 export type CustomerPatch = Partial<Omit<NewCustomerInput, 'id'>>;
@@ -91,7 +92,7 @@ export interface CustomerAddressRecord {
   building: string | null;
   parkingArea: string | null;
   parkingDetail: string | null;
-  geoEnc: Uint8Array | null;
+  geo: GeoPoint | null;
   geoCell: string | null;
   valid: DateRangeValue;
   isPrimary: boolean;
@@ -112,9 +113,9 @@ export interface CustomerContactRecord {
   id: string;
   customerId: string;
   relation: string | null;
-  nameEnc: Uint8Array | null;
-  phoneEnc: Uint8Array | null;
-  notesEnc: Uint8Array | null;
+  name: string | null;
+  phone: string | null;
+  notes: string | null;
   isEmergency: boolean;
   sortOrder: number;
 }
@@ -133,8 +134,8 @@ export interface CareRecipientRecord {
   nameKana: string | null;
   birthDate: string | null;
   sex: Gender | null;
-  allergyEnc: Uint8Array | null;
-  needsEnc: Uint8Array | null;
+  allergy: string | null;
+  needs: string | null;
   sortOrder: number;
   archivedAt: Date | null;
 }

@@ -35,9 +35,9 @@ const customerColumns = {
   givenNameKana: customers.givenNameKana,
   email: customers.email,
   phone: customers.phone,
-  memoEnc: customers.memoEnc,
-  benefitMemberIdEnc: customers.benefitMemberIdEnc,
-  evacuationSiteEnc: customers.evacuationSiteEnc,
+  memo: customers.memo,
+  benefitMemberId: customers.benefitMemberId,
+  evacuationSite: customers.evacuationSite,
   archivedAt: customers.archivedAt,
   archiveReason: customers.archiveReason,
   rowVersion: customers.rowVersion,
@@ -219,23 +219,36 @@ const addressColumns = {
   building: customerAddresses.building,
   parkingArea: customerAddresses.parkingArea,
   parkingDetail: customerAddresses.parkingDetail,
-  geoEnc: customerAddresses.geoEnc,
+  lat: customerAddresses.lat,
+  lng: customerAddresses.lng,
   geoCell: customerAddresses.geoCell,
   valid: customerAddresses.valid,
   isPrimary: customerAddresses.isPrimary,
 };
 
+type AddressRow = Omit<CustomerAddressRecord, 'geo'> & { lat: number | null; lng: number | null };
+
+function toAddressRecord({ lat, lng, ...row }: AddressRow): CustomerAddressRecord {
+  return { ...row, geo: lat !== null && lng !== null ? { lat, lng } : null };
+}
+
+/** 緯度経度(geo)を lat / lng の列にする。patch に geo が無ければ列に触れない。 */
+function addressValues<T extends Partial<CustomerAddressInput>>({ geo, ...rest }: T) {
+  return geo === undefined ? rest : { ...rest, lat: geo?.lat ?? null, lng: geo?.lng ?? null };
+}
+
 export class DrizzleCustomerAddressRepository extends TenantBound implements CustomerAddressRepository {
-  listByCustomer(customerId: string): Promise<CustomerAddressRecord[]> {
-    return this.tx
+  async listByCustomer(customerId: string): Promise<CustomerAddressRecord[]> {
+    const rows = await this.tx
       .select(addressColumns)
       .from(customerAddresses)
       .where(and(eq(customerAddresses.tenantId, this.tenantId), eq(customerAddresses.customerId, customerId)))
       .orderBy(asc(customerAddresses.createdAt), asc(customerAddresses.id));
+    return rows.map(toAddressRecord);
   }
 
-  listForActiveCustomers(): Promise<CustomerAddressRecord[]> {
-    return this.tx
+  async listForActiveCustomers(): Promise<CustomerAddressRecord[]> {
+    const rows = await this.tx
       .select(addressColumns)
       .from(customerAddresses)
       .innerJoin(
@@ -247,16 +260,17 @@ export class DrizzleCustomerAddressRepository extends TenantBound implements Cus
       )
       .where(and(eq(customerAddresses.tenantId, this.tenantId), isNull(customers.archivedAt)))
       .orderBy(asc(customerAddresses.customerId), asc(customerAddresses.createdAt));
+    return rows.map(toAddressRecord);
   }
 
   async insert(input: CustomerAddressInput): Promise<void> {
-    await this.tx.insert(customerAddresses).values({ tenantId: this.tenantId, ...input });
+    await this.tx.insert(customerAddresses).values({ tenantId: this.tenantId, ...addressValues(input) });
   }
 
   async update(id: string, patch: Partial<Omit<CustomerAddressInput, 'id' | 'customerId'>>): Promise<void> {
     await this.tx
       .update(customerAddresses)
-      .set(patch)
+      .set(addressValues(patch))
       .where(and(eq(customerAddresses.tenantId, this.tenantId), eq(customerAddresses.id, id)));
   }
 
@@ -274,9 +288,9 @@ export class DrizzleCustomerContactRepository extends TenantBound implements Cus
         id: customerContacts.id,
         customerId: customerContacts.customerId,
         relation: customerContacts.relation,
-        nameEnc: customerContacts.nameEnc,
-        phoneEnc: customerContacts.phoneEnc,
-        notesEnc: customerContacts.notesEnc,
+        name: customerContacts.name,
+        phone: customerContacts.phone,
+        notes: customerContacts.notes,
         isEmergency: customerContacts.isEmergency,
         sortOrder: customerContacts.sortOrder,
       })
@@ -316,8 +330,8 @@ export class DrizzleCareRecipientRepository extends TenantBound implements CareR
         nameKana: careRecipients.nameKana,
         birthDate: careRecipients.birthDate,
         sex: careRecipients.sex,
-        allergyEnc: careRecipients.allergyEnc,
-        needsEnc: careRecipients.needsEnc,
+        allergy: careRecipients.allergy,
+        needs: careRecipients.needs,
         sortOrder: careRecipients.sortOrder,
         archivedAt: careRecipients.archivedAt,
       })

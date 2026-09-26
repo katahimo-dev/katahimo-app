@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { TenantSecretName } from '../domain/model';
 import type { SettingsActor, SettingsDeps } from './settings';
 import {
   getAdminSettings,
@@ -10,7 +11,6 @@ import {
 import type { TestContext } from './testContext';
 import { createTestContext } from './testContext';
 import type { FakeAppLogPort } from './testDoubles';
-import { fakePlaintext } from './testDoubles';
 
 describe('管理者設定(app_settings)', () => {
   let deps: SettingsDeps;
@@ -28,7 +28,7 @@ describe('管理者設定(app_settings)', () => {
     listedWith = [];
     deps = {
       uow: ctx.uow,
-      crypto: ctx.crypto,
+      secretBox: ctx.secretBox,
       appLog,
       listGeminiModels: async (apiKey) => {
         listedWith.push(apiKey);
@@ -37,10 +37,14 @@ describe('管理者設定(app_settings)', () => {
     };
   });
 
-  /** 保存済みの平文(tenant_secrets)。 */
+  /** 保存済みの値(tenant_secrets の暗号文を開いたもの)。 */
   const stored = async (tenantId = actor.tenantId) => {
-    const plain = (name: string) =>
-      fakePlaintext(ctx.data(tenantId).secrets.find((s) => s.name === name)?.valueEnc ?? null) ?? '';
+    const plain = (name: TenantSecretName) => {
+      const secret = ctx.data(tenantId).secrets.find((s) => s.name === name);
+      return secret
+        ? Buffer.from(secret.sealedValue).toString('utf8').replace(`SEALED|${tenantId}|${name}|`, '')
+        : '';
+    };
     return {
       geminiApiKey: plain('gemini_api_key'),
       report: plain('gchat_report_webhook'),

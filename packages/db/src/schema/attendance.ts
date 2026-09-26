@@ -32,7 +32,7 @@ import {
   updatedAt,
 } from './_columns';
 import { tenantFk, tenantIsolation, tenantRef, tenantScoped } from './_helpers';
-import { bytea, tstzrange } from './_types';
+import { tstzrange } from './_types';
 import { customers } from './customers';
 import { reservationAssignments } from './services';
 import { staff } from './staff';
@@ -56,7 +56,7 @@ export const attendanceDays = pgTable(
     staffId: uuid().notNull(),
     businessDate: date().notNull(),
     shoppingErrandCount: smallint(),
-    remarksEnc: bytea(),
+    remarks: text(),
     status: text({ enum: ATTENDANCE_DAY_STATUSES }).notNull().default('open'),
     overriddenFields: text().array().notNull().default(sql`'{}'::text[]`),
     rowVersion: rowVersion(),
@@ -78,7 +78,7 @@ export const attendanceDays = pgTable(
 
 /**
  * 訪問(実績)。seq はその日の中での並び(1〜3 が出勤簿の訪問#1〜#3。4件目以降も保存するが出勤簿には出ない)。
- * 顧客が特定できない予定(カレンダーのタイトルだけ)は customer_id を null にし、表示名を label_enc に持つ。
+ * 顧客が特定できない予定(カレンダーのタイトルだけ)は customer_id を null にし、表示名を label に持つ。
  * 時間帯の重なりは禁止しない(GAS版と同じく重なる予定もそのまま反映する。二重予約の防止は将来の
  * reservation_assignments の EXCLUDE が受け持つ)。
  */
@@ -97,7 +97,7 @@ export const visits = pgTable(
     status: text({ enum: VISIT_STATUSES }).notNull().default('scheduled'),
     source: text({ enum: VISIT_SOURCES }).notNull(),
     externalEventId: text(),
-    labelEnc: bytea(),
+    label: text(),
     overriddenFields: text().array().notNull().default(sql`'{}'::text[]`),
     rowVersion: rowVersion(),
     createdAt: createdAt(),
@@ -128,7 +128,7 @@ export const visits = pgTable(
   ],
 ).enableRLS();
 
-/** 訪問以外の業務時間(事務作業・研修等)。seq 1〜2 が出勤簿の作業1・2。内容は自由記述のため暗号化。 */
+/** 訪問以外の業務時間(事務作業・研修等)。seq 1〜2 が出勤簿の作業1・2。description は内容の自由記述。 */
 export const workSegments = pgTable(
   'work_segments',
   {
@@ -139,7 +139,7 @@ export const workSegments = pgTable(
     seq: smallint().notNull(),
     kind: text({ enum: WORK_SEGMENT_KINDS }).notNull().default('office'),
     period: tstzrange(),
-    descriptionEnc: bytea(),
+    description: text(),
     overriddenFields: text().array().notNull().default(sql`'{}'::text[]`),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

@@ -14,7 +14,7 @@ export const attendanceDays = pgTable(
      * 説明)。 */
     displayName: text().notNull(),
     // 行コメントは説明に使わない
-    remarksEnc: bytea(),
+    remarks: text(),
   },
   (t) => [],
 );

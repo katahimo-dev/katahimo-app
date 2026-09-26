@@ -36,7 +36,7 @@ export async function getAttendanceScheduleEvents(
     const timeZone = (await r.tenant()).timezone;
     const events: ScheduleEvent[] = [];
     for (const rows of await r.attendance.loadRange(target.staffId, startDate, endDate)) {
-      const sheet = await toSheetDay(deps.crypto, r.tenantId, timeZone, rows);
+      const sheet = toSheetDay(timeZone, rows);
       events.push(...buildScheduleEventsFromRowData(rows.businessDate, projectDay(sheet).rowData));
     }
     return { target, events };

@@ -1,18 +1,13 @@
-import { ENCRYPTION_PURPOSES as P } from '../domain/pii';
-import { parseLatLng } from '../domain/schedule/place';
+import { routeLatLngOf } from '../domain/schedule/place';
 import type { ScheduleCustomer } from '../domain/schedule/types';
 import type { CachePort } from '../ports/cache';
-import type { AuditLogPort, CryptoPort } from '../ports/crypto';
 import type { CustomerAddressRecord } from '../ports/customers';
 import { DEFAULT_TRAVEL_MODE } from '../ports/maps';
 import type { ScheduleDirectory, ScheduleDirectoryPort, ScheduleStaff } from '../ports/scheduleDirectory';
 import type { UnitOfWorkPort } from '../ports/unitOfWork';
-import { DecryptSession } from './cipher';
 
 export interface ScheduleDirectoryDeps {
   uow: UnitOfWorkPort;
-  crypto: CryptoPort;
-  audit?: AuditLogPort;
   /**
    * 読み込んだマスタのキャッシュ(テナント × 顧客データの版数)。顧客CSVを取り込むと版数が変わり、次の読み込みで
    * 作り直す。スタッフの変更は TTL(cacheTtlSeconds)の後に反映される。
@@ -24,8 +19,8 @@ export interface ScheduleDirectoryDeps {
 const DEFAULT_CACHE_TTL_SECONDS = 5 * 60;
 
 /**
- * 予定計算のマスタ(顧客・スタッフ)を DB から読み、緯度経度を復号して返す(GAS版は顧客CSVとスタッフ台帳を
- * 読んでいた)。1回の読み込みは1トランザクション、復号の監査は1件。
+ * 予定計算のマスタ(顧客・スタッフ)を DB から読んで返す(GAS版は顧客CSVとスタッフ台帳を読んでいた)。
+ * 1回の読み込みは1トランザクション。
  */
 export function createScheduleDirectory(deps: ScheduleDirectoryDeps): ScheduleDirectoryPort {
   const ttl = deps.cacheTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS;
@@ -38,7 +33,6 @@ export function createScheduleDirectory(deps: ScheduleDirectoryDeps): ScheduleDi
       sources: await r.customerSourceRecords.mapExternalIds('reserva'),
       staff: await r.staff.listRouteProfiles(),
     }));
-    const d = new DecryptSession(deps.crypto, tenantId);
     const externalIdOf = new Map<string, string>();
     for (const [externalId, link] of loaded.sources) externalIdOf.set(link.customerId, externalId);
     const addressesByCustomer = new Map<string, CustomerAddressRecord[]>();
@@ -50,9 +44,7 @@ export function createScheduleDirectory(deps: ScheduleDirectoryDeps): ScheduleDi
       const addresses = addressesByCustomer.get(c.id) ?? [];
       const home = addresses.find((a) => a.kind === 'home');
       const secondary = addresses.find((a) => a.kind === 'secondary');
-      const latLng = home?.geoEnc
-        ? parseLatLng(await d.decrypt(P.customerAddressGeo, home.id, home.geoEnc))
-        : null;
+      const latLng = routeLatLngOf(home?.geo ?? null);
       customers.push({
         customerId: externalIdOf.get(c.id) ?? '',
         name: c.displayName,
@@ -75,7 +67,7 @@ export function createScheduleDirectory(deps: ScheduleDirectoryDeps): ScheduleDi
     }
     const staff: ScheduleStaff[] = [];
     for (const s of loaded.staff) {
-      const latLng = s.homeGeoEnc ? parseLatLng(await d.decrypt(P.staffHomeGeo, s.id, s.homeGeoEnc)) : null;
+      const latLng = routeLatLngOf(s.homeGeo);
       staff.push({
         id: s.id,
         name: s.displayName,
@@ -84,7 +76,6 @@ export function createScheduleDirectory(deps: ScheduleDirectoryDeps): ScheduleDi
         calendarId: s.scheduleCalendarId,
       });
     }
-    d.flush(deps.audit, 'schedule.directory');
     return { customers, staff };
   }
 

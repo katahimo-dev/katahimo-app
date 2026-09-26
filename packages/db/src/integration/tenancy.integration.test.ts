@@ -1,6 +1,5 @@
-import { newId, outboxDedupeKey } from '@katahimo/core/domain';
+import { newId, outboxDedupeKey, receiptDedupeHash } from '@katahimo/core/domain';
 import type { TenantRepositories, VisitRow } from '@katahimo/core/ports';
-import { FakeCryptoPort } from '@katahimo/core/test-utils';
 import { applyCustomerSnapshot } from '@katahimo/core/usecases';
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
@@ -8,7 +7,7 @@ import { withTenant } from '../client';
 import { pgErrorOf } from '../errors';
 import { DrizzleOutboxQueue } from '../repositories/platform/outboxQueue';
 import { DrizzleRateLimiter } from '../repositories/platform/rateLimiter';
-import { bytes, connect } from './testDb';
+import { connect, reportBody } from './testDb';
 
 const { app, owner, worker, uow, createTenant, createStaff, createCustomer } = connect();
 
@@ -66,7 +65,7 @@ describe('テナントの分離(RLS)', () => {
         building: null,
         parkingArea: null,
         parkingDetail: null,
-        geoEnc: null,
+        geo: null,
         geoCell: null,
         valid: { start: null, end: null },
         isPrimary: true,
@@ -149,7 +148,7 @@ async function insertRecord(
     servicePeriod: null,
     riskRating: null,
     esRating: null,
-    bodyEnc: bytes('v1'),
+    body: reportBody('v1'),
     bodySchemaVer: 1,
     aiGenerated: false,
     retainUntil: null,
@@ -167,7 +166,7 @@ function visit(seq: number, start: string, end: string): VisitRow {
     status: 'completed',
     source: 'manual',
     externalEventId: null,
-    labelEnc: bytes(`訪問${seq}`),
+    label: `訪問${seq}`,
     overriddenFields: [],
   };
 }
@@ -181,7 +180,7 @@ describe('勤怠の制約・トリガー', () => {
       const staffId = await createStaff(r);
       const day = await r.attendance.lockDay(staffId, '2026-09-24', newId());
       await r.attendance.writeDay(day.day.id, {
-        day: { shoppingErrandCount: null, remarksEnc: null, overriddenFields: [] },
+        day: { shoppingErrandCount: null, remarks: null, overriddenFields: [] },
         visits: {
           insert: [
             visit(1, '2026-09-24T00:00:00Z', '2026-09-24T03:00:00Z'),
@@ -209,7 +208,7 @@ describe('勤怠の制約・トリガー', () => {
     await expect(
       uow.run(a, (r) =>
         r.attendance.writeDay(dayId, {
-          day: { shoppingErrandCount: 1, remarksEnc: null, overriddenFields: [] },
+          day: { shoppingErrandCount: 1, remarks: null, overriddenFields: [] },
           visits: emptyWrite,
           segments: emptyWrite,
           legs: emptyWrite,
@@ -222,7 +221,6 @@ describe('勤怠の制約・トリガー', () => {
 describe('顧客の取込(applyCustomerSnapshot)', () => {
   it('住所2の適用終了日が開始日の前日・それより前でも DB の制約で失敗せず、期間なしで持つ', async () => {
     const a = await createTenant();
-    const crypto = new FakeCryptoPort();
     const snapshot = (externalId: string, validFrom: string, validTo: string) => ({
       source: 'reserva' as const,
       externalId,
@@ -237,13 +235,13 @@ describe('顧客の取込(applyCustomerSnapshot)', () => {
     });
     const outcomes = await uow.run(a, async (r) => [
       await applyCustomerSnapshot(
-        { crypto, runId: null },
+        { runId: null },
         r,
         snapshot('R-1', '2026-10-01', '2026-09-30'),
         new Date(),
       ),
       await applyCustomerSnapshot(
-        { crypto, runId: null },
+        { runId: null },
         r,
         snapshot('R-2', '2026-10-05', '2026-09-01'),
         new Date(),
@@ -262,7 +260,7 @@ describe('月の締め(attendance_periods)', () => {
     r.attendance.lockDay(staffId, '2026-09-24', newId());
   const insertVisit = (r: TenantRepositories, dayId: string, seq: number) =>
     r.attendance.writeDay(dayId, {
-      day: { shoppingErrandCount: null, remarksEnc: null, overriddenFields: [] },
+      day: { shoppingErrandCount: null, remarks: null, overriddenFields: [] },
       visits: {
         insert: [visit(seq, '2026-09-24T00:00:00Z', '2026-09-24T01:00:00Z')],
         update: [],
@@ -357,24 +355,20 @@ describe('活動記録', () => {
         servicePeriod: null,
         riskRating: null,
         esRating: null,
-        bodyEnc: bytes('v1'),
+        body: reportBody('v1'),
         bodySchemaVer: 1,
         aiGenerated: false,
         retainUntil: null,
       });
       return { recordId: record.id, staffId };
     });
-    await uow.run(a, (r) => r.careRecords.update(recordId, { bodyEnc: bytes('v2') }, 1), {
+    await uow.run(a, (r) => r.careRecords.update(recordId, { body: reportBody('v2') }, 1), {
       actorId: staffId,
     });
     const revisions = (await withTenant(app, a, (tx) =>
-      tx.execute(
-        sql`select body_enc, changed_by from care_record_revisions where care_record_id = ${recordId}`,
-      ),
-    )) as unknown as { body_enc: Buffer; changed_by: string }[];
-    expect(revisions.map((v) => [Buffer.from(v.body_enc).toString(), v.changed_by])).toEqual([
-      ['v1', staffId],
-    ]);
+      tx.execute(sql`select body, changed_by from care_record_revisions where care_record_id = ${recordId}`),
+    )) as unknown as { body: { inputText: string }; changed_by: string }[];
+    expect(revisions.map((v) => [v.body.inputText, v.changed_by])).toEqual([['v1', staffId]]);
   });
 
   it('確定済み(locked)の記録は本文以外も含めて変更・削除できず、locked から戻せない(KH002)', async () => {
@@ -396,7 +390,7 @@ describe('活動記録', () => {
     });
   });
 
-  it('下書き以外は本文(暗号文・形式の版)が変わるたびに履歴を残し、下書きの変更・状態だけの変更は残さない', async () => {
+  it('下書き以外は本文(中身・形式の版)が変わるたびに履歴を残し、下書きの変更・状態だけの変更は残さない', async () => {
     const a = await createTenant();
     const { submitted, draft } = await uow.run(a, async (r) => {
       const staffId = await createStaff(r);
@@ -408,8 +402,8 @@ describe('活動記録', () => {
     });
     await uow.run(a, (r) => r.careRecords.update(submitted, { bodySchemaVer: 2 }));
     await uow.run(a, (r) => r.careRecords.update(submitted, { riskRating: 2 }));
-    await uow.run(a, (r) => r.careRecords.update(submitted, { bodyEnc: bytes('v2') }));
-    await uow.run(a, (r) => r.careRecords.update(draft, { bodyEnc: bytes('d2') }));
+    await uow.run(a, (r) => r.careRecords.update(submitted, { body: reportBody('v2') }));
+    await uow.run(a, (r) => r.careRecords.update(draft, { body: reportBody('d2') }));
     const revisions = (await withTenant(app, a, (tx) =>
       tx.execute(
         sql`select care_record_id, revision_no, body_schema_ver from care_record_revisions order by care_record_id, revision_no`,
@@ -445,7 +439,7 @@ describe('活動記録', () => {
           servicePeriod: null,
           riskRating: null,
           esRating: null,
-          bodyEnc: bytes(`r${i}`),
+          body: reportBody(`r${i}`),
           bodySchemaVer: 1,
           aiGenerated: false,
           retainUntil: null,
@@ -478,12 +472,12 @@ describe('並行性', () => {
         staffId,
         customerId: null,
         customerNameText: null,
-        handoffTextEnc: null,
+        handoffText: null,
         createdBy: staffId,
       });
       return { staffId, uploadId };
     });
-    const bidx = bytes('same-receipt');
+    const dedupeHash = receiptDedupeHash('same-receipt');
     const attempt = () =>
       uow.run(a, async (r) => {
         const fileId = newId();
@@ -505,8 +499,8 @@ describe('並行性', () => {
           customerNameText: null,
           receiptedAt: new Date(),
           amountYen: 100,
-          storeNameEnc: null,
-          dedupeBidx: bidx,
+          storeName: null,
+          dedupeHash,
         });
       });
     const results = await Promise.all(Array.from({ length: 6 }, attempt));
@@ -653,7 +647,7 @@ describe('テナントの消去(platform.purge_tenant)', () => {
       const customerId = await createCustomer(r);
       const day = await r.attendance.lockDay(staffId, '2026-09-24', newId());
       await r.attendance.writeDay(day.day.id, {
-        day: { shoppingErrandCount: 1, remarksEnc: null, overriddenFields: [] },
+        day: { shoppingErrandCount: 1, remarks: null, overriddenFields: [] },
         visits: {
           insert: [visit(1, '2026-09-24T00:00:00Z', '2026-09-24T01:00:00Z')],
           update: [],
@@ -663,7 +657,7 @@ describe('テナントの消去(platform.purge_tenant)', () => {
         legs: emptyWrite,
       });
       const submitted = await insertRecord(r, staffId, customerId, 'submitted');
-      await r.careRecords.update(submitted, { bodyEnc: bytes('v2') });
+      await r.careRecords.update(submitted, { body: reportBody('v2') });
       await r.careRecords.update(submitted, { status: 'locked' });
       return staffId;
     });
@@ -687,7 +681,7 @@ describe('テナントの消去(platform.purge_tenant)', () => {
         sql`select (select count(*) from staff) + (select count(*) from attendance_periods)
                  + (select count(*) from attendance_days) + (select count(*) from visits)
                  + (select count(*) from care_records) + (select count(*) from care_record_revisions)
-                 + (select count(*) from tenant_data_keys) as n`,
+                 + (select count(*) from tenant_settings) as n`,
       ),
     );
     expect(remaining).toBe(0);

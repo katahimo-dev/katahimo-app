@@ -4,9 +4,9 @@
  * (slug に乱数を付ける)ため、同じ DB で何度流してもよい。
  */
 import { randomBytes } from 'node:crypto';
+import type { DailyReportContent } from '@katahimo/core/domain';
 import { newId } from '@katahimo/core/domain';
 import type { TenantRepositories } from '@katahimo/core/ports';
-import { FakeKmsPort } from '@katahimo/core/test-utils';
 import { provisionTenant } from '@katahimo/core/usecases';
 import { afterAll } from 'vitest';
 import { closeDatabase, createDatabase, type Database } from '../client';
@@ -43,7 +43,6 @@ export function connect() {
       {
         tenants: new DrizzleTenantDirectory(owner),
         provisioning: new DrizzleTenantProvisioning(owner),
-        kms: new FakeKmsPort(),
       },
       { slug, name: `結合テスト ${slug}` },
     );
@@ -75,4 +74,11 @@ export function connect() {
   return { app, owner, worker, uow, createTenant, createStaff, createCustomer };
 }
 
-export const bytes = (text: string) => new Uint8Array(Buffer.from(text, 'utf8'));
+/** 日報の本文(care_records.body)。inputText だけを変えて本文の変化を作る。 */
+export const reportBody = (inputText: string): DailyReportContent => ({
+  startTime: '',
+  endTime: '',
+  inputText,
+  internalText: '',
+  customerText: '',
+});

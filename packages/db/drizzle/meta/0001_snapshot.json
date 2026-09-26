@@ -1,6 +1,6 @@
 {
-  "id": "d3de1bca-4ce4-4f2f-9b39-47836bd76659",
-  "prevId": "1b4ce117-7309-480c-b55c-a5b9716b6d77",
+  "id": "a491f302-7e4b-42ba-87a0-b300b7c4278a",
+  "prevId": "f1843b2f-fd75-4a59-8848-41cdf94e2575",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -39,9 +39,9 @@
           "primaryKey": false,
           "notNull": false
         },
-        "remarks_enc": {
-          "name": "remarks_enc",
-          "type": "bytea",
+        "remarks": {
+          "name": "remarks",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -561,9 +561,9 @@
           "primaryKey": false,
           "notNull": false
         },
-        "label_enc": {
-          "name": "label_enc",
-          "type": "bytea",
+        "label": {
+          "name": "label",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -800,9 +800,9 @@
           "primaryKey": false,
           "notNull": false
         },
-        "description_enc": {
-          "name": "description_enc",
-          "type": "bytea",
+        "description": {
+          "name": "description",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -956,15 +956,15 @@
           "primaryKey": false,
           "notNull": false
         },
-        "allergy_enc": {
-          "name": "allergy_enc",
-          "type": "bytea",
+        "allergy": {
+          "name": "allergy",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "needs_enc": {
-          "name": "needs_enc",
-          "type": "bytea",
+        "needs": {
+          "name": "needs",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -1151,9 +1151,15 @@
           "primaryKey": false,
           "notNull": false
         },
-        "geo_enc": {
-          "name": "geo_enc",
-          "type": "bytea",
+        "lat": {
+          "name": "lat",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lng": {
+          "name": "lng",
+          "type": "double precision",
           "primaryKey": false,
           "notNull": false
         },
@@ -1323,6 +1329,10 @@
         "customer_addresses_geo_cell_check": {
           "name": "customer_addresses_geo_cell_check",
           "value": "\"customer_addresses\".\"geo_cell\" ~ '^[0-9b-hjkmnp-z]{6}$'"
+        },
+        "customer_addresses_lat_lng_check": {
+          "name": "customer_addresses_lat_lng_check",
+          "value": "(\"customer_addresses\".\"lat\" is null) = (\"customer_addresses\".\"lng\" is null) and \"customer_addresses\".\"lat\" between -90 and 90 and \"customer_addresses\".\"lng\" between -180 and 180"
         }
       },
       "isRLSEnabled": true
@@ -1356,21 +1366,21 @@
           "primaryKey": false,
           "notNull": false
         },
-        "name_enc": {
-          "name": "name_enc",
-          "type": "bytea",
+        "name": {
+          "name": "name",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "phone_enc": {
-          "name": "phone_enc",
-          "type": "bytea",
+        "phone": {
+          "name": "phone",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "notes_enc": {
-          "name": "notes_enc",
-          "type": "bytea",
+        "notes": {
+          "name": "notes",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -1511,9 +1521,9 @@
           "notNull": true,
           "default": false
         },
-        "notes_enc": {
-          "name": "notes_enc",
-          "type": "bytea",
+        "notes": {
+          "name": "notes",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -2010,21 +2020,21 @@
           "primaryKey": false,
           "notNull": false
         },
-        "memo_enc": {
-          "name": "memo_enc",
-          "type": "bytea",
+        "memo": {
+          "name": "memo",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "benefit_member_id_enc": {
-          "name": "benefit_member_id_enc",
-          "type": "bytea",
+        "benefit_member_id": {
+          "name": "benefit_member_id",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "evacuation_site_enc": {
-          "name": "evacuation_site_enc",
-          "type": "bytea",
+        "evacuation_site": {
+          "name": "evacuation_site",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -2384,9 +2394,9 @@
           "primaryKey": false,
           "notNull": false
         },
-        "notes_enc": {
-          "name": "notes_enc",
-          "type": "bytea",
+        "notes": {
+          "name": "notes",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -2910,9 +2920,9 @@
           "notNull": true,
           "default": "'manual'"
         },
-        "note_enc": {
-          "name": "note_enc",
-          "type": "bytea",
+        "note": {
+          "name": "note",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -3581,9 +3591,9 @@
           "primaryKey": false,
           "notNull": false
         },
-        "note_enc": {
-          "name": "note_enc",
-          "type": "bytea",
+        "note": {
+          "name": "note",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -3770,9 +3780,9 @@
           "primaryKey": false,
           "notNull": true
         },
-        "reason_enc": {
-          "name": "reason_enc",
-          "type": "bytea",
+        "reason": {
+          "name": "reason",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -4620,9 +4630,9 @@
           "primaryKey": false,
           "notNull": true
         },
-        "before_enc": {
-          "name": "before_enc",
-          "type": "bytea",
+        "before": {
+          "name": "before",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },
@@ -4883,9 +4893,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "outbox_messages_completed_at_idx": {
           "name": "outbox_messages_completed_at_idx",
@@ -5702,9 +5712,9 @@
           "primaryKey": false,
           "notNull": true
         },
-        "body_enc": {
-          "name": "body_enc",
-          "type": "bytea",
+        "body": {
+          "name": "body",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": true
         },
@@ -5873,9 +5883,9 @@
           "primaryKey": false,
           "notNull": false
         },
-        "body_enc": {
-          "name": "body_enc",
-          "type": "bytea",
+        "body": {
+          "name": "body",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": true
         },
@@ -6189,9 +6199,9 @@
           "primaryKey": false,
           "notNull": false
         },
-        "handoff_text_enc": {
-          "name": "handoff_text_enc",
-          "type": "bytea",
+        "handoff_text": {
+          "name": "handoff_text",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -6355,14 +6365,14 @@
           "primaryKey": false,
           "notNull": false
         },
-        "store_name_enc": {
-          "name": "store_name_enc",
-          "type": "bytea",
+        "store_name": {
+          "name": "store_name",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "dedupe_bidx": {
-          "name": "dedupe_bidx",
+        "dedupe_hash": {
+          "name": "dedupe_hash",
           "type": "bytea",
           "primaryKey": false,
           "notNull": false
@@ -6376,8 +6386,8 @@
         }
       },
       "indexes": {
-        "receipts_tenant_id_dedupe_bidx_key": {
-          "name": "receipts_tenant_id_dedupe_bidx_key",
+        "receipts_tenant_id_dedupe_hash_key": {
+          "name": "receipts_tenant_id_dedupe_hash_key",
           "columns": [
             {
               "expression": "tenant_id",
@@ -6386,7 +6396,7 @@
               "nulls": "last"
             },
             {
-              "expression": "dedupe_bidx",
+              "expression": "dedupe_hash",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -6395,7 +6405,7 @@
           "isUnique": true,
           "with": {},
           "method": "btree",
-          "where": "dedupe_bidx is not null",
+          "where": "dedupe_hash is not null",
           "concurrently": false
         },
         "receipts_tenant_id_staff_id_receipted_at_idx": {
@@ -7148,9 +7158,9 @@
           "notNull": true,
           "default": 1
         },
-        "notes_enc": {
-          "name": "notes_enc",
-          "type": "bytea",
+        "notes": {
+          "name": "notes",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -7543,9 +7553,9 @@
           "notNull": true,
           "default": 5
         },
-        "mail_code_enc": {
-          "name": "mail_code_enc",
-          "type": "bytea",
+        "mail_code": {
+          "name": "mail_code",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -7929,9 +7939,15 @@
           "primaryKey": false,
           "notNull": false
         },
-        "home_geo_enc": {
-          "name": "home_geo_enc",
-          "type": "bytea",
+        "home_lat": {
+          "name": "home_lat",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "home_lng": {
+          "name": "home_lng",
+          "type": "double precision",
           "primaryKey": false,
           "notNull": false
         },
@@ -8078,6 +8094,10 @@
         "staff_home_geo_cell_check": {
           "name": "staff_home_geo_cell_check",
           "value": "\"staff\".\"home_geo_cell\" ~ '^[0-9b-hjkmnp-z]{6}$'"
+        },
+        "staff_home_lat_lng_check": {
+          "name": "staff_home_lat_lng_check",
+          "value": "(\"staff\".\"home_lat\" is null) = (\"staff\".\"home_lng\" is null) and \"staff\".\"home_lat\" between -90 and 90 and \"staff\".\"home_lng\" between -180 and 180"
         }
       },
       "isRLSEnabled": true
@@ -8795,133 +8815,6 @@
       },
       "isRLSEnabled": true
     },
-    "public.tenant_data_keys": {
-      "name": "tenant_data_keys",
-      "schema": "",
-      "columns": {
-        "tenant_id": {
-          "name": "tenant_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "wrapped_dek": {
-          "name": "wrapped_dek",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "kek_key_name": {
-          "name": "kek_key_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "destroyed_at": {
-          "name": "destroyed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "tenant_data_keys_tenant_id_active_key": {
-          "name": "tenant_data_keys_tenant_id_active_key",
-          "columns": [
-            {
-              "expression": "tenant_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "with": {},
-          "method": "btree",
-          "where": "state = 'active'",
-          "concurrently": false
-        }
-      },
-      "foreignKeys": {
-        "tenant_data_keys_tenant_id_fkey": {
-          "name": "tenant_data_keys_tenant_id_fkey",
-          "tableFrom": "tenant_data_keys",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {
-        "tenant_data_keys_pkey": {
-          "name": "tenant_data_keys_pkey",
-          "columns": [
-            "tenant_id",
-            "version"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {
-        "tenant_isolation": {
-          "name": "tenant_isolation",
-          "as": "PERMISSIVE",
-          "for": "ALL",
-          "to": [
-            "public"
-          ],
-          "using": "tenant_id = app_current_tenant()",
-          "withCheck": "tenant_id = app_current_tenant()"
-        }
-      },
-      "checkConstraints": {
-        "tenant_data_keys_state_check": {
-          "name": "tenant_data_keys_state_check",
-          "value": "\"tenant_data_keys\".\"state\" in ('active', 'decrypt_only', 'destroyed')"
-        },
-        "tenant_data_keys_version_check": {
-          "name": "tenant_data_keys_version_check",
-          "value": "\"tenant_data_keys\".\"version\" between 1 and 65535"
-        },
-        "tenant_data_keys_wrapped_dek_check": {
-          "name": "tenant_data_keys_wrapped_dek_check",
-          "value": "(\"tenant_data_keys\".\"state\" = 'destroyed') = (\"tenant_data_keys\".\"wrapped_dek\" is null)"
-        }
-      },
-      "isRLSEnabled": true
-    },
     "public.tenant_features": {
       "name": "tenant_features",
       "schema": "",
@@ -9024,8 +8917,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "value_enc": {
-          "name": "value_enc",
+        "sealed_value": {
+          "name": "sealed_value",
           "type": "bytea",
           "primaryKey": false,
           "notNull": true
