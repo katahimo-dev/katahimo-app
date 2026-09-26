@@ -62,6 +62,8 @@ CREATE TRIGGER "data_subject_requests_set_updated_at" BEFORE UPDATE ON "data_sub
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "matching_runs_set_updated_at" BEFORE UPDATE ON "matching_runs"
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
+CREATE TRIGGER "push_subscriptions_set_updated_at" BEFORE UPDATE ON "push_subscriptions"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "reservation_assignments_set_updated_at" BEFORE UPDATE ON "reservation_assignments"
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "reservations_set_updated_at" BEFORE UPDATE ON "reservations"
@@ -466,6 +468,7 @@ ALTER TABLE "matching_run_candidates" FORCE ROW LEVEL SECURITY;--> statement-bre
 ALTER TABLE "matching_runs" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "outbox_messages" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "password_reset_codes" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "push_subscriptions" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "receipt_uploads" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "receipts" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "reservation_assignments" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -536,6 +539,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   "staff_login_emails", "staff_service_areas", "staff_weekly_availability", "stored_files", "tenant_features",
   "tenant_secrets", "travel_legs", "travel_time_cache", "visits", "work_segments"
   TO katahimo_app;--> statement-breakpoint
+-- Web Push の購読(本人の端末の登録・付け替え・削除)
+GRANT SELECT, INSERT, UPDATE, DELETE ON "push_subscriptions" TO katahimo_app;--> statement-breakpoint
 
 -- ── katahimo_worker(ワーカー・ジョブ)。ジョブが使う表・操作だけ(認証情報・テナントの秘密値・AIプロンプト・
 --    マッチングの表には権限を与えない)。ジョブを足すときはここと catalog.integration.test.ts の一覧を直す ──
@@ -554,6 +559,8 @@ GRANT SELECT, UPDATE ON "tenant_settings" TO katahimo_worker;--> statement-break
 -- ミラーの送信(記録・領収書を読む)・再設定メールの送信
 GRANT SELECT ON "care_records", "receipts", "receipt_uploads" TO katahimo_worker;--> statement-breakpoint
 GRANT SELECT, UPDATE, DELETE ON "password_reset_codes" TO katahimo_worker;--> statement-breakpoint
+-- Web Push(翌日の予定のお知らせの対象の選び出し・送信の成功と失敗の記録・もう無い購読の削除)
+GRANT SELECT, UPDATE, DELETE ON "push_subscriptions" TO katahimo_worker;--> statement-breakpoint
 -- free/busy の同期
 GRANT SELECT, INSERT, DELETE ON "staff_busy_blocks" TO katahimo_worker;--> statement-breakpoint
 -- 保守(保存期間の削除。参照されないファイルの判定に staff_attributes・data_export_requests を読む)

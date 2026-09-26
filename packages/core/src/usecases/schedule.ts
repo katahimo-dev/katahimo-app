@@ -21,7 +21,8 @@ export interface ScheduleDeps {
  */
 export interface ScheduleViewRequest {
   tenantId: string;
-  actorStaffId: string;
+  /** 操作したスタッフ。夜間ジョブ(翌日の予定のお知らせ)は null。 */
+  actorStaffId: string | null;
   targetStaffId: string;
   /** 'YYYY-MM-DD'(JSTの業務日) */
   date: string;

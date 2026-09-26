@@ -3,6 +3,8 @@
  * 実行前の状態に戻す(トランザクションのロールバックと同じ振る舞い)。DB の一意制約のうちテストで確かめたいもの
  * (ログイン用メール・領収書の重複・outbox の dedupe_key)は同じように弾く。
  */
+
+import type { PushNotice } from '@katahimo/shared';
 import type { RateLimitBucket, RateLimitDecision, RateLimitRule } from '../domain';
 import { conflict, consumeRateLimit, DomainError, refundRateLimit, STALE_WRITE_MESSAGE } from '../domain';
 import type { GeoPoint } from '../domain/geo';
@@ -49,6 +51,13 @@ import type {
   OutboxMessageInput,
   OutboxQueuePort,
 } from '../ports/outbox';
+import type {
+  PushSubscriptionRecord,
+  WebPushSenderPort,
+  WebPushSendOptions,
+  WebPushSendResult,
+  WebPushTarget,
+} from '../ports/push';
 import type { RateLimiterPort } from '../ports/rateLimiter';
 import type { CareRecordRow, ReceiptRow, ReceiptUploadRow, StoredFileRow } from '../ports/records';
 import type {
@@ -128,6 +137,7 @@ export interface TenantData {
   importRuns: (ImportRunRecord & { message: string | null })[];
   calendars: StaffCalendarRecord[];
   busyBlocks: { staffId: string; start: Date; end: Date }[];
+  pushSubscriptions: PushSubscriptionRecord[];
   outbox: OutboxRow[];
   entityChanges: EntityChangeInput[];
 }
@@ -163,6 +173,7 @@ function emptyTenantData(): TenantData {
     importRuns: [],
     calendars: [],
     busyBlocks: [],
+    pushSubscriptions: [],
     outbox: [],
     entityChanges: [],
   };
@@ -840,6 +851,57 @@ export function fakeRepositories(
         ];
       },
     },
+    pushSubscriptions: {
+      async findByEndpoint(endpoint) {
+        return structuredClone(d().pushSubscriptions.find((p) => p.endpoint === endpoint) ?? null);
+      },
+      async upsert(input) {
+        const data = d();
+        const existing = data.pushSubscriptions.find((p) => p.endpoint === input.endpoint);
+        if (existing) {
+          Object.assign(existing, {
+            staffId: input.staffId,
+            p256dh: input.p256dh,
+            auth: input.auth,
+            userAgent: input.userAgent,
+            failureCount: 0,
+          });
+          return structuredClone(existing);
+        }
+        const created: PushSubscriptionRecord = {
+          ...input,
+          createdAt: new Date(),
+          lastSuccessAt: null,
+          failureCount: 0,
+        };
+        data.pushSubscriptions.push(created);
+        return structuredClone(created);
+      },
+      async deleteForStaff(staffId, endpoint) {
+        const data = d();
+        const found = data.pushSubscriptions.find((p) => p.staffId === staffId && p.endpoint === endpoint);
+        if (!found) return null;
+        data.pushSubscriptions = data.pushSubscriptions.filter((p) => p !== found);
+        return found.id;
+      },
+      async listForStaff(staffId) {
+        return structuredClone(d().pushSubscriptions.filter((p) => p.staffId === staffId));
+      },
+      async listSubscribedStaffIds() {
+        return [...new Set(d().pushSubscriptions.map((p) => p.staffId))];
+      },
+      async recordSuccess(id, at) {
+        const found = d().pushSubscriptions.find((p) => p.id === id);
+        if (found) Object.assign(found, { lastSuccessAt: at, failureCount: 0 });
+      },
+      async recordFailure(id) {
+        const found = d().pushSubscriptions.find((p) => p.id === id);
+        if (found) found.failureCount++;
+      },
+      async delete(id) {
+        d().pushSubscriptions = d().pushSubscriptions.filter((p) => p.id !== id);
+      },
+    },
     outbox: {
       async enqueue(message) {
         if (db.skipOutboxTopics.has(message.topic)) return;
@@ -1207,6 +1269,31 @@ export class FakeSchedulePort implements SchedulePort {
     const error = this.errors.get(`${target.staffName}|${dateString}`);
     if (error) throw new Error(error);
     return this.results.get(`${target.staffName}|${dateString}`) ?? { success: true, appointments: [] };
+  }
+}
+
+/** Web Push の送信(送った通知を記録する)。endpoint ごとに結果・失敗を決められる。 */
+export class FakeWebPushSender implements WebPushSenderPort {
+  /** 受け付けられた(delivered)送信。 */
+  readonly sent: { endpoint: string; notice: PushNotice; options: WebPushSendOptions }[] = [];
+  private readonly outcomes = new Map<string, WebPushSendResult | Error>();
+
+  /** endpoint への送信の結果(既定は delivered)。Error を渡すとその例外を投げる。 */
+  setOutcome(endpoint: string, outcome: WebPushSendResult | Error): void {
+    this.outcomes.set(endpoint, outcome);
+  }
+
+  async send(
+    target: WebPushTarget,
+    notice: PushNotice,
+    options: WebPushSendOptions,
+  ): Promise<WebPushSendResult> {
+    const outcome = this.outcomes.get(target.endpoint) ?? 'delivered';
+    if (outcome instanceof Error) throw outcome;
+    if (outcome === 'delivered') {
+      this.sent.push({ endpoint: target.endpoint, notice: structuredClone(notice), options });
+    }
+    return outcome;
   }
 }
 

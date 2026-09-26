@@ -10,6 +10,7 @@ import type {
   StoragePort,
   TenantDirectoryPort,
   UnitOfWorkPort,
+  WebPushSenderPort,
 } from '@katahimo/core/ports';
 import type { StaffBusyBlockSyncDeps } from '@katahimo/core/usecases';
 import { createScheduleDirectory } from '@katahimo/core/usecases';
@@ -32,11 +33,13 @@ import {
   NoopMirrorSenderPort,
   SmtpMailerPort,
   skippedOutboxTopics,
+  vapidDetailsOf,
+  WebPushSender,
 } from '@katahimo/integrations';
 import type { WorkerEnv } from './env';
 
 /**
- * ワーカーの全ジョブ(outbox・夜間のカレンダー反映・顧客CSV取込・保守・free/busy 同期)が使う依存一式
+ * ワーカーの全ジョブ(outbox・夜間のカレンダー反映・翌日の予定のお知らせ・顧客CSV取込・保守・free/busy 同期)が使う依存一式
  * (ポートの型だけで持つ)。usecase の Deps を構造的に満たす。
  */
 export interface WorkerContainer {
@@ -52,6 +55,8 @@ export interface WorkerContainer {
   csvSource: CustomerCsvSourcePort;
   /** MIRROR_TO_GOOGLE_SHEETS(API と同じ設定)。無効ならミラーのトピックは送らずに完了にする。 */
   mirrorEnabled: boolean;
+  /** Web Push の送信(VAPID の設定が無ければ null。push.* は送らずに完了にし、お知らせのジョブは何もしない)。 */
+  webPush: WebPushSenderPort | null;
   workerId: string;
   leaseMs: number;
   retryPolicy: { baseDelayMs: number; maxDelayMs: number };
@@ -75,6 +80,7 @@ function createMailer(env: WorkerEnv): MailerPort {
 export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerContainer {
   const uow = new DrizzleUnitOfWork(db, { skipOutboxTopics: skippedOutboxTopics(env) });
   const appLog = new DrizzleAppLogRepository(db);
+  const vapid = vapidDetailsOf(env);
   const bridge =
     env.GAS_BRIDGE_URL && env.GAS_BRIDGE_SECRET
       ? { baseUrl: env.GAS_BRIDGE_URL, secret: env.GAS_BRIDGE_SECRET }
@@ -101,6 +107,7 @@ export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerConta
       ...(env.CUSTOMER_CSV_LOCAL_DIR ? { localDir: env.CUSTOMER_CSV_LOCAL_DIR } : {}),
     }),
     mirrorEnabled: env.MIRROR_TO_GOOGLE_SHEETS,
+    webPush: vapid ? new WebPushSender(vapid) : null,
     workerId: `${hostname()}:${process.pid}`,
     leaseMs: env.OUTBOX_LEASE_MS,
     retryPolicy: { baseDelayMs: env.OUTBOX_RETRY_BASE_DELAY_MS, maxDelayMs: env.OUTBOX_RETRY_MAX_DELAY_MS },

@@ -92,13 +92,18 @@ export const CALENDAR_PURPOSES = ['schedule', 'busy'] as const;
 export const BUSY_BLOCK_SOURCES = ['google_calendar', 'manual'] as const;
 export const MATCHING_RUN_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancelled'] as const;
 
-/** outbox のトピック。ペイロードはIDのみ(個人情報を入れない。ワーカーがDBから読み直す)。 */
+/**
+ * outbox のトピック。ミラー・メールのペイロードはIDのみ(個人情報を入れない。ワーカーがDBから読み直す)。
+ * Web Push(push.*)のペイロードは送る通知の文面(PushNotice: 表示名と時刻だけ。住所・電話番号は入れない)。
+ */
 export const OUTBOX_TOPICS = [
   'mirror.attendance_day',
   'mirror.attendance_aggregate',
   'mirror.care_record',
   'mirror.receipt',
   'mail.password_reset',
+  'push.route_notice',
+  'push.test',
 ] as const;
 export type OutboxTopic = (typeof OUTBOX_TOPICS)[number];
 /** スプレッドシートへのミラー(MIRROR_TO_GOOGLE_SHEETS が有効な時だけ積む・送る)。 */
@@ -108,6 +113,8 @@ export const MIRROR_TOPICS: readonly OutboxTopic[] = [
   'mirror.care_record',
   'mirror.receipt',
 ];
+/** Web Push の通知(VAPID が設定されている時だけ積む・送る)。 */
+export const PUSH_TOPICS: readonly OutboxTopic[] = ['push.route_notice', 'push.test'];
 export const OUTBOX_STATUSES = ['pending', 'processing', 'done', 'failed', 'dead'] as const;
 export type OutboxStatus = (typeof OUTBOX_STATUSES)[number];
 

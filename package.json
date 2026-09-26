@@ -28,9 +28,11 @@
     "worker": "pnpm --filter @katahimo/worker start",
     "outbox:once": "pnpm --filter @katahimo/worker outbox:once",
     "job:nightly-calendar-sync": "pnpm --filter @katahimo/worker job:nightly-calendar-sync",
+    "job:route-notice": "pnpm --filter @katahimo/worker job:route-notice",
     "job:csv-import": "pnpm --filter @katahimo/worker job:csv-import",
     "job:maintenance": "pnpm --filter @katahimo/worker job:maintenance",
     "job:sync-busy-blocks": "pnpm --filter @katahimo/worker job:sync-busy-blocks",
+    "push:vapid-keys": "pnpm --filter @katahimo/integrations exec web-push generate-vapid-keys",
     "preview:shoot": "pnpm --filter @katahimo/gas-preview shoot",
     "preview:e2e": "pnpm --filter @katahimo/gas-preview e2e"
   },

@@ -10,6 +10,7 @@ import type {
 import type { ImportRunRepository } from './imports';
 import type { TenantRetentionRepository } from './maintenance';
 import type { EntityChangeWriter, OutboxWriter } from './outbox';
+import type { PushSubscriptionRepository } from './push';
 import type { CareRecordRepository, ReceiptRepository, StoredFileRepository } from './records';
 import type { AiPromptRepository, TenantSecretRepository, TenantSettingsRepository } from './settings';
 import type { PasswordResetCodeRepository, SessionRepository, StaffRepository } from './staff';
@@ -41,6 +42,7 @@ export interface TenantRepositories {
   importRuns: ImportRunRepository;
   staffCalendars: StaffCalendarRepository;
   busyBlocks: StaffBusyBlockRepository;
+  pushSubscriptions: PushSubscriptionRepository;
   outbox: OutboxWriter;
   entityChanges: EntityChangeWriter;
   retention: TenantRetentionRepository;

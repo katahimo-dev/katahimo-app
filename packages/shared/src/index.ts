@@ -9,6 +9,7 @@ export * from './contracts/common';
 export * from './contracts/customerHistory';
 export * from './contracts/customerImport';
 export * from './contracts/customers';
+export * from './contracts/push';
 export * from './contracts/receipts';
 export * from './contracts/reports';
 export * from './contracts/roles';

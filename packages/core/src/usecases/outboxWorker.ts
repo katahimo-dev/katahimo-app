@@ -9,16 +9,18 @@ import {
   type RetryPolicy,
   reportTypeLabelOf,
 } from '../domain';
-import { MIRROR_TOPICS, type OutboxTopic } from '../domain/model';
+import { MIRROR_TOPICS, type OutboxTopic, PUSH_TOPICS } from '../domain/model';
 import { formatJstDateTime } from '../domain/reports/jstTime';
 import type { AppLogPort } from '../ports/appLog';
 import type { MailerPort } from '../ports/mailer';
 import type { MirrorSenderPort } from '../ports/mirrorSender';
 import type { ClaimedOutboxMessage, OutboxQueuePort } from '../ports/outbox';
+import type { WebPushSenderPort } from '../ports/push';
 import type { StoragePort } from '../ports/storage';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
 import { toSheetDay } from './attendance/records';
 import { sendPasswordResetMail } from './auth/passwordReset';
+import { sendPushNotice } from './pushNotifications';
 import type { Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
 
@@ -31,6 +33,8 @@ export interface OutboxWorkerDeps extends Clock {
   appLog: AppLogPort;
   /** MIRROR_TO_GOOGLE_SHEETS。無効ならミラーのトピックは送らずに完了にする(API と同じ設定を使う)。 */
   mirrorEnabled: boolean;
+  /** Web Push の送信。VAPID の設定が無ければ null(push.* は送らずに完了にする)。 */
+  webPush: WebPushSenderPort | null;
   /** このワーカーの識別子(locked_by)。 */
   workerId: string;
   /** 取り出したメッセージのリース(1件の処理の最長時間より長くする)。 */
@@ -177,6 +181,11 @@ const mirrorAttendanceAggregate: Handler = async (deps, message) => {
   if (loaded) await deps.sender.sendAttendanceAggregate(loaded);
 };
 
+const pushNotice: Handler = async (deps, message) => {
+  if (!deps.webPush) throw new PermanentOutboxError('Web Push が設定されていません');
+  await sendPushNotice({ ...deps, webPush: deps.webPush }, message);
+};
+
 const HANDLERS: Record<OutboxTopic, Handler> = {
   'mirror.care_record': mirrorCareRecord,
   'mirror.receipt': mirrorReceipt,
@@ -184,6 +193,8 @@ const HANDLERS: Record<OutboxTopic, Handler> = {
   'mirror.attendance_aggregate': mirrorAttendanceAggregate,
   'mail.password_reset': (deps, message) =>
     sendPasswordResetMail(deps, message.tenantId, message.aggregateId),
+  'push.route_notice': pushNotice,
+  'push.test': pushNotice,
 };
 
 export type ProcessOutcome = 'idle' | 'done' | 'skipped' | 'retried' | 'failed' | 'lease_lost';
@@ -215,7 +226,9 @@ async function logDead(
 
 /**
  * outbox から1件取り出して処理する(テナントを横断して FOR UPDATE SKIP LOCKED で1件ずつ。複数のワーカーが
- * 同時に動いても同じメッセージを二重に処理しない)。対象の行は処理のたびに DB から読み直す(ペイロードは ID だけ)。
+ * 同時に動いても同じメッセージを二重に処理しない)。ミラー・メールの対象の行は処理のたびに DB から読み直す
+ * (ペイロードは ID だけ)。Web Push はペイロードの文面をそのスタッフの購読へ送る。ミラーが無効・VAPID の設定が無い
+ * 環境では、そのトピックを送らずに完了にする(skipped)。
  * 失敗は指数バックオフで再試行し、max_attempts 回で dead(ERROR ログ)、再試行しても直らない失敗は failed。
  * 処理中にリースが切れて別のワーカーが取り直していたら、結果は書かない(lease_lost、WARN ログ)。
  * 処理中のままリースが切れて試行回数の上限に達したもの(処理の途中でワーカーが落ち続けた等)は取り直さず dead にする。
@@ -237,7 +250,10 @@ export async function processNextOutboxMessage(deps: OutboxWorkerDeps): Promise<
     });
     return 'lease_lost';
   };
-  if (!deps.mirrorEnabled && MIRROR_TOPICS.includes(message.topic)) {
+  const disabled =
+    (!deps.mirrorEnabled && MIRROR_TOPICS.includes(message.topic)) ||
+    (!deps.webPush && PUSH_TOPICS.includes(message.topic));
+  if (disabled) {
     return (await deps.queue.complete(message, currentTime(deps))) ? 'skipped' : leaseLost();
   }
   try {
