@@ -80,6 +80,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `receipt_ocr_staff` | テナント + スタッフ | 1日300回 | 429 | `RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY` |
 | `schedule_force_refresh_staff` | テナント + スタッフ | 1時間30回 | 429 | `RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR` |
 | `push_test_staff` | テナント + スタッフ | 1時間10回 | 429 | — |
+| `push_subscribe_staff` | テナント + スタッフ | 1時間30回 | 429 | — |
 
 ログインの2つの規則は照合(argon2)の**前に**1回分の枠を取る(同時の大量の試行でも照合まで進むのは上限の回数まで)。
 一致した回は数えない(アカウントは数え直し、IP は先に取った1回分を返す)。
@@ -207,9 +208,9 @@ URL へ送らないように)。操作ログに `endpoint`・鍵は残さない�
 | メソッド・パス | 契約(要求 / 応答) | 応答・エラー・ログ |
 | --- | --- | --- |
 | `GET /config` | — / `pushConfigResponseSchema` | `{ enabled, publicKey }`。VAPID の設定(`VAPID_PUBLIC_KEY`)が無ければ `{ enabled: false, publicKey: null }` |
-| `POST /subscriptions` | `pushSubscribeRequestSchema`(`PushSubscription.toJSON()` の形: `endpoint`・`expirationTime?`・`keys: { p256dh, auth }`)/ `okResponseSchema` | 同じ `endpoint` があれば鍵を書き直し、別のスタッフのものなら本人に付け替える。User-Agent(300字まで)を残す。通知を使えない環境は 400。INFO `push.subscription.saved`(`subscriptionId`・`created`・付け替えなら `previousStaffId`) |
+| `POST /subscriptions` | `pushSubscribeRequestSchema`(`PushSubscription.toJSON()` の形: `endpoint`・`expirationTime?`・`keys: { p256dh, auth }`)/ `okResponseSchema` | 同じ `endpoint` があれば鍵を書き直し、別のスタッフのものなら本人に付け替える。User-Agent(300字まで)を残す。1人10件まで(超えたら `updated_at` の古いものから消す)。通知を使えない環境は 400。回数制限 `push_subscribe_staff`。INFO `push.subscription.saved`(`subscriptionId`・`created`・付け替えなら `previousStaffId`・消した数 `trimmed`) |
 | `DELETE /subscriptions` | `pushUnsubscribeRequestSchema`(`endpoint`)/ `okResponseSchema` | 本人の購読だけを消す(無ければ何もしない)。INFO `push.subscription.deleted`(`subscriptionId`・`deleted`) |
-| `POST /test` | — / `pushTestResponseSchema` | `{ ok, subscriptionCount }`。本人の全ての購読に送るテスト通知を outbox に積む。購読が無ければ 400。回数制限 `push_test_staff`。INFO `push.test.queued` |
+| `POST /test` | — / `pushTestResponseSchema` | `{ ok, subscriptionCount }`。本人の全ての購読に送るテスト通知を購読ごとに outbox に積む。購読が無ければ 400。回数制限 `push_test_staff`。INFO `push.test.queued` |
 
 ## 3. 本番での Web 画面の配信
 
