@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { zonedBusinessDate } from '../domain';
 import type { ScheduleAppointmentWithRoute } from '../ports/schedule';
 import { processNextOutboxMessage } from './outboxWorker';
 import {
@@ -121,11 +122,14 @@ describe('Web Push の購読', () => {
     expect(ctx.appLog.byAction('push.subscription.saved').at(-1)?.details).toMatchObject({ trimmed: 1 });
   });
 
-  it('退職日を入れると、そのスタッフの購読を全て消す', async () => {
+  it('退職日(今日以前)を入れると、そのスタッフの購読を全て消す(先の日付なら残す)', async () => {
     const admin = (await ctx.addStaff('管理 者', 'admin@example.com', 'admin')).actor;
     await subscribePush(ctx.deps, taro, { endpoint: ENDPOINT_A, ...keys });
     await subscribePush(ctx.deps, hanako, { endpoint: ENDPOINT_B, ...keys });
-    await updateStaffByAdmin(ctx.deps, admin, taro.staffId, { retiredOn: '2026-09-30' });
+    await updateStaffByAdmin(ctx.deps, admin, taro.staffId, { retiredOn: '2999-12-31' });
+    expect(ctx.data().pushSubscriptions).toHaveLength(2);
+    const retiredToday = zonedBusinessDate(ctx.clock.now, 'Asia/Tokyo');
+    await updateStaffByAdmin(ctx.deps, admin, taro.staffId, { retiredOn: retiredToday });
     expect(ctx.data().pushSubscriptions.map((p) => p.staffId)).toEqual([hanako.staffId]);
   });
 

@@ -9,10 +9,11 @@ sql_tier              = "db-g1-small"
 sql_high_availability = false
 
 schedule_provider          = "google"
-google_calendar_ids        = ""
 gas_bridge_url             = ""
 mirror_to_google_sheets    = false
 customer_csv_drive_folders = "{\"cutest\":\"<DriveフォルダID>\"}"
+
+app_public_url = "https://app.example.jp"
 
 smtp = {
   host = "smtp.gmail.com"

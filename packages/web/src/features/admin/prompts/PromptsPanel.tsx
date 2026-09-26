@@ -103,7 +103,10 @@ export function PromptsPanel({ onDirtyChange }: { onDirtyChange: (dirty: boolean
       void queryClient.invalidateQueries({ queryKey: queryKeys.uiConfig });
       void queryClient.invalidateQueries({ queryKey: adminQueryKeys.auditLogsAll });
     },
-    onError: (error) => showErrorToast(error),
+    // 他の管理者と重なった(409)ときは下に理由を出すので、お知らせは出さない
+    onError: (error) => {
+      if (!(error instanceof ApiRequestError && error.code === 'conflict')) showErrorToast(error);
+    },
   });
 
   const reload = async () => {

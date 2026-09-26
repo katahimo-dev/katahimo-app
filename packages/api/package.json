@@ -13,6 +13,7 @@
     "build": "tsup",
     "seed": "tsx src/scripts/seed.ts",
     "tenant:create": "tsx src/scripts/createTenant.ts",
+    "tenant:calendars": "tsx src/scripts/tenantCalendars.ts",
     "import:reserva": "tsx src/scripts/importReservaCsv.ts",
     "import:staff-master": "tsx src/scripts/importStaffMasterCsv.ts",
     "import:attendance": "tsx src/scripts/importAttendanceCsv.ts"

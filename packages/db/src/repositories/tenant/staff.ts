@@ -4,6 +4,7 @@ import type {
   StaffCredentials,
   StaffDeleteOutcome,
   StaffHome,
+  StaffPasswordStatus,
   StaffPatch,
   StaffRecord,
   StaffRepository,
@@ -11,7 +12,15 @@ import type {
 } from '@katahimo/core/ports';
 import { and, asc, eq, gt, isNull, or, type SQL, sql } from 'drizzle-orm';
 import { FOREIGN_KEY_VIOLATION, pgErrorOf } from '../../errors';
-import { staff, staffCalendars, staffCredentials, staffLoginEmails } from '../../schema';
+import {
+  aiPromptRevisions,
+  careRecordRevisions,
+  entityChanges,
+  staff,
+  staffCalendars,
+  staffCredentials,
+  staffLoginEmails,
+} from '../../schema';
 import { TenantBound } from './base';
 
 // 外側の列は表名つきで書く(drizzle は単一表の select では列を表名なしで出すため、副問い合わせの中では
@@ -146,9 +155,21 @@ export class DrizzleStaffRepository extends TenantBound implements StaffReposito
     return this.findById(id);
   }
 
+  /** 外部キーを持たない変更の履歴に、このスタッフが変更者として残っているか。 */
+  private async appearsInHistory(id: string): Promise<boolean> {
+    const [row] = await this.tx.execute<{ referenced: boolean }>(sql`select
+      exists (select 1 from ${entityChanges} where ${entityChanges.tenantId} = ${this.tenantId} and ${entityChanges.changedBy} = ${id})
+      or exists (select 1 from ${careRecordRevisions} where ${careRecordRevisions.tenantId} = ${this.tenantId} and ${careRecordRevisions.changedBy} = ${id})
+      or exists (select 1 from ${aiPromptRevisions} where ${aiPromptRevisions.tenantId} = ${this.tenantId} and ${aiPromptRevisions.createdBy} = ${id})
+      as referenced`);
+    return Boolean(row?.referenced);
+  }
+
   async deleteIfUnreferenced(id: string): Promise<StaffDeleteOutcome> {
+    if (!(await this.findById(id))) return 'not_found';
+    if (await this.appearsInHistory(id)) return 'referenced';
     try {
-      // 参照の検査は外部キーに任せる(業務の記録の表が増えても漏れない)。失敗しても UoW のトランザクションを
+      // 業務の記録の参照の検査は外部キーに任せる(記録の表が増えても漏れない)。失敗しても UoW のトランザクションを
       // 続けられるよう、セーブポイントの中で消す
       const deleted = await this.tx.transaction((sp) =>
         sp
@@ -161,6 +182,35 @@ export class DrizzleStaffRepository extends TenantBound implements StaffReposito
       if (pgErrorOf(error)?.code === FOREIGN_KEY_VIOLATION) return 'referenced';
       throw error;
     }
+  }
+
+  async lockActiveAdmins(date: string): Promise<{ id: string; retiredOn: string | null }[]> {
+    return this.tx
+      .select({ id: staff.id, retiredOn: staff.retiredOn })
+      .from(staff)
+      .where(
+        and(
+          eq(staff.tenantId, this.tenantId),
+          eq(staff.role, 'admin'),
+          or(isNull(staff.retiredOn), gt(staff.retiredOn, date)),
+        ),
+      )
+      .orderBy(asc(staff.id))
+      .for('update');
+  }
+
+  async listPasswordStatuses(): Promise<Map<string, StaffPasswordStatus>> {
+    const rows = await this.tx
+      .select({
+        staffId: staffCredentials.staffId,
+        hasPassword: sql<boolean>`${staffCredentials.passwordHash} is not null`,
+        hasLegacy: sql<boolean>`${staffCredentials.legacyPasswordHash} is not null`,
+      })
+      .from(staffCredentials)
+      .where(eq(staffCredentials.tenantId, this.tenantId));
+    return new Map(
+      rows.map((r) => [r.staffId, r.hasPassword ? 'set' : r.hasLegacy ? 'legacy' : 'unset'] as const),
+    );
   }
 
   async getCredentials(staffId: string): Promise<StaffCredentials | null> {

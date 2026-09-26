@@ -7,7 +7,7 @@ import type {
 } from '@katahimo/core/ports';
 import { type Database, type Tx, withTenant } from './client';
 import { mapDatabaseError } from './errors';
-import { findTenantById } from './repositories/platform/tenants';
+import { findTenantById, findTenantCalendarSettings } from './repositories/platform/tenants';
 import { DrizzleAppLogReadRepository } from './repositories/tenant/appLogs';
 import { DrizzleAttendanceRepository } from './repositories/tenant/attendance';
 import {
@@ -60,6 +60,9 @@ export function bindRepositories(
         return t;
       });
       return tenant;
+    },
+    calendarSettings() {
+      return findTenantCalendarSettings(tx, tenantId);
     },
     staff: new DrizzleStaffRepository(tx, tenantId),
     sessions: new DrizzleSessionRepository(tx, tenantId),

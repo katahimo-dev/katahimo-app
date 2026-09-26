@@ -1,10 +1,15 @@
+import type { AdminStaffView } from '@katahimo/shared';
 import {
   conflict,
+  forbidden,
   invalid,
   isRetiredOn,
+  isStaffCalendarAllowed,
   newId,
+  normalizeCalendarId,
   normalizeEmailForIndex,
   notFound,
+  STALE_WRITE_MESSAGE,
   splitJapaneseFullName,
   splitJapaneseKana,
   zonedBusinessDate,
@@ -13,7 +18,7 @@ import type { Gender, StaffRole, TravelModeCode } from '../domain/model';
 import type { AppLogPort } from '../ports/appLog';
 import type { MapsPort } from '../ports/maps';
 import type { RateLimiterPort } from '../ports/rateLimiter';
-import type { StaffPatch, StaffRecord } from '../ports/staff';
+import type { StaffPasswordStatus, StaffPatch, StaffRecord } from '../ports/staff';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
 import type { PasswordHasherPort } from './auth';
 import { issuePasswordResetCode } from './auth/passwordReset';
@@ -21,6 +26,8 @@ import { accountRateLimitKey, type RateLimitPolicy } from './rateLimits';
 import type { Actor, Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
 import { type HomeGeocodeStatus, type ResolvedStaffHome, resolveStaffHome } from './staffHome';
+
+export type { AdminStaffView } from '@katahimo/shared';
 
 export interface StaffAdminDeps extends Clock {
   uow: UnitOfWorkPort;
@@ -37,26 +44,7 @@ export interface StaffPasswordGuideDeps extends StaffAdminDeps {
   rateLimits: RateLimitPolicy;
 }
 
-export interface AdminStaffView {
-  id: string;
-  name: string;
-  kana: string | null;
-  email: string;
-  altEmail: string | null;
-  phone: string | null;
-  role: StaffRole;
-  retiredOn: string | null;
-  isRetired: boolean;
-  passwordStatus: 'set' | 'legacy' | 'unset';
-  homeAddress: string | null;
-  hasHomeGeo: boolean;
-  travelMode: TravelModeCode | null;
-  gender: Gender | null;
-  scheduleCalendarId: string | null;
-  rowVersion: number;
-}
-
-/** 登録・更新の結果。homeGeocode は自宅住所を登録・変更したときのジオコーディングの結果(それ以外は null)。 */
+/** 登録・更新の結果。homeGeocode は自宅住所をジオコーディングしたときの結果(それ以外は null)。 */
 export interface AdminStaffWriteResult {
   staff: AdminStaffView;
   homeGeocode: HomeGeocodeStatus | null;
@@ -66,6 +54,11 @@ interface ViewContext {
   today: string;
   /** スタッフID → 予定を読むカレンダー。 */
   calendars: Map<string, string>;
+  passwords: Map<string, StaffPasswordStatus>;
+}
+
+async function todayOf(deps: Clock, r: TenantRepositories): Promise<string> {
+  return zonedBusinessDate(currentTime(deps), (await r.tenant()).timezone);
 }
 
 async function viewContext(deps: Clock, r: TenantRepositories): Promise<ViewContext> {
@@ -73,15 +66,10 @@ async function viewContext(deps: Clock, r: TenantRepositories): Promise<ViewCont
   for (const c of await r.staffCalendars.listAll()) {
     if (c.purpose === 'schedule') calendars.set(c.staffId, c.calendarId);
   }
-  return { today: zonedBusinessDate(currentTime(deps), (await r.tenant()).timezone), calendars };
+  return { today: await todayOf(deps, r), calendars, passwords: await r.staff.listPasswordStatuses() };
 }
 
-async function toView(
-  r: TenantRepositories,
-  staff: StaffRecord,
-  context: ViewContext,
-): Promise<AdminStaffView> {
-  const credentials = await r.staff.getCredentials(staff.id);
+function toView(staff: StaffRecord, context: ViewContext): AdminStaffView {
   return {
     id: staff.id,
     name: staff.displayName,
@@ -92,7 +80,7 @@ async function toView(
     role: staff.role,
     retiredOn: staff.retiredOn,
     isRetired: isRetiredOn(staff.retiredOn, context.today),
-    passwordStatus: credentials?.passwordHash ? 'set' : credentials?.legacyPasswordHash ? 'legacy' : 'unset',
+    passwordStatus: context.passwords.get(staff.id) ?? 'unset',
     homeAddress: staff.homeAddress,
     hasHomeGeo: staff.homeGeo !== null,
     travelMode: staff.travelMode,
@@ -105,15 +93,16 @@ async function toView(
 async function loadView(deps: Clock, r: TenantRepositories, staffId: string): Promise<AdminStaffView> {
   const staff = await r.staff.findById(staffId);
   if (!staff) throw notFound('スタッフが見つかりません', 'not_found');
-  return toView(r, staff, await viewContext(deps, r));
+  return toView(staff, await viewContext(deps, r));
 }
 
 /** 管理者向けスタッフ一覧(退職者を含む、氏名順)。GAS版スタッフ台帳シートの閲覧に相当。 */
 export function listStaffForAdmin(deps: StaffAdminDeps, tenantId: string): Promise<AdminStaffView[]> {
   return deps.uow.run(tenantId, async (r) => {
     const context = await viewContext(deps, r);
-    const views = await Promise.all((await r.staff.listAll()).map((s) => toView(r, s, context)));
-    return views.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+    return (await r.staff.listAll())
+      .map((s) => toView(s, context))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
   });
 }
 
@@ -137,6 +126,44 @@ async function assertEmailsFree(
     const owner = await r.staff.findByLoginEmail(value);
     if (owner && owner.id !== selfId)
       throw conflict(EMAIL_CONFLICT[field], { [field]: EMAIL_CONFLICT[field] }, 'email_conflict');
+  }
+}
+
+export const CALENDAR_NOT_ALLOWED_MESSAGE = 'このカレンダーは使えません。運用担当者に登録を依頼してください';
+
+/**
+ * スタッフに設定する予定のカレンダーが、テナントの許可の一覧(運用担当者が設定)に合うか。予定は全テナント共通の
+ * Google の ID で読むため、合わないカレンダー(別のテナントのもの等)は設定させない。
+ */
+async function assertCalendarAllowed(r: TenantRepositories, calendarId: string): Promise<void> {
+  if (!isStaffCalendarAllowed(await r.calendarSettings(), calendarId)) {
+    throw invalid(
+      CALENDAR_NOT_ALLOWED_MESSAGE,
+      { scheduleCalendarId: CALENDAR_NOT_ALLOWED_MESSAGE },
+      'calendar_not_allowed',
+    );
+  }
+}
+
+export const LAST_ADMIN_MESSAGE =
+  '管理者が1人もいなくなるため、この操作はできません。先に別の管理者を決めてください';
+
+/**
+ * 在籍中の管理者の行をロックして(FOR UPDATE)確かめる: 操作する人自身がまだ在籍中の管理者か、removedAdminId
+ * (管理者を外す・退職させる・削除する相手)を除いても、退職日の決まっていない管理者が1人は残るか。同時に互いを
+ * 外しても管理者が残るように、管理者を減らす変更はこのロックの順に並ぶ。
+ */
+async function assertAdminsRemain(
+  r: TenantRepositories,
+  actor: Actor,
+  today: string,
+  removedAdminId: string | null,
+): Promise<void> {
+  const admins = await r.staff.lockActiveAdmins(today);
+  if (!admins.some((a) => a.id === actor.staffId)) throw forbidden('権限がありません。', 'actor_not_admin');
+  if (!removedAdminId || !admins.some((a) => a.id === removedAdminId)) return;
+  if (!admins.some((a) => a.id !== removedAdminId && a.retiredOn === null)) {
+    throw conflict(LAST_ADMIN_MESSAGE, undefined, 'last_admin');
   }
 }
 
@@ -221,15 +248,20 @@ export async function createStaffByAdmin(
 ): Promise<AdminStaffWriteResult> {
   const email = normalizeEmailForIndex(input.email);
   const altEmail = normalizedAltEmail(input.altEmail);
+  const calendarId = input.scheduleCalendarId ? normalizeCalendarId(input.scheduleCalendarId) : null;
   const staffId = newId();
   try {
-    await deps.uow.run(actor.tenantId, (r) => assertEmailsFree(r, { email, altEmail }, null));
+    await deps.uow.run(actor.tenantId, async (r) => {
+      await assertEmailsFree(r, { email, altEmail }, null);
+      if (calendarId) await assertCalendarAllowed(r, calendarId);
+    });
     const resolved = input.homeAddress ? await resolveStaffHome(deps.maps, input.homeAddress) : null;
     const passwordHash = input.initialPassword ? await deps.passwordHasher.hash(input.initialPassword) : null;
     const patch = profilePatch(input);
     const staff = await deps.uow.run(
       actor.tenantId,
       async (r) => {
+        if (calendarId) await assertCalendarAllowed(r, calendarId);
         await r.staff.create({
           id: staffId,
           displayName: patch.displayName ?? '',
@@ -246,9 +278,7 @@ export async function createStaffByAdmin(
           ...(resolved ? { home: resolved.home } : {}),
           passwordHash,
         });
-        if (input.scheduleCalendarId) {
-          await r.staffCalendars.setScheduleCalendar(staffId, input.scheduleCalendarId, newId());
-        }
+        if (calendarId) await r.staffCalendars.setScheduleCalendar(staffId, calendarId, newId());
         return loadView(deps, r, staffId);
       },
       { actorId: actor.staffId },
@@ -273,24 +303,32 @@ export async function createStaffByAdmin(
   }
 }
 
-/** 自宅住所が変わるなら、トランザクションの前にジオコーディングしておく(変わらなければ null)。 */
-async function resolveChangedHome(
+/**
+ * 更新の前の確かめ(トランザクションの外、地図APIを呼ぶ前): 版が古くないか。自宅住所が変わる、または住所は
+ * そのままでも緯度経度が無いなら、ここでジオコーディングしておく(それ以外は null)。
+ */
+async function prepareUpdate(
   deps: StaffAdminDeps,
   tenantId: string,
   staffId: string,
-  homeAddress: string | null | undefined,
+  input: UpdateStaffInput,
 ): Promise<ResolvedStaffHome | null> {
-  if (homeAddress === undefined) return null;
   const current = await deps.uow.run(tenantId, (r) => r.staff.findById(staffId));
   if (!current) throw notFound('スタッフが見つかりません', 'not_found');
-  const next = homeAddress?.trim() || null;
-  return next === current.homeAddress ? null : resolveStaffHome(deps.maps, next);
+  if (input.rowVersion !== undefined && input.rowVersion !== current.rowVersion) {
+    throw conflict(STALE_WRITE_MESSAGE, undefined, 'stale_row_version');
+  }
+  if (input.homeAddress === undefined) return null;
+  const next = input.homeAddress?.trim() || null;
+  if (next === current.homeAddress && (next === null || current.homeGeo !== null)) return null;
+  return resolveStaffHome(deps.maps, next);
 }
 
 /**
- * 管理者によるスタッフ情報の更新。自分自身の管理者権限の解除・退職日の設定は、管理者が誰もいなくなる事故を
- * 防ぐため拒否する。退職日を設定したらそのスタッフのセッションを失効させる。自宅住所を変えたら緯度経度も
- * 置き換える(ジオコーディングできなければ空にし、ルート計算は住所で行う)。
+ * 管理者によるスタッフ情報の更新。自分自身の管理者権限の解除・退職日の設定は拒否し、管理者を外す・退職させる変更は
+ * 在籍中の管理者の行をロックしてから行う(同時に互いを外しても管理者が残るように)。今日の時点で退職している
+ * 退職日を入れたら、そのスタッフのセッションを失効させる(先の日付なら、その日からログインできなくなる)。
+ * 自宅住所を変えたら緯度経度も置き換える(ジオコーディングできなければ空にし、ルート計算は住所で行う)。
  */
 export async function updateStaffByAdmin(
   deps: StaffAdminDeps,
@@ -305,10 +343,13 @@ export async function updateStaffByAdmin(
     if (staffId === actor.staffId && input.retiredOn) {
       throw invalid('自分自身に退職日は設定できません', undefined, 'cannot_retire_self');
     }
-    const resolved = await resolveChangedHome(deps, actor.tenantId, staffId, input.homeAddress);
+    const resolved = await prepareUpdate(deps, actor.tenantId, staffId, input);
     const staff = await deps.uow.run(
       actor.tenantId,
       async (r) => {
+        const today = await todayOf(deps, r);
+        const removesAdmin = (input.role !== undefined && input.role !== 'admin') || Boolean(input.retiredOn);
+        await assertAdminsRemain(r, actor, today, removesAdmin ? staffId : null);
         const current = await r.staff.findById(staffId);
         if (!current) throw notFound('スタッフが見つかりません', 'not_found');
         const patch = profilePatch(input);
@@ -325,17 +366,21 @@ export async function updateStaffByAdmin(
           },
           staffId,
         );
+        const calendarId =
+          input.scheduleCalendarId === undefined
+            ? undefined
+            : input.scheduleCalendarId
+              ? normalizeCalendarId(input.scheduleCalendarId)
+              : null;
+        const currentCalendar =
+          (await r.staffCalendars.listAll()).find((c) => c.staffId === staffId && c.purpose === 'schedule')
+            ?.calendarId ?? null;
+        const calendarChanged = calendarId !== undefined && calendarId !== currentCalendar;
+        if (calendarChanged && calendarId) await assertCalendarAllowed(r, calendarId);
         const updated = await r.staff.update(staffId, patch, input.rowVersion);
         if (!updated) throw notFound('スタッフが見つかりません', 'not_found');
-        if (input.scheduleCalendarId !== undefined) {
-          const calendars = await r.staffCalendars.listAll();
-          const currentCalendar =
-            calendars.find((c) => c.staffId === staffId && c.purpose === 'schedule')?.calendarId ?? null;
-          if (currentCalendar !== input.scheduleCalendarId) {
-            await r.staffCalendars.setScheduleCalendar(staffId, input.scheduleCalendarId, newId());
-          }
-        }
-        if (patch.retiredOn) {
+        if (calendarChanged) await r.staffCalendars.setScheduleCalendar(staffId, calendarId ?? null, newId());
+        if (patch.retiredOn && isRetiredOn(patch.retiredOn, today)) {
           // 退職: セッションを失効し、端末の通知の購読も消す(退職者の端末にお客様のお名前を送らない)
           await r.sessions.revokeAllForStaff(staffId, currentTime(deps));
           await r.pushSubscriptions.deleteAllForStaff(staffId);
@@ -370,8 +415,9 @@ export const STAFF_HAS_RECORDS_MESSAGE =
   'このスタッフには出勤簿・報告・領収書などの記録があるため削除できません。辞めた方は退職日を設定してください。';
 
 /**
- * 管理者によるスタッフの削除。間違えて登録したスタッフを消すためのもので、業務の記録(出勤簿・報告・領収書等)が
- * 1件でもあれば消さずに conflict にする(記録を残したまま使えなくするのは退職日)。自分自身は削除できない。
+ * 管理者によるスタッフの削除。間違えて登録したスタッフを消すためのもので、業務の記録(出勤簿・報告・領収書・
+ * 変更の履歴等)が1件でもあれば消さずに conflict にする(記録を残したまま使えなくするのは退職日)。自分自身・
+ * 最後の管理者は削除できない。
  */
 export async function deleteStaffByAdmin(deps: StaffAdminDeps, actor: Actor, staffId: string): Promise<void> {
   try {
@@ -381,6 +427,7 @@ export async function deleteStaffByAdmin(deps: StaffAdminDeps, actor: Actor, sta
     await deps.uow.run(
       actor.tenantId,
       async (r) => {
+        await assertAdminsRemain(r, actor, await todayOf(deps, r), staffId);
         const outcome = await r.staff.deleteIfUnreferenced(staffId);
         if (outcome === 'not_found') throw notFound('スタッフが見つかりません', 'not_found');
         if (outcome === 'referenced')
@@ -406,8 +453,8 @@ export type PasswordGuideOutcome = { status: 'queued' } | { status: 'rate_limite
 
 /**
  * パスワード未設定・GAS版のパスワードのままのスタッフに、パスワード設定の案内(再設定コード)をメールで送る。
- * 本人の「パスワードを忘れたとき」と同じコード・同じ outbox の送信を使い、回数の上限もアカウント単位で共有する
- * (案内を送り続けてもメールが溢れないように)。送り先はメールアドレス(主)。
+ * 本人の「パスワードを忘れたとき」と同じコード・同じ outbox の送信を使う。回数の上限は本人の再設定の要求と共有する
+ * (その人のログイン用メール(主・サブ)それぞれの枠を数え、どれかが上限なら送らない)。送り先はメールアドレス(主)。
  */
 export async function sendPasswordGuideByAdmin(
   deps: StaffPasswordGuideDeps,
@@ -428,20 +475,23 @@ export async function sendPasswordGuideByAdmin(
       }
       return { staff: view, tenantSlug: (await r.tenant()).slug };
     });
-    const limit = await deps.rateLimiter.consume(
-      deps.rateLimits.passwordResetRequestAccount,
-      accountRateLimitKey(tenantSlug, staff.email),
-      now,
-    );
-    if (!limit.allowed) {
-      await logRejected(
-        deps,
-        actor,
-        'staff.admin.password_guide_rejected',
-        { reason: 'rate_limited' },
-        staffId,
+    for (const loginId of [staff.email, staff.altEmail]) {
+      if (!loginId) continue;
+      const limit = await deps.rateLimiter.consume(
+        deps.rateLimits.passwordResetRequestAccount,
+        accountRateLimitKey(tenantSlug, loginId),
+        now,
       );
-      return { status: 'rate_limited', retryAfterMs: limit.retryAfterMs };
+      if (!limit.allowed) {
+        await logRejected(
+          deps,
+          actor,
+          'staff.admin.password_guide_rejected',
+          { reason: 'rate_limited' },
+          staffId,
+        );
+        return { status: 'rate_limited', retryAfterMs: limit.retryAfterMs };
+      }
     }
     await issuePasswordResetCode(
       deps,

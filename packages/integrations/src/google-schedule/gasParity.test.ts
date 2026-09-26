@@ -193,6 +193,11 @@ function createGoogleSchedulePort(scenario: Scenario) {
       travelMode: 'car',
       calendarId: null,
     })),
+    // GAS版の getAllCalendars() と同じ順・同じカレンダー名で読む
+    calendarSettings: {
+      sharedCalendars: scenario.calendars.map((c) => ({ calendarId: c.name })),
+      allowedStaffCalendars: [],
+    },
   };
   const directoryPort: ScheduleDirectoryPort = { load: async () => directory };
   const appLog: AppLogPort = { write: async () => {} };
@@ -202,8 +207,6 @@ function createGoogleSchedulePort(scenario: Scenario) {
     directory: directoryPort,
     routeCache: new InMemoryTtlCache({ maxEntries: 10 }),
     appLog,
-    // GAS版の getAllCalendars() と同じ順・同じカレンダー名で読む
-    calendarSources: scenario.calendars.map((c) => ({ calendarId: c.name })),
   });
 }
 

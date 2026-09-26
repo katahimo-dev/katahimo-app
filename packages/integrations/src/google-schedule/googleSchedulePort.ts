@@ -35,8 +35,6 @@ export interface GoogleSchedulePortDeps {
   /** ルート結果の共有キャッシュ(閲覧用。fresh指定時は読み書きしない)。 */
   routeCache: CachePort;
   appLog: AppLogPort;
-  /** 環境変数 GOOGLE_CALENDAR_IDS で指定されたカレンダー(staff.calendar_id と合わせて読む)。 */
-  calendarSources: CalendarSource[];
 }
 
 interface ScheduleQuery {
@@ -114,7 +112,20 @@ export class GoogleSchedulePort implements SchedulePort {
     const staff = directory.staff.find((s) => s.id === query.staffId) ?? null;
     if (!staff) return { staff: null, appointments: [] };
 
-    const sources = resolveCalendarSources(this.deps.calendarSources, directory.staff);
+    const { sources, disallowedStaffIds } = resolveCalendarSources(
+      directory.calendarSettings,
+      directory.staff,
+    );
+    // 対象のスタッフ自身のカレンダーが許可から外れていれば残す(他のスタッフの分は毎回の記録にしない)
+    if (disallowedStaffIds.includes(staff.id)) {
+      await this.deps.appLog.write({
+        tenantId: query.tenantId,
+        level: 'WARN',
+        action: 'calendar.staff_calendar_not_allowed',
+        targetStaffId: staff.id,
+        details: { source: 'schedule' },
+      });
+    }
     const events = await this.readCalendars(query, sources, strict);
     const all = classifyCalendarEvents(events, directory.customers);
     return { staff, appointments: appointmentsForStaff(all, staff.name) };

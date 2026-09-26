@@ -50,6 +50,8 @@ export interface WorkerContainer {
   storage: StoragePort;
   sender: MirrorSenderPort;
   mailer: MailerPort;
+  /** 画面の URL(APP_PUBLIC_URL。パスワード設定の案内のメールに書く)。 */
+  appPublicUrl?: string;
   appLog: AppLogPort;
   schedule: SchedulePort;
   csvSource: CustomerCsvSourcePort;
@@ -100,6 +102,7 @@ export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerConta
     storage: createStoragePort(env),
     sender: bridge ? new GasBridgeMirrorSenderPort(bridge) : new NoopMirrorSenderPort(),
     mailer: createMailer(env),
+    ...(env.APP_PUBLIC_URL ? { appPublicUrl: env.APP_PUBLIC_URL } : {}),
     appLog,
     schedule: scheduleServices.schedule,
     csvSource: createCustomerCsvSource({

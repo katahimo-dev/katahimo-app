@@ -76,6 +76,12 @@ export const tenants = platform.table(
     timezone: text().notNull().default('Asia/Tokyo'),
     businessType: text({ enum: BUSINESS_TYPES }).notNull().default('babysitting'),
     planId: uuid(),
+    /**
+     * カレンダーの設定(運用担当者だけが `pnpm tenant:calendars` で変える。アプリは読むだけ):
+     * `{ sharedCalendars: [{ calendarId, ownerName? }], allowedStaffCalendars: ['id@example.com' | '@example.co.jp'] }`。
+     * スタッフの予定を読むカレンダーは allowedStaffCalendars に合うものだけ(core/domain/schedule/calendarPolicy.ts)。
+     */
+    calendarSettings: jsonb().$type<Record<string, unknown>>().notNull().default({}),
     terminatedAt: timestamp({ withTimezone: true }),
     purgeAfter: timestamp({ withTimezone: true }),
     createdAt: createdAt(),

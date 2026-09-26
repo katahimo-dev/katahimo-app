@@ -20,4 +20,5 @@ export * from './staffAdmin';
 export * from './staffBusyBlocks';
 export * from './staffHome';
 export * from './staffMasterImport';
+export * from './tenantCalendars';
 export * from './tenantProvisioning';

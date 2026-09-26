@@ -1,16 +1,13 @@
+import type { HomeGeocodeStatus } from '@katahimo/shared';
 import { geoCellOf } from '../domain';
 import type { MapsPort } from '../ports/maps';
 import type { StaffHome } from '../ports/staff';
 
 /**
- * 自宅住所のジオコーディングの結果。
- * - ok: 緯度経度を保存した
- * - not_found: 住所が見つからなかった
- * - failed: 地図APIの失敗(通信・認証・クォータ等)
- * - unavailable: 地図APIを使えない環境(SCHEDULE_PROVIDER=noop 等)
+ * 自宅住所のジオコーディングの結果(ok / not_found / failed / unavailable。@katahimo/shared の契約と同じ)。
  * ok 以外でも住所は保存する(ルート計算のたびに住所をジオコーディングする。GAS版と同じ)。
  */
-export type HomeGeocodeStatus = 'ok' | 'not_found' | 'failed' | 'unavailable';
+export type { HomeGeocodeStatus } from '@katahimo/shared';
 
 export interface ResolvedStaffHome {
   home: StaffHome;

@@ -60,6 +60,22 @@ export function StaffFormModal({ open, staff, isSelf, onClose }: StaffFormModalP
   }, [open, staff]);
 
   const saving = mutations.create.isPending || mutations.update.isPending || mutations.remove.isPending;
+  const dirty = staff
+    ? toUpdateRequest(staff, values) !== null
+    : JSON.stringify(values) !== JSON.stringify(emptyStaffForm());
+
+  /** ×・Escape・キャンセル。保存中は閉じず、書きかけがあれば確かめる。 */
+  const requestClose = async () => {
+    if (saving) return;
+    if (dirty) {
+      const ok = await confirm({
+        title: '保存していない変更があります。閉じますか？',
+        confirmLabel: '閉じる',
+      });
+      if (!ok) return;
+    }
+    onClose();
+  };
   const set = <K extends keyof StaffFormValues>(key: K, value: StaffFormValues[K]) =>
     setValues((v) => ({ ...v, [key]: value }));
 
@@ -128,8 +144,8 @@ export function StaffFormModal({ open, staff, isSelf, onClose }: StaffFormModalP
     <Modal
       open={open}
       labelledBy="adminStaffFormTitle"
-      onClose={saving ? undefined : onClose}
-      className="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4 transition-opacity duration-300"
+      onClose={() => void requestClose()}
+      className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4 transition-opacity duration-300"
     >
       <form
         noValidate
@@ -142,7 +158,7 @@ export function StaffFormModal({ open, staff, isSelf, onClose }: StaffFormModalP
         <ModalHeader
           title={staff ? 'スタッフの編集' : 'スタッフの登録'}
           titleId="adminStaffFormTitle"
-          onClose={onClose}
+          onClose={() => void requestClose()}
         />
         <div className="p-4 space-y-4 overflow-y-auto">
           <FormField
@@ -299,7 +315,7 @@ export function StaffFormModal({ open, staff, isSelf, onClose }: StaffFormModalP
         <ModalFooter className="flex justify-end gap-3">
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => void requestClose()}
             disabled={saving}
             className="min-h-12 px-5 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl"
           >

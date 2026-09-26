@@ -1,8 +1,9 @@
 import { newId, normalizeEmailForIndex, splitJapaneseFullName, splitJapaneseKana } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
 import type { MapsPort } from '../ports/maps';
-import type { StaffHome, StaffPatch } from '../ports/staff';
-import type { UnitOfWorkPort } from '../ports/unitOfWork';
+import type { StaffHome, StaffPatch, StaffRecord } from '../ports/staff';
+import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
+
 import type { PasswordHasherPort } from './auth';
 import { resolveStaffHome } from './staffHome';
 
@@ -61,19 +62,58 @@ function parsePassword(raw: string): PasswordValue {
   return { kind: 'plain', value: raw };
 }
 
-/** 取込で自宅住所が変わる行の住所(既存の住所と同じものはジオコーディングし直さない)。 */
-async function changedHomeAddresses(deps: StaffMasterImportDeps, tenantId: string, rows: StaffMasterRow[]) {
-  const current = await deps.uow.run(tenantId, async (r) => {
-    const byEmail = new Map<string, string | null>();
-    for (const staff of await r.staff.listAll()) byEmail.set(staff.email, staff.homeAddress);
-    return byEmail;
-  });
-  const addresses = new Set<string>();
-  for (const row of rows) {
-    if (row.homeAddress && current.get(normalizeEmailForIndex(row.email)) !== row.homeAddress)
-      addresses.add(row.homeAddress);
+type RowPlan =
+  | { kind: 'skip'; reason: string }
+  | { kind: 'apply'; name: string; email: string; altEmail: string | null; existing: StaffRecord | null };
+
+/**
+ * 1行を取り込めるか(氏名・メールが空、CSV内の重複、他のスタッフのアドレスとの衝突は取り込まない)。seen は
+ * それまでの行で使ったアドレス(取り込む行なら足す)。
+ */
+async function planRow(r: TenantRepositories, row: StaffMasterRow, seen: Set<string>): Promise<RowPlan> {
+  const name = row.name.trim();
+  const email = normalizeEmailForIndex(row.email);
+  if (!name || !email.includes('@')) return { kind: 'skip', reason: '氏名またはメールアドレスが空です' };
+  const altCandidate = row.altEmail ? normalizeEmailForIndex(row.altEmail) : null;
+  const altEmail = altCandidate && altCandidate !== email ? altCandidate : null;
+  if (seen.has(email) || (altEmail && seen.has(altEmail))) {
+    return { kind: 'skip', reason: '同じメールアドレスの行がCSV内で重複しています' };
   }
-  return addresses;
+  const existing = await r.staff.findByLoginEmail(email);
+  if (altEmail) {
+    const altOwner = await r.staff.findByLoginEmail(altEmail);
+    if (altOwner && altOwner.id !== existing?.id) {
+      return { kind: 'skip', reason: 'サブメールが別のスタッフのメールアドレスと重複しています' };
+    }
+  }
+  if (existing && existing.email !== email) {
+    return { kind: 'skip', reason: 'メールアドレスが別のスタッフのサブメールとして登録済みです' };
+  }
+  seen.add(email);
+  if (altEmail) seen.add(altEmail);
+  return { kind: 'apply', name, email, altEmail, existing };
+}
+
+/** 自宅を書き直す行か(住所が変わる、または住所は同じでも緯度経度が無い)。 */
+function needsHome(
+  row: StaffMasterRow,
+  existing: StaffRecord | null,
+): row is StaffMasterRow & { homeAddress: string } {
+  if (!row.homeAddress) return false;
+  return !existing || row.homeAddress !== existing.homeAddress || existing.homeGeo === null;
+}
+
+/** 取り込む行のうち自宅を書き直す住所(取り込まない行はジオコーディングしない)。 */
+async function homeAddressesToGeocode(deps: StaffMasterImportDeps, tenantId: string, rows: StaffMasterRow[]) {
+  return deps.uow.run(tenantId, async (r) => {
+    const seen = new Set<string>();
+    const addresses = new Set<string>();
+    for (const row of rows) {
+      const plan = await planRow(r, row, seen);
+      if (plan.kind === 'apply' && needsHome(row, plan.existing)) addresses.add(row.homeAddress);
+    }
+    return addresses;
+  });
 }
 
 /**
@@ -81,7 +121,8 @@ async function changedHomeAddresses(deps: StaffMasterImportDeps, tenantId: strin
  * 取込の実行を import_runs に残す。既に本アプリでパスワード(argon2id)を設定済みのスタッフのパスワードは
  * 上書きしない(台帳の古いパスワードに戻らないように)。
  * カナ・電話・住所の空欄は既存の値を消さない(本アプリの管理画面で入れた値を台帳の空欄で消さないため)。
- * 住所が変わったら緯度経度も置き換える(トランザクションの前にジオコーディングし、得られなければ空にする)。
+ * 住所が変わったら(住所は同じでも緯度経度が無ければ)緯度経度も置き換える(トランザクションの前に取り込む行の住所だけを
+ * ジオコーディングし、得られなければ空にする)。
  */
 export async function importStaffMasterRows(
   deps: StaffMasterImportDeps,
@@ -98,7 +139,7 @@ export async function importStaffMasterRows(
   const runId = newId();
   const homes = new Map<string, StaffHome>();
   if (!options.dryRun) {
-    for (const address of await changedHomeAddresses(deps, tenantId, rows)) {
+    for (const address of await homeAddressesToGeocode(deps, tenantId, rows)) {
       homes.set(address, (await resolveStaffHome(deps.maps, address)).home);
     }
   }
@@ -117,33 +158,12 @@ export async function importStaffMasterRows(
       });
     }
     for (const row of rows) {
-      const skip = (reason: string) => outcome.skipped.push({ rowNumber: row.rowNumber, reason });
-      const name = row.name.trim();
-      const email = normalizeEmailForIndex(row.email);
-      if (!name || !email.includes('@')) {
-        skip('氏名またはメールアドレスが空です');
+      const plan = await planRow(r, row, seen);
+      if (plan.kind === 'skip') {
+        outcome.skipped.push({ rowNumber: row.rowNumber, reason: plan.reason });
         continue;
       }
-      const altCandidate = row.altEmail ? normalizeEmailForIndex(row.altEmail) : null;
-      const altEmail = altCandidate && altCandidate !== email ? altCandidate : null;
-      if (seen.has(email) || (altEmail && seen.has(altEmail))) {
-        skip('同じメールアドレスの行がCSV内で重複しています');
-        continue;
-      }
-      const existing = await r.staff.findByLoginEmail(email);
-      if (altEmail) {
-        const altOwner = await r.staff.findByLoginEmail(altEmail);
-        if (altOwner && altOwner.id !== existing?.id) {
-          skip('サブメールが別のスタッフのメールアドレスと重複しています');
-          continue;
-        }
-      }
-      if (existing && existing.email !== email) {
-        skip('メールアドレスが別のスタッフのサブメールとして登録済みです');
-        continue;
-      }
-      seen.add(email);
-      if (altEmail) seen.add(altEmail);
+      const { name, email, altEmail, existing } = plan;
       if (options.dryRun) {
         if (existing) outcome.updated++;
         else outcome.created++;
@@ -153,8 +173,7 @@ export async function importStaffMasterRows(
       const password = parsePassword(row.password);
       const split = splitJapaneseFullName(name);
       const kana = row.kana ? splitJapaneseKana(row.kana) : null;
-      const home =
-        row.homeAddress && row.homeAddress !== existing?.homeAddress ? homeOf(row.homeAddress) : null;
+      const home = needsHome(row, existing) ? homeOf(row.homeAddress) : null;
       if (home && !home.geo) outcome.homeWithoutGeo++;
       // 台帳には管理者かどうかしか無い。取込では権限を上げるだけで下げない(K列=1 なら管理者。空なら本アプリで
       // 付けた管理者・コーディネーターを保つ。権限を外すのは本アプリの管理画面で行う)
@@ -167,7 +186,9 @@ export async function importStaffMasterRows(
           altEmail,
           role,
           retiredOn: row.retiredOn,
-          ...(kana ?? {}),
+          // カナが姓だけの行は、本アプリで入れた名のカナを消さない
+          ...(kana?.familyNameKana ? { familyNameKana: kana.familyNameKana } : {}),
+          ...(kana?.givenNameKana ? { givenNameKana: kana.givenNameKana } : {}),
           ...(row.phone ? { phone: row.phone } : {}),
           ...(home ? { home } : {}),
         };

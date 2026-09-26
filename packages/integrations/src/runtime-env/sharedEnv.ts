@@ -44,8 +44,6 @@ export const sharedEnvShape = {
   SCHEDULE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(SCHEDULE_PROVIDERS).optional()),
   GOOGLE_MAPS_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
   GOOGLE_APPLICATION_CREDENTIALS: z.preprocess(emptyToUndefined, z.string().optional()),
-  // staff_calendars 以外に読むカレンダー。カンマ区切りで `ID` または `ID=持ち主のスタッフ名`。
-  GOOGLE_CALENDAR_IDS: z.preprocess(emptyToUndefined, z.string().optional()),
   // ドメイン全体の委任で成り代わる Workspace ユーザー(未指定ならサービスアカウント自身として読む)。
   GOOGLE_CALENDAR_IMPERSONATE: z.preprocess(emptyToUndefined, z.string().optional()),
 

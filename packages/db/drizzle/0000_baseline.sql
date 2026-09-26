@@ -622,6 +622,7 @@ CREATE TABLE "platform"."tenants" (
 	"timezone" text DEFAULT 'Asia/Tokyo' NOT NULL,
 	"business_type" text DEFAULT 'babysitting' NOT NULL,
 	"plan_id" uuid,
+	"calendar_settings" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"terminated_at" timestamp with time zone,
 	"purge_after" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,

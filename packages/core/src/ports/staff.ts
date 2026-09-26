@@ -75,7 +75,10 @@ export interface StaffPatch {
   gender?: Gender | null;
 }
 
-/** 削除の結果。referenced は業務の記録(勤怠・報告・領収書等)から参照されていて消せなかった。 */
+/** パスワードの状態(一覧の表示用)。 */
+export type StaffPasswordStatus = 'set' | 'legacy' | 'unset';
+
+/** 削除の結果。referenced は業務の記録(勤怠・報告・領収書・変更の履歴等)から参照されていて消せなかった。 */
 export type StaffDeleteOutcome = 'deleted' | 'not_found' | 'referenced';
 
 /** 予定・ルート計算に使うスタッフの属性(自宅・移動手段・予定を読むカレンダー)。 */
@@ -107,9 +110,18 @@ export interface StaffRepository {
   update(id: string, patch: StaffPatch, expectedVersion?: number): Promise<StaffRecord | null>;
   /**
    * 業務の記録から参照されていなければ削除する(認証情報・ログイン用メール・セッション・カレンダー設定等の
-   * スタッフに従属する行も一緒に消える)。参照されていれば何も変えずに referenced を返す。
+   * スタッフに従属する行も一緒に消える)。参照は外部キー(ON DELETE の無いもの)に加え、外部キーを持たない
+   * 変更の履歴(entity_changes.changed_by・care_record_revisions.changed_by・ai_prompt_revisions.created_by)も数える。
+   * 参照されていれば何も変えずに referenced を返す。
    */
   deleteIfUnreferenced(id: string): Promise<StaffDeleteOutcome>;
+  /**
+   * date の時点で在籍している管理者の行をトランザクションの終わりまでロックして(FOR UPDATE)返す。
+   * 管理者を外す・退職させる・削除する変更を並べて行い、管理者が1人もいなくならないようにするため。
+   */
+  lockActiveAdmins(date: string): Promise<{ id: string; retiredOn: string | null }[]>;
+  /** 全スタッフのパスワードの状態(1回の問い合わせ)。 */
+  listPasswordStatuses(): Promise<Map<string, StaffPasswordStatus>>;
   getCredentials(staffId: string): Promise<StaffCredentials | null>;
   /** argon2id のハッシュを設定し、GAS版のハッシュを消す(移行・変更・再設定)。 */
   setPasswordHash(staffId: string, passwordHash: string): Promise<void>;

@@ -3,7 +3,8 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { adminStaffApi, aiPromptsApi, auditLogsApi } from '../../api/admin';
 import { ApiRequestError } from '../../api/client';
-import { createWrapper, TEST_USER } from '../../test/providers';
+import { queryKeys } from '../../api/queryKeys';
+import { createTestQueryClient, createWrapper, deferred, TEST_USER } from '../../test/providers';
 import { showErrorToast, showToast } from '../../ui/toast';
 import { AdminTab } from './AdminTab';
 import { adminStaff } from './adminFixtures.test-helper';
@@ -62,8 +63,8 @@ function prompts(): AiPromptView[] {
   }));
 }
 
-function renderAdmin() {
-  const Wrapper = createWrapper();
+function renderAdmin(queryClient = createTestQueryClient()) {
+  const Wrapper = createWrapper({ queryClient });
   return render(
     <Wrapper>
       <AdminTab />
@@ -306,5 +307,133 @@ describe('管理タブ: 操作ログ', () => {
     expect(screen.getByRole('link', { name: '⬇ CSVで保存' }).getAttribute('href')).toBe(
       '/api/admin/audit-logs.csv',
     );
+  });
+});
+
+describe('管理タブ: 指摘への対応', () => {
+  const stale = () =>
+    new ApiRequestError(409, { code: 'conflict', message: '他の人(または別の画面)が先に更新しました。' });
+
+  it('古い版で断られた(409)ら一覧を読み直す。一覧の「読み込み直す」でも読み直す', async () => {
+    staffApi.update.mockRejectedValue(stale());
+    renderAdmin();
+    fireEvent.click(await screen.findByRole('button', { name: '佐藤 花子さんを編集' }));
+    const dialog = await screen.findByRole('dialog', { name: 'スタッフの編集' });
+    fireEvent.change(within(dialog).getByLabelText('電話'), { target: { value: '090' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存する' }));
+    await waitFor(() => expect(staffApi.list).toHaveBeenCalledTimes(2));
+    expect(within(dialog).getByRole('alert').textContent).toContain('先に更新しました');
+    fireEvent.click(screen.getByRole('button', { name: '🔄 読み込み直す' }));
+    await waitFor(() => expect(staffApi.list).toHaveBeenCalledTimes(3));
+  });
+
+  it('自分自身を変えたらログイン中の人(ヘッダーの名前)も読み直す', async () => {
+    const queryClient = createTestQueryClient();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    staffApi.update.mockResolvedValue({ staff: { ...self, name: '管理者 次郎' }, homeGeocode: null });
+    renderAdmin(queryClient);
+    fireEvent.click(await screen.findByRole('button', { name: `${self.name}さんを編集` }));
+    const dialog = await screen.findByRole('dialog', { name: 'スタッフの編集' });
+    fireEvent.change(within(dialog).getByLabelText(/^氏名/), { target: { value: '管理者 次郎' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存する' }));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.session }));
+  });
+
+  it('保存中は×でも閉じない。書きかけで閉じるときは確かめる(やめれば残る)', async () => {
+    const pending = deferred<{ staff: typeof hanako; homeGeocode: null }>();
+    staffApi.update.mockReturnValue(pending.promise);
+    renderAdmin();
+    fireEvent.click(await screen.findByRole('button', { name: '佐藤 花子さんを編集' }));
+    const dialog = await screen.findByRole('dialog', { name: 'スタッフの編集' });
+    fireEvent.change(within(dialog).getByLabelText('電話'), { target: { value: '090' } });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'キャンセル' }));
+    const confirmDialog = await screen.findByRole('alertdialog');
+    expect(confirmDialog.textContent).toContain('保存していない変更があります');
+    fireEvent.click(within(confirmDialog).getByRole('button', { name: 'キャンセル' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(screen.getByRole('dialog', { name: 'スタッフの編集' })).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存する' }));
+    await waitFor(() => expect(staffApi.update).toHaveBeenCalled());
+    fireEvent.click(within(dialog).getByRole('button', { name: '閉じる' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'スタッフの編集' })).toBeTruthy();
+    pending.resolve({ staff: hanako, homeGeocode: null });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'スタッフの編集' })).toBeNull());
+  });
+
+  it('許可されていないカレンダーのサーバーの理由を項目の下に出す', async () => {
+    const message = 'このカレンダーは使えません。運用担当者に登録を依頼してください';
+    staffApi.update.mockRejectedValue(
+      new ApiRequestError(400, {
+        code: 'validation_failed',
+        message,
+        fields: { scheduleCalendarId: message },
+      }),
+    );
+    renderAdmin();
+    fireEvent.click(await screen.findByRole('button', { name: '佐藤 花子さんを編集' }));
+    const dialog = await screen.findByRole('dialog', { name: 'スタッフの編集' });
+    const field = within(dialog).getByLabelText('予定を読むGoogleカレンダーのID');
+    fireEvent.change(field, { target: { value: 'x@other.example.org' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存する' }));
+    await waitFor(() => expect(field.getAttribute('aria-invalid')).toBe('true'));
+    expect(within(dialog).getAllByText(message).length).toBeGreaterThan(0);
+  });
+
+  it('AIプロンプトの 409 は下の理由だけで、お知らせは出さない', async () => {
+    const list = prompts();
+    promptsApi.list.mockResolvedValue({ prompts: list });
+    promptsApi.save.mockRejectedValue(
+      new ApiRequestError(409, { code: 'conflict', message: '先に保存されました' }),
+    );
+    renderAdmin();
+    fireEvent.click(screen.getByRole('tab', { name: '🤖 AIプロンプト' }));
+    fireEvent.change(await screen.findByLabelText(list[0]?.label ?? ''), { target: { value: 'x' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存する（1件）' }));
+    expect(await screen.findByText('先に保存されました')).toBeTruthy();
+    expect(showErrorToast).not.toHaveBeenCalled();
+  });
+
+  it('タブは Home / End でも移れ、aria-controls は表示中のタブだけ', async () => {
+    logsApi.list.mockResolvedValue({
+      entries: [],
+      nextCursor: null,
+      range: { from: '2026-09-19', to: '2026-09-25' },
+      timeZone: 'Asia/Tokyo',
+    });
+    renderAdmin();
+    const staffTab = screen.getByRole('tab', { name: '👤 スタッフ' });
+    expect(staffTab.getAttribute('aria-controls')).toBe('adminPanel-staff');
+    expect(screen.getByRole('tab', { name: '📄 操作ログ' }).getAttribute('aria-controls')).toBeNull();
+    fireEvent.keyDown(staffTab, { key: 'End' });
+    expect(screen.getByRole('tab', { name: '📄 操作ログ' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(screen.getByRole('tab', { name: '📄 操作ログ' }), { key: 'Home' });
+    expect(staffTab.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('操作ログ: 同じ条件で「絞り込む」を押すと読み直す。条件が誤っている間は CSV を保存できない', async () => {
+    logsApi.list.mockResolvedValue({
+      entries: [],
+      nextCursor: null,
+      range: { from: '2026-09-19', to: '2026-09-25' },
+      timeZone: 'Asia/Tokyo',
+    });
+    renderAdmin();
+    fireEvent.click(screen.getByRole('tab', { name: '📄 操作ログ' }));
+    await screen.findByText('この条件の操作ログはありません');
+    fireEvent.click(screen.getByRole('button', { name: '絞り込む' }));
+    await waitFor(() => expect(logsApi.list).toHaveBeenCalledTimes(2));
+
+    logsApi.list.mockRejectedValue(
+      new ApiRequestError(400, { code: 'validation_failed', message: '期間は93日以内で指定してください' }),
+    );
+    fireEvent.change(screen.getByLabelText('いつから'), { target: { value: '2026-01-01' } });
+    fireEvent.click(screen.getByRole('button', { name: '絞り込む' }));
+    expect(await screen.findByText('期間は93日以内で指定してください')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: '⬇ CSVで保存' })).toBeNull();
+    expect((screen.getByRole('button', { name: '⬇ CSVで保存' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/CSVは絞り込んだ条件の全件です/)).toBeTruthy();
   });
 });

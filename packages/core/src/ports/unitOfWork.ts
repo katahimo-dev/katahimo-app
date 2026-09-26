@@ -1,3 +1,4 @@
+import type { TenantCalendarSettings } from '../domain/schedule/calendarPolicy';
 import type { AppLogReadRepository } from './appLog';
 import type { AttendanceRepository } from './attendance';
 import type { StaffBusyBlockRepository, StaffCalendarRepository } from './calendars';
@@ -25,6 +26,8 @@ export interface TenantRepositories {
   readonly tenantId: string;
   /** UoW のテナント(platform.tenants)。 */
   tenant(): Promise<TenantRecord>;
+  /** テナントのカレンダーの設定(platform.tenants.calendar_settings。運用担当者が CLI で変える。アプリは読むだけ)。 */
+  calendarSettings(): Promise<TenantCalendarSettings>;
   staff: StaffRepository;
   sessions: SessionRepository;
   passwordResetCodes: PasswordResetCodeRepository;

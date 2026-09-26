@@ -1,3 +1,4 @@
+import { EMPTY_CALENDAR_SETTINGS } from '@katahimo/core/domain';
 import { describe, expect, it } from 'vitest';
 import { InMemoryTtlCache } from '../cache';
 import { GasBridgeMapsPort, GasBridgeSchedulePort } from '../gas-bridge';
@@ -10,7 +11,7 @@ import { createScheduleServices, scheduleEnvProblems, selectScheduleProvider } f
 const bridge = { GAS_BRIDGE_URL: 'https://script.google.com/macros/s/x/exec', GAS_BRIDGE_SECRET: 's' };
 const google = { GOOGLE_MAPS_API_KEY: 'key', GOOGLE_APPLICATION_CREDENTIALS: '/secrets/sa.json' };
 const deps: ScheduleServiceDeps = {
-  directory: { load: async () => ({ staff: [], customers: [] }) },
+  directory: { load: async () => ({ staff: [], customers: [], calendarSettings: EMPTY_CALENDAR_SETTINGS }) },
   appLog: { write: async () => {} },
   routeCache: new InMemoryTtlCache({ maxEntries: 1 }),
 };

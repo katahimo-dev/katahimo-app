@@ -1,4 +1,5 @@
 import type { BusinessType, TenantStatus } from '../domain/model';
+import type { TenantCalendarSettings } from '../domain/schedule/calendarPolicy';
 
 export interface TenantRecord {
   id: string;
@@ -32,4 +33,13 @@ export interface ProvisionTenantInput {
 /** テナントの作成(platform.provision_tenant()。運用の CLI・シードだけが使う)。 */
 export interface TenantProvisioningPort {
   provision(input: ProvisionTenantInput): Promise<void>;
+}
+
+/**
+ * テナントのカレンダーの設定の読み書き(運用担当者の CLI だけが使う。platform.tenants は所有者しか書けないため
+ * MIGRATION_DATABASE_URL の接続で使う)。
+ */
+export interface TenantCalendarSettingsStore {
+  get(tenantId: string): Promise<TenantCalendarSettings>;
+  set(tenantId: string, settings: TenantCalendarSettings): Promise<void>;
 }

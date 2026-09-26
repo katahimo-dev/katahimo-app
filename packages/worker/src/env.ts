@@ -28,6 +28,12 @@ const envSchema = z.object({
   SMTP_USER: z.preprocess(emptyToUndefined, z.string().optional()),
   SMTP_PASS: z.preprocess(emptyToUndefined, z.string().optional()),
   SMTP_FROM: z.string().default('保育日報 <noreply@localhost>'),
+  // 画面の URL(例: https://app.example.jp)。管理者が送る「パスワード設定の案内」のメールに、法人IDつきの
+  // ログイン画面の URL として書く(未設定なら URL は書かず、法人IDだけを書く)。
+  APP_PUBLIC_URL: z.preprocess(
+    emptyToUndefined,
+    z.string().url('APP_PUBLIC_URL は URL で指定してください').optional(),
+  ),
 
   // Web Push(翌日の予定のお知らせ・テスト通知)の送信: VAPID の秘密鍵と連絡先。公開鍵(VAPID_PUBLIC_KEY)と
   // 3つとも設定するか、3つとも空にする(空なら push.* は送らずに完了にし、お知らせのジョブは何もしない)。

@@ -1,5 +1,7 @@
+import { parseTenantCalendarSettings, type TenantCalendarSettings } from '@katahimo/core/domain';
 import type {
   ProvisionTenantInput,
+  TenantCalendarSettingsStore,
   TenantDirectoryPort,
   TenantProvisioningPort,
   TenantRecord,
@@ -20,6 +22,14 @@ const tenantColumns = {
 export async function findTenantById(db: Executor, id: string): Promise<TenantRecord | null> {
   const rows = await db.select(tenantColumns).from(tenants).where(eq(tenants.id, id));
   return rows[0] ?? null;
+}
+
+export async function findTenantCalendarSettings(db: Executor, id: string): Promise<TenantCalendarSettings> {
+  const rows = await db
+    .select({ calendarSettings: tenants.calendarSettings })
+    .from(tenants)
+    .where(eq(tenants.id, id));
+  return parseTenantCalendarSettings(rows[0]?.calendarSettings);
 }
 
 /** platform.tenants の参照(RLS なし)。 */
@@ -59,5 +69,21 @@ export class DrizzleTenantProvisioning implements TenantProvisioningPort {
     await this.db.execute(
       sql`select platform.provision_tenant(${input.id}::uuid, ${input.slug}, ${input.name}, ${input.timezone}, ${input.businessType})`,
     );
+  }
+}
+
+/** テナントのカレンダーの設定(所有者の接続。運用担当者の CLI `pnpm tenant:calendars`)。 */
+export class DrizzleTenantCalendarSettingsStore implements TenantCalendarSettingsStore {
+  constructor(private readonly db: Database) {}
+
+  get(tenantId: string): Promise<TenantCalendarSettings> {
+    return findTenantCalendarSettings(this.db, tenantId);
+  }
+
+  async set(tenantId: string, settings: TenantCalendarSettings): Promise<void> {
+    await this.db
+      .update(tenants)
+      .set({ calendarSettings: { ...settings } })
+      .where(eq(tenants.id, tenantId));
   }
 }
