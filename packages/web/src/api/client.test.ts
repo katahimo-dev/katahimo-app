@@ -40,6 +40,44 @@ describe('api client', () => {
     await expect(api.get('/api/x', z.object({ ok: z.literal(true) }))).rejects.toBeInstanceOf(NetworkError);
   });
 
+  it('契約と違う応答は、食い違った場所をコンソールの文言に入れる', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    stubFetch(200, { attendance: { rowVersion: -1 } });
+    await expect(
+      api.get('/api/x', z.object({ attendance: z.object({ rowVersion: z.number().nonnegative() }) })),
+    ).rejects.toBeInstanceOf(NetworkError);
+    expect(String(consoleError.mock.calls[0]?.[0])).toMatch(/契約と一致しません: attendance\.rowVersion: /);
+  });
+
+  it('本文を読み終える前に取り消された読み込みは中断のまま投げ、契約の食い違いとして記録しない', async () => {
+    // 応答の頭が届いた後に signal が中断されると、本文の読み込み(res.json())が AbortError になる
+    // (TanStack Query が保存後の読み直しのために、読み込み中の前の分を取り消したとき)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const controller = new AbortController();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const body = new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('{"attendance":'));
+            controller.signal.addEventListener('abort', () =>
+              c.error(new DOMException('The operation was aborted.', 'AbortError')),
+            );
+          },
+        });
+        return new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }),
+    );
+    const pending = api.get('/api/x', z.object({ attendance: z.object({}) }), undefined, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    const error = await pending.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as DOMException).name).toBe('AbortError');
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
   it('formatRetryAfter', () => {
     expect(formatRetryAfter(30)).toBe('あと約1分');
     expect(formatRetryAfter(3600)).toBe('あと約60分');

@@ -9,6 +9,7 @@ import { requireAdmin, type SessionEnv } from '../session';
 const STATUS_BY_RESULT: Partial<Record<string, ContentfulStatusCode>> = {
   failed: 502,
   review_required: 409,
+  busy: 409,
 };
 
 /**

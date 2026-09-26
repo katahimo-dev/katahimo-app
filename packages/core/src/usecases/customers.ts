@@ -459,6 +459,24 @@ async function syncRecipients(
 }
 
 /**
+ * keep(外部連携の API)で表示名が省かれたときの表示名。今の表示名が今の姓名から作った既定の形(「姓 名」。
+ * 空白の有無は問わない)で、姓か名が変わったなら新しい姓名から作り直す。
+ * 取込元が別に付けた表示名(既定の形でないもの)・姓名が変わらないときは今のまま。
+ */
+function keptDisplayName(
+  current: { displayName: string; familyName: string; givenName: string },
+  next: { familyName: string; givenName: string },
+  derived: string,
+): string {
+  const namesChanged = current.familyName !== next.familyName || current.givenName !== next.givenName;
+  if (!namesChanged) return current.displayName;
+  const wasDerived =
+    normalizeStaffName(current.displayName) ===
+    normalizeStaffName(`${current.familyName}${current.givenName}`);
+  return wasDerived ? derived : current.displayName;
+}
+
+/**
  * 取込元の1顧客分を DB に揃える(UoW のトランザクションの中で呼ぶ)。取込元の ID(source, external_id)で
  * 突き合わせ、無ければ作り、あれば変わった項目だけを書く。アーカイブ済みの顧客が取込元に戻ったら戻す。
  * 取込元の値の誤りは書く前に直し(normalizeCustomerSnapshot)、直せない行は書かずに skipped を返す
@@ -484,10 +502,11 @@ export async function applyCustomerSnapshot(
     value !== undefined ? value : keep && existing !== undefined ? existing : empty;
   const familyName = normalizeStaffName(snapshot.familyName);
   const givenName = normalizeStaffName(orCurrent(snapshot.givenName, current?.givenName, ''));
+  const derivedDisplayName = `${snapshot.familyName} ${snapshot.givenName ?? givenName}`.trim();
   const displayName =
     snapshot.displayName === undefined && keep && current
-      ? current.displayName
-      : snapshot.displayName || `${snapshot.familyName} ${snapshot.givenName ?? givenName}`.trim();
+      ? keptDisplayName(current, { familyName, givenName }, derivedDisplayName)
+      : snapshot.displayName || derivedDisplayName;
   const fields = {
     displayName,
     familyName,

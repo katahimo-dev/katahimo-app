@@ -167,6 +167,50 @@ describe('API: 外部システムからの顧客の受け取り', () => {
     expect(linked[0]?.n).toBe(2);
   });
 
+  it('他の取込がロックを lock_timeout(5秒)より長く持っていれば 409 と送り直しの案内(500 にしない)。放した後は通る', async () => {
+    let release = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let locked = () => {};
+    const lockTaken = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    // 別の接続で、夜間の顧客CSVの取込と同じテナントの取込のロックを持ち続ける
+    const holder = ownerDb.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`customer_import:${tenantId}`}, 0))`,
+      );
+      locked();
+      await released;
+    });
+    try {
+      await lockTaken;
+      const res = await post({ customers: [customer('BUSY-1')] });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        code: 'conflict',
+        message: '別の顧客の取込が実行中です。しばらくしてから送り直してください。',
+      });
+      const failed = await withTenant(ownerDb, tenantId, (tx) =>
+        tx.execute(
+          sql`select level, details from app_logs
+              where action = 'integration.customers.ingest_failed' order by created_at desc limit 1`,
+        ),
+      );
+      expect(failed[0]).toMatchObject({
+        level: 'WARN',
+        details: expect.objectContaining({ error: 'conflict:customer_import_in_progress' }),
+      });
+    } finally {
+      release();
+      await holder;
+    }
+    const retried = await post({ customers: [customer('BUSY-1')] });
+    expect(retried.status).toBe(200);
+    expect(((await retried.json()) as { counts: { created: number } }).counts.created).toBe(1);
+  }, 30_000);
+
   it('キーが無い・Cookie のセッションだけ・形が違う・別のテナントのIDに差し替えたキーは 401', async () => {
     const other = await createTenant('int-other');
     const forged = token.replace(tenantId.replaceAll('-', ''), other.id.replaceAll('-', ''));

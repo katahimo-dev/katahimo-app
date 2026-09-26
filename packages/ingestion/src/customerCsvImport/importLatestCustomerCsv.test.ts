@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { CUSTOMER_IMPORT_BUSY_MESSAGE, CUSTOMER_IMPORT_BUSY_REASON, conflict } from '@katahimo/core/domain';
 import type { TestContext } from '@katahimo/core/test-utils';
 import { createTestContext, type FakeAppLogPort, FakeCustomerCsvSource } from '@katahimo/core/test-utils';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -91,6 +92,39 @@ describe('importLatestCustomerCsv(GAS版 checkAndImportLatestCsv)', () => {
     expect(result.dataVersion).toBe('1');
     expect(activeCustomers().length).toBe(count);
     expect(appLog.byAction('customer_csv.import_review_required')).toHaveLength(1);
+  });
+
+  it('他の取込がロックを持ったままなら busy(API は 409)。版は進めず WARN を残す', async () => {
+    source.put(FOLDER, 'Kokyaku_202601191958_1.csv', FIXTURE);
+    // DB ではロックを lock_timeout まで待てなかったとき、リポジトリがこのエラーにする(55P03)
+    const busy: CustomerCsvImportDeps = {
+      ...deps,
+      uow: {
+        run: (tenantId, work, options) =>
+          deps.uow.run(
+            tenantId,
+            (r) =>
+              work({
+                ...r,
+                importRuns: Object.assign(Object.create(r.importRuns), {
+                  lockTenantCustomerImports: async () => {
+                    throw conflict(CUSTOMER_IMPORT_BUSY_MESSAGE, undefined, CUSTOMER_IMPORT_BUSY_REASON);
+                  },
+                }),
+              }),
+            options,
+          ),
+      },
+    };
+    const result = await importLatestCustomerCsv(busy, { tenant });
+    expect(result).toMatchObject({ status: 'busy', message: CUSTOMER_IMPORT_BUSY_MESSAGE, dataVersion: '0' });
+    expect(activeCustomers()).toEqual([]);
+    expect(appLog.byAction('customer_csv.import_failed')).toEqual([
+      expect.objectContaining({
+        level: 'WARN',
+        details: expect.objectContaining({ error: CUSTOMER_IMPORT_BUSY_REASON }),
+      }),
+    ]);
   });
 
   it('読み込みに失敗したら failed で ERROR ログを残す', async () => {

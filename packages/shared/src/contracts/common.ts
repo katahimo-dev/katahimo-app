@@ -30,6 +30,28 @@ export const businessDateSchema = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD 形式で指定してください');
 export type BusinessDate = z.infer<typeof businessDateSchema>;
 
+/**
+ * 記録の日付(日報の訪問日・領収書の日時)として書き込める年の範囲。これ外の年は入力・OCR の誤りとして扱う
+ * (一覧の続きの位置・月ごとの集計に、業務であり得ない年を持ち込まない)。
+ */
+export const RECORD_YEAR_MIN = 2000;
+export const RECORD_YEAR_MAX = 2100;
+
+/** 年月日が実在し、記録として書き込める年の範囲(RECORD_YEAR_MIN〜RECORD_YEAR_MAX)にあるか。 */
+export function isRecordDate(year: number, month: number, day: number): boolean {
+  if (!Number.isInteger(year) || year < RECORD_YEAR_MIN || year > RECORD_YEAR_MAX) return false;
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  return probe.getUTCFullYear() === year && probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day;
+}
+
+const RECORD_DATE_MESSAGE = `${RECORD_YEAR_MIN}〜${RECORD_YEAR_MAX}年の実在する日付を指定してください`;
+
+/** 書き込む記録の日付('YYYY-MM-DD'。実在する日付で、年は RECORD_YEAR_MIN〜RECORD_YEAR_MAX)。 */
+export const recordDateSchema = businessDateSchema.refine((value) => {
+  const [year, month, day] = value.split('-').map(Number) as [number, number, number];
+  return isRecordDate(year, month, day);
+}, RECORD_DATE_MESSAGE);
+
 /** 'YYYY-MM' 形式の対象月。 */
 export const yearMonthSchema = z.string().regex(/^\d{4}-\d{2}$/, 'YYYY-MM 形式で指定してください');
 
