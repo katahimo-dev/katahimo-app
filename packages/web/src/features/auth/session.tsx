@@ -12,8 +12,10 @@ import {
   removeUserScopedData,
   STORAGE_KEYS,
   type UserStorageScope,
+  userStorageKey,
   writeStorage,
 } from '../../lib/storage';
+import { releaseForeignPushSubscription, stopPushOnThisDevice } from '../notifications/pushDevice';
 
 /**
  * ログイン状態。GET /api/auth/me の結果を TanStack Query で持つ(未ログインなら null)。
@@ -67,10 +69,18 @@ export function SessionProvider({ user, children }: { user: SessionUser; childre
     [user.tenantId, user.staffId],
   );
 
+  const pushStorageKey = userStorageKey(STORAGE_KEYS.pushEndpoint, storageScope);
+
   // 人ごとに分ける前の(誰のものか分からない)値は使わずに消す
   useEffect(() => removeUnscopedUserData(), []);
+  // 前にこの端末を使った別の人の通知の購読が残っていれば、端末の購読をやめる
+  useEffect(() => {
+    void releaseForeignPushSubscription(pushStorageKey);
+  }, [pushStorageKey]);
 
   const logout = useCallback(async () => {
+    // ログアウトした端末には通知(お客様のお名前)を出さない(購読の削除にセッションが要るため、ログアウトより前)
+    await stopPushOnThisDevice(pushStorageKey);
     try {
       await authApi.logout();
     } catch {
@@ -82,7 +92,7 @@ export function SessionProvider({ user, children }: { user: SessionUser; childre
     clearDeviceCaches();
     queryClient.clear();
     window.location.reload();
-  }, [queryClient, storageScope]);
+  }, [queryClient, storageScope, pushStorageKey]);
 
   const value = useMemo(() => ({ user, storageScope, logout }), [user, storageScope, logout]);
   return <SessionContext value={value}>{children}</SessionContext>;

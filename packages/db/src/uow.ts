@@ -7,7 +7,8 @@ import type {
 } from '@katahimo/core/ports';
 import { type Database, type Tx, withTenant } from './client';
 import { mapDatabaseError } from './errors';
-import { findTenantById } from './repositories/platform/tenants';
+import { findTenantById, findTenantCalendarSettings } from './repositories/platform/tenants';
+import { DrizzleAppLogReadRepository } from './repositories/tenant/appLogs';
 import { DrizzleAttendanceRepository } from './repositories/tenant/attendance';
 import {
   DrizzleStaffBusyBlockRepository,
@@ -21,6 +22,7 @@ import {
   DrizzleCustomerRepository,
   DrizzleCustomerSourceRecordRepository,
 } from './repositories/tenant/customers';
+import { DrizzlePushSubscriptionRepository } from './repositories/tenant/push';
 import {
   DrizzleCareRecordRepository,
   DrizzleReceiptRepository,
@@ -59,6 +61,9 @@ export function bindRepositories(
       });
       return tenant;
     },
+    calendarSettings() {
+      return findTenantCalendarSettings(tx, tenantId);
+    },
     staff: new DrizzleStaffRepository(tx, tenantId),
     sessions: new DrizzleSessionRepository(tx, tenantId),
     passwordResetCodes: new DrizzlePasswordResetCodeRepository(tx, tenantId),
@@ -77,7 +82,9 @@ export function bindRepositories(
     importRuns: new DrizzleImportRunRepository(tx, tenantId),
     staffCalendars: new DrizzleStaffCalendarRepository(tx, tenantId),
     busyBlocks: new DrizzleStaffBusyBlockRepository(tx, tenantId),
+    pushSubscriptions: new DrizzlePushSubscriptionRepository(tx, tenantId),
     outbox: new DrizzleOutboxWriter(tx, tenantId, skip),
+    appLogs: new DrizzleAppLogReadRepository(tx, tenantId),
     entityChanges: new DrizzleEntityChangeWriter(tx, tenantId),
     retention: new DrizzleTenantRetentionRepository(tx, tenantId),
   };

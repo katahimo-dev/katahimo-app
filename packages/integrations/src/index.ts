@@ -20,3 +20,4 @@ export * from './runtime-env';
 export * from './schedule-provider';
 export * from './secret-box';
 export * from './storage-provider';
+export * from './web-push';

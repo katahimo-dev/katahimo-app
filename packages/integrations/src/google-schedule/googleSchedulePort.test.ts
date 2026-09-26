@@ -65,6 +65,10 @@ class FakeMaps implements MapsPort {
 }
 
 const directory: ScheduleDirectory = {
+  calendarSettings: {
+    sharedCalendars: [{ calendarId: 'reserva@group.calendar.google.com' }],
+    allowedStaffCalendars: ['@cutest.biz'],
+  },
   staff: [
     {
       id: 'staff-sato',
@@ -130,11 +134,10 @@ describe('GoogleSchedulePort', () => {
       directory: { load: async () => directory },
       routeCache: new InMemoryTtlCache({ maxEntries: 100, now: () => now }),
       appLog: { write: async (entry) => void logs.push(entry) },
-      calendarSources: [{ calendarId: 'reserva@group.calendar.google.com' }],
     });
   });
 
-  it('staff.calendar_id と GOOGLE_CALENDAR_IDS のカレンダーをJSTの1日の範囲で読み、スタッフの予定を返す', async () => {
+  it('スタッフのカレンダーとテナントの共有カレンダーをJSTの1日の範囲で読み、スタッフの予定を返す', async () => {
     const result = await port.getSchedule(targetOf('佐藤美咲'), date, { tenantId });
     expect(result).toEqual({
       success: true,
@@ -247,6 +250,40 @@ describe('GoogleSchedulePort', () => {
     await expect(
       port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId, fresh: true }),
     ).rejects.toThrow('カレンダーを読み込めませんでした');
+  });
+
+  it('軽量版も strict(翌日の予定のお知らせ)なら読めないカレンダーで失敗させる', async () => {
+    calendar.failing.add('reserva@group.calendar.google.com');
+    const view = await port.getSchedule(targetOf('佐藤 美咲'), date, { tenantId });
+    expect(view.appointments?.map((a) => a.title)).toEqual(['請求書']);
+    await expect(port.getSchedule(targetOf('佐藤 美咲'), date, { tenantId, strict: true })).rejects.toThrow(
+      'カレンダーを読み込めませんでした',
+    );
+  });
+
+  it('許可の一覧から外れたスタッフのカレンダーは読まず、そのスタッフの予定を見たときに WARN を残す', async () => {
+    port = new GoogleSchedulePort({
+      calendar,
+      maps,
+      directory: {
+        load: async () => ({
+          ...directory,
+          calendarSettings: { ...directory.calendarSettings, allowedStaffCalendars: ['@other.example'] },
+        }),
+      },
+      routeCache: new InMemoryTtlCache({ maxEntries: 10, now: () => now }),
+      appLog: { write: async (entry) => void logs.push(entry) },
+    });
+    const result = await port.getSchedule(targetOf('佐藤 美咲'), date, { tenantId });
+    expect(calendar.calls.map((c) => c.calendarId)).toEqual(['reserva@group.calendar.google.com']);
+    expect((result.appointments ?? []).map((a) => a.title)).toEqual(['山田 花子']);
+    expect(logs).toEqual([
+      expect.objectContaining({
+        level: 'WARN',
+        action: 'calendar.staff_calendar_not_allowed',
+        targetStaffId: 'staff-sato',
+      }),
+    ]);
   });
 
   it('スタッフ台帳に居ない名前は予定なし(カレンダーも読まない)', async () => {

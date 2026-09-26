@@ -1,7 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { LatLng, MapsPort } from '../ports/maps';
+import { updateAttendanceDay } from './attendance';
+import { accountRateLimitKey } from './rateLimits';
 import type { Actor } from './requestMeta';
 import { listActiveStaffForActor } from './staff';
-import { createStaffByAdmin, listStaffForAdmin, updateStaffByAdmin } from './staffAdmin';
+import {
+  createStaffByAdmin,
+  deleteStaffByAdmin,
+  listStaffForAdmin,
+  sendPasswordGuideByAdmin,
+  updateStaffByAdmin,
+} from './staffAdmin';
 import type { StaffMasterRow } from './staffMasterImport';
 import { importStaffMasterRows } from './staffMasterImport';
 import type { TestContext } from './testContext';
@@ -17,7 +26,7 @@ describe('管理者によるスタッフ管理', () => {
   });
 
   it('スタッフを登録でき(初期パスワード省略時は未設定)、SECURITYログが残る', async () => {
-    const created = await createStaffByAdmin(ctx.deps, admin, {
+    const { staff: created } = await createStaffByAdmin(ctx.deps, admin, {
       name: ' 佐藤 花子 ',
       email: 'Hanako@Example.com',
       altEmail: 'hanako@cutest.biz',
@@ -32,7 +41,7 @@ describe('管理者によるスタッフ管理', () => {
       retiredOn: null,
     });
     expect(ctx.appLog.entries.at(-1)).toMatchObject({ level: 'SECURITY', action: 'staff.admin.created' });
-    const withPassword = await createStaffByAdmin(ctx.deps, admin, {
+    const { staff: withPassword } = await createStaffByAdmin(ctx.deps, admin, {
       name: '鈴木',
       email: 'suzuki@example.com',
       role: 'staff',
@@ -55,12 +64,12 @@ describe('管理者によるスタッフ管理', () => {
   });
 
   it('部分更新でき、自分自身の重複とはみなさない。退職日を設定するとセッションを失効させる', async () => {
-    const target = await createStaffByAdmin(ctx.deps, admin, {
+    const { staff: target } = await createStaffByAdmin(ctx.deps, admin, {
       name: 'A',
       email: 'a@example.com',
       role: 'staff',
     });
-    const updated = await updateStaffByAdmin(ctx.deps, admin, target.id, {
+    const { staff: updated } = await updateStaffByAdmin(ctx.deps, admin, target.id, {
       email: 'a@example.com',
       phone: '090',
     });
@@ -77,7 +86,9 @@ describe('管理者によるスタッフ管理', () => {
         userAgent: null,
       }),
     );
-    const retired = await updateStaffByAdmin(ctx.deps, admin, target.id, { retiredOn: '2026-09-01' });
+    const { staff: retired } = await updateStaffByAdmin(ctx.deps, admin, target.id, {
+      retiredOn: '2026-09-01',
+    });
     expect(retired).toMatchObject({ retiredOn: '2026-09-01', isRetired: true });
     expect(ctx.data().sessions.every((s) => s.revokedAt)).toBe(true);
   });
@@ -96,7 +107,11 @@ describe('管理者によるスタッフ管理', () => {
   });
 
   it('一覧は退職者を含み、退職済みかはテナントのタイムゾーンの今日で判定する', async () => {
-    const a = await createStaffByAdmin(ctx.deps, admin, { name: 'A', email: 'a@example.com', role: 'staff' });
+    const { staff: a } = await createStaffByAdmin(ctx.deps, admin, {
+      name: 'A',
+      email: 'a@example.com',
+      role: 'staff',
+    });
     await updateStaffByAdmin(ctx.deps, admin, a.id, { retiredOn: '2026-09-26' });
     ctx.clock.now = new Date('2026-09-25T14:59:00Z'); // JST 9/25 23:59
     expect((await listStaffForAdmin(ctx.deps, ctx.tenantId)).find((s) => s.id === a.id)?.isRetired).toBe(
@@ -106,6 +121,347 @@ describe('管理者によるスタッフ管理', () => {
     expect((await listStaffForAdmin(ctx.deps, ctx.tenantId)).find((s) => s.id === a.id)?.isRetired).toBe(
       true,
     );
+  });
+});
+
+/** 住所 → 緯度経度。'不明' を含む住所は見つからない、fail で地図APIの失敗。 */
+class FakeGeocoder implements MapsPort {
+  calls: string[] = [];
+  fail = false;
+  async geocode(address: string): Promise<LatLng | null> {
+    this.calls.push(address);
+    if (this.fail) throw new Error('Geocoding API エラー: HTTP 429');
+    return address.includes('不明') ? null : { lat: 35.6264, lng: 139.6336 };
+  }
+  async route() {
+    return null;
+  }
+}
+
+describe('管理者によるスタッフ管理(自宅・移動手段・カレンダー・版)', () => {
+  let ctx: TestContext;
+  let admin: Actor;
+  let maps: FakeGeocoder;
+  const rowOf = (id: string) => ctx.data().staff.find((s) => s.record.id === id);
+
+  beforeEach(async () => {
+    ctx = createTestContext();
+    admin = (await ctx.addStaff('管理 者', 'admin@example.com', 'admin')).actor;
+    maps = new FakeGeocoder();
+    ctx.db.calendarSettings.set(ctx.tenantId, {
+      sharedCalendars: [],
+      allowedStaffCalendars: ['@cutest.biz'],
+    });
+  });
+
+  it('カナ・自宅・移動手段・性別・予定のカレンダーを登録でき、自宅はジオコーディングして区画も保存する', async () => {
+    const { staff, homeGeocode } = await createStaffByAdmin({ ...ctx.deps, maps }, admin, {
+      name: '佐藤 花子',
+      kana: 'ｻﾄｳ ﾊﾅｺ',
+      email: 'hanako@example.com',
+      role: 'staff',
+      homeAddress: ' 東京都世田谷区用賀4-1-1 ',
+      travelMode: 'bicycle',
+      gender: 'female',
+      scheduleCalendarId: 'hanako@cutest.biz',
+    });
+    expect(homeGeocode).toBe('ok');
+    expect(staff).toMatchObject({
+      kana: 'サトウ ハナコ',
+      homeAddress: '東京都世田谷区用賀4-1-1',
+      hasHomeGeo: true,
+      travelMode: 'bicycle',
+      gender: 'female',
+      scheduleCalendarId: 'hanako@cutest.biz',
+      rowVersion: 1,
+    });
+    expect(rowOf(staff.id)).toMatchObject({
+      record: { familyNameKana: 'サトウ', givenNameKana: 'ハナコ', homeGeo: { lat: 35.6264, lng: 139.6336 } },
+      homeGeoCell: expect.stringMatching(/^[0-9b-hjkmnp-z]{6}$/),
+    });
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({
+      action: 'staff.admin.created',
+      details: { homeGeocode: 'ok' },
+    });
+    expect(JSON.stringify(ctx.appLog.entries)).not.toContain('用賀');
+  });
+
+  it('ジオコーディングできなくても住所は保存し、緯度経度は空にして結果を返す(地図APIが無い環境は unavailable)', async () => {
+    maps.fail = true;
+    const failed = await createStaffByAdmin({ ...ctx.deps, maps }, admin, {
+      name: 'A',
+      email: 'a@example.com',
+      role: 'staff',
+      homeAddress: '東京都世田谷区用賀4-1-1',
+    });
+    expect(failed.homeGeocode).toBe('failed');
+    expect(failed.staff).toMatchObject({ homeAddress: '東京都世田谷区用賀4-1-1', hasHomeGeo: false });
+
+    const unavailable = await createStaffByAdmin(ctx.deps, admin, {
+      name: 'B',
+      email: 'b@example.com',
+      role: 'staff',
+      homeAddress: '東京都渋谷区道玄坂1-1',
+    });
+    expect(unavailable.homeGeocode).toBe('unavailable');
+    expect(unavailable.staff.homeAddress).toBe('東京都渋谷区道玄坂1-1');
+  });
+
+  it('住所を変えると緯度経度も置き換え(見つからなければ空)。同じ住所でも緯度経度が無ければ調べ直し、あれば調べない', async () => {
+    const deps = { ...ctx.deps, maps };
+    const { staff } = await createStaffByAdmin(deps, admin, {
+      name: 'A',
+      email: 'a@example.com',
+      role: 'staff',
+      homeAddress: '東京都世田谷区用賀4-1-1',
+    });
+    const moved = await updateStaffByAdmin(deps, admin, staff.id, { homeAddress: '不明な住所' });
+    expect(moved.homeGeocode).toBe('not_found');
+    expect(moved.staff).toMatchObject({ homeAddress: '不明な住所', hasHomeGeo: false });
+    expect(rowOf(staff.id)?.homeGeoCell).toBeNull();
+
+    maps.calls = [];
+    const retry = await updateStaffByAdmin(deps, admin, staff.id, { homeAddress: '不明な住所' });
+    expect(retry.homeGeocode).toBe('not_found');
+    expect(maps.calls).toEqual(['不明な住所']);
+
+    await updateStaffByAdmin(deps, admin, staff.id, { homeAddress: '東京都世田谷区用賀4-1-1' });
+    maps.calls = [];
+    const same = await updateStaffByAdmin(deps, admin, staff.id, {
+      homeAddress: '東京都世田谷区用賀4-1-1',
+      phone: '090',
+    });
+    expect(same.homeGeocode).toBeNull();
+    expect(maps.calls).toEqual([]);
+
+    const cleared = await updateStaffByAdmin(deps, admin, staff.id, { homeAddress: null });
+    expect(cleared.staff).toMatchObject({ homeAddress: null, hasHomeGeo: false });
+  });
+
+  it('rowVersion が古ければ conflict。カレンダーは付け替え・外しができる', async () => {
+    const { staff } = await createStaffByAdmin(ctx.deps, admin, {
+      name: 'A',
+      email: 'a@example.com',
+      role: 'staff',
+      scheduleCalendarId: 'a@cutest.biz',
+    });
+    const updated = await updateStaffByAdmin(ctx.deps, admin, staff.id, {
+      scheduleCalendarId: 'a2@cutest.biz',
+      rowVersion: staff.rowVersion,
+    });
+    expect(updated.staff).toMatchObject({ scheduleCalendarId: 'a2@cutest.biz', rowVersion: 2 });
+    await expect(
+      updateStaffByAdmin(ctx.deps, admin, staff.id, { phone: '090', rowVersion: staff.rowVersion }),
+    ).rejects.toMatchObject({ code: 'conflict', reason: 'stale_row_version' });
+    expect(ctx.appLog.byAction('staff.admin.update_rejected').at(-1)?.details).toEqual({
+      reason: 'stale_row_version',
+    });
+    const removed = await updateStaffByAdmin(ctx.deps, admin, staff.id, { scheduleCalendarId: null });
+    expect(removed.staff.scheduleCalendarId).toBeNull();
+    expect(ctx.data().calendars).toEqual([]);
+  });
+
+  it('許可の一覧に無いカレンダーは登録・変更できず(400・項目の誤り)、WARN を残す', async () => {
+    await expect(
+      createStaffByAdmin(ctx.deps, admin, {
+        name: 'A',
+        email: 'a@example.com',
+        role: 'staff',
+        scheduleCalendarId: 'someone@other-tenant.jp',
+      }),
+    ).rejects.toMatchObject({
+      code: 'validation_failed',
+      reason: 'calendar_not_allowed',
+      fields: { scheduleCalendarId: 'このカレンダーは使えません。運用担当者に登録を依頼してください' },
+    });
+    expect(ctx.data().staff).toHaveLength(1);
+    const { staff } = await createStaffByAdmin(ctx.deps, admin, {
+      name: 'A',
+      email: 'a@example.com',
+      role: 'staff',
+      scheduleCalendarId: 'A@Cutest.biz',
+    });
+    expect(staff.scheduleCalendarId).toBe('a@cutest.biz');
+    await expect(
+      updateStaffByAdmin(ctx.deps, admin, staff.id, { scheduleCalendarId: 'x@gmail.com' }),
+    ).rejects.toMatchObject({ reason: 'calendar_not_allowed' });
+    expect(ctx.appLog.byAction('staff.admin.create_rejected').at(-1)?.details).toEqual({
+      reason: 'calendar_not_allowed',
+    });
+    expect(ctx.appLog.byAction('staff.admin.update_rejected').at(-1)?.details).toEqual({
+      reason: 'calendar_not_allowed',
+    });
+    // 許可を後から外しても、カレンダー以外の項目は変えられる
+    ctx.db.calendarSettings.set(ctx.tenantId, { sharedCalendars: [], allowedStaffCalendars: [] });
+    await expect(updateStaffByAdmin(ctx.deps, admin, staff.id, { phone: '090' })).resolves.toBeDefined();
+  });
+
+  it('先の日付の退職日ではセッションを失効させず、今日以前なら失効させる', async () => {
+    const target = await ctx.addStaff('山田 太郎', 'taro@example.com');
+    await ctx.uow.run(ctx.tenantId, (r) =>
+      r.sessions.create({
+        id: '00000000-0000-7000-8000-0000000000f2',
+        staffId: target.staff.id,
+        tokenHash: new Uint8Array([2]),
+        createdAt: ctx.clock.now,
+        idleExpiresAt: new Date(ctx.clock.now.getTime() + 1000),
+        absoluteExpiresAt: new Date(ctx.clock.now.getTime() + 1000),
+        ip: null,
+        userAgent: null,
+      }),
+    );
+    await updateStaffByAdmin(ctx.deps, admin, target.staff.id, { retiredOn: '2026-10-31' });
+    expect(ctx.data().sessions.every((s) => !s.revokedAt)).toBe(true);
+    await updateStaffByAdmin(ctx.deps, admin, target.staff.id, { retiredOn: '2026-09-25' });
+    expect(ctx.data().sessions.every((s) => s.revokedAt)).toBe(true);
+  });
+
+  it('互いに管理者を外すと2つ目は断る(外された人はもう管理者ではない)', async () => {
+    const other = await ctx.addStaff('別の 管理者', 'other@example.com', 'admin');
+    await updateStaffByAdmin(ctx.deps, admin, other.staff.id, { role: 'staff' });
+    await expect(
+      updateStaffByAdmin(ctx.deps, other.actor, admin.staffId, { role: 'staff' }),
+    ).rejects.toMatchObject({ code: 'forbidden', reason: 'actor_not_admin' });
+    expect(ctx.appLog.byAction('staff.admin.update_rejected').at(-1)?.details).toEqual({
+      reason: 'actor_not_admin',
+    });
+  });
+
+  it('退職日の決まっていない管理者が残らなくなる変更・削除は断る(last_admin)', async () => {
+    const other = await ctx.addStaff('別の 管理者', 'other@example.com', 'admin');
+    ctx.setRetiredOn(admin.staffId, '2026-10-31'); // 操作する管理者は来月退職する
+    for (const change of [{ role: 'staff' as const }, { retiredOn: '2026-12-31' }]) {
+      await expect(updateStaffByAdmin(ctx.deps, admin, other.staff.id, change)).rejects.toMatchObject({
+        code: 'conflict',
+        reason: 'last_admin',
+      });
+    }
+    await expect(deleteStaffByAdmin(ctx.deps, admin, other.staff.id)).rejects.toMatchObject({
+      reason: 'last_admin',
+    });
+    // 管理者を減らさない変更はできる
+    await expect(
+      updateStaffByAdmin(ctx.deps, admin, other.staff.id, { phone: '090' }),
+    ).resolves.toBeDefined();
+  });
+
+  it('記録の無いスタッフは削除でき、出勤簿などの記録があれば 409(退職日の案内)。自分自身は削除できない', async () => {
+    const { staff: mistaken } = await createStaffByAdmin(ctx.deps, admin, {
+      name: '間違い',
+      email: 'wrong@example.com',
+      role: 'staff',
+    });
+    await deleteStaffByAdmin(ctx.deps, admin, mistaken.id);
+    expect(rowOf(mistaken.id)).toBeUndefined();
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({
+      level: 'SECURITY',
+      action: 'staff.admin.deleted',
+      targetStaffId: mistaken.id,
+    });
+
+    const worker = await ctx.addStaff('山田 太郎', 'taro@example.com');
+    await updateAttendanceDay(ctx.deps, worker.actor, worker.staff.id, '2026-09-24', { C: '佐藤様' });
+    await expect(deleteStaffByAdmin(ctx.deps, admin, worker.staff.id)).rejects.toMatchObject({
+      code: 'conflict',
+      reason: 'staff_has_records',
+      message: expect.stringContaining('退職日を設定してください'),
+    });
+    expect(rowOf(worker.staff.id)).toBeDefined();
+    await expect(deleteStaffByAdmin(ctx.deps, admin, admin.staffId)).rejects.toMatchObject({
+      reason: 'cannot_delete_self',
+    });
+    await expect(deleteStaffByAdmin(ctx.deps, admin, mistaken.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    expect(ctx.appLog.byAction('staff.admin.delete_rejected').map((e) => e.details)).toEqual([
+      { reason: 'staff_has_records' },
+      { reason: 'cannot_delete_self' },
+      { reason: 'not_found' },
+    ]);
+  });
+
+  it('パスワード設定の案内: 未設定のスタッフに再設定コードを発行して案内のメールを送る。設定済み・退職者には送らない', async () => {
+    const { staff } = await createStaffByAdmin(ctx.deps, admin, {
+      name: 'A',
+      email: 'a@example.com',
+      role: 'staff',
+    });
+    expect(await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id)).toEqual({ status: 'queued' });
+    expect(ctx.data().outbox.at(-1)).toMatchObject({
+      topic: 'mail.password_reset',
+      payload: { purpose: 'setup_guide' },
+    });
+    await ctx.drain();
+    expect(ctx.mailer.sent.at(-1)).toMatchObject({
+      to: 'a@example.com',
+      subject: '【保育日報】パスワード設定のご案内',
+      text: expect.stringMatching(/法人ID\(事業所ID\): test-tenant\nコード: \d{6}/),
+    });
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({
+      level: 'SECURITY',
+      action: 'staff.admin.password_guide_sent',
+      details: { passwordStatus: 'unset' },
+    });
+
+    await expect(sendPasswordGuideByAdmin(ctx.deps, admin, admin.staffId)).rejects.toMatchObject({
+      reason: 'password_already_set',
+    });
+    await updateStaffByAdmin(ctx.deps, admin, staff.id, { retiredOn: '2026-09-01' });
+    await expect(sendPasswordGuideByAdmin(ctx.deps, admin, staff.id)).rejects.toMatchObject({
+      reason: 'retired',
+    });
+  });
+
+  it('パスワード設定の案内は本人の再設定の要求と回数の上限を共有する', async () => {
+    const { staff } = await createStaffByAdmin(ctx.deps, admin, {
+      name: 'A',
+      email: 'a@example.com',
+      role: 'staff',
+    });
+    const limit = ctx.deps.rateLimits.passwordResetRequestAccount.limit;
+    for (let i = 0; i < limit; i++) await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id);
+    expect(await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id)).toMatchObject({
+      status: 'rate_limited',
+    });
+    expect(ctx.appLog.byAction('staff.admin.password_guide_rejected').at(-1)?.details).toEqual({
+      reason: 'rate_limited',
+    });
+  });
+
+  it('本人がサブメールで再設定を要求し続けた後も、案内は同じ上限で断る', async () => {
+    const { staff } = await createStaffByAdmin(ctx.deps, admin, {
+      name: 'A',
+      email: 'a@example.com',
+      altEmail: 'a@cutest.biz',
+      role: 'staff',
+    });
+    const rule = ctx.deps.rateLimits.passwordResetRequestAccount;
+    for (let i = 0; i < rule.limit; i++) {
+      await ctx.rateLimiter.consume(rule, accountRateLimitKey('test-tenant', 'a@cutest.biz'), ctx.clock.now);
+    }
+    expect(await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id)).toMatchObject({
+      status: 'rate_limited',
+    });
+  });
+
+  it('変更の履歴(外部キーの無い変更者の記録)に残っているスタッフも削除しない', async () => {
+    const { staff } = await createStaffByAdmin(ctx.deps, admin, {
+      name: '履歴 あり',
+      email: 'history@example.com',
+      role: 'staff',
+    });
+    ctx.data().entityChanges.push({
+      id: '00000000-0000-7000-8000-0000000000e1',
+      entityType: 'staff',
+      entityId: staff.id,
+      changedBy: staff.id,
+      changeSource: 'user',
+      changedFields: ['phone'],
+      before: null,
+    });
+    await expect(deleteStaffByAdmin(ctx.deps, admin, staff.id)).rejects.toMatchObject({
+      reason: 'staff_has_records',
+    });
   });
 });
 
@@ -130,7 +486,10 @@ describe('スタッフ台帳の取込', () => {
   const row = (overrides: Partial<StaffMasterRow>): StaffMasterRow => ({
     rowNumber: 2,
     name: '佐藤 花子',
+    kana: null,
+    phone: null,
     email: 'hanako@gmail.com',
+    homeAddress: null,
     altEmail: null,
     password: legacyHash,
     isAdmin: false,
@@ -149,7 +508,7 @@ describe('スタッフ台帳の取込', () => {
       row({ rowNumber: 3, name: '鈴木', email: 'suzuki@gmail.com', password: 'plain-pass' }),
       row({ rowNumber: 4, name: '田中', email: 'tanaka@gmail.com', password: '', retiredOn: '2026-03-31' }),
     ]);
-    expect(result).toEqual({ created: 3, updated: 0, skipped: [] });
+    expect(result).toEqual({ created: 3, updated: 0, skipped: [], homeWithoutGeo: 0 });
     expect(credentialsOf('hanako@gmail.com')).toMatchObject({
       record: { role: 'admin', altEmail: 'hanako@cutest.biz' },
       credentials: { legacyPasswordHash: legacyHash, passwordHash: null },
@@ -168,7 +527,7 @@ describe('スタッフ台帳の取込', () => {
   it('既存スタッフはメールで照合して更新し、設定済みのパスワードとコーディネーターの役割は保つ', async () => {
     const existing = await ctx.addStaff('旧姓 花子', 'hanako@gmail.com', 'coordinator', 'already-set');
     const result = await importStaffMasterRows(ctx.deps, ctx.tenantId, [row({ retiredOn: '2027-01-01' })]);
-    expect(result).toEqual({ created: 0, updated: 1, skipped: [] });
+    expect(result).toEqual({ created: 0, updated: 1, skipped: [], homeWithoutGeo: 0 });
     expect(credentialsOf('hanako@gmail.com')).toMatchObject({
       record: {
         id: existing.staff.id,
@@ -201,6 +560,76 @@ describe('スタッフ台帳の取込', () => {
     ]);
     expect(result.created).toBe(1);
     expect(result.skipped.map((s) => s.rowNumber)).toEqual([2, 4, 5]);
+  });
+
+  it('カナ・電話・住所を取り込み、空欄は既存の値を消さない。住所が変わったら緯度経度を置き換える', async () => {
+    const maps = new FakeGeocoder();
+    const deps = { ...ctx.deps, maps };
+    await importStaffMasterRows(deps, ctx.tenantId, [
+      row({ kana: 'サトウ ハナコ', phone: '090-1111-2222', homeAddress: '東京都世田谷区用賀4-1-1' }),
+    ]);
+    const imported = () => credentialsOf('hanako@gmail.com');
+    expect(imported()).toMatchObject({
+      record: {
+        familyNameKana: 'サトウ',
+        givenNameKana: 'ハナコ',
+        phone: '090-1111-2222',
+        homeAddress: '東京都世田谷区用賀4-1-1',
+        homeGeo: { lat: 35.6264, lng: 139.6336 },
+      },
+      homeGeoCell: expect.any(String),
+    });
+
+    maps.calls = [];
+    await importStaffMasterRows(deps, ctx.tenantId, [row({})]);
+    expect(imported()?.record).toMatchObject({
+      familyNameKana: 'サトウ',
+      phone: '090-1111-2222',
+      homeAddress: '東京都世田谷区用賀4-1-1',
+      homeGeo: { lat: 35.6264, lng: 139.6336 },
+    });
+    await importStaffMasterRows(deps, ctx.tenantId, [row({ homeAddress: '東京都世田谷区用賀4-1-1' })]);
+    expect(maps.calls).toEqual([]);
+
+    const moved = await importStaffMasterRows(deps, ctx.tenantId, [row({ homeAddress: '不明な住所' })]);
+    expect(moved.homeWithoutGeo).toBe(1);
+    expect(imported()).toMatchObject({
+      record: { homeAddress: '不明な住所', homeGeo: null },
+      homeGeoCell: null,
+    });
+  });
+
+  it('住所が同じでも緯度経度が無ければ調べ直す。取り込まない行の住所は調べない。姓だけのカナは名のカナを消さない', async () => {
+    const maps = new FakeGeocoder();
+    const deps = { ...ctx.deps, maps };
+    await importStaffMasterRows(ctx.deps, ctx.tenantId, [
+      row({ kana: 'サトウ ハナコ', homeAddress: '東京都世田谷区用賀4-1-1' }),
+    ]);
+    expect(credentialsOf('hanako@gmail.com')?.record.homeGeo).toBeNull();
+    await importStaffMasterRows(deps, ctx.tenantId, [
+      row({ kana: 'サトウ', homeAddress: '東京都世田谷区用賀4-1-1' }),
+      row({ rowNumber: 3, email: '', homeAddress: '取り込まない行の住所' }),
+    ]);
+    expect(maps.calls).toEqual(['東京都世田谷区用賀4-1-1']);
+    expect(credentialsOf('hanako@gmail.com')?.record).toMatchObject({
+      homeGeo: { lat: 35.6264, lng: 139.6336 },
+      familyNameKana: 'サトウ',
+      givenNameKana: 'ハナコ',
+    });
+  });
+
+  it('地図APIが無い環境では住所だけを保存し、古い緯度経度は消す', async () => {
+    await importStaffMasterRows({ ...ctx.deps, maps: new FakeGeocoder() }, ctx.tenantId, [
+      row({ homeAddress: '東京都世田谷区用賀4-1-1' }),
+    ]);
+    const result = await importStaffMasterRows(ctx.deps, ctx.tenantId, [
+      row({ homeAddress: '東京都渋谷区道玄坂1-1' }),
+    ]);
+    expect(result.homeWithoutGeo).toBe(1);
+    expect(credentialsOf('hanako@gmail.com')?.record).toMatchObject({
+      homeAddress: '東京都渋谷区道玄坂1-1',
+      homeGeo: null,
+    });
   });
 
   it('dryRun では件数だけ数えて何も書き込まない', async () => {

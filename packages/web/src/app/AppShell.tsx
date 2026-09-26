@@ -1,8 +1,9 @@
+import { isAdminRole } from '@katahimo/shared';
 import { lazy, type ReactNode, Suspense, useEffect, useState } from 'react';
 import { ChangePasswordModal, useSession } from '../features/auth';
 import { CustomerSearchProvider, CustomersTab } from '../features/customers';
 import { ReportModalProvider } from '../features/report';
-import { ScheduleTab } from '../features/schedule';
+import { ScheduleTab, useScheduleLinkNavigation } from '../features/schedule';
 import { SettingsModal } from '../features/settings';
 import { runWhenIdle } from '../lib/idle';
 import { SectionErrorBoundary } from '../ui/ErrorBoundary';
@@ -16,9 +17,12 @@ import { useUiConfig } from './uiConfig/useUiConfig';
 // 出勤簿タブは初めて開いたときに作る(GAS版と同じ)ので、JSも分けておき、手が空いたときに先に読む
 const loadAttendance = () => import('../features/attendance');
 const AttendanceTab = lazy(() => loadAttendance().then((m) => ({ default: m.AttendanceTab })));
+// 管理タブは管理者だけが開くので、JSを分けて開いたときに読む
+const AdminTab = lazy(() => import('../features/admin').then((m) => ({ default: m.AdminTab })));
 
 /**
- * ログイン後の画面の骨格(GAS版 #app)。ヘッダー・3つのタブ・下タブ・設定まわりのダイアログを置く。
+ * ログイン後の画面の骨格(GAS版 #app)。ヘッダー・3つのタブ(管理者は「🛠 管理」を加えた4つ)・下タブ・
+ * 設定まわりのダイアログを置く。
  * 各タブの中身・日報ダイアログは features/ 以下の各機能が持つ。
  */
 export function AppShell() {
@@ -41,6 +45,7 @@ function ShellLayout() {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
   useDataVersionPolling();
+  useScheduleLinkNavigation();
   useUiConfig(); // 日報ダイアログを開く前に読み始めておく(GAS版 loadUiConfig)
   useEffect(() => runWhenIdle(() => void loadAttendance()), []);
 
@@ -60,6 +65,13 @@ function ShellLayout() {
             <AttendanceTab />
           </Suspense>
         </TabPanel>
+        {isAdminRole(user.role) ? (
+          <TabPanel tab="admin" id="tabAdmin">
+            <Suspense fallback={null}>
+              <AdminTab />
+            </Suspense>
+          </TabPanel>
+        ) : null}
       </main>
 
       <BottomNav />

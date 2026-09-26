@@ -12,12 +12,14 @@ import {
   securityHeaders,
 } from './http/security';
 import { registerWebStatic } from './http/webStatic';
+import { createAdminAuditLogRoutes } from './routes/adminAuditLogs';
 import { createAdminImportRoutes } from './routes/adminImport';
 import { createAdminStaffRoutes } from './routes/adminStaff';
 import { createAttendanceRoutes } from './routes/attendance';
 import { createAuthRoutes } from './routes/auth';
 import { createCustomerRoutes } from './routes/customers';
 import { createDataVersionRoutes } from './routes/dataVersion';
+import { createPushRoutes } from './routes/push';
 import { createReceiptRoutes } from './routes/receipts';
 import { createReportRoutes } from './routes/reports';
 import { createScheduleRoutes } from './routes/schedule';
@@ -76,7 +78,9 @@ export function createApp(deps: AppDeps) {
   app.route('/api/admin/customers', createAdminImportRoutes(container));
   app.route('/api/data-version', createDataVersionRoutes(container));
   app.route('/api/admin/staff', createAdminStaffRoutes(container));
+  app.route('/api/admin', createAdminAuditLogRoutes(container));
   app.route('/api/ui-config', createUiConfigRoutes(container));
+  app.route('/api/push', createPushRoutes(container));
 
   // 本番コンテナではビルド済みのWeb画面も同じオリジンから配信する(APIのルートより後に登録し、/api を優先)
   if (deps.env.WEB_DIST_DIR) registerWebStatic(app, deps.env.WEB_DIST_DIR);

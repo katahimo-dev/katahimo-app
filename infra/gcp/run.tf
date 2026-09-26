@@ -14,9 +14,9 @@ locals {
     STORAGE_PROVIDER           = "gcs"
     GCS_BUCKET                 = google_storage_bucket.receipts.name
     SCHEDULE_PROVIDER          = var.schedule_provider
-    GOOGLE_CALENDAR_IDS        = var.google_calendar_ids
     GAS_BRIDGE_URL             = var.gas_bridge_url
     CUSTOMER_CSV_DRIVE_FOLDERS = var.customer_csv_drive_folders
+    VAPID_PUBLIC_KEY           = var.web_push.public_key
   } : k => v if v != "" }
 
   api_env = merge(local.common_env, { for k, v in {
@@ -30,11 +30,13 @@ locals {
 
   # パスワード再設定メールは outbox 経由でワーカーが送る(API は応答時間からアカウントの有無が分からないよう送らない)
   worker_env = merge(local.common_env, { for k, v in {
-    DB_POOL_MAX = "3"
-    SMTP_HOST   = var.smtp.host
-    SMTP_PORT   = tostring(var.smtp.port)
-    SMTP_USER   = var.smtp.user
-    SMTP_FROM   = var.smtp.from
+    DB_POOL_MAX    = "3"
+    SMTP_HOST      = var.smtp.host
+    SMTP_PORT      = tostring(var.smtp.port)
+    SMTP_USER      = var.smtp.user
+    SMTP_FROM      = var.smtp.from
+    VAPID_SUBJECT  = var.web_push.subject
+    APP_PUBLIC_URL = var.app_public_url
   } : k => v if v != "" })
 
   # 環境変数名 = シークレット名(secrets.tf)。optional のものは var.optional_secrets にあるときだけ渡す。
@@ -57,6 +59,7 @@ locals {
       SMTP_PASS           = "smtp-pass"
       GOOGLE_MAPS_API_KEY = "google-maps-api-key"
       GAS_BRIDGE_SECRET   = "gas-bridge-secret"
+      VAPID_PRIVATE_KEY   = "vapid-private-key"
     } : k => v if contains(var.optional_secrets, v) },
   )
 
@@ -80,6 +83,16 @@ locals {
       max_retries     = 1 # 冪等なので失敗時に1回だけ流し直す
       timeout         = "1800s"
       schedule        = "0 22 * * *"
+    }
+    # 翌日の予定のお知らせ(Web Push)。GAS版 gas-root-serach の夜間 main() の LINE WORKS DM の置き換え
+    route-notice = {
+      args            = ["dist/route-notice.js"]
+      service_account = google_service_account.worker.email
+      env             = local.worker_env
+      secret_env      = local.worker_secret_env
+      max_retries     = 1 # スタッフ × 日付で1件なので流し直してよい
+      timeout         = "1800s"
+      schedule        = var.route_notice_schedule
     }
     # GAS版 checkAndImportLatestCsv(Triggers.js)
     csv-import = {
@@ -290,6 +303,15 @@ resource "google_cloud_run_v2_service" "worker" {
 
   lifecycle {
     ignore_changes = [template[0].containers[0].image, client, client_version]
+
+    # Web Push は公開鍵・連絡先・秘密鍵の3つが揃って使える(ワーカーは片方だけの設定では起動しない)
+    precondition {
+      condition = (
+        (var.web_push.public_key == "") == (var.web_push.subject == "") &&
+        (var.web_push.public_key == "") == !contains(var.optional_secrets, "vapid-private-key")
+      )
+      error_message = "web_push.public_key・web_push.subject・optional_secrets の vapid-private-key は3つとも設定するか、3つとも外してください。"
+    }
   }
 
   depends_on = [google_secret_manager_secret_iam_member.accessor, google_project_iam_member.cloudsql_client]

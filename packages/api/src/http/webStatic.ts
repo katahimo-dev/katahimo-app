@@ -12,10 +12,16 @@ const SHORT_CACHE = 'public, max-age=3600';
 
 /**
  * 更新をすぐ端末に届ける必要があるファイル。index.html は参照するアセットのハッシュが変わるため、
- * Service Worker(vite-plugin-pwa の sw.js)と登録スクリプト・マニフェストは、キャッシュされると
- * 古い版のアプリが端末に残り続けるため、いずれもキャッシュさせない。
+ * Service Worker(vite-plugin-pwa の sw.js と、sw.js が読む通知の処理 push-sw.js)と登録スクリプト・マニフェストは、
+ * キャッシュされると古い版のアプリが端末に残り続けるため、いずれもキャッシュさせない。
  */
-const ALWAYS_REVALIDATE = new Set(['index.html', 'sw.js', 'registerSW.js', 'manifest.webmanifest']);
+const ALWAYS_REVALIDATE = new Set([
+  'index.html',
+  'sw.js',
+  'push-sw.js',
+  'registerSW.js',
+  'manifest.webmanifest',
+]);
 
 /** 配信するファイルのパス(distDir からの相対、`/` 区切り)に付ける Cache-Control。 */
 export function cacheControlFor(relativePath: string): string {

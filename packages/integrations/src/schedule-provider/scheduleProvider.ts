@@ -10,7 +10,7 @@ import { GasBridgeMapsPort, GasBridgeSchedulePort } from '../gas-bridge';
 import type { GasBridgeOptions } from '../gas-bridge/gasBridgeClient';
 import { createCalendarApiClient, GoogleCalendarApiPort } from '../google-calendar';
 import { GoogleMapsPlatformPort } from '../google-maps';
-import { GoogleSchedulePort, parseCalendarSourcesEnv } from '../google-schedule';
+import { GoogleSchedulePort } from '../google-schedule';
 import { NoopMapsPort, NoopSchedulePort } from '../noop';
 
 export const SCHEDULE_PROVIDERS = ['google', 'gas_bridge', 'noop'] as const;
@@ -21,7 +21,6 @@ export interface ScheduleProviderEnv {
   SCHEDULE_PROVIDER?: ScheduleProvider | undefined;
   GOOGLE_MAPS_API_KEY?: string | undefined;
   GOOGLE_APPLICATION_CREDENTIALS?: string | undefined;
-  GOOGLE_CALENDAR_IDS?: string | undefined;
   GOOGLE_CALENDAR_IMPERSONATE?: string | undefined;
   GAS_BRIDGE_URL?: string | undefined;
   GAS_BRIDGE_SECRET?: string | undefined;
@@ -85,7 +84,6 @@ export function createScheduleServices(
         directory: deps.directory,
         routeCache: deps.routeCache,
         appLog: deps.appLog,
-        calendarSources: parseCalendarSourcesEnv(env.GOOGLE_CALENDAR_IDS),
       });
       return { provider, schedule, maps };
     }

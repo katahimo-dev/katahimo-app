@@ -8,6 +8,7 @@ export default defineConfig({
     main: 'src/main.ts',
     'outbox-once': 'src/entrypoints/outboxOnce.ts',
     'nightly-calendar-sync': 'src/entrypoints/nightlyCalendarSync.ts',
+    'route-notice': 'src/entrypoints/routeNotice.ts',
     'csv-import': 'src/entrypoints/csvImport.ts',
     'sync-busy-blocks': 'src/entrypoints/syncBusyBlocks.ts',
     maintenance: 'src/entrypoints/maintenance.ts',

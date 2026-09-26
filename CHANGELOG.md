@@ -1,5 +1,43 @@
 # 更新履歴 (katahimo-app)
 
+## [未リリース]
+
+### 追加
+
+- 管理者だけの「🛠 管理」タブ: スタッフ(一覧・登録・編集・退職日・削除・パスワード設定の案内メール)、AIプロンプト(編集・既定に戻す・
+  他の管理者の保存との競合の検出)、操作ログ(期間・レベル・スタッフ・操作の種類で絞り込み、CSV で保存)。GAS版で管理者が
+  スプレッドシートを直接編集していた作業と Drive の CSV ログの置き換え(`doc/02_機能仕様.md` 10章)。
+- API: `DELETE /api/admin/staff/:id`、`POST /api/admin/staff/:id/password-guide`、`GET /api/admin/audit-logs`(`.csv`)。
+  スタッフの登録・変更にカナ・自宅住所(ジオコーディングして保存)・移動手段・性別・予定のカレンダー・`rowVersion`、
+  AIプロンプトに `revision` を追加(`doc/04_API仕様.md` 2.8・2.9)。
+- スタッフ台帳の取込でカナ・電話・住所も読む(空欄は既存の値を消さない。住所が変わったら緯度経度を置き換える)。
+- パスワード再設定の画面の「番号が届いている方はこちら」。
+- 翌日の予定のお知らせ(PWA の Web Push。GAS版 gas-root-serach の夜間の LINE WORKS の DM の置き換え): 設定の「通知」で端末ごとに
+  オンにすると、毎日 19:00 に明日の予定の時刻とお名前が届き、押すと予定タブで明日の予定を開く。テスト通知も送れる。
+  API `GET /api/push/config`・`POST`/`DELETE /api/push/subscriptions`・`POST /api/push/test`、outbox の `push.route_notice`・`push.test`、
+  ジョブ `pnpm job:route-notice`(Cloud Scheduler 19:00)。VAPID の鍵(`VAPID_PUBLIC_KEY`・`VAPID_PRIVATE_KEY`・`VAPID_SUBJECT`)が
+  無い環境では使わない。
+- 運用のコマンド `pnpm push:vapid-keys`(Web Push の VAPID の鍵の組を作る)。
+- テナントごとのカレンダーの設定(共有カレンダー・スタッフに設定できるカレンダーの許可)を `platform.tenants.calendar_settings` に置き、
+  運用担当者のコマンド `pnpm tenant:calendars` で変える。管理者は許可に無いカレンダーをスタッフに設定できず、予定を読むときにも
+  確かめ直す(`doc/05_バッチ・外部連携.md` 4.2)。
+- ワーカーの環境変数 `APP_PUBLIC_URL`: パスワード設定の案内のメールに法人IDつきのログイン画面の URL を書く(terraform の `app_public_url`)。
+
+### 変更
+
+- 共有カレンダーの環境変数 `GOOGLE_CALENDAR_IDS` をやめ、テナントごとのカレンダーの設定(`pnpm tenant:calendars`)に置き換える。
+  切替の前に、`GOOGLE_CALENDAR_IDS` に入れていたカレンダーを `pnpm tenant:calendars -- <slug> --add-shared …` で登録する。
+- GAS版と並べて撮る画面の見比べ(`tools/gas-preview`、`pnpm preview:*`)をやめ、実際の API・DB での通し確認を `tools/e2e`(`pnpm e2e`)に
+  切り出す。通し確認に管理タブ(スタッフ・AIプロンプト・操作ログ)と、VAPID が無いときに「通知」欄が出ないことの確認を足す。
+  画面の文言・振る舞いはこのアプリのコードが正で、GAS版は業務ロジック・計算結果の基準(gasParity のテスト)。
+
+### 資料
+
+- `doc/11_GAS版との機能比較.md`: GAS版でできたこと全てと新アプリの判定(同等・改善・変更・GAS版のみと理由)、上位互換の状況、
+  切替の日の運用に残っていること。
+- キューテスト様向けのご説明資料(`doc/partner/`)を、スマホへの通知・管理者の画面・シートは見るだけの写しになることに合わせて
+  更新(23枚)。画面の見比べの記述を外す。
+
 ## [Ver. 1.0.0-baseline] - 2026-09-26
 
 GAS版 `gas-childcare-visit-app` と同じ画面・同じ結果を持つ katahimo-app の最初の版(ベースライン)。今後の変更はこの版を起点に記録する。

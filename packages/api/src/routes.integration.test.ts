@@ -18,6 +18,8 @@ const env = loadEnv({
   MIRROR_TO_GOOGLE_SHEETS: 'false',
   SESSION_SECRET: process.env.SESSION_SECRET ?? 'integration-test-session-secret',
   SECRET_BOX_LOCAL_KEY: process.env.SECRET_BOX_LOCAL_KEY ?? 'a'.repeat(64),
+  // Web Push を使える環境にする(API は公開鍵だけを使う。65バイトの base64url)
+  VAPID_PUBLIC_KEY: Buffer.alloc(65, 4).toString('base64url'),
 });
 const appDb = createDatabase(env.DATABASE_URL, { max: 4 });
 const ownerDb = createDatabase(process.env.MIGRATION_DATABASE_URL ?? '', { max: 1, onnotice: () => {} });
@@ -26,6 +28,7 @@ const app = createApp({ env, container });
 
 const PASSWORD = 'integration-pass-1';
 let slug = '';
+let tenantId = '';
 let staffId = '';
 let adminId = '';
 let staffCookie = '';
@@ -76,6 +79,7 @@ beforeAll(async () => {
     password: PASSWORD,
     role: 'admin',
   });
+  tenantId = tenant.id;
   staffId = staff.id;
   adminId = admin.id;
   staffCookie = await login(`staff-${slug}@example.com`);
@@ -161,5 +165,82 @@ describe('API: admin-vs-self', () => {
     expect(await (await get('/api/staff', staffCookie)).json()).toEqual({ staff: [] });
     const admin = await json(await get('/api/staff', adminCookie));
     expect(admin.staff.map((s) => s.id).sort()).toEqual([staffId, adminId].sort());
+  });
+});
+
+describe('API: Web Push', () => {
+  const subscription = (name: string) => ({
+    endpoint: `https://fcm.googleapis.com/fcm/send/${name}-${slug}`,
+    expirationTime: null,
+    keys: { p256dh: 'p'.repeat(87), auth: 'a'.repeat(22) },
+  });
+
+  it('設定は VAPID の公開鍵を返す(ログインが必要)', async () => {
+    expect((await get('/api/push/config', '')).status).toBe(401);
+    const res = await get('/api/push/config', staffCookie);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ enabled: true, publicKey: env.VAPID_PUBLIC_KEY });
+  });
+
+  it('プッシュサービス以外の送り先は 400(ワーカーが任意の URL へ送らないように)', async () => {
+    for (const endpoint of [
+      'https://169.254.169.254/x',
+      'http://fcm.googleapis.com/fcm/send/x',
+      'https://evil.example/fcm.googleapis.com',
+    ]) {
+      const res = await send('POST', '/api/push/subscriptions', staffCookie, {
+        ...subscription('x'),
+        endpoint,
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ code: 'validation_failed' });
+    }
+  });
+
+  it('登録・テスト通知・削除は本人の端末だけ(購読が無ければテスト通知は 400)', async () => {
+    const res = await send('POST', '/api/push/test', adminCookie, {});
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'validation_failed' });
+
+    expect((await send('POST', '/api/push/subscriptions', staffCookie, subscription('staff'))).status).toBe(
+      200,
+    );
+    const test = await send('POST', '/api/push/test', staffCookie, {});
+    expect(test.status).toBe(200);
+    expect(await test.json()).toEqual({ ok: true, subscriptionCount: 1 });
+
+    // 他のスタッフは消せない(何もしない)。本人が消したらテスト通知は送れない
+    const endpoint = subscription('staff').endpoint;
+    expect((await send('DELETE', '/api/push/subscriptions', adminCookie, { endpoint })).status).toBe(200);
+    expect((await send('POST', '/api/push/test', staffCookie, {})).status).toBe(200);
+    expect((await send('DELETE', '/api/push/subscriptions', staffCookie, { endpoint })).status).toBe(200);
+    expect((await send('POST', '/api/push/test', staffCookie, {})).status).toBe(400);
+  });
+
+  it('テスト通知は1時間の回数の上限で 429', async () => {
+    expect((await send('POST', '/api/push/subscriptions', adminCookie, subscription('admin'))).status).toBe(
+      200,
+    );
+    const statuses: number[] = [];
+    for (let i = 0; i < container.rateLimits.pushTestStaff.limit + 1; i++) {
+      statuses.push((await send('POST', '/api/push/test', adminCookie, {})).status);
+    }
+    expect(statuses.at(-1)).toBe(429);
+  });
+
+  it('購読の登録も1時間の回数の上限で 429、1人の購読は10件まで', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < container.rateLimits.pushSubscribeStaff.limit + 1; i++) {
+      statuses.push(
+        (await send('POST', '/api/push/subscriptions', staffCookie, subscription(`many-${i}`))).status,
+      );
+    }
+    // 前のテストの1回を含めて上限まで通り、その後は 429
+    expect(statuses.filter((status) => status === 200)).toHaveLength(
+      container.rateLimits.pushSubscribeStaff.limit - 1,
+    );
+    expect(statuses.at(-1)).toBe(429);
+    const subscriptions = await container.uow.run(tenantId, (r) => r.pushSubscriptions.listForStaff(staffId));
+    expect(subscriptions).toHaveLength(10);
   });
 });

@@ -1,4 +1,5 @@
-import { HOME_TABS, useHomeTabs } from './homeTabs';
+import { useSession } from '../features/auth';
+import { homeTabsFor, useHomeTabs } from './homeTabs';
 
 /**
  * GAS版の下部固定タブ。#app が overflow-hidden のため sticky では本文が長いと画面外へ切れてしまう。
@@ -6,12 +7,13 @@ import { HOME_TABS, useHomeTabs } from './homeTabs';
  */
 export function BottomNav() {
   const { activeTab, switchTab } = useHomeTabs();
+  const { user } = useSession();
   return (
     <nav
       className="fixed bottom-0 left-1/2 -translate-x-1/2 z-20 flex bg-white border-t border-gray-200"
       style={{ width: '100%', maxWidth: 480 }}
     >
-      {HOME_TABS.map((tab) => {
+      {homeTabsFor(user.role).map((tab) => {
         const active = tab.key === activeTab;
         return (
           <button

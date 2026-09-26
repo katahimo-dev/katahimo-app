@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_RATE_LIMIT_POLICY } from '../rateLimits';
 import { login } from './login';
-import { confirmPasswordReset, RESET_CODE_MAX_ATTEMPTS, requestPasswordReset } from './passwordReset';
+import {
+  buildPasswordResetMail,
+  confirmPasswordReset,
+  RESET_CODE_MAX_ATTEMPTS,
+  requestPasswordReset,
+} from './passwordReset';
 import { registerStaff } from './staffRegistration';
 import type { AuthTestContext } from './testSetup';
 import { createAuthTestContext } from './testSetup';
@@ -236,5 +241,21 @@ describe('パスワード再設定', () => {
       reason: 'weak_password',
       violation: 'too_short',
     });
+  });
+});
+
+describe('パスワード設定の案内のメール', () => {
+  it('法人ID と、画面の URL があれば法人IDつきのログイン画面の URL を書く', () => {
+    const mail = buildPasswordResetMail('a@example.com', '123456', 'setup_guide', {
+      tenantSlug: 'cutest',
+      appPublicUrl: 'https://app.example.jp/',
+    });
+    expect(mail.text).toContain('ログイン画面: https://app.example.jp/?t=cutest');
+    expect(mail.text).toContain('法人ID(事業所ID): cutest');
+    expect(mail.text).toContain('コード: 123456');
+    const withoutUrl = buildPasswordResetMail('a@example.com', '123456', 'setup_guide', {
+      tenantSlug: 'cutest',
+    });
+    expect(withoutUrl.text).not.toContain('ログイン画面:');
   });
 });

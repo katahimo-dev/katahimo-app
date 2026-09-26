@@ -2,13 +2,25 @@ import { conflict, STALE_WRITE_MESSAGE } from '@katahimo/core/domain';
 import type {
   NewStaffInput,
   StaffCredentials,
+  StaffDeleteOutcome,
+  StaffHome,
+  StaffPasswordStatus,
   StaffPatch,
   StaffRecord,
   StaffRepository,
   StaffRouteProfile,
 } from '@katahimo/core/ports';
 import { and, asc, eq, gt, isNull, or, type SQL, sql } from 'drizzle-orm';
-import { staff, staffCalendars, staffCredentials, staffLoginEmails } from '../../schema';
+import { FOREIGN_KEY_VIOLATION, pgErrorOf } from '../../errors';
+import {
+  aiPromptRevisions,
+  careRecordRevisions,
+  entityChanges,
+  staff,
+  staffCalendars,
+  staffCredentials,
+  staffLoginEmails,
+} from '../../schema';
 import { TenantBound } from './base';
 
 // 外側の列は表名つきで書く(drizzle は単一表の select では列を表名なしで出すため、副問い合わせの中では
@@ -32,16 +44,37 @@ const staffColumns = {
   role: staff.role,
   retiredOn: staff.retiredOn,
   gender: staff.gender,
+  homeAddress: staff.homeAddress,
+  homeLat: staff.homeLat,
+  homeLng: staff.homeLng,
+  travelMode: staff.travelMode,
   rowVersion: staff.rowVersion,
 };
 
+type StaffRow = Omit<StaffRecord, 'homeGeo'> & { homeLat: number | null; homeLng: number | null };
+
+function toRecord({ homeLat, homeLng, ...row }: StaffRow): StaffRecord {
+  return { ...row, homeGeo: homeLat !== null && homeLng !== null ? { lat: homeLat, lng: homeLng } : null };
+}
+
+/** 自宅(住所・緯度経度・区画)を staff の列にする。 */
+function homeColumns(home: StaffHome) {
+  return {
+    homeAddress: home.address,
+    homeLat: home.geo?.lat ?? null,
+    homeLng: home.geo?.lng ?? null,
+    homeGeoCell: home.geoCell,
+  };
+}
+
 export class DrizzleStaffRepository extends TenantBound implements StaffRepository {
-  private select(where: SQL | undefined) {
-    return this.tx
+  private async select(where: SQL | undefined): Promise<StaffRecord[]> {
+    const rows = await this.tx
       .select(staffColumns)
       .from(staff)
       .where(and(eq(staff.tenantId, this.tenantId), where))
       .orderBy(asc(staff.displayName), asc(staff.id));
+    return rows.map(toRecord);
   }
 
   async findById(id: string): Promise<StaffRecord | null> {
@@ -71,9 +104,14 @@ export class DrizzleStaffRepository extends TenantBound implements StaffReposito
       displayName: input.displayName,
       familyName: input.familyName,
       givenName: input.givenName,
+      familyNameKana: input.familyNameKana ?? null,
+      givenNameKana: input.givenNameKana ?? null,
       phone: input.phone ?? null,
       role: input.role,
       retiredOn: input.retiredOn ?? null,
+      travelMode: input.travelMode ?? null,
+      gender: input.gender ?? null,
+      ...(input.home ? homeColumns(input.home) : {}),
     });
     await this.replaceEmails(input.id, input.email, input.altEmail ?? null);
     await this.tx.insert(staffCredentials).values({
@@ -102,10 +140,10 @@ export class DrizzleStaffRepository extends TenantBound implements StaffReposito
     if (expectedVersion !== undefined && current.rowVersion !== expectedVersion) {
       throw conflict(STALE_WRITE_MESSAGE, undefined, 'stale_row_version');
     }
-    const { email, altEmail: alt, ...columns } = patch;
+    const { email, altEmail: alt, home, ...columns } = patch;
     const updated = await this.tx
       .update(staff)
-      .set({ ...columns, rowVersion: sql`${staff.rowVersion} + 1` })
+      .set({ ...columns, ...(home ? homeColumns(home) : {}), rowVersion: sql`${staff.rowVersion} + 1` })
       .where(
         and(eq(staff.tenantId, this.tenantId), eq(staff.id, id), eq(staff.rowVersion, current.rowVersion)),
       )
@@ -115,6 +153,64 @@ export class DrizzleStaffRepository extends TenantBound implements StaffReposito
       await this.replaceEmails(id, email ?? current.email, alt === undefined ? current.altEmail : alt);
     }
     return this.findById(id);
+  }
+
+  /** 外部キーを持たない変更の履歴に、このスタッフが変更者として残っているか。 */
+  private async appearsInHistory(id: string): Promise<boolean> {
+    const [row] = await this.tx.execute<{ referenced: boolean }>(sql`select
+      exists (select 1 from ${entityChanges} where ${entityChanges.tenantId} = ${this.tenantId} and ${entityChanges.changedBy} = ${id})
+      or exists (select 1 from ${careRecordRevisions} where ${careRecordRevisions.tenantId} = ${this.tenantId} and ${careRecordRevisions.changedBy} = ${id})
+      or exists (select 1 from ${aiPromptRevisions} where ${aiPromptRevisions.tenantId} = ${this.tenantId} and ${aiPromptRevisions.createdBy} = ${id})
+      as referenced`);
+    return Boolean(row?.referenced);
+  }
+
+  async deleteIfUnreferenced(id: string): Promise<StaffDeleteOutcome> {
+    if (!(await this.findById(id))) return 'not_found';
+    if (await this.appearsInHistory(id)) return 'referenced';
+    try {
+      // 業務の記録の参照の検査は外部キーに任せる(記録の表が増えても漏れない)。失敗しても UoW のトランザクションを
+      // 続けられるよう、セーブポイントの中で消す
+      const deleted = await this.tx.transaction((sp) =>
+        sp
+          .delete(staff)
+          .where(and(eq(staff.tenantId, this.tenantId), eq(staff.id, id)))
+          .returning({ id: staff.id }),
+      );
+      return deleted.length > 0 ? 'deleted' : 'not_found';
+    } catch (error) {
+      if (pgErrorOf(error)?.code === FOREIGN_KEY_VIOLATION) return 'referenced';
+      throw error;
+    }
+  }
+
+  async lockActiveAdmins(date: string): Promise<{ id: string; retiredOn: string | null }[]> {
+    return this.tx
+      .select({ id: staff.id, retiredOn: staff.retiredOn })
+      .from(staff)
+      .where(
+        and(
+          eq(staff.tenantId, this.tenantId),
+          eq(staff.role, 'admin'),
+          or(isNull(staff.retiredOn), gt(staff.retiredOn, date)),
+        ),
+      )
+      .orderBy(asc(staff.id))
+      .for('update');
+  }
+
+  async listPasswordStatuses(): Promise<Map<string, StaffPasswordStatus>> {
+    const rows = await this.tx
+      .select({
+        staffId: staffCredentials.staffId,
+        hasPassword: sql<boolean>`${staffCredentials.passwordHash} is not null`,
+        hasLegacy: sql<boolean>`${staffCredentials.legacyPasswordHash} is not null`,
+      })
+      .from(staffCredentials)
+      .where(eq(staffCredentials.tenantId, this.tenantId));
+    return new Map(
+      rows.map((r) => [r.staffId, r.hasPassword ? 'set' : r.hasLegacy ? 'legacy' : 'unset'] as const),
+    );
   }
 
   async getCredentials(staffId: string): Promise<StaffCredentials | null> {

@@ -1,8 +1,9 @@
 # @katahimo/web(スタッフ用Webアプリ)
 
-GAS版 `gas-childcare-visit-app` の画面(`legacy/gas-childcare-visit-app/gas-childcare-visit-app/index.html`)を、
-見た目・文言・操作の流れを変えずに React + TypeScript で作り直したもの。**GAS版が正**であり、迷ったら
-GAS版のマークアップ・クラス名・文言・`<script>` の処理をそのまま再現する(`tools/gas-preview` で並べて撮影して確かめる)。
+GAS版 `gas-childcare-visit-app` の画面(`legacy/gas-childcare-visit-app/gas-childcare-visit-app/index.html`)を
+出発点に React + TypeScript で作り直したもの。**業務ロジック・計算結果は GAS版が正**(gasParity テストで一致を
+確かめる)。画面は GAS版のマークアップ・クラス名・文言をそのまま引き継いだが、以後の見た目・操作の流れの変更は
+このアプリの中だけで判断する(GAS版と見比べて揃える運用はしていない)。
 画面ごとの振る舞い・業務ルール・権限は [`doc/02_機能仕様.md`](../../doc/02_機能仕様.md)、API は [`doc/04_API仕様.md`](../../doc/04_API仕様.md)。
 
 ## 動かし方
@@ -60,7 +61,7 @@ src/
   styles/index.css         Tailwind + GAS版の<style>の移植
   app/                     画面の骨格(全機能で共有)
     App.tsx                Provider の組み立て(エラーの受け止め / Query / 文字の大きさ / 確認ダイアログ / ログイン / トースト / 新しい版のお知らせ)
-    AppShell.tsx           ヘッダー・3つのタブ・下タブ・設定ダイアログ
+    AppShell.tsx           ヘッダー・3つのタブ(管理者は「🛠 管理」を加えた4つ)・下タブ・設定ダイアログ
     Header.tsx, BottomNav.tsx, homeTabs.tsx(useHomeTabs)
     TextSizeProvider.tsx   useTextSize()
     adminTargetStaff/      管理者用「表示するスタッフ」(予定・出勤簿で共有)
@@ -70,14 +71,17 @@ src/
   api/                     APIの呼び出し(1ファイル=1つのAPIのまとまり)
     client.ts              共通の fetch(zodで応答を検証、エラーの種類分け)
     queryKeys.ts           機能をまたいで無効化するクエリキー
-    auth.ts, settings.ts, staff.ts, system.ts
+    auth.ts, settings.ts, staff.ts, system.ts, push.ts
+    admin.ts               管理画面(スタッフ管理・AIプロンプト・操作ログ)
   features/                機能ごとのフォルダ
     auth/                  ログイン・パスワード再設定・パスワード変更・セッション
     settings/              設定ダイアログ
+    notifications/         設定の「通知」(Web Push の購読・テスト通知・受け取れない端末の判定)
     schedule/              「📅 今日の予定」タブ
     customers/             「👪 お客様」タブ・お客様の情報/これまでの記録
     report/                日報・事故報告・領収書ダイアログ
     attendance/            「🕒 出勤簿」タブとその中のダイアログ
+    admin/                 「🛠 管理」タブ(管理者だけ): staff/(一覧・登録/編集ダイアログ)・prompts/(AIプロンプト)・logs/(操作ログ)
   lib/                     画面に依存しない小さな処理(storage / date / recentCustomers / textSize / tenant / messages / idle)
   ui/                      共通の部品(トースト・確認ダイアログ・ダイアログの外側 Modal・読み込み中・0件表示・ErrorBoundary)
   test/                    テストの共通部品(providers.tsx・setup.ts)
@@ -91,10 +95,19 @@ src/
   お客様に関係ない領収書は `openStandaloneReceipt()`。
 - **予定→お客様タブへの移動**(GAS版 `jumpToCustomerFromSchedule`)は `useHomeTabs().switchTab('visitors')` を使い、
   検索欄への受け渡しは `features/customers` の中で用意する。
+- 「🛠 管理」タブは `homeTabsFor(user.role)` が管理者にだけ出し、`AppShell` も管理者のときだけ置く(`React.lazy` で別のJS)。
+  中の「スタッフ」「AIプロンプト」「操作ログ」は切り替えると作り直す(AIプロンプトに保存していない変更があれば確かめる)。
+  クエリキーは `features/admin/adminQueryKeys.ts`。スタッフを書き換えたら「表示するスタッフ」(`queryKeys.activeStaff`)と操作ログ、
+  AIプロンプトを保存したら `queryKeys.uiConfig` も読み直す。
 - 出勤簿タブはGAS版と同じく**初めて開いたときに作られる**(`AttendanceTab` の初回描画 = GAS版 `initPastScheduleTab`)。
   タブを切り替えても作り直さない(隠すだけ)ので、入力途中の値は残る。
 - 共有部分(`app/`・`api/client.ts`・`api/queryKeys.ts`・`lib/`・`ui/`)は全機能が使う。既存の関数の形を変えるときは使っている所を全て直す。
-- 見比べのモック(`tools/gas-preview/src/webMock.ts`・`fixtures.ts`)は機能ごとのまとまりで足す。
+- **通知→予定タブ**: 翌日の予定のお知らせは `/?schedule=YYYY-MM-DD` を開く。予定タブ(`useScheduleView`)は最初の描画で URL の日付を
+  選び(明日なら「🌙 明日」)、`AppShell` の `useScheduleLinkNavigation` が URL から取り除く。開いている画面で通知を押したときは
+  Service Worker(`public/push-sw.js`)のメッセージを受けて表示するスタッフを本人に戻し、予定タブに切り替え、`openScheduleLink` で日付を知らせる
+  (`features/schedule/scheduleLink.ts`)。
+- **Service Worker**: vite-plugin-pwa の generateSW が作る `sw.js`(事前キャッシュ・新しい版のお知らせ)が、`workbox.importScripts` で
+  `public/push-sw.js`(通知の表示と通知を押したときの処理)を読む。テストは `src/test/pushServiceWorker.test.ts`(`node:vm` で動かす)。
 
 ## 書き方の決まり
 
@@ -165,13 +178,15 @@ src/
 | `GAS_RECEIPT_KEYS_V1_<スタッフ名>` | この端末から送った領収書の重複チェック用 | ○ |
 | `cal_week_view_mode` | 週の表示(一覧/表)。端末の好みなので人ごとに分けない | ○ |
 | `recent_customers@<法人ID>/<スタッフID>` / `pending_report_draft@…` / `last_start_hour@…` / `last_start_minute@…` / `last_acc_time@…` | 最近開いたお客様・書きかけの日報・日報の開始時刻・事故の発生時刻の前回値(ログインしている人ごと) | △(中身の形はGAS版と同じ。GAS版は1人1端末が前提で人ごとに分けていなかった) |
+| `katahimo_push_endpoint@<法人ID>/<スタッフID>` | この端末で本人が通知をオンにしたときの購読の endpoint(同じ端末で別の人がオンにしていたら本人にはオフに見せる) | (新規) |
 
 GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使わない(ログインは httpOnly Cookie、管理者かどうかは `/api/auth/me`)。
 
 ログアウト・セッション切れのとき(`features/auth`):
 
 - ログアウト: その人の値(上の表の `@<法人ID>/<スタッフID>` のもの)と、表示用の2時間キャッシュ(ルート・週間予定・今月のまとめ)を
-  消し、TanStack Query のキャッシュも捨てる。
+  消し、TanStack Query のキャッシュも捨てる。その前に、この端末で本人がオンにしていた通知をやめる(`useSession().logout` の中。どの画面からのログアウトでも)。
+  ログインしたときは、本人がオンにしたのではない端末の購読(前にこの端末を使った人のもの)を端末でやめる(`releaseForeignPushSubscription`)。
 - セッション切れ(401): 表示用の2時間キャッシュと TanStack Query のキャッシュを捨てる。書きかけの日報などその人の値は、
   その人にしか見えないので残す(もう一度ログインすると続きから書ける。GAS版と同じ)。
 - お客様タブの探す欄の文字はログイン後の画面(AppShell)の中だけに持つので、ログイン画面に戻ると空になる。
@@ -185,25 +200,13 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
 | --- | --- |
 | `z-10` / `z-20` | ヘッダー / 下タブ |
 | `z-50` | ログイン、日報・事故報告 |
-| `z-[60]` | パスワード再設定、ヒント、お客様の情報、これまでの記録 |
+| `z-[60]` | パスワード再設定、ヒント、お客様の情報、これまでの記録、スタッフの登録・編集(管理。上に確認ダイアログを重ねる) |
 | `z-[70]` | 確認ダイアログ(useConfirmModal) |
 | `z-[100]` | 設定 |
 | `z-[110]` | パスワード変更、今月のまとめ、まとめて取り込む |
 | `z-[115]` | カレンダーとの見比べ |
 | `z-[120]` | 予定の修正 |
 | `z-[130]` | お知らせ(トースト) |
-
-## GAS版との見比べ(tools/gas-preview)
-
-GAS版の `index.html` をモックの `google.script.run` 付きでローカルに開き、新アプリと同じ場面を同じデータで撮影して
-横に並べる。使い方は `tools/gas-preview/README.md`。
-
-```bash
-pnpm --filter @katahimo/gas-preview shoot             # tools/gas-preview/out/<場面>.png(Vite もこのコマンドが起動する)
-pnpm --filter @katahimo/gas-preview shoot -- --only settings
-```
-
-新しい画面を作ったら、`tools/gas-preview/src/shots/<機能>.ts` に場面を足し、差分(3列目)が黒くなるまで直す。
 
 ## GAS版と意図的に変えているところ
 
@@ -222,6 +225,10 @@ pnpm --filter @katahimo/gas-preview shoot -- --only settings
 - 失敗のお知らせは読み上げで すぐに伝える(`role="alert"`)。同じ文言を続けて出しても、そのたびに読み上げる。
 - GAS版は未ログインでも顧客データの版数を確かめ、失敗のお知らせが出ることがあった。新アプリはログイン後だけ確かめる。
   また顧客CSVの取り込みはサーバーが定期実行するため、画面を開いたときの取り込み(checkAndImportLatestCsv)はしない。
+- 管理者には下タブに「🛠 管理」を出す(スタッフ台帳・AIプロンプトのシートの編集と Drive の CSV ログの確認の置き換え。
+  `doc/02_機能仕様.md` 10章)。
+- パスワード再設定の画面に「番号が届いている方はこちら」を置く(管理者が送った「パスワード設定の案内」の番号を、送り直さずに
+  入力する)。
 - 設定の詳細設定は1回のAPI(GET /api/settings/admin)で読むため、読み込み中に保存したときの案内は
   「Gemini APIキーの読み込みが完了してから保存してください」の1種類(GAS版は設定ごとに3種類)。
 - パスワード変更に成功したら入力欄を空にする(GAS版は残っていた)。
@@ -231,9 +238,8 @@ pnpm --filter @katahimo/gas-preview shoot -- --only settings
     読み込むまでは見出しの住所が空で、「対象のお子様」は読めた時点で1人目を選ぶ。
   - 保存・AI生成の失敗は、サーバーが理由を返したらその理由を出す(GAS版は通信失敗の文言だけ)。「訪問終わりました」の
     失敗はGAS版と同じく「お知らせを送れませんでした…」。
-  - 事故報告の保存は訪問日を送らない(APIの契約に訪問日が無いため。記録日時はサーバーの保存時刻)。
+  - 事故報告の保存は訪問日を送らない(APIの契約に訪問日が無い。GAS版の画面は送るがサーバーは使っておらず、記録日時はどちらもサーバーの保存時刻)。
   - 開き直す前に届いたAI生成・読み取りの結果は捨てる(GAS版は開き直したあとの別のお客様の欄に入ってしまうことがあった)。
     保存も同じで、開き直す前に送った保存の結果が届いても、今の入力を「✅ 保存しました」にせず、上書き用の報告IDも持たない
     (お知らせ「保存しました」は出す)。サーバーも、別のお客様の報告IDでの上書きは 409 で断る。
   - 「🎤 話して入力」は、ダイアログを閉じたとき・開き直したときに止める(聞き取り途中の文は捨てる)。
-  - 開発サーバーのときだけ `window.__katahimoReport`(`openReport` / `openStandaloneReceipt`)を置く(見比べハーネス用)。

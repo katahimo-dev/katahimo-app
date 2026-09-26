@@ -16,7 +16,8 @@ export interface OutboxMessageInput {
  * ミラーのトピックを積まない(実装が設定で判断する)。
  */
 export interface OutboxWriter {
-  enqueue(message: OutboxMessageInput): Promise<void>;
+  /** 積んだら true。同じ dedupe_key が積み済み・積まないトピックなら false。 */
+  enqueue(message: OutboxMessageInput): Promise<boolean>;
   /** 同じトピック・同じ対象の、最後に積んだメッセージのペイロード(無ければ null)。 */
   latestPayload(topic: OutboxTopic, aggregateId: string): Promise<Record<string, unknown> | null>;
 }

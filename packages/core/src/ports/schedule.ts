@@ -68,6 +68,11 @@ export interface ScheduleRequestOptions {
    * (無いと例外)。GasBridgeSchedulePort/NoopSchedulePortは使わない。
    */
   tenantId?: string;
+  /**
+   * 軽量版(getSchedule)で、読めないカレンダーがあれば飛ばさずに失敗させる(予定が欠けたまま使わない。翌日の予定の
+   * お知らせのジョブ)。ルートつきは fresh が同じ意味を持つ。
+   */
+  strict?: boolean;
 }
 
 export interface ScheduleWithRouteOptions extends ScheduleRequestOptions {

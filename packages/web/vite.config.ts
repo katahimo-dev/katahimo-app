@@ -33,6 +33,8 @@ export default defineConfig({
       workbox: {
         // API は Service Worker の画面(index.html)で代わりに返さない(常にサーバーへ)
         navigateFallbackDenylist: [/^\/api\//],
+        // 通知(Web Push)の受け取りと、通知を押したときの処理(public/push-sw.js)
+        importScripts: ['push-sw.js'],
       },
     }),
   ],

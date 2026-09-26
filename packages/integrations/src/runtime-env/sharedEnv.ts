@@ -1,9 +1,10 @@
 import type { OutboxTopic } from '@katahimo/core/domain';
-import { MIRROR_TOPICS } from '@katahimo/core/domain';
+import { MIRROR_TOPICS, PUSH_TOPICS } from '@katahimo/core/domain';
 import { z } from 'zod';
 import { parseTenantFolderMap } from '../customer-csv/createCustomerCsvSource';
 import { SCHEDULE_PROVIDERS, scheduleEnvProblems } from '../schedule-provider';
 import { STORAGE_PROVIDERS, storageEnvProblems } from '../storage-provider';
+import { vapidPublicKeySchema } from '../web-push/webPushConfig';
 
 /** 空文字の環境変数は未設定として扱う。 */
 export const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
@@ -43,8 +44,6 @@ export const sharedEnvShape = {
   SCHEDULE_PROVIDER: z.preprocess(emptyToUndefined, z.enum(SCHEDULE_PROVIDERS).optional()),
   GOOGLE_MAPS_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
   GOOGLE_APPLICATION_CREDENTIALS: z.preprocess(emptyToUndefined, z.string().optional()),
-  // staff_calendars 以外に読むカレンダー。カンマ区切りで `ID` または `ID=持ち主のスタッフ名`。
-  GOOGLE_CALENDAR_IDS: z.preprocess(emptyToUndefined, z.string().optional()),
   // ドメイン全体の委任で成り代わる Workspace ユーザー(未指定ならサービスアカウント自身として読む)。
   GOOGLE_CALENDAR_IMPERSONATE: z.preprocess(emptyToUndefined, z.string().optional()),
 
@@ -70,6 +69,10 @@ export const sharedEnvShape = {
       }
     }),
   CUSTOMER_CSV_LOCAL_DIR: z.preprocess(emptyToUndefined, z.string().optional()),
+
+  // Web Push(翌日の予定のお知らせ)の VAPID の公開鍵。API は画面に渡し、ワーカーは秘密鍵と組にして署名する。
+  // 未設定なら Web Push を使わない(API は購読を受け付けず、push.* を outbox に積まない)。
+  VAPID_PUBLIC_KEY: vapidPublicKeySchema,
 };
 
 const sharedEnvSchema = z.object(sharedEnvShape);
@@ -97,7 +100,15 @@ export function parseEnvOrThrow<S extends z.ZodTypeAny>(
   return parsed.data;
 }
 
-/** MIRROR_TO_GOOGLE_SHEETS が無効なら、outbox に積まないトピック(UoW の skipOutboxTopics)。 */
-export function skippedOutboxTopics(env: Pick<SharedEnv, 'MIRROR_TO_GOOGLE_SHEETS'>): OutboxTopic[] {
-  return env.MIRROR_TO_GOOGLE_SHEETS ? [] : [...MIRROR_TOPICS];
+/**
+ * outbox に積まないトピック(UoW の skipOutboxTopics): MIRROR_TO_GOOGLE_SHEETS が無効ならスプレッドシートへの
+ * ミラー、VAPID_PUBLIC_KEY が無ければ Web Push。
+ */
+export function skippedOutboxTopics(
+  env: Pick<SharedEnv, 'MIRROR_TO_GOOGLE_SHEETS' | 'VAPID_PUBLIC_KEY'>,
+): OutboxTopic[] {
+  return [
+    ...(env.MIRROR_TO_GOOGLE_SHEETS ? [] : MIRROR_TOPICS),
+    ...(env.VAPID_PUBLIC_KEY ? [] : PUSH_TOPICS),
+  ];
 }

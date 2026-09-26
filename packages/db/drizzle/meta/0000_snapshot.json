@@ -4970,7 +4970,7 @@
       "checkConstraints": {
         "outbox_messages_topic_check": {
           "name": "outbox_messages_topic_check",
-          "value": "\"outbox_messages\".\"topic\" in ('mirror.attendance_day', 'mirror.attendance_aggregate', 'mirror.care_record', 'mirror.receipt', 'mail.password_reset')"
+          "value": "\"outbox_messages\".\"topic\" in ('mirror.attendance_day', 'mirror.attendance_aggregate', 'mirror.care_record', 'mirror.receipt', 'mail.password_reset', 'push.route_notice', 'push.test')"
         },
         "outbox_messages_status_check": {
           "name": "outbox_messages_status_check",
@@ -5391,6 +5391,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "calendar_settings": {
+          "name": "calendar_settings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
         "terminated_at": {
           "name": "terminated_at",
           "type": "timestamp with time zone",
@@ -5465,6 +5472,184 @@
         }
       },
       "isRLSEnabled": false
+    },
+    "public.push_subscriptions": {
+      "name": "push_subscriptions",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "staff_id": {
+          "name": "staff_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "endpoint": {
+          "name": "endpoint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "p256dh": {
+          "name": "p256dh",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "auth": {
+          "name": "auth",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_success_at": {
+          "name": "last_success_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_failure_at": {
+          "name": "last_failure_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "failure_count": {
+          "name": "failure_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "push_subscriptions_tenant_id_staff_id_idx": {
+          "name": "push_subscriptions_tenant_id_staff_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "staff_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "push_subscriptions_tenant_id_fkey": {
+          "name": "push_subscriptions_tenant_id_fkey",
+          "tableFrom": "push_subscriptions",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "push_subscriptions_tenant_id_staff_id_fkey": {
+          "name": "push_subscriptions_tenant_id_staff_id_fkey",
+          "tableFrom": "push_subscriptions",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "tenant_id",
+            "staff_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "push_subscriptions_pkey": {
+          "name": "push_subscriptions_pkey",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "push_subscriptions_tenant_id_endpoint_key": {
+          "name": "push_subscriptions_tenant_id_endpoint_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "endpoint"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "tenant_id = app_current_tenant()",
+          "withCheck": "tenant_id = app_current_tenant()"
+        }
+      },
+      "checkConstraints": {
+        "push_subscriptions_endpoint_check": {
+          "name": "push_subscriptions_endpoint_check",
+          "value": "\"push_subscriptions\".\"endpoint\" like 'https://%'"
+        },
+        "push_subscriptions_failure_count_check": {
+          "name": "push_subscriptions_failure_count_check",
+          "value": "\"push_subscriptions\".\"failure_count\" >= 0"
+        }
+      },
+      "isRLSEnabled": true
     },
     "public.ai_prompt_revisions": {
       "name": "ai_prompt_revisions",

@@ -32,6 +32,7 @@ export function createScheduleDirectory(deps: ScheduleDirectoryDeps): ScheduleDi
       addresses: await r.customerAddresses.listForActiveCustomers(),
       sources: await r.customerSourceRecords.mapExternalIds('reserva'),
       staff: await r.staff.listRouteProfiles(),
+      calendarSettings: await r.calendarSettings(),
     }));
     const externalIdOf = new Map<string, string>();
     for (const [externalId, link] of loaded.sources) externalIdOf.set(link.customerId, externalId);
@@ -76,7 +77,7 @@ export function createScheduleDirectory(deps: ScheduleDirectoryDeps): ScheduleDi
         calendarId: s.scheduleCalendarId,
       });
     }
-    return { customers, staff };
+    return { customers, staff, calendarSettings: loaded.calendarSettings };
   }
 
   return {

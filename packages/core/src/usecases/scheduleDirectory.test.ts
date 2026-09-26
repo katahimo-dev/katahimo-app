@@ -45,8 +45,8 @@ async function setup() {
   const { staff } = await ctx.addStaff('佐藤 美咲', 'misaki@example.com');
   const row = ctx.data().staff.find((s) => s.record.id === staff.id);
   if (row) {
-    row.homeAddress = '東京都世田谷区用賀4-1-1';
-    row.homeGeo = { lat: 35.6264, lng: 139.6336 };
+    row.record.homeAddress = '東京都世田谷区用賀4-1-1';
+    row.record.homeGeo = { lat: 35.6264, lng: 139.6336 };
   }
   return { ctx, staffId: staff.id };
 }
@@ -79,6 +79,16 @@ describe('createScheduleDirectory', () => {
         calendarId: null,
       },
     ]);
+  });
+
+  it('テナントのカレンダーの設定(共有カレンダー・許可)も一緒に読む', async () => {
+    const { ctx } = await setup();
+    const settings = {
+      sharedCalendars: [{ calendarId: 'reserva@group.calendar.google.com' }],
+      allowedStaffCalendars: ['@cutest.co.jp'],
+    };
+    ctx.db.calendarSettings.set(ctx.tenantId, settings);
+    expect((await createScheduleDirectory(ctx.deps).load(ctx.tenantId)).calendarSettings).toEqual(settings);
   });
 
   it('キャッシュは顧客データの版数ごと。取込で版数が上がれば読み直す。同時の読み込みは1回にまとめる', async () => {

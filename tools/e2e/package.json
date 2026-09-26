@@ -1,0 +1,17 @@
+{
+  "name": "@katahimo/e2e",
+  "version": "1.0.0-baseline",
+  "private": true,
+  "type": "module",
+  "description": "実際のAPI・DBにつないだ新アプリを最初から最後まで操作する通し確認(e2e)",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "e2e": "NODE_USE_ENV_PROXY=1 NODE_NO_WARNINGS=1 tsx src/e2e.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "playwright-core": "1.56.1",
+    "tsx": "^4.19.2",
+    "vite": "^7.3.6"
+  }
+}

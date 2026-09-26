@@ -4,6 +4,7 @@ import { confirmNative } from '../../ui/confirm';
 import { FadeModal, ModalHeader } from '../../ui/modal';
 import { showToast } from '../../ui/toast';
 import { useSession } from '../auth';
+import { NotificationSettingsSection } from '../notifications';
 import { AdminSettingsSection } from './AdminSettingsSection';
 import { TextSizeOptions } from './TextSizeOptions';
 import { useAdminSettingsForm } from './useAdminSettingsForm';
@@ -60,6 +61,8 @@ export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsM
         <ModalHeader title="設定" titleId="settingsModalTitle" onClose={onClose} />
         <div className="p-6 space-y-6 overflow-y-auto">
           <TextSizeOptions />
+
+          <NotificationSettingsSection open={open} />
 
           <div className="border-t pt-4">
             <button

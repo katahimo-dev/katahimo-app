@@ -7,6 +7,7 @@ export * from './lifecycle';
 export * from './matching';
 export * from './outbox';
 export * from './platform';
+export * from './push';
 export * from './records';
 export * from './services';
 export * from './staff';

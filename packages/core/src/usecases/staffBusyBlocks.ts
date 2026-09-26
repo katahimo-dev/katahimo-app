@@ -1,4 +1,4 @@
-import { newId, zonedBusinessDate } from '../domain';
+import { isStaffCalendarAllowed, newId, zonedBusinessDate } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
 import type { CalendarBusyResult, GoogleCalendarPort, InstantRange } from '../ports/googleCalendar';
 import type { TenantDirectoryPort } from '../ports/tenants';
@@ -29,12 +29,27 @@ export async function syncStaffBusyBlocks(
   window: InstantRange,
   today?: string,
 ): Promise<StaffBusyBlockSyncResult> {
-  const calendars = await deps.uow.run(tenantId, async (r) => {
+  const { calendars, disallowed } = await deps.uow.run(tenantId, async (r) => {
     // 在籍の判定はテナントのタイムゾーンの今日
     const date = today ?? zonedBusinessDate(new Date(), (await r.tenant()).timezone);
     const active = new Set((await r.staff.listActiveOn(date)).map((s) => s.id));
-    return (await r.staffCalendars.listAll()).filter((c) => active.has(c.staffId));
+    const settings = await r.calendarSettings();
+    const owned = (await r.staffCalendars.listAll()).filter((c) => active.has(c.staffId));
+    // 許可の一覧に合わないカレンダー(後から許可を外した等)は読まない(別のテナントのカレンダーを読まないため)
+    return {
+      calendars: owned.filter((c) => isStaffCalendarAllowed(settings, c.calendarId)),
+      disallowed: owned.filter((c) => !isStaffCalendarAllowed(settings, c.calendarId)),
+    };
   });
+  for (const c of disallowed) {
+    await deps.appLog.write({
+      tenantId,
+      level: 'WARN',
+      action: 'calendar.staff_calendar_not_allowed',
+      targetStaffId: c.staffId,
+      details: { source: 'busy_blocks' },
+    });
+  }
   const byStaff = new Map<string, typeof calendars>();
   for (const c of calendars) byStaff.set(c.staffId, [...(byStaff.get(c.staffId) ?? []), c]);
   const calendarIds = [...new Set(calendars.map((c) => c.calendarId))];

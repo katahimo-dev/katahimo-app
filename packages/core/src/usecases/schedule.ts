@@ -21,12 +21,18 @@ export interface ScheduleDeps {
  */
 export interface ScheduleViewRequest {
   tenantId: string;
-  actorStaffId: string;
+  /** 操作したスタッフ。夜間ジョブ(翌日の予定のお知らせ)は null。 */
+  actorStaffId: string | null;
   targetStaffId: string;
   /** 'YYYY-MM-DD'(JSTの業務日) */
   date: string;
   /** ログに添える送信元情報。 */
   meta?: RequestMeta;
+}
+
+/** 軽量版の予定の要求。strict は読めないカレンダーがあれば失敗させる(502。夜間ジョブ用)。 */
+export interface ScheduleLightViewRequest extends ScheduleViewRequest {
+  strict?: boolean;
 }
 
 export interface ScheduleRouteViewRequest extends ScheduleViewRequest {
@@ -48,10 +54,13 @@ export interface FreshScheduleRouteRequest {
  */
 export async function getScheduleForStaff(
   deps: ScheduleDeps,
-  request: ScheduleViewRequest,
+  request: ScheduleLightViewRequest,
 ): Promise<ScheduleLightResult> {
   return runLogged(deps, 'schedule.view', request, async (target) => {
-    const result = await deps.schedule.getSchedule(target, request.date, { tenantId: request.tenantId });
+    const result = await deps.schedule.getSchedule(target, request.date, {
+      tenantId: request.tenantId,
+      ...(request.strict ? { strict: true } : {}),
+    });
     return { result, logSuccess: false };
   });
 }

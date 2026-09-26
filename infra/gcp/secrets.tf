@@ -16,6 +16,7 @@ locals {
     "gemini-api-key"         = ["api"]
     "google-maps-api-key"    = ["api", "worker"]
     "gas-bridge-secret"      = ["api", "worker"]
+    "vapid-private-key"      = ["worker"] # Web Push の VAPID の秘密鍵(送信はワーカー。公開鍵は var.web_push)
   }
 
   secret_accessors = merge([

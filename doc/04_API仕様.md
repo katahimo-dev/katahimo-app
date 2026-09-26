@@ -79,6 +79,8 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `ai_generate_staff` | テナント + スタッフ | 1日200回 | 429 | `RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY` |
 | `receipt_ocr_staff` | テナント + スタッフ | 1日300回 | 429 | `RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY` |
 | `schedule_force_refresh_staff` | テナント + スタッフ | 1時間30回 | 429 | `RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR` |
+| `push_test_staff` | テナント + スタッフ | 1時間10回 | 429 | — |
+| `push_subscribe_staff` | テナント + スタッフ | 1時間30回 | 429 | — |
 
 ログインの2つの規則は照合(argon2)の**前に**1回分の枠を取る(同時の大量の試行でも照合まで進むのは上限の回数まで)。
 一致した回は数えない(アカウントは数え直し、IP は先に取った1回分を返す)。
@@ -172,8 +174,8 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 | `POST /api/settings/admin/gemini-models` | 管理者 | `saveGeminiModelsRequestSchema`(`reportModel`・`ocrModel`)/ 同上 | SECURITY `settings.gemini_models.changed` |
 | `POST /api/settings/admin/gchat-webhooks` | 管理者 | `saveGchatWebhooksRequestSchema`(`reportWebhookUrl?`・`receiptWebhookUrl?`)/ 同上 | 新しい値は `https://chat.googleapis.com/v1/spaces/<space>/messages?…` だけ。SECURITY `settings.gchat_webhooks.changed`、WARN `.save_rejected` |
 | `POST /api/settings/admin/gemini-models/available` | 管理者 | `listGeminiModelsRequestSchema`(`apiKey?`)/ `listGeminiModelsResponseSchema` | `{ success, models }`。キー無し 400、API 失敗 502 |
-| `GET /api/settings/admin/prompts` | 管理者 | — / `aiPromptListResponseSchema` | `{ prompts: [{ key, kind, label, body, defaultBody, customized, updatedAt }] }` |
-| `PUT /api/settings/admin/prompts` | 管理者 | `updateAiPromptsRequestSchema`(`prompts: [{ key, body｜null }]`)/ 同上 | null・空・既定値と同じなら上書きを消す。未知の key が含まれると 400 で何も変えない。INFO `settings.ai_prompts.updated` |
+| `GET /api/settings/admin/prompts` | 管理者 | — / `aiPromptListResponseSchema` | `{ prompts: [{ key, kind, label, body, defaultBody, customized, updatedAt, revision }] }`。`revision` はキーの最新の版(履歴 `ai_prompt_revisions` の最大値。保存したことが無ければ 0) |
+| `PUT /api/settings/admin/prompts` | 管理者 | `updateAiPromptsRequestSchema`(`prompts: [{ key, body｜null, revision? }]`、本文は2万字まで)/ 同上 | null・空・既定値と同じなら上書きを消す。未知の key が含まれると 400 で何も変えない。`revision` が最新の版と違えば(他の管理者が先に保存した)409 で何も変えない(WARN `settings.ai_prompts.update_rejected`)。INFO `settings.ai_prompts.updated` |
 
 同じ値の保存は `changed: false`「変更ありません」でログも残さない。秘密値の伏せ字: APIキーは `••••••••` + 末尾4文字(8文字以下は
 全て伏せる)、Webhook URL は `…/messages?••••••••`(文字は `SECRET_MASK_CHAR`)。プロンプトの key(`AI_PROMPT_KEYS`):
@@ -184,18 +186,37 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 
 | メソッド・パス | 契約(要求 / 応答) | 応答・エラー・ログ |
 | --- | --- | --- |
-| `GET /api/admin/staff` | — / `adminStaffListResponseSchema` | `{ staff: [{ id, name, email, altEmail, phone, role, retiredOn, isRetired, passwordStatus }] }`(退職者を含む) |
-| `POST /api/admin/staff` | `createStaffRequestSchema`(`name`・`email`・`altEmail?`・`phone?`・`role`(既定 staff)・`initialPassword?`)/ `adminStaffResponseSchema` | 201 `{ staff }`。初期パスワードを省くと未設定(本人が再設定で決める)。メール・サブメールはテナント内で両方を跨いで一意(409)。SECURITY `staff.admin.created` |
-| `PATCH /api/admin/staff/:id` | `updateStaffRequestSchema`(各項目を省略可、`altEmail`・`phone`・`retiredOn` は null で消す)/ `adminStaffResponseSchema` | 退職日を入れると全セッションを失効。自分の管理者権限の解除・退職日は 400。SECURITY `staff.admin.updated` |
+| `GET /api/admin/staff` | — / `adminStaffListResponseSchema` | `{ staff: [{ id, name, kana, email, altEmail, phone, role, retiredOn, isRetired, passwordStatus, homeAddress, hasHomeGeo, travelMode, gender, scheduleCalendarId, rowVersion }] }`(退職者を含む、氏名順)。`kana` は「セイ メイ」、`scheduleCalendarId` は `staff_calendars`(purpose=schedule) |
+| `POST /api/admin/staff` | `createStaffRequestSchema`(`name`・`email`・`kana?`・`altEmail?`・`phone?`・`role`(既定 staff)・`homeAddress?`・`travelMode?`(car / bicycle / transit / walk)・`gender?`(female / male / other / unknown)・`scheduleCalendarId?`・`initialPassword?`)/ `adminStaffResponseSchema` | 201 `{ staff, homeGeocode }`。初期パスワードを省くと未設定。メール・サブメールはテナント内で両方を跨いで一意(409、`fields` つき)。自宅住所はジオコーディングして緯度経度・区画を保存し、`homeGeocode` に結果(`ok` / `not_found` / `failed` / `unavailable`。住所を送らなければ null)。ok 以外でも住所は保存する。`scheduleCalendarId` はテナントの許可の一覧(運用担当者の `pnpm tenant:calendars`。05 4.2)に合うものだけで、合わなければ 400(`fields.scheduleCalendarId`「このカレンダーは使えません。運用担当者に登録を依頼してください」、WARN `staff.admin.create_rejected` `calendar_not_allowed`)。カレンダーIDは小文字にして保存する。SECURITY `staff.admin.created` |
+| `PATCH /api/admin/staff/:id` | `updateStaffRequestSchema`(登録の項目 + `retiredOn`、全て省略可。null・空欄は値を消す。`rowVersion?`)/ `adminStaffResponseSchema` | `rowVersion` が今の版と違えば 409(`stale_row_version`)。`rowVersion` は地図APIを呼ぶ前に確かめる。住所を変えたとき(または住所は同じでも緯度経度が無いとき)だけジオコーディングし `homeGeocode` を返す(それ以外は null)。カレンダーを変えるときは登録と同じ許可の確かめ(400)。今日以前の退職日を入れると全セッションを失効(先の日付ならその日からログイン不可)。自分の役割の変更・退職日は 400。ほかの管理者を外す・退職させる変更は、在籍中の管理者の行をロックして確かめ、操作する人がもう管理者でなければ 403(`actor_not_admin`)、退職日の決まっていない管理者が残らなければ 409(`last_admin`)。更新する項目が無ければ 400。SECURITY `staff.admin.updated`(`changedFields` と役割・退職日・`homeGeocode`。値そのものは残さない) |
+| `DELETE /api/admin/staff/:id` | — / `okResponseSchema` | 業務の記録(出勤簿・訪問・移動・勤務・日報・領収書・取込・設定の更新者 等、`ON DELETE` の無い外部キー)にも、外部キーの無い変更の履歴(`entity_changes.changed_by`・`care_record_revisions.changed_by`・`ai_prompt_revisions.created_by`)にも無ければ削除し、認証情報・ログイン用メール・セッション・再設定コード・カレンダー設定も消える。参照されていれば 409「…記録があるため削除できません。辞めた方は退職日を設定してください。」(`staff_has_records`)。自分自身は 400、無ければ 404、管理者で退職日の決まっていない管理者が残らなくなるなら 409(`last_admin`)。SECURITY `staff.admin.deleted` |
+| `POST /api/admin/staff/:id/password-guide` | — / `okResponseSchema` | パスワード未設定・GAS版のパスワードのままの在籍者に、パスワード設定の案内(再設定コード。`mail.password_reset` を outbox に積み、payload は `{ purpose: 'setup_guide' }` だけ)をメールアドレス宛に送る(本文に法人ID と、ワーカーの `APP_PUBLIC_URL` があれば `?t=<法人ID>` つきのログイン画面の URL)。設定済み・退職者は 400。回数は本人の再設定の要求と同じアカウント単位の枠(メール・サブメールそれぞれ)を数え、どれかが上限なら 429(Retry-After)。SECURITY `staff.admin.password_guide_sent` |
+| `GET /api/admin/audit-logs` | `auditLogQuerySchema`(`from?`・`to?`(業務日、両端を含む。既定は今日までの7日間、93日まで)・`level?`・`staffId?`(操作者か対象)・`action?`(操作コードの前方一致)・`cursor?`・`limit`(1〜200、既定50))/ `auditLogListResponseSchema` | `{ entries: [{ id, createdAt, level, action, actorType, actorStaffId, actorName, targetStaffId, targetName, details, ip, userAgent, requestId }], nextCursor, range: { from, to }, timeZone }`。新しい順(`created_at`, `id` の keyset。`nextCursor` を次の `cursor` に)。テナントの行だけ(tenant_id が null のログイン前の記録は出さない)。期間の誤りは 400(`fields.from`)。最初のページだけ INFO `audit_log.viewed`(条件。スタッフを絞れば `targetStaffId`) |
+| `GET /api/admin/audit-logs.csv` | 同上(`cursor`・`limit` は使わない) | `text/csv; charset=utf-8`(BOM つき、CRLF、`attachment; filename="audit-logs_<from>_<to>.csv"`)。見出し: 日時(テナントのタイムゾーン)・レベル・操作・操作コード・操作者の種類・操作者・対象スタッフ・詳細・IPアドレス・ユーザーエージェント・リクエストID。条件に合う全件を500件ずつ別のトランザクションで読んで流す。`=`・`+`・`-`・`@` で始まる値は先頭に `'` を付ける。受け取る側が切ったら読むのをやめる。途中で失敗したら(状態コードは送った後なので 200 のまま)最後の行に「※ 書き出しが途中で失敗しました(request id <X-Request-Id>)…」を書き、ERROR を残す。読み始める前に SECURITY `audit_log.exported` |
 | `POST /api/admin/customers/import` | `customerCsvImportRequestSchema`(`force` 既定 true)/ `customerCsvImportResponseSchema` | `{ status, message, fileName, version, stats, dataVersion }`。`imported` / `up_to_date` / `no_files` / `not_configured` は 200、`review_required` 409、`failed` 502 |
 
-拒否は WARN `<action>.access_denied`(`staff.admin.list` 等)・`staff.admin.create_rejected` / `update_rejected`・`customer_csv.import.access_denied`。
+拒否は WARN `<action>.access_denied`(`staff.admin.list` / `staff.admin.delete` / `staff.admin.password_guide` / `audit_log.view` / `audit_log.export` 等)・`staff.admin.create_rejected` / `update_rejected` / `delete_rejected` / `password_guide_rejected`(`details.reason` に理由コード)・`customer_csv.import.access_denied`。
+操作コードの日本語の表示名は `@katahimo/shared` の `AUDIT_ACTION_LABELS`(画面と CSV で共有)。
+
+### 2.10 通知 `/api/push`(`routes/push.ts`、全てログイン)
+
+Web Push(翌日の予定のお知らせ・テスト通知。02 9.1、05 10章)。購読はログイン中の**本人の端末だけ**を扱う(要求にスタッフの
+指定は無い)。`endpoint` は既知のプッシュサービス(`fcm.googleapis.com`・`android.googleapis.com`・`push.services.mozilla.com`・
+`push.apple.com`・`notify.windows.com` とそのサブドメイン)の `https` の URL だけ(`isAllowedPushEndpoint`。ワーカーが任意の
+URL へ送らないように)。操作ログに `endpoint`・鍵は残さない。
+
+| メソッド・パス | 契約(要求 / 応答) | 応答・エラー・ログ |
+| --- | --- | --- |
+| `GET /config` | — / `pushConfigResponseSchema` | `{ enabled, publicKey }`。VAPID の設定(`VAPID_PUBLIC_KEY`)が無ければ `{ enabled: false, publicKey: null }` |
+| `POST /subscriptions` | `pushSubscribeRequestSchema`(`PushSubscription.toJSON()` の形: `endpoint`・`expirationTime?`・`keys: { p256dh, auth }`)/ `okResponseSchema` | 同じ `endpoint` があれば鍵を書き直し、別のスタッフのものなら本人に付け替える。User-Agent(300字まで)を残す。1人10件まで(超えたら `updated_at` の古いものから消す)。通知を使えない環境は 400。回数制限 `push_subscribe_staff`。INFO `push.subscription.saved`(`subscriptionId`・`created`・付け替えなら `previousStaffId`・消した数 `trimmed`) |
+| `DELETE /subscriptions` | `pushUnsubscribeRequestSchema`(`endpoint`)/ `okResponseSchema` | 本人の購読だけを消す(無ければ何もしない)。INFO `push.subscription.deleted`(`subscriptionId`・`deleted`) |
+| `POST /test` | — / `pushTestResponseSchema` | `{ ok, subscriptionCount }`。本人の全ての購読に送るテスト通知を購読ごとに outbox に積む。購読が無ければ 400。回数制限 `push_test_staff`。INFO `push.test.queued` |
 
 ## 3. 本番での Web 画面の配信
 
 `WEB_DIST_DIR` を設定すると、`/api/*` の後に静的ファイルを配信する(`http/webStatic.ts`)。拡張子の無いパスは `index.html`
-(SPA)。キャッシュ: `assets/*`・`workbox-<hash>.js` は1年 immutable、`index.html`・`sw.js`・`registerSW.js`・`manifest.webmanifest`
-は `no-cache`、その他は1時間。
+(SPA)。キャッシュ: `assets/*`・`workbox-<hash>.js` は1年 immutable、`index.html`・`sw.js`・`push-sw.js`(通知の処理)・
+`registerSW.js`・`manifest.webmanifest` は `no-cache`、その他は1時間。
 
 ## 4. 新しいエンドポイントを足すとき
 
@@ -204,4 +225,4 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
    `targetStaffIdOf` で決め、usecase でも確かめる。
 3. ルートは `parseJsonBody` / `parseQuery` → usecase → `jsonOk(c, 応答の契約, …)`。
 4. `packages/api/src/routes.integration.test.ts` にエラーの形・権限のテストを足し、この資料の2章に行を足す。
-5. 画面は `packages/web/src/api/<機能>.ts` から同じ契約で呼ぶ。見比べのモック(`tools/gas-preview/src/webMock.ts`)にも足す。
+5. 画面は `packages/web/src/api/<機能>.ts` から同じ契約で呼ぶ。

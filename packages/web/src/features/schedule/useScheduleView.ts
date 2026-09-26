@@ -9,6 +9,7 @@ import { showErrorToast, showToast } from '../../ui/toast';
 import { type CachedRoute, readCachedRoute, writeCachedRoute } from './routeCache';
 import { type ScheduleDate, type ScheduleOffset, scheduleDateFor } from './scheduleDate';
 import { itemsFromPlainSchedule, itemsFromRouteSchedule, type ScheduleItem } from './scheduleItems';
+import { initialScheduleOffset, onScheduleLink, scheduleOffsetForDate } from './scheduleLink';
 
 /** 予定一覧の表示(読み込み中 / 予定(0件なら「予定はありません」) / 赤い文言) */
 export type ScheduleListState =
@@ -66,8 +67,9 @@ class RouteUnavailableError extends Error {}
 export function useScheduleView(): ScheduleView {
   const queryClient = useQueryClient();
   const { targetStaffId, requestStaffId } = useAdminTargetStaff();
-  const [offset, setOffset] = useState<ScheduleOffset>(0);
-  const [date, setDate] = useState(() => scheduleDateFor(0));
+  // 通知のリンク(`/?schedule=YYYY-MM-DD`)で起動したら、最初からその日を出す(今日の予定を先に調べない)
+  const [offset, setOffset] = useState<ScheduleOffset>(() => initialScheduleOffset());
+  const [date, setDate] = useState(() => scheduleDateFor(offset));
   const request: ScheduleRequest = { date: date.dateStr, staffId: requestStaffId };
   const routeKey = scheduleKeys.route(targetStaffId, date.dateStr);
 
@@ -164,6 +166,9 @@ export function useScheduleView(): ScheduleView {
     },
     [queryClient, targetStaffId],
   );
+
+  // 開いている画面で通知を押したとき(Service Worker からの知らせ)は、その日を選び直す
+  useEffect(() => onScheduleLink((linked) => selectDay(scheduleOffsetForDate(linked))), [selectDay]);
 
   const { mutate } = refresh;
   const refreshRoute = useCallback(() => {

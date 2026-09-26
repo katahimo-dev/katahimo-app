@@ -1,3 +1,5 @@
+import type { TenantCalendarSettings } from '../domain/schedule/calendarPolicy';
+import type { AppLogReadRepository } from './appLog';
 import type { AttendanceRepository } from './attendance';
 import type { StaffBusyBlockRepository, StaffCalendarRepository } from './calendars';
 import type {
@@ -10,6 +12,7 @@ import type {
 import type { ImportRunRepository } from './imports';
 import type { TenantRetentionRepository } from './maintenance';
 import type { EntityChangeWriter, OutboxWriter } from './outbox';
+import type { PushSubscriptionRepository } from './push';
 import type { CareRecordRepository, ReceiptRepository, StoredFileRepository } from './records';
 import type { AiPromptRepository, TenantSecretRepository, TenantSettingsRepository } from './settings';
 import type { PasswordResetCodeRepository, SessionRepository, StaffRepository } from './staff';
@@ -23,6 +26,8 @@ export interface TenantRepositories {
   readonly tenantId: string;
   /** UoW のテナント(platform.tenants)。 */
   tenant(): Promise<TenantRecord>;
+  /** テナントのカレンダーの設定(platform.tenants.calendar_settings。運用担当者が CLI で変える。アプリは読むだけ)。 */
+  calendarSettings(): Promise<TenantCalendarSettings>;
   staff: StaffRepository;
   sessions: SessionRepository;
   passwordResetCodes: PasswordResetCodeRepository;
@@ -41,9 +46,12 @@ export interface TenantRepositories {
   importRuns: ImportRunRepository;
   staffCalendars: StaffCalendarRepository;
   busyBlocks: StaffBusyBlockRepository;
+  pushSubscriptions: PushSubscriptionRepository;
   outbox: OutboxWriter;
   entityChanges: EntityChangeWriter;
   retention: TenantRetentionRepository;
+  /** 操作ログの閲覧(書き込みは AppLogPort。UoW のトランザクションとは独立に書く)。 */
+  appLogs: AppLogReadRepository;
 }
 
 export interface UnitOfWorkOptions {

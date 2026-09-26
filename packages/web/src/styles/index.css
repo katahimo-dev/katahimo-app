@@ -1,8 +1,6 @@
 /*
- * GAS版 gas-childcare-visit-app/index.html の <style> ブロックをそのまま移植したもの。
- * Tailwind(v3)のユーティリティはGAS版と同じクラス名で書けば同じ見た目になるため、
- * ここにはGAS版が独自に書いていたCSSだけを置く。値を変えるときはGAS版と見比べること
- * (tools/gas-preview で並べて撮影できる)。
+ * Tailwind(v3)のユーティリティで書けない、画面共通のCSSだけを置く
+ * (出発点は GAS版 gas-childcare-visit-app/index.html の <style> ブロック)。
  */
 /* biome-ignore lint/suspicious/noUnknownAtRules: Tailwind(v3)のディレクティブ */
 @tailwind base;

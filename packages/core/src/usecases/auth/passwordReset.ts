@@ -25,13 +25,93 @@ export const RESET_CODE_TTL_MS = 30 * 60 * 1000;
 /** 1つのコードに対する入力の上限(正しいコードの入力も含む)。これに達したコードは無効になる(総当たり対策)。 */
 export const RESET_CODE_MAX_ATTEMPTS = 5;
 
-/** GAS版 requestPasswordReset のメール文面そのまま。 */
-export function buildPasswordResetMail(to: string, code: string): MailMessage {
+/**
+ * 再設定コードのメールの種類。reset: 本人の再設定の要求(GAS版 requestPasswordReset) /
+ * setup_guide: 管理者が送るパスワード設定の案内(パスワード未設定・GAS版のパスワードのままのスタッフ向け)。
+ */
+export type PasswordResetMailPurpose = 'reset' | 'setup_guide';
+
+/** 案内のメールに書くログインの手がかり(法人ID・画面の URL)。 */
+export interface PasswordResetMailContext {
+  tenantSlug: string;
+  /** 画面の URL(APP_PUBLIC_URL)。無ければ URL は書かない。 */
+  appPublicUrl?: string | undefined;
+}
+
+/** 法人IDつきのログイン画面の URL(`?t=<法人ID>` で法人IDの欄を出さずに開く。web の lib/tenant.ts)。 */
+export function loginUrlFor(appPublicUrl: string, tenantSlug: string): string {
+  const url = new URL(appPublicUrl);
+  url.searchParams.set('t', tenantSlug);
+  return url.toString();
+}
+
+/** reset は GAS版 requestPasswordReset のメール文面そのまま。setup_guide には法人ID・ログイン画面の URL も書く。 */
+export function buildPasswordResetMail(
+  to: string,
+  code: string,
+  purpose: PasswordResetMailPurpose = 'reset',
+  context?: PasswordResetMailContext,
+): MailMessage {
+  if (purpose === 'setup_guide') {
+    const lines = [
+      'ログインに使うパスワードを設定してください。',
+      'ログイン画面の「パスワードを忘れたときはこちら」→「番号が届いている方はこちら」を押し、' +
+        'このメールアドレス・下の番号・新しいパスワードを入力します。',
+      '',
+      ...(context?.appPublicUrl
+        ? [`ログイン画面: ${loginUrlFor(context.appPublicUrl, context.tenantSlug)}`]
+        : []),
+      ...(context ? [`法人ID(事業所ID): ${context.tenantSlug}`] : []),
+      `コード: ${code}`,
+      '有効期限: 30分',
+    ];
+    return { to, subject: '【保育日報】パスワード設定のご案内', text: lines.join('\n') };
+  }
   return {
     to,
     subject: '【保育日報】パスワード再設定認証コード',
     text: `パスワード再設定のリクエストを受け付けました。\n以下の認証コードを入力してください。\n\nコード: ${code}\n有効期限: 30分`,
   };
+}
+
+/** outbox の payload から読むメールの種類(payload には種類だけを入れる)。 */
+export function passwordResetMailPurposeOf(payload: Record<string, unknown>): PasswordResetMailPurpose {
+  return payload.purpose === 'setup_guide' ? 'setup_guide' : 'reset';
+}
+
+/**
+ * 再設定コードを発行し、メールの送信を outbox に積む(同じトランザクション。片方だけが残らない)。
+ * 同じスタッフの古いコードは無効になる。
+ */
+export async function issuePasswordResetCode(
+  deps: { uow: UnitOfWorkPort; resetCodeSecret: string },
+  tenantId: string,
+  target: { staffId: string; sentTo: string; purpose: PasswordResetMailPurpose },
+  now: Date,
+): Promise<void> {
+  const code = String(randomInt(100000, 1000000));
+  const codeId = newId();
+  await deps.uow.run(tenantId, async (r) => {
+    await r.passwordResetCodes.replaceActive(
+      {
+        id: codeId,
+        staffId: target.staffId,
+        codeHash: hashResetCode(deps.resetCodeSecret, target.staffId, code),
+        sentToEmail: target.sentTo,
+        expiresAt: new Date(now.getTime() + RESET_CODE_TTL_MS),
+        maxAttempts: RESET_CODE_MAX_ATTEMPTS,
+        mailCode: code,
+      },
+      now,
+    );
+    await r.outbox.enqueue({
+      topic: 'mail.password_reset',
+      aggregateType: 'password_reset_code',
+      aggregateId: codeId,
+      dedupeKey: outboxDedupeKey('mail.password_reset', codeId, 0),
+      ...(target.purpose === 'reset' ? {} : { payload: { purpose: target.purpose } }),
+    });
+  });
 }
 
 /** コードのハッシュ。スタッフIDを混ぜた HMAC にし、同じコードでもスタッフごとに異なる値にする。 */
@@ -144,28 +224,7 @@ export async function requestPasswordReset(
   const { tenant, staff, loginId } = found;
 
   const sentTo = resolvePasswordResetAddress(staff, loginId);
-  const code = String(randomInt(100000, 1000000));
-  const codeId = newId();
-  await deps.uow.run(tenant.id, async (r) => {
-    await r.passwordResetCodes.replaceActive(
-      {
-        id: codeId,
-        staffId: staff.id,
-        codeHash: hashResetCode(deps.resetCodeSecret, staff.id, code),
-        sentToEmail: sentTo,
-        expiresAt: new Date(now.getTime() + RESET_CODE_TTL_MS),
-        maxAttempts: RESET_CODE_MAX_ATTEMPTS,
-        mailCode: code,
-      },
-      now,
-    );
-    await r.outbox.enqueue({
-      topic: 'mail.password_reset',
-      aggregateType: 'password_reset_code',
-      aggregateId: codeId,
-      dedupeKey: outboxDedupeKey('mail.password_reset', codeId, 0),
-    });
-  });
+  await issuePasswordResetCode(deps, tenant.id, { staffId: staff.id, sentTo, purpose: 'reset' }, now);
 
   await deps.appLog.write({
     tenantId: tenant.id,
@@ -181,6 +240,8 @@ export async function requestPasswordReset(
 export interface PasswordResetMailDeps extends Clock {
   uow: UnitOfWorkPort;
   mailer: MailerPort;
+  /** 画面の URL(案内のメールに書く)。 */
+  appPublicUrl?: string | undefined;
 }
 
 /**
@@ -193,6 +254,7 @@ export async function sendPasswordResetMail(
   deps: PasswordResetMailDeps,
   tenantId: string,
   codeId: string,
+  purpose: PasswordResetMailPurpose = 'reset',
 ): Promise<void> {
   const now = currentTime(deps);
   const record = await deps.uow.run(tenantId, async (r) => {
@@ -202,10 +264,15 @@ export async function sendPasswordResetMail(
       await r.passwordResetCodes.clearMailCode(codeId);
       return null;
     }
-    return code;
+    return { code, tenantSlug: (await r.tenant()).slug };
   });
-  if (!record?.mailCode) return;
-  await deps.mailer.send(buildPasswordResetMail(record.sentToEmail, record.mailCode));
+  if (!record?.code.mailCode) return;
+  await deps.mailer.send(
+    buildPasswordResetMail(record.code.sentToEmail, record.code.mailCode, purpose, {
+      tenantSlug: record.tenantSlug,
+      appPublicUrl: deps.appPublicUrl,
+    }),
+  );
   await deps.uow.run(tenantId, (r) => r.passwordResetCodes.clearMailCode(codeId));
 }
 

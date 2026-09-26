@@ -556,7 +556,7 @@ CREATE TABLE "outbox_messages" (
 	"completed_at" timestamp with time zone,
 	CONSTRAINT "outbox_messages_pkey" PRIMARY KEY("tenant_id","id"),
 	CONSTRAINT "outbox_messages_tenant_id_dedupe_key_key" UNIQUE("tenant_id","dedupe_key"),
-	CONSTRAINT "outbox_messages_topic_check" CHECK ("outbox_messages"."topic" in ('mirror.attendance_day', 'mirror.attendance_aggregate', 'mirror.care_record', 'mirror.receipt', 'mail.password_reset')),
+	CONSTRAINT "outbox_messages_topic_check" CHECK ("outbox_messages"."topic" in ('mirror.attendance_day', 'mirror.attendance_aggregate', 'mirror.care_record', 'mirror.receipt', 'mail.password_reset', 'push.route_notice', 'push.test')),
 	CONSTRAINT "outbox_messages_status_check" CHECK ("outbox_messages"."status" in ('pending', 'processing', 'done', 'failed', 'dead')),
 	CONSTRAINT "outbox_messages_attempts_check" CHECK ("outbox_messages"."attempts" >= 0 and "outbox_messages"."max_attempts" >= 1),
 	CONSTRAINT "outbox_messages_lock_check" CHECK (("outbox_messages"."status" = 'processing') = ("outbox_messages"."locked_until" is not null))
@@ -622,6 +622,7 @@ CREATE TABLE "platform"."tenants" (
 	"timezone" text DEFAULT 'Asia/Tokyo' NOT NULL,
 	"business_type" text DEFAULT 'babysitting' NOT NULL,
 	"plan_id" uuid,
+	"calendar_settings" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"terminated_at" timestamp with time zone,
 	"purge_after" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -633,6 +634,26 @@ CREATE TABLE "platform"."tenants" (
 	CONSTRAINT "tenants_terminated_at_check" CHECK ("platform"."tenants"."status" <> 'terminated' or "platform"."tenants"."terminated_at" is not null)
 );
 --> statement-breakpoint
+CREATE TABLE "push_subscriptions" (
+	"tenant_id" uuid NOT NULL,
+	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
+	"staff_id" uuid NOT NULL,
+	"endpoint" text NOT NULL,
+	"p256dh" text NOT NULL,
+	"auth" text NOT NULL,
+	"user_agent" text,
+	"last_success_at" timestamp with time zone,
+	"last_failure_at" timestamp with time zone,
+	"failure_count" integer DEFAULT 0 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "push_subscriptions_pkey" PRIMARY KEY("tenant_id","id"),
+	CONSTRAINT "push_subscriptions_tenant_id_endpoint_key" UNIQUE("tenant_id","endpoint"),
+	CONSTRAINT "push_subscriptions_endpoint_check" CHECK ("push_subscriptions"."endpoint" like 'https://%'),
+	CONSTRAINT "push_subscriptions_failure_count_check" CHECK ("push_subscriptions"."failure_count" >= 0)
+);
+--> statement-breakpoint
+ALTER TABLE "push_subscriptions" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "ai_prompt_revisions" (
 	"tenant_id" uuid NOT NULL,
 	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -1090,6 +1111,8 @@ ALTER TABLE "entity_changes" ADD CONSTRAINT "entity_changes_tenant_id_fkey" FORE
 ALTER TABLE "outbox_messages" ADD CONSTRAINT "outbox_messages_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "platform"."plan_features" ADD CONSTRAINT "plan_features_plan_id_fkey" FOREIGN KEY ("plan_id") REFERENCES "platform"."plans"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "platform"."tenants" ADD CONSTRAINT "tenants_plan_id_fkey" FOREIGN KEY ("plan_id") REFERENCES "platform"."plans"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "push_subscriptions" ADD CONSTRAINT "push_subscriptions_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "push_subscriptions" ADD CONSTRAINT "push_subscriptions_tenant_id_staff_id_fkey" FOREIGN KEY ("tenant_id","staff_id") REFERENCES "public"."staff"("tenant_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ai_prompt_revisions" ADD CONSTRAINT "ai_prompt_revisions_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ai_prompts" ADD CONSTRAINT "ai_prompts_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ai_prompts" ADD CONSTRAINT "ai_prompts_tenant_id_updated_by_fkey" FOREIGN KEY ("tenant_id","updated_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -1167,6 +1190,7 @@ CREATE INDEX "outbox_messages_tenant_id_aggregate_id_id_idx" ON "outbox_messages
 CREATE INDEX "outbox_messages_completed_at_idx" ON "outbox_messages" USING btree ("completed_at") WHERE status in ('done', 'failed', 'dead');--> statement-breakpoint
 CREATE INDEX "rate_limit_buckets_updated_at_idx" ON "platform"."rate_limit_buckets" USING btree ("updated_at");--> statement-breakpoint
 CREATE INDEX "tenant_lifecycle_events_tenant_id_created_at_idx" ON "platform"."tenant_lifecycle_events" USING btree ("tenant_id","created_at");--> statement-breakpoint
+CREATE INDEX "push_subscriptions_tenant_id_staff_id_idx" ON "push_subscriptions" USING btree ("tenant_id","staff_id");--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_customer_id_occurred_at_id_idx" ON "care_records" USING btree ("tenant_id","customer_id","occurred_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_author_staff_id_occurred_at_idx" ON "care_records" USING btree ("tenant_id","author_staff_id","occurred_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_visit_id_idx" ON "care_records" USING btree ("tenant_id","visit_id");--> statement-breakpoint
@@ -1217,6 +1241,7 @@ CREATE POLICY "tenant_isolation" ON "staff_weekly_availability" AS PERMISSIVE FO
 CREATE POLICY "tenant_isolation" ON "travel_time_cache" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "entity_changes" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "outbox_messages" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "push_subscriptions" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "ai_prompt_revisions" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "ai_prompts" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "care_record_revisions" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint

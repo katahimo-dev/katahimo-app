@@ -1,7 +1,8 @@
-# CI: lint / 型検査 / マイグレーション(差分チェック含む)/ テスト / ビルド、と GAS版との見比べ・通し確認。
+# CI: lint / 型検査 / マイグレーション(差分チェック含む)/ テスト / ビルド、と 実際のAPI・DBでの通し確認(e2e)。
 # 必要な設定(doc/07_インフラ・運用.md 9章):
 #   secrets.SUBMODULE_TOKEN … katahimo-dev/gas-childcare-visit-app を読めるトークン(fine-grained PAT の
-#                             Contents: Read-only 等)。未設定でも CI は通り、GAS版との一致テストだけがスキップされる。
+#                             Contents: Read-only 等)。未設定でも CI は通り、GAS版との一致テスト(gasParity)だけが
+#                             スキップされる(e2e ジョブはこのサブモジュールを使わない)。
 name: CI
 
 on:
@@ -86,13 +87,12 @@ jobs:
       - name: ビルド
         run: pnpm build
 
-  preview:
-    name: GAS版との見比べ・通し確認(e2e)
+  e2e:
+    name: 通し確認(e2e)
     needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    # 見比べ(shoot)は差分が 0.05% を越えた場面・撮れなかった場面があれば、通し確認(e2e)は1手順でも失敗すれば
-    # 終了コード1で終わる(どちらも失敗の一覧を出す。画像は下の artifact)。
+    # 実際のAPI・DBにつないだ新アプリを操作し、1手順でも失敗すれば終了コード1で終わる(失敗の一覧・画面は下の artifact)。
 
     services:
       postgres:
@@ -109,24 +109,18 @@ jobs:
 
     env:
       API_PORT: '8080'
-      WEB_PORT: '5173'
 
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
-      - id: legacy
-        uses: ./.github/actions/legacy-submodule
-        with:
-          token: ${{ secrets.SUBMODULE_TOKEN }}
-
       - uses: ./.github/actions/setup
 
-      # playwright-core の版に対応する Chromium を入れる(版は tools/gas-preview/package.json で固定)
+      # playwright-core の版に対応する Chromium を入れる(版は tools/e2e/package.json で固定)
       - id: playwright
         name: Playwright の版
-        run: echo "version=$(node -p "require('./tools/gas-preview/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(node -p "require('./tools/e2e/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@v5
         id: browsers
@@ -136,29 +130,20 @@ jobs:
 
       - name: Chromium のインストール
         if: steps.browsers.outputs.cache-hit != 'true'
-        run: pnpm --filter @katahimo/gas-preview exec playwright-core install --with-deps chromium
+        run: pnpm --filter @katahimo/e2e exec playwright-core install --with-deps chromium
 
       - name: Chromium の依存ライブラリ
         if: steps.browsers.outputs.cache-hit == 'true'
-        run: pnpm --filter @katahimo/gas-preview exec playwright-core install-deps chromium
+        run: pnpm --filter @katahimo/e2e exec playwright-core install-deps chromium
 
-      # Google Fonts のキャッシュ(src/fontCache.ts)。撮る場面によって取得するサブセットが増えるため、
+      # Google Fonts のキャッシュ(src/fontCache.ts)。手順によって取得するサブセットが増えるため、
       # 毎回新しいキーで保存し、直近のものから復元する
       - uses: actions/cache@v5
         with:
-          path: tools/gas-preview/.cache/fonts
-          key: gas-preview-fonts-${{ github.run_id }}
-          restore-keys: gas-preview-fonts-
+          path: tools/e2e/.cache/fonts
+          key: e2e-fonts-${{ github.run_id }}
+          restore-keys: e2e-fonts-
 
-      # ── 見比べ(モック。API・DB は使わない) ──────────────────────
-      # 新アプリの Vite はハーネスが自分で起動して止める(WEB_DEV_PORT のポート)
-      - name: 見比べ撮影(shoot)
-        if: steps.legacy.outputs.available == 'true'
-        env:
-          WEB_DEV_PORT: ${{ env.WEB_PORT }}
-        run: pnpm --filter @katahimo/gas-preview shoot
-
-      # ── 通し確認(実際の API・DB) ─────────────────────────────
       - uses: ./.github/actions/test-db
 
       - name: 開発用データの投入
@@ -175,7 +160,7 @@ jobs:
       - name: 通し確認(e2e)
         env:
           KATAHIMO_WEB_URL: http://127.0.0.1:${{ env.API_PORT }}
-        run: pnpm --filter @katahimo/gas-preview e2e
+        run: pnpm --filter @katahimo/e2e e2e
 
       - name: サーバーのログ
         if: always()
@@ -190,7 +175,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: gas-preview-out
-          path: tools/gas-preview/out
+          name: e2e-out
+          path: tools/e2e/out
           if-no-files-found: ignore
           retention-days: 14
