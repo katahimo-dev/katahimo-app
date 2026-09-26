@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { reportAiApi } from '../../../api/admin';
 import { ApiRequestError } from '../../../api/client';
+import { createQueryClient } from '../../../app/queryClient';
 import { createWrapper, TEST_USER } from '../../../test/providers';
 import { showToast } from '../../../ui/toast';
 import { ReportAiPanel } from './ReportAiPanel';
@@ -212,5 +213,31 @@ describe('日報AIの調整', () => {
       fileName: 'master.xlsx',
       dryRun: false,
     });
+  });
+
+  it('開き直すと(アプリの既定の staleTime の間でも)読み直し、画面の外で足された行を出す', async () => {
+    const Wrapper = createWrapper({
+      queryClient: createQueryClient(),
+      user: { ...TEST_USER, role: 'admin' },
+    });
+    const first = render(
+      <Wrapper>
+        <ReportAiPanel />
+      </Wrapper>,
+    );
+    await screen.findByRole('heading', { name: 'キーワード(1)' });
+    first.unmount();
+
+    const [keyword] = masters().keywords;
+    if (!keyword) throw new Error('キーワードの行が無い');
+    const added = { ...keyword, id: '00000000-0000-7000-8000-00000000a002', code: 'K02', keyword: '語B' };
+    vi.mocked(reportAiApi.masters).mockResolvedValue({ ...masters(), keywords: [keyword, added] });
+    render(
+      <Wrapper>
+        <ReportAiPanel />
+      </Wrapper>,
+    );
+    await screen.findByRole('button', { name: /K02 語B/ });
+    expect(reportAiApi.masters).toHaveBeenCalledTimes(2);
   });
 });

@@ -43,6 +43,8 @@ export function ReportAiPanel() {
   const query = useQuery({
     queryKey: adminQueryKeys.reportAi,
     queryFn: ({ signal }) => reportAiApi.masters(signal),
+    // 他の管理者の編集・取込で変わるので、開くたびに読み直す
+    staleTime: 0,
   });
   const reload = () => {
     void queryClient.invalidateQueries({ queryKey: adminQueryKeys.reportAi });

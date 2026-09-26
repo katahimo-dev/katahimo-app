@@ -837,33 +837,43 @@ async function runJourney() {
 
     await step(page, 'admin-report-ai-list', async () => {
       await page.getByRole('tab', { name: '🧩 日報AIの調整' }).click();
-      await wait(page, 600);
-      // 取込むファイルの材料にする行(何度流しても同じ ID の1行)
-      const created = await page.request.post(`${WEB_URL}/api/admin/report-ai/keywords`, {
-        data: {
-          row: {
-            code: 'E2E1',
-            keyword: 'e2e の語',
-            ageFromMonths: 0,
-            ageToMonths: 84,
-            educationLevelMin: 2,
-            educationLevelMax: 5,
-            psiMin: 3,
-            parentExplanation: 'e2e の説明',
-          },
-        },
-      });
-      assert(
-        created.status() === 201 || created.status() === 409,
-        `キーワードを足せない: ${created.status()}`,
-      );
-      // 表示を切り替えると読み直す
+      await page.getByRole('heading', { name: /^キーワード\(\d+\)$/ }).waitFor({ timeout: 10_000 });
+      // 表示している間に(画面の外から)行を足す・直す。何度流しても同じ ID の1行で、カテゴリだけ毎回変える。
+      // 開き直した時に読み直していなければ、このカテゴリは出ない(新しい DB でも、行が残っている DB でも確かめられる)
+      const category = `e2e ${Date.now()}`;
+      const row = {
+        code: 'E2E1',
+        keyword: 'e2e の語',
+        category,
+        ageFromMonths: 0,
+        ageToMonths: 84,
+        educationLevelMin: 2,
+        educationLevelMax: 5,
+        psiMin: 3,
+        parentExplanation: 'e2e の説明',
+      };
+      const masters = await page.request.get(`${WEB_URL}/api/admin/report-ai`);
+      assert(masters.ok(), `GET /api/admin/report-ai が ${masters.status()}`);
+      const { keywords } = (await masters.json()) as {
+        keywords: { id: string; code: string; rowVersion: number }[];
+      };
+      const existing = keywords.find((k) => k.code === row.code);
+      const saved = existing
+        ? await page.request.put(`${WEB_URL}/api/admin/report-ai/keywords/${existing.id}`, {
+            data: { row, rowVersion: existing.rowVersion },
+          })
+        : await page.request.post(`${WEB_URL}/api/admin/report-ai/keywords`, { data: { row } });
+      assert(saved.ok(), `キーワードを保存できない: ${saved.status()} ${await saved.text()}`);
+      // 表示を切り替えて開き直すと読み直す
       await page.getByRole('tab', { name: '📋 報告一覧' }).click();
       await wait(page, 400);
       await page.getByRole('tab', { name: '🧩 日報AIの調整' }).click();
       const list = page.getByRole('list', { name: 'キーワード' });
-      await list.getByRole('button', { name: /E2E1 e2e の語/ }).waitFor({ timeout: 10_000 });
-      return undefined;
+      await list
+        .getByRole('button', { name: /E2E1 e2e の語/ })
+        .filter({ hasText: category })
+        .waitFor({ timeout: 10_000 });
+      return existing ? '既存の行を直した' : '行を足した';
     });
 
     await step(page, 'admin-report-ai-import', async () => {
