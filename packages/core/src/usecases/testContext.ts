@@ -27,7 +27,7 @@ import {
   MemoryDatabase,
 } from './testDoubles';
 
-export function createTestContext(options: { now?: string; mirrorEnabled?: boolean } = {}) {
+export function createTestContext(options: { now?: string } = {}) {
   const db = new MemoryDatabase();
   const tenant = db.addTenant({ slug: 'test-tenant', name: 'テスト法人' });
   const clock = { now: new Date(options.now ?? '2026-09-25T03:00:00Z') };
@@ -62,7 +62,8 @@ export function createTestContext(options: { now?: string; mirrorEnabled?: boole
     rateLimits: DEFAULT_RATE_LIMIT_POLICY,
     resetCodeSecret: 'test-secret',
     legacyAuthSalt: undefined as string | undefined,
-    mirrorEnabled: options.mirrorEnabled ?? true,
+    // ミラーするテナント(GAS_BRIDGE_TENANT)。null にするとミラーを使わない環境になる
+    mirrorTenantSlug: tenant.slug as string | null,
     webPush: webPush as FakeWebPushSender | null,
     pushPublicKey: 'test-vapid-public-key' as string | null,
     workerId: 'test-worker',

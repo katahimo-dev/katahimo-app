@@ -1,7 +1,6 @@
-import type { OutboxTopic } from '@katahimo/core/domain';
-import { MIRROR_TOPICS, PUSH_TOPICS } from '@katahimo/core/domain';
+import type { OutboxTopicPolicy } from '@katahimo/core/domain';
 import { z } from 'zod';
-import { parseTenantFolderMap } from '../customer-csv/createCustomerCsvSource';
+import { gasBridgeEnvProblems } from '../gas-bridge/gasBridgeEnv';
 import { SCHEDULE_PROVIDERS, scheduleEnvProblems } from '../schedule-provider';
 import { STORAGE_PROVIDERS, storageEnvProblems } from '../storage-provider';
 import { vapidPublicKeySchema } from '../web-push/webPushConfig';
@@ -48,26 +47,27 @@ export const sharedEnvShape = {
   GOOGLE_CALENDAR_IMPERSONATE: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // 稼働中の gas-childcare-visit-app の Web App(Bridge.js)。予定の取得(gas_bridge)とミラーの送信に使う。
+  // Bridge は1つのテナント(GAS版を使っている法人)の GAS・スプレッドシートにつながっているため、持ち主のテナントの
+  // slug(GAS_BRIDGE_TENANT)を必ず一緒に設定する。そのテナント以外の予定の取得・ミラーには使わない。
   GAS_BRIDGE_URL: z.preprocess(emptyToUndefined, z.string().optional()),
   GAS_BRIDGE_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
+  GAS_BRIDGE_TENANT: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(/^[a-z0-9][a-z0-9-]*$/, 'テナントの slug(英小文字・数字・「-」)にしてください')
+      .optional(),
+  ),
 
-  // スプレッドシートへのミラー。false ならミラーのトピックを outbox に積まず(API)、残っていても送らない(ワーカー)。
+  // スプレッドシートへのミラー(GAS_BRIDGE_TENANT のテナントだけ)。false ならミラーのトピックを outbox に積まず(API)、
+  // 残っていても送らない(ワーカー)。true には GAS_BRIDGE_URL / SECRET / TENANT が要る。
   MIRROR_TO_GOOGLE_SHEETS: booleanFlag,
 
-  // 顧客CSV(RESERVA「Kokyaku_YYYYMMDDHHmm_N.csv」)の取込元。
-  // CUSTOMER_CSV_DRIVE_FOLDERS: {"テナントslug": "DriveフォルダID"} の JSON。
-  // CUSTOMER_CSV_LOCAL_DIR: ローカル開発用。<dir>/<テナントslug>/ に置いた CSV を読む(Drive の設定が無い場合のみ)。
-  CUSTOMER_CSV_DRIVE_FOLDERS: z
-    .string()
-    .optional()
-    .transform((value, ctx) => {
-      try {
-        return parseTenantFolderMap(value);
-      } catch (e) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: e instanceof Error ? e.message : String(e) });
-        return z.NEVER;
-      }
-    }),
+  // 顧客CSV(RESERVA「Kokyaku_YYYYMMDDHHmm_N.csv」)の取込元。Drive のフォルダはテナントごとに
+  // platform.tenants.customer_import_settings(運用担当者の `pnpm tenant:customer-source`)に持つ。
+  // CUSTOMER_CSV_LOCAL_DIR はローカル開発用: その設定の無いテナントは <dir>/<テナントslug>/ に置いた CSV を読む。
   CUSTOMER_CSV_LOCAL_DIR: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // Web Push(翌日の予定のお知らせ)の VAPID の公開鍵。API は画面に渡し、ワーカーは秘密鍵と組にして署名する。
@@ -81,7 +81,11 @@ export type SharedEnv = z.infer<typeof sharedEnvSchema>;
 /** 項目単体では表せない組み合わせの検証(共通部分)。 */
 export function sharedEnvProblems(env: SharedEnv): string[] {
   const isProduction = env.NODE_ENV === 'production';
-  return [...storageEnvProblems(env, isProduction), ...scheduleEnvProblems(env, isProduction)];
+  return [
+    ...storageEnvProblems(env, isProduction),
+    ...scheduleEnvProblems(env, isProduction),
+    ...gasBridgeEnvProblems(env),
+  ];
 }
 
 /** 環境変数を検証する。問題があれば全てをまとめた例外にする(起動前に落とす)。 */
@@ -101,14 +105,14 @@ export function parseEnvOrThrow<S extends z.ZodTypeAny>(
 }
 
 /**
- * outbox に積まないトピック(UoW の skipOutboxTopics): MIRROR_TO_GOOGLE_SHEETS が無効ならスプレッドシートへの
- * ミラー、VAPID_PUBLIC_KEY が無ければ Web Push。
+ * outbox に積む・送るトピックの規則(API の UoW とワーカーで同じ値を使う): ミラーは MIRROR_TO_GOOGLE_SHEETS が
+ * 有効なら GAS_BRIDGE_TENANT のテナントだけ、Web Push は VAPID_PUBLIC_KEY がある時だけ。
  */
-export function skippedOutboxTopics(
-  env: Pick<SharedEnv, 'MIRROR_TO_GOOGLE_SHEETS' | 'VAPID_PUBLIC_KEY'>,
-): OutboxTopic[] {
-  return [
-    ...(env.MIRROR_TO_GOOGLE_SHEETS ? [] : MIRROR_TOPICS),
-    ...(env.VAPID_PUBLIC_KEY ? [] : PUSH_TOPICS),
-  ];
+export function outboxTopicPolicyOf(
+  env: Pick<SharedEnv, 'MIRROR_TO_GOOGLE_SHEETS' | 'GAS_BRIDGE_TENANT' | 'VAPID_PUBLIC_KEY'>,
+): OutboxTopicPolicy {
+  return {
+    mirrorTenantSlug: env.MIRROR_TO_GOOGLE_SHEETS ? (env.GAS_BRIDGE_TENANT ?? null) : null,
+    pushEnabled: Boolean(env.VAPID_PUBLIC_KEY),
+  };
 }

@@ -1,4 +1,4 @@
 export * from './gasBridgeClient';
-export * from './gasBridgeMapsPort';
+export * from './gasBridgeEnv';
 export * from './gasBridgeMirrorSenderPort';
 export * from './gasBridgeSchedulePort';

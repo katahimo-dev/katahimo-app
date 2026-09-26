@@ -34,6 +34,8 @@ export interface RateLimitPolicy {
   pushTestStaff: RateLimitRule;
   /** 通知の購読の登録(スタッフ単位の1時間の上限。購読の数は別に1人10件まで)。 */
   pushSubscribeStaff: RateLimitRule;
+  /** 外部システムからの顧客の受け取り(API キー単位の1時間の上限。1回500件まで)。 */
+  integrationCustomersKey: RateLimitRule;
 }
 
 export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
@@ -53,6 +55,7 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   scheduleForceRefreshStaff: { name: 'schedule_force_refresh_staff', limit: 30, windowMs: HOUR_MS },
   pushTestStaff: { name: 'push_test_staff', limit: 10, windowMs: HOUR_MS },
   pushSubscribeStaff: { name: 'push_subscribe_staff', limit: 30, windowMs: HOUR_MS },
+  integrationCustomersKey: { name: 'integration_customers_key', limit: 120, windowMs: HOUR_MS },
 };
 
 /** 回数だけを差し替えた規則一式を作る(環境変数での調整用。0以下・未指定は既定値のまま)。 */

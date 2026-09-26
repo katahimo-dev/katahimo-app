@@ -1,8 +1,10 @@
 import {
   conflict,
   type ImportSource,
+  isOutboxTopicEnabled,
   newId,
   type OutboxTopic,
+  type OutboxTopicPolicy,
   STALE_PROMPT_MESSAGE,
   type TenantSecretName,
 } from '@katahimo/core/domain';
@@ -243,13 +245,16 @@ export class DrizzleOutboxWriter extends TenantBound implements OutboxWriter {
   constructor(
     tx: ConstructorParameters<typeof TenantBound>[0],
     tenantId: string,
-    private readonly skipTopics: ReadonlySet<OutboxTopic>,
+    /** 積むトピックの規則(null なら全て積む)。 */
+    private readonly policy: OutboxTopicPolicy | null,
+    private readonly tenantSlug: () => Promise<string>,
   ) {
     super(tx, tenantId);
   }
 
   async enqueue(message: OutboxMessageInput): Promise<boolean> {
-    if (this.skipTopics.has(message.topic)) return false;
+    if (this.policy && !(await isOutboxTopicEnabled(this.policy, message.topic, this.tenantSlug)))
+      return false;
     const inserted = await this.tx
       .insert(outboxMessages)
       .values({

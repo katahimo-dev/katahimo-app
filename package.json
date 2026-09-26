@@ -23,6 +23,8 @@
     "db:doc": "pnpm --filter @katahimo/db doc",
     "tenant:create": "pnpm --filter @katahimo/api tenant:create",
     "tenant:calendars": "pnpm --filter @katahimo/api tenant:calendars",
+    "tenant:customer-source": "pnpm --filter @katahimo/api tenant:customer-source",
+    "tenant:api-keys": "pnpm --filter @katahimo/api tenant:api-keys",
     "import:reserva": "pnpm --filter @katahimo/api import:reserva",
     "import:staff-master": "pnpm --filter @katahimo/api import:staff-master",
     "import:attendance": "pnpm --filter @katahimo/api import:attendance",

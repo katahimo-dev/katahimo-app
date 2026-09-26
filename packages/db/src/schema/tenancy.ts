@@ -1,6 +1,7 @@
 import {
   CUSTOM_FIELD_ENTITIES,
   CUSTOM_FIELD_VALUE_TYPES,
+  CUSTOMER_SOURCES,
   IMPORT_RUN_STATUSES,
   IMPORT_SOURCES,
   TENANT_SECRET_NAMES,
@@ -116,11 +117,43 @@ export const importRuns = pgTable(
     index(constraintName('import_runs', ['tenant_id', 'source', 'started_at'], 'idx')).on(
       t.tenantId,
       t.source,
-      t.startedAt.desc(),
+      t.startedAt.desc().nullsFirst(),
     ),
     check('import_runs_source_check', oneOf(t.source, IMPORT_SOURCES)),
     check('import_runs_status_check', oneOf(t.status, IMPORT_RUN_STATUSES)),
     check('import_runs_finished_at_check', sql`(${t.status} = 'running') = (${t.finishedAt} is null)`),
+  ],
+).enableRLS();
+
+/**
+ * 外部システム連携の API キー(POST /api/integrations/customers。RESERVA 等からの顧客の受け取り)。
+ * 運用担当者の `pnpm tenant:api-keys` だけが発行・失効させる(アプリのロールは読むことと last_used_at の
+ * 更新だけ)。トークン(`kth_<テナントID>_<乱数>`)そのものは持たず、SHA-256 だけを持つ(発行時に1回だけ表示する)。
+ * customer_source は、このキーで書ける顧客の取込元(customer_source_records.source)。消さずに revoked_at で失効させる。
+ */
+export const integrationApiKeys = pgTable(
+  'integration_api_keys',
+  {
+    tenantId: tenantIdColumn(),
+    id: idColumn(),
+    /** 運用担当者が付ける名前(連携先の区別。例: 'RESERVA 本番')。 */
+    name: text().notNull(),
+    customerSource: text({ enum: CUSTOMER_SOURCES }).notNull(),
+    tokenHash: bytea().notNull(),
+    /** 発行した運用担当者(OS のユーザー名等。スタッフではない)。 */
+    createdBy: text().notNull(),
+    createdAt: createdAt(),
+    lastUsedAt: timestamp({ withTimezone: true }),
+    revokedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    ...tenantScoped('integration_api_keys', t),
+    unique(constraintName('integration_api_keys', ['tenant_id', 'token_hash'], 'key')).on(
+      t.tenantId,
+      t.tokenHash,
+    ),
+    check('integration_api_keys_customer_source_check', oneOf(t.customerSource, CUSTOMER_SOURCES)),
+    check('integration_api_keys_name_check', sql`char_length(${t.name}) between 1 and 100`),
   ],
 ).enableRLS();
 

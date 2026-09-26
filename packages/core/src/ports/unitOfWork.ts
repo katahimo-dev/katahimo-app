@@ -1,3 +1,4 @@
+import type { TenantCustomerImportSettings } from '../domain/customerCsv/importSettings';
 import type { TenantCalendarSettings } from '../domain/schedule/calendarPolicy';
 import type { AppLogReadRepository } from './appLog';
 import type { AttendanceRepository } from './attendance';
@@ -10,6 +11,7 @@ import type {
   CustomerSourceRecordRepository,
 } from './customers';
 import type { ImportRunRepository } from './imports';
+import type { IntegrationApiKeyRepository } from './integrations';
 import type { TenantRetentionRepository } from './maintenance';
 import type { EntityChangeWriter, OutboxWriter } from './outbox';
 import type { PushSubscriptionRepository } from './push';
@@ -28,6 +30,8 @@ export interface TenantRepositories {
   tenant(): Promise<TenantRecord>;
   /** テナントのカレンダーの設定(platform.tenants.calendar_settings。運用担当者が CLI で変える。アプリは読むだけ)。 */
   calendarSettings(): Promise<TenantCalendarSettings>;
+  /** 顧客データの取込元の設定(platform.tenants.customer_import_settings。運用担当者が CLI で変える。無ければ null)。 */
+  customerImportSettings(): Promise<TenantCustomerImportSettings | null>;
   staff: StaffRepository;
   sessions: SessionRepository;
   passwordResetCodes: PasswordResetCodeRepository;
@@ -44,6 +48,7 @@ export interface TenantRepositories {
   secrets: TenantSecretRepository;
   aiPrompts: AiPromptRepository;
   importRuns: ImportRunRepository;
+  integrationApiKeys: IntegrationApiKeyRepository;
   staffCalendars: StaffCalendarRepository;
   busyBlocks: StaffBusyBlockRepository;
   pushSubscriptions: PushSubscriptionRepository;

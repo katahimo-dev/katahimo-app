@@ -1961,7 +1961,7 @@
       "checkConstraints": {
         "customer_source_records_source_check": {
           "name": "customer_source_records_source_check",
-          "value": "\"customer_source_records\".\"source\" in ('reserva')"
+          "value": "\"customer_source_records\".\"source\" in ('reserva', 'external_api')"
         }
       },
       "isRLSEnabled": true
@@ -5398,6 +5398,13 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
+        "customer_import_settings": {
+          "name": "customer_import_settings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
         "terminated_at": {
           "name": "terminated_at",
           "type": "timestamp with time zone",
@@ -6166,19 +6173,46 @@
               "expression": "occurred_at",
               "isExpression": false,
               "asc": false,
-              "nulls": "last"
+              "nulls": "first"
             },
             {
               "expression": "id",
               "isExpression": false,
               "asc": false,
-              "nulls": "last"
+              "nulls": "first"
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
+        },
+        "care_records_tenant_id_occurred_at_id_idx": {
+          "name": "care_records_tenant_id_occurred_at_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "care_records_tenant_id_author_staff_id_occurred_at_idx": {
           "name": "care_records_tenant_id_author_staff_id_occurred_at_idx",
@@ -6199,13 +6233,13 @@
               "expression": "occurred_at",
               "isExpression": false,
               "asc": false,
-              "nulls": "last"
+              "nulls": "first"
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "care_records_tenant_id_visit_id_idx": {
           "name": "care_records_tenant_id_visit_id_idx",
@@ -6625,6 +6659,33 @@
           "with": {},
           "method": "btree",
           "concurrently": false
+        },
+        "receipts_tenant_id_receipted_at_id_idx": {
+          "name": "receipts_tenant_id_receipted_at_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "receipted_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "receipts_tenant_id_upload_id_idx": {
           "name": "receipts_tenant_id_upload_id_idx",
@@ -8928,13 +8989,13 @@
               "expression": "started_at",
               "isExpression": false,
               "asc": false,
-              "nulls": "last"
+              "nulls": "first"
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -8993,7 +9054,7 @@
       "checkConstraints": {
         "import_runs_source_check": {
           "name": "import_runs_source_check",
-          "value": "\"import_runs\".\"source\" in ('reserva_csv', 'staff_master_csv')"
+          "value": "\"import_runs\".\"source\" in ('reserva_csv', 'staff_master_csv', 'external_api')"
         },
         "import_runs_status_check": {
           "name": "import_runs_status_check",
@@ -9002,6 +9063,127 @@
         "import_runs_finished_at_check": {
           "name": "import_runs_finished_at_check",
           "value": "(\"import_runs\".\"status\" = 'running') = (\"import_runs\".\"finished_at\" is null)"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.integration_api_keys": {
+      "name": "integration_api_keys",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_source": {
+          "name": "customer_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "integration_api_keys_tenant_id_fkey": {
+          "name": "integration_api_keys_tenant_id_fkey",
+          "tableFrom": "integration_api_keys",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "integration_api_keys_pkey": {
+          "name": "integration_api_keys_pkey",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "integration_api_keys_tenant_id_token_hash_key": {
+          "name": "integration_api_keys_tenant_id_token_hash_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "token_hash"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "tenant_id = app_current_tenant()",
+          "withCheck": "tenant_id = app_current_tenant()"
+        }
+      },
+      "checkConstraints": {
+        "integration_api_keys_customer_source_check": {
+          "name": "integration_api_keys_customer_source_check",
+          "value": "\"integration_api_keys\".\"customer_source\" in ('reserva', 'external_api')"
+        },
+        "integration_api_keys_name_check": {
+          "name": "integration_api_keys_name_check",
+          "value": "char_length(\"integration_api_keys\".\"name\") between 1 and 100"
         }
       },
       "isRLSEnabled": true

@@ -60,7 +60,7 @@ if (env.WORKER_IN_PROCESS_CRON) {
 logJson('INFO', 'katahimo worker を起動しました', {
   workerId: container.workerId,
   pollIntervalMs: env.OUTBOX_POLL_INTERVAL_MS,
-  mirrorEnabled: container.mirrorEnabled,
+  mirrorTenant: container.mirrorTenantSlug,
   webPushEnabled: container.webPush !== null,
 });
 runOutboxPoller(container, {

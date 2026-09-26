@@ -11,11 +11,14 @@ import {
   consumeRateLimit,
   DomainError,
   EMPTY_CALENDAR_SETTINGS,
+  isOutboxTopicEnabled,
+  type OutboxTopicPolicy,
   refundRateLimit,
   STALE_PROMPT_MESSAGE,
   STALE_WRITE_MESSAGE,
 } from '../domain';
-import type { OutboxTopic, TenantSecretName } from '../domain/model';
+import type { TenantCustomerImportSettings } from '../domain/customerCsv/importSettings';
+import type { TenantSecretName } from '../domain/model';
 import type { CareRecordContent } from '../domain/reports/careRecord';
 import type { TenantCalendarSettings } from '../domain/schedule/calendarPolicy';
 import type { AppLogEntry, AppLogPort, AppLogRecord } from '../ports/appLog';
@@ -30,9 +33,9 @@ import type {
 } from '../ports/attendance';
 import type { StaffCalendarRecord } from '../ports/calendars';
 import type {
+  CustomerCsvLocation,
   CustomerCsvSourceFile,
   CustomerCsvSourcePort,
-  CustomerCsvSourceTenant,
 } from '../ports/customerCsvSource';
 import type {
   CareRecipientRecord,
@@ -42,6 +45,7 @@ import type {
   CustomerSourceRecord,
 } from '../ports/customers';
 import type { ImportRunRecord } from '../ports/imports';
+import type { IntegrationApiKeyRecord } from '../ports/integrations';
 import type { MailerPort, MailMessage } from '../ports/mailer';
 import type {
   AccidentReportMirrorPayload,
@@ -89,6 +93,7 @@ import type { StoragePort, StoredFile } from '../ports/storage';
 import type {
   ProvisionTenantInput,
   TenantCalendarSettingsStore,
+  TenantCustomerImportSettingsStore,
   TenantDirectoryPort,
   TenantProvisioningPort,
   TenantRecord,
@@ -147,6 +152,7 @@ export interface TenantData {
   /** ai_prompt_revisions.created_by(保存・既定に戻したスタッフ)。 */
   aiPromptRevisionAuthors: string[];
   importRuns: (ImportRunRecord & { message: string | null })[];
+  integrationApiKeys: (IntegrationApiKeyRecord & { tokenHash: Uint8Array })[];
   calendars: StaffCalendarRecord[];
   busyBlocks: { staffId: string; start: Date; end: Date }[];
   pushSubscriptions: PushSubscriptionRecord[];
@@ -186,6 +192,7 @@ function emptyTenantData(): TenantData {
     aiPromptRevisions: {},
     aiPromptRevisionAuthors: [],
     importRuns: [],
+    integrationApiKeys: [],
     calendars: [],
     busyBlocks: [],
     pushSubscriptions: [],
@@ -208,8 +215,10 @@ export class MemoryDatabase {
   readonly data = new Map<string, TenantData>();
   /** テナント → カレンダーの設定(platform.tenants.calendar_settings)。 */
   readonly calendarSettings = new Map<string, TenantCalendarSettings>();
-  /** skipOutboxTopics と同じ(ミラーを無効にした環境)。 */
-  skipOutboxTopics = new Set<OutboxTopic>();
+  /** テナント → 顧客データの取込元の設定(platform.tenants.customer_import_settings。無ければ未設定)。 */
+  readonly customerImportSettings = new Map<string, TenantCustomerImportSettings>();
+  /** UoW の outboxPolicy と同じ(null なら全てのトピックを積む)。 */
+  outboxPolicy: OutboxTopicPolicy | null = null;
   private seq = 0;
 
   addTenant(input: Partial<TenantRecord> & { slug: string }): TenantRecord {
@@ -396,6 +405,9 @@ export function fakeRepositories(
     },
     async calendarSettings() {
       return structuredClone(db.calendarSettings.get(tenantId) ?? EMPTY_CALENDAR_SETTINGS);
+    },
+    async customerImportSettings() {
+      return structuredClone(db.customerImportSettings.get(tenantId) ?? null);
     },
     staff: {
       async findById(id) {
@@ -938,6 +950,40 @@ export function fakeRepositories(
         return run ? structuredClone(run) : null;
       },
     },
+    integrationApiKeys: {
+      async create(input) {
+        const row = {
+          ...structuredClone(input),
+          createdAt: new Date(),
+          lastUsedAt: null,
+          revokedAt: null,
+        };
+        d().integrationApiKeys.push(row);
+        const { tokenHash: _hash, ...record } = row;
+        return structuredClone(record);
+      },
+      async list() {
+        return [...d().integrationApiKeys]
+          .reverse()
+          .map(({ tokenHash: _hash, ...record }) => structuredClone(record));
+      },
+      async findByTokenHash(tokenHash) {
+        const found = d().integrationApiKeys.find((k) => sameBytes(k.tokenHash, tokenHash));
+        if (!found) return null;
+        const { tokenHash: _hash, ...record } = found;
+        return structuredClone(record);
+      },
+      async touch(id, at) {
+        const found = d().integrationApiKeys.find((k) => k.id === id);
+        if (found) found.lastUsedAt = at;
+      },
+      async revoke(id, at) {
+        const found = d().integrationApiKeys.find((k) => k.id === id && k.revokedAt === null);
+        if (!found) return false;
+        found.revokedAt = at;
+        return true;
+      },
+    },
     staffCalendars: {
       async listAll() {
         return structuredClone(d().calendars);
@@ -1037,7 +1083,9 @@ export function fakeRepositories(
     },
     outbox: {
       async enqueue(message) {
-        if (db.skipOutboxTopics.has(message.topic)) return false;
+        const slug = async () => db.tenants.get(tenantId)?.slug ?? '';
+        if (db.outboxPolicy && !(await isOutboxTopicEnabled(db.outboxPolicy, message.topic, slug)))
+          return false;
         if (d().outbox.some((m) => m.dedupeKey === message.dedupeKey)) return false;
         d().outbox.push({
           ...structuredClone(message),
@@ -1175,6 +1223,17 @@ export class FakeTenantCalendarSettingsStore implements TenantCalendarSettingsSt
   }
   async set(tenantId: string, settings: TenantCalendarSettings) {
     this.db.calendarSettings.set(tenantId, structuredClone(settings));
+  }
+}
+
+export class FakeTenantCustomerImportSettingsStore implements TenantCustomerImportSettingsStore {
+  constructor(private readonly db: MemoryDatabase) {}
+  async get(tenantId: string) {
+    return structuredClone(this.db.customerImportSettings.get(tenantId) ?? null);
+  }
+  async set(tenantId: string, settings: TenantCustomerImportSettings | null) {
+    if (settings) this.db.customerImportSettings.set(tenantId, structuredClone(settings));
+    else this.db.customerImportSettings.delete(tenantId);
   }
 }
 
@@ -1475,23 +1534,24 @@ export class FakeWebPushSender implements WebPushSenderPort {
   }
 }
 
+/** Drive のフォルダID → ファイル名 → 中身(取込元の設定のあるテナントだけ、そのフォルダを読む)。 */
 export class FakeCustomerCsvSource implements CustomerCsvSourcePort {
-  private readonly files = new Map<string, Map<string, Buffer>>();
+  private readonly folders = new Map<string, Map<string, Buffer>>();
 
-  put(tenantSlug: string, name: string, content: Buffer): void {
-    const folder = this.files.get(tenantSlug) ?? new Map<string, Buffer>();
+  put(driveFolderId: string, name: string, content: Buffer): void {
+    const folder = this.folders.get(driveFolderId) ?? new Map<string, Buffer>();
     folder.set(name, content);
-    this.files.set(tenantSlug, folder);
+    this.folders.set(driveFolderId, folder);
   }
 
-  async listFiles(tenant: CustomerCsvSourceTenant): Promise<CustomerCsvSourceFile[] | null> {
-    const folder = this.files.get(tenant.slug);
-    if (!folder) return null;
+  async listFiles(location: CustomerCsvLocation): Promise<CustomerCsvSourceFile[] | null> {
+    if (!location.settings) return null;
+    const folder = this.folders.get(location.settings.driveFolderId) ?? new Map<string, Buffer>();
     return [...folder.keys()].map((name) => ({ id: name, name }));
   }
 
-  async readFile(tenant: CustomerCsvSourceTenant, file: CustomerCsvSourceFile): Promise<Buffer> {
-    const content = this.files.get(tenant.slug)?.get(file.id);
+  async readFile(location: CustomerCsvLocation, file: CustomerCsvSourceFile): Promise<Buffer> {
+    const content = location.settings && this.folders.get(location.settings.driveFolderId)?.get(file.id);
     if (!content) throw new Error(`ファイルがありません: ${file.name}`);
     return content;
   }

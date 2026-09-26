@@ -1,17 +1,13 @@
 import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import type {
-  CustomerCsvSourceFile,
-  CustomerCsvSourcePort,
-  CustomerCsvSourceTenant,
-} from '@katahimo/core/ports';
+import type { CustomerCsvSourceFile, CustomerCsvSourceTenant } from '@katahimo/core/ports';
 
 /**
- * ローカル開発用の取込元: `<rootDir>/<テナントslug>/` に置いたCSVを読む。
+ * ローカル開発用の取込元: `<rootDir>/<テナントslug>/` に置いたCSVを読む(取込元の設定の無いテナントだけ)。
  * テナントのディレクトリが無ければ「取込元なし」(自動取込の対象外)として扱う。
  */
-export class LocalDirectoryCustomerCsvSource implements CustomerCsvSourcePort {
+export class LocalDirectoryCustomerCsvSource {
   constructor(private readonly rootDir: string) {}
 
   private tenantDir(tenant: CustomerCsvSourceTenant): string {

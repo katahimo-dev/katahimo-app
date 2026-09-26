@@ -9,23 +9,24 @@ locals {
   sql_conn_name = google_sql_database_instance.main.connection_name
 
   # API・ワーカー・夜間ジョブ共通(packages/api/src/env.ts / packages/worker/src/env.ts)。空の値は渡さない。
+  # MIRROR_TO_GOOGLE_SHEETS・GAS_BRIDGE_* は API(積む)とワーカー(送る)で同じ値にする(packages/integrations の sharedEnvShape)。
   common_env = { for k, v in {
-    NODE_ENV                   = "production"
-    STORAGE_PROVIDER           = "gcs"
-    GCS_BUCKET                 = google_storage_bucket.receipts.name
-    SCHEDULE_PROVIDER          = var.schedule_provider
-    GAS_BRIDGE_URL             = var.gas_bridge_url
-    CUSTOMER_CSV_DRIVE_FOLDERS = var.customer_csv_drive_folders
-    VAPID_PUBLIC_KEY           = var.web_push.public_key
+    NODE_ENV                = "production"
+    STORAGE_PROVIDER        = "gcs"
+    GCS_BUCKET              = google_storage_bucket.receipts.name
+    SCHEDULE_PROVIDER       = var.schedule_provider
+    GAS_BRIDGE_URL          = var.gas_bridge_url
+    GAS_BRIDGE_TENANT       = var.gas_bridge_tenant
+    MIRROR_TO_GOOGLE_SHEETS = tostring(var.mirror_to_google_sheets)
+    VAPID_PUBLIC_KEY        = var.web_push.public_key
   } : k => v if v != "" }
 
   api_env = merge(local.common_env, { for k, v in {
-    DB_POOL_MAX             = tostring(var.api_db_pool_max)
-    SECRET_BOX_PROVIDER     = "gcp"
-    SECRET_BOX_KMS_KEY      = google_kms_crypto_key.tenant_secrets.id
-    MIRROR_TO_GOOGLE_SHEETS = tostring(var.mirror_to_google_sheets)
-    GEMINI_MODEL_REPORT     = var.gemini_models.report
-    GEMINI_MODEL_OCR        = var.gemini_models.ocr
+    DB_POOL_MAX         = tostring(var.api_db_pool_max)
+    SECRET_BOX_PROVIDER = "gcp"
+    SECRET_BOX_KMS_KEY  = google_kms_crypto_key.tenant_secrets.id
+    GEMINI_MODEL_REPORT = var.gemini_models.report
+    GEMINI_MODEL_OCR    = var.gemini_models.ocr
   } : k => v if v != "" })
 
   # パスワード再設定メールは outbox 経由でワーカーが送る(API は応答時間からアカウントの有無が分からないよう送らない)

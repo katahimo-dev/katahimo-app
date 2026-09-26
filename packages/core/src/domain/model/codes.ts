@@ -28,7 +28,8 @@ export const TENANT_SECRET_NAMES = [
 ] as const;
 export type TenantSecretName = (typeof TENANT_SECRET_NAMES)[number];
 
-export const IMPORT_SOURCES = ['reserva_csv', 'staff_master_csv'] as const;
+/** 取込の経路(import_runs.source)。external_api は外部システムからの顧客の受け取り(POST /api/integrations/customers)。 */
+export const IMPORT_SOURCES = ['reserva_csv', 'staff_master_csv', 'external_api'] as const;
 export type ImportSource = (typeof IMPORT_SOURCES)[number];
 export const IMPORT_RUN_STATUSES = ['running', 'applied', 'review_required', 'failed', 'skipped'] as const;
 export type ImportRunStatus = (typeof IMPORT_RUN_STATUSES)[number];
@@ -52,7 +53,12 @@ export const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contractor'] as cons
 export const ARCHIVE_REASONS = ['import_missing', 'manual'] as const;
 export type ArchiveReason = (typeof ARCHIVE_REASONS)[number];
 
-export const CUSTOMER_SOURCES = ['reserva'] as const;
+/**
+ * 顧客の取込元(customer_source_records.source。外部ID はこの取込元の中で一意)。reserva: RESERVA の顧客ID
+ * (顧客CSV、RESERVA からの受け取りの API)/ external_api: それ以外の外部システムからの受け取りの API。
+ * 予定(カレンダーの予定の RESERVA の顧客ID)と突き合わせるのは reserva だけ。
+ */
+export const CUSTOMER_SOURCES = ['reserva', 'external_api'] as const;
 export type CustomerSource = (typeof CUSTOMER_SOURCES)[number];
 
 export const ADDRESS_KINDS = ['home', 'secondary', 'visit'] as const;
@@ -108,7 +114,7 @@ export const OUTBOX_TOPICS = [
   'push.test',
 ] as const;
 export type OutboxTopic = (typeof OUTBOX_TOPICS)[number];
-/** スプレッドシートへのミラー(MIRROR_TO_GOOGLE_SHEETS が有効な時だけ積む・送る)。 */
+/** スプレッドシートへのミラー(MIRROR_TO_GOOGLE_SHEETS が有効な時、GAS_BRIDGE_TENANT のテナントだけ積む・送る。domain/outbox/topicPolicy.ts)。 */
 export const MIRROR_TOPICS: readonly OutboxTopic[] = [
   'mirror.attendance_day',
   'mirror.attendance_aggregate',

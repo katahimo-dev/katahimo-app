@@ -317,7 +317,7 @@ describe('カレンダーからの反映', () => {
 
   it('ミラーは worker が送り、MIRROR が無効なら送らずに完了にする', async () => {
     await applyCalendarSync(ctx.deps, staff, staff.staffId, DATE);
-    ctx.deps.mirrorEnabled = false;
+    ctx.deps.mirrorTenantSlug = null;
     const result = await ctx.drain();
     expect(result.skipped).toBeGreaterThan(0);
     expect(ctx.sender.attendanceDays).toHaveLength(0);

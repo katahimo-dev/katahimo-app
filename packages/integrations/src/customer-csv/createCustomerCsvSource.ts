@@ -1,47 +1,44 @@
-import type { CustomerCsvSourcePort } from '@katahimo/core/ports';
-import { GoogleDriveCustomerCsvSource } from './googleDriveCustomerCsvSource';
+import type { CustomerCsvLocation, CustomerCsvSourceFile, CustomerCsvSourcePort } from '@katahimo/core/ports';
+import {
+  type CustomerCsvDriveFolderReader,
+  GoogleDriveCustomerCsvFolder,
+} from './googleDriveCustomerCsvSource';
 import { LocalDirectoryCustomerCsvSource } from './localDirectoryCustomerCsvSource';
 
 export interface CustomerCsvSourceConfig {
-  /** テナントslug → DriveフォルダID。1件以上あればGoogle Driveを取込元にする。 */
-  driveFolderIdsByTenantSlug?: Readonly<Record<string, string>>;
-  /** ローカル開発用: `<dir>/<テナントslug>/` を取込元にする(Driveの設定が無い場合のみ)。 */
+  /**
+   * ローカル開発用(CUSTOMER_CSV_LOCAL_DIR): 取込元の設定の無いテナントは `<dir>/<テナントslug>/` を取込元にする。
+   */
   localDir?: string;
 }
 
-/** どのテナントにも取込元が無い(自動取込を使わない)場合の実装。 */
-class UnconfiguredCustomerCsvSource implements CustomerCsvSourcePort {
-  async listFiles(): Promise<null> {
-    return null;
-  }
-  async readFile(): Promise<Buffer> {
-    throw new Error('顧客CSVの取込元が設定されていません');
-  }
-}
-
-/** 環境設定から顧客CSVの取込元を選ぶ(Drive > ローカルディレクトリ > 取込なし)。API・ワーカー共通。 */
-export function createCustomerCsvSource(config: CustomerCsvSourceConfig): CustomerCsvSourcePort {
-  const folders = config.driveFolderIdsByTenantSlug ?? {};
-  if (Object.keys(folders).length > 0) {
-    return new GoogleDriveCustomerCsvSource({ folderIdsByTenantSlug: folders });
-  }
-  if (config.localDir) return new LocalDirectoryCustomerCsvSource(config.localDir);
-  return new UnconfiguredCustomerCsvSource();
-}
-
 /**
- * 環境変数 CUSTOMER_CSV_DRIVE_FOLDERS(JSON: {"テナントslug": "DriveフォルダID"})を読む。
- * 未設定・空なら空のマップ。形式が不正なら起動時に気づけるよう例外にする。
+ * テナントの取込元の設定で取込元を選ぶ: 設定(customer_import_settings)があればその Drive のフォルダ、
+ * 無ければローカルディレクトリ(CUSTOMER_CSV_LOCAL_DIR がある時だけ)、どちらも無ければ取込元なし(null)。
  */
-export function parseTenantFolderMap(json: string | undefined): Record<string, string> {
-  if (!json || json.trim() === '') return {};
-  const parsed: unknown = JSON.parse(json);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('CUSTOMER_CSV_DRIVE_FOLDERS は {"テナントslug": "フォルダID"} 形式のJSONにしてください');
+export class TenantCustomerCsvSource implements CustomerCsvSourcePort {
+  private readonly local: LocalDirectoryCustomerCsvSource | null;
+
+  constructor(
+    private readonly drive: CustomerCsvDriveFolderReader,
+    localDir?: string,
+  ) {
+    this.local = localDir ? new LocalDirectoryCustomerCsvSource(localDir) : null;
   }
-  const entries = Object.entries(parsed as Record<string, unknown>);
-  if (entries.some(([, v]) => typeof v !== 'string' || v === '')) {
-    throw new Error('CUSTOMER_CSV_DRIVE_FOLDERS のフォルダIDは空でない文字列にしてください');
+
+  async listFiles(location: CustomerCsvLocation): Promise<CustomerCsvSourceFile[] | null> {
+    if (location.settings) return this.drive.listFiles(location.settings.driveFolderId);
+    return this.local ? this.local.listFiles(location.tenant) : null;
   }
-  return Object.fromEntries(entries) as Record<string, string>;
+
+  async readFile(location: CustomerCsvLocation, file: CustomerCsvSourceFile): Promise<Buffer> {
+    if (location.settings) return this.drive.readFile(file.id);
+    if (!this.local) throw new Error('顧客CSVの取込元が設定されていません');
+    return this.local.readFile(location.tenant, file);
+  }
+}
+
+/** 顧客CSVの取込元(API の手動取込・ワーカーの定期取込で共通)。 */
+export function createCustomerCsvSource(config: CustomerCsvSourceConfig): CustomerCsvSourcePort {
+  return new TenantCustomerCsvSource(new GoogleDriveCustomerCsvFolder(), config.localDir);
 }
