@@ -200,6 +200,23 @@ describe('カレンダーからの反映', () => {
     expect(ctx.data().outbox.length).toBe(outboxAfterFirst);
   });
 
+  it('移動には、作ったときのスタッフの移動手段を持たせる(未設定のスタッフは car。作った後の移動手段は変えない)', async () => {
+    await applyCalendarSync(ctx.deps, staff, staff.staffId, DATE);
+    expect(ctx.data().legs.length).toBeGreaterThan(0);
+    expect(ctx.data().legs.every((l) => l.transportMode === 'car')).toBe(true);
+    const row = ctx.data().staff.find((s) => s.record.id === staff.staffId);
+    if (row) row.record.travelMode = 'bicycle';
+    // 移動を計算し直しても、前からある移動の手段はそのまま。新しく足した移動はいまの移動手段
+    await updateAttendanceDay(ctx.deps, staff, staff.staffId, DATE, { AJ: '2.5' });
+    expect(ctx.data().legs.find((l) => l.kind === 'commute')?.transportMode).toBe('car');
+    expect(
+      ctx
+        .data()
+        .legs.filter((l) => l.kind === 'return')
+        .map((l) => l.transportMode),
+    ).toEqual(['bicycle']);
+  });
+
   it('手入力で足した(カレンダーに無く、時間の重ならない)予定は反映で消さない(GAS版と同じ)', async () => {
     await applyCalendarSync(ctx.deps, staff, staff.staffId, DATE);
     await updateAttendanceDay(ctx.deps, staff, staff.staffId, DATE, {

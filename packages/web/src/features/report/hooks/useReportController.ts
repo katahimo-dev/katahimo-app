@@ -1,3 +1,4 @@
+import type { DailyReportAiInfo } from '@katahimo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
@@ -17,6 +18,7 @@ import {
 import { confirmNative, useConfirmModal } from '../../../ui/confirm';
 import { showErrorToast, showToast } from '../../../ui/toast';
 import { useSession } from '../../auth';
+import { useCustomerReportProfile } from '../../customers/useCustomerReportProfile';
 import { buildReceiptTimestamp, type ClockTime, formatClock, shiftReportDate } from '../model/dateTime';
 import {
   applyDraftToForm,
@@ -49,7 +51,7 @@ export interface ReportCustomer {
   id: string;
   name: string;
   address: string;
-  family: { name: string; dob: string }[];
+  family: { id: string; name: string; dob: string }[];
 }
 
 export type VisitCompleteState = { status: 'idle' } | { status: 'sending' } | { status: 'sent'; at: string };
@@ -130,13 +132,30 @@ export function useReportController(session: ReportSession | null) {
           id: session.target.customerId,
           name: detail?.name ?? session.target.customerName,
           address: detail?.addressDetail ?? '',
-          family: (detail?.familyMembers ?? []).map((m) => ({ name: m.name, dob: m.dob ?? '' })),
+          family: (detail?.familyMembers ?? []).map((m) => ({ id: m.id, name: m.name, dob: m.dob ?? '' })),
         }
       : null;
   const customerRef = useRef(customer);
   useLayoutEffect(() => {
     customerRef.current = customer;
   });
+
+  // ── 日報AIの言葉選び(対象のお子様・家庭の教育思考★・最後の生成の結果) ──
+  /** 日報の対象のお子様(世帯構成員の ID。'' = 選ばない) */
+  const [dailyChildId, setDailyChildId] = useState('');
+  const dailyChildRef = useRef('');
+  /** 最後に AI に書いてもらったときの日報AIの情報(使った言葉・管理者への連絡・保存で結び付ける記録の ID) */
+  const [aiInfo, setAiInfo] = useState<DailyReportAiInfo | null>(null);
+  const aiInfoRef = useRef<DailyReportAiInfo | null>(null);
+  const selectDailyChild = useCallback((childId: string) => {
+    dailyChildRef.current = childId;
+    setDailyChildId(childId);
+  }, []);
+  const rememberAiInfo = useCallback((info: DailyReportAiInfo | null) => {
+    aiInfoRef.current = info;
+    setAiInfo(info);
+  }, []);
+  const reportProfile = useCustomerReportProfile(customerId);
 
   // ── 開くたびに初めの状態に戻す(GAS版 openModal / openStandaloneReceiptModal) ──
   // biome-ignore lint/correctness/useExhaustiveDependencies: 開き直したとき(nonce が変わったとき)だけ戻す
@@ -151,6 +170,8 @@ export function useReportController(session: ReportSession | null) {
     setGeneratingSince(null);
     setSavingSince(null);
     setVisitComplete({ status: 'idle' });
+    selectDailyChild('');
+    rememberAiInfo(null);
     let initial = createInitialForm({
       today: today(),
       lastStart: lastStartTime(storageScope),
@@ -163,7 +184,8 @@ export function useReportController(session: ReportSession | null) {
     if (draft) showToast(draftRestoredMessage(draft), true);
   }, [nonce]);
 
-  // 世帯構成員が読めたら、1人目を「対象のお子様」に選んでおく(GAS版 openModal の Auto Select first child)
+  // 世帯構成員が読めたら、1人目を事故報告の「対象のお子様」に選んでおく(GAS版 openModal の Auto Select first
+  // child)。日報のお子様は1人だけのときだけ選んでおく(何人もいれば、スタッフが選ぶ)
   const familyInitNonceRef = useRef<number | null>(null);
   useEffect(() => {
     if (session?.kind !== 'customer' || !detail || familyInitNonceRef.current === session.nonce) return;
@@ -174,7 +196,8 @@ export function useReportController(session: ReportSession | null) {
       index: first ? '0' : '',
       member: first ? { name: first.name, dob: first.dob ?? '' } : null,
     });
-  }, [session, detail, apply]);
+    if (detail.familyMembers.length === 1 && first) selectDailyChild(first.id);
+  }, [session, detail, apply, selectDailyChild]);
 
   // ── 書きかけの退避(GAS版 markDirty → saveReportDraftSnapshot) ──
   /** いまの入力(apply 済みの最新の状態)を退避する */
@@ -303,10 +326,19 @@ export function useReportController(session: ReportSession | null) {
 
     try {
       if (f.mode === 'daily') {
-        const { draft } = await reportsApi.generateDaily({
+        const target = customerRef.current;
+        if (!target) {
+          showToast('お客様の情報が見つかりません。画面を開きなおしてください', true);
+          return;
+        }
+        const { draft, ai } = await reportsApi.generateDaily({
           text: f.memo,
           start: formatClock(f.start),
           end: formatClock(f.end),
+          customerId: target.id,
+          careRecipientId: dailyChildRef.current || null,
+          riskRating: f.ratings.risk || null,
+          reportDate: f.reportDate,
         });
         // GAS版と同じく、まずボタンを元に戻して(すぐ描画して)から結果を入れる
         // (結果へのスクロールの位置が、下のボタンの高さで変わるため)
@@ -314,6 +346,7 @@ export function useReportController(session: ReportSession | null) {
         flushSync(finish);
         if (requestNonce !== nonceRef.current) return;
         if (isDailyDraftApiError(draft.warnings)) {
+          rememberAiInfo(null);
           apply({ type: 'showWarnings', message: draft.internal || '不明なエラーが発生しました' });
           saveSnapshot('daily');
           scrollTo('warnings');
@@ -328,6 +361,7 @@ export function useReportController(session: ReportSession | null) {
         }
         // 足りない情報が無いときはスクロールしない(GAS版は結果欄を出す前に結果欄へのスクロールを
         // 呼んでいたため、実際には動いていなかった。同じ見え方にする)
+        rememberAiInfo(ai);
         apply({
           type: 'dailyGenerated',
           internal: draft.internal,
@@ -414,8 +448,12 @@ export function useReportController(session: ReportSession | null) {
           customerText: f.customerText,
           riskRating: f.ratings.risk || null,
           esRating: f.ratings.es || null,
+          careRecipientId: dailyChildRef.current || null,
+          aiGenerationId: aiInfoRef.current?.generationId ?? undefined,
         });
-        message = res.message || '保存しました';
+        message = res.report.psiAlert
+          ? `${res.message || '保存しました'}（PSI ${res.report.riskRating}のため管理者に知らせました）`
+          : res.message || '保存しました';
         savedId = res.report.id;
       } else {
         const a = f.accident;
@@ -536,6 +574,15 @@ export function useReportController(session: ReportSession | null) {
     sendReceipts,
     scrollRefs,
     today: today(),
+    dailyAi: {
+      childId: dailyChildId,
+      selectChild: selectDailyChild,
+      /** 家庭の★(未設定は null、読み込み中は undefined) */
+      educationLevel: reportProfile.educationLevel,
+      setEducationLevel: reportProfile.setEducationLevel,
+      savingLevel: reportProfile.saving,
+      info: aiInfo,
+    },
   };
 }
 

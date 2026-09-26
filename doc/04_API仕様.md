@@ -62,7 +62,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | 4 | `/api/*` | `Cache-Control: no-store` |
 | 5 | `/api/*` | CSRF: 状態を変える要求(POST/PUT/PATCH/DELETE)は `Sec-Fetch-Site` が `same-origin` / `none` 以外なら 403。`Sec-Fetch-Site` が無ければ `Origin` のホストが `Host` と違えば 403。どちらも無い要求(ブラウザ以外)は通す |
 | 6 | `/api/*` | 本体のある状態変更の要求は `Content-Type: application/json` だけ(415) |
-| 7 | `/api/*` | 本体の上限: 既定 256KB、`POST /api/receipts` 14MB、`POST /api/receipts/ocr` 3MB、`POST /api/integrations/customers` 2MB(413) |
+| 7 | `/api/*` | 本体の上限: 既定 256KB、`POST /api/receipts` 14MB、`POST /api/receipts/ocr` 3MB、`POST /api/integrations/customers` 2MB、`POST /api/admin/report-ai/import` 3MB(413) |
 
 ### 1.5 回数制限
 
@@ -120,6 +120,8 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | --- | --- | --- | --- |
 | `GET /?familyName=` | `customerListQuerySchema` / `customerListResponseSchema` | `{ customers: [{ id, name, phone, city }], cities }` | `familyName` 省略でアーカイブされていない全件(絞り込みは画面)。指定すると苗字の完全一致 |
 | `GET /:id` | — / `customerDetailResponseSchema` | 住所・連絡先・子ども(アレルギー等)の全項目 | 形の違う ID は 404。INFO `customer.detail.viewed`(`details.customerId`) |
+| `GET /:id/report-profile` | — / `customerReportProfileResponseSchema` | `{ profile: { customerId, educationLevel, rowVersion, updatedAt, updatedByName } }`(家庭の教育思考★。未設定は `educationLevel`・`rowVersion` が null) | 無い・別テナントのお客様は 404 |
+| `PUT /:id/report-profile` | `saveCustomerReportProfileRequestSchema`(`educationLevel` 1〜5・`rowVersion?`(未設定の家庭は省略))/ 同上 | 同上 | ログインしているスタッフなら誰でも。版が違う(未設定のつもりで送ったが他の人が先に設定した場合を含む)と 409(WARN `customer.report_profile.update_rejected`)。INFO `customer.report_profile.updated`(`customerId`・前後の★) |
 
 ### 2.4 予定 `/api/schedule`(`routes/schedule.ts`、全てログイン)
 
@@ -150,9 +152,9 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 
 | メソッド・パス | 契約(要求 / 応答) | 応答・エラー |
 | --- | --- | --- |
-| `POST /daily/generate` | `generateReportRequestSchema`(`text` 1〜20,000字・`start?`・`end?`)/ `generateDailyReportResponseSchema` | `{ draft: { warnings, internal, customer } }`。失敗もエラーにせず `warnings` に `API Error` / `API Key Missing`(GAS版と同じ)。回数制限 |
-| `POST /accident/generate` | 同上 / `generateAccidentReportResponseSchema` | `{ draft: {…8項目} | { error } }`。回数制限は日報と共通 |
-| `POST /daily` | `saveDailyReportRequestSchema`(`reportId?`・`rowVersion?`・`staffId?`・`customerId`・`reportDate?`(実在する 2000〜2100年の日付。外は 400)・`startTime`・`endTime`・`inputText`・`internalText`・`customerText`・`riskRating?`・`esRating?`)/ `saveDailyReportResponseSchema` | `{ success, message: '保存しました', report }`(`report.rowVersion` を含む)。404 `report_not_found`、403(他人の報告。SECURITY `report.daily.save_denied`)、409 `customer_mismatch` / `author_mismatch` / 古い版、400 `locked` |
+| `POST /daily/generate` | `generateDailyReportRequestSchema`(`text` 1〜20,000字・`start?`・`end?`・`customerId`・`careRecipientId?`(日報のお子様。`null` = 選ばない、省略 = 世帯にアーカイブされていない子がちょうど1人ならその子)・`riskRating?`(1〜5。PSI)・`reportDate?`(月齢を数える訪問日。省略はテナントの今日))/ `generateDailyReportResponseSchema` | `{ draft: { warnings, internal, customer }, ai: { generationId, usedKeywords: [{ code, keyword, status }], candidateCount, escalationRequired, childAgeMonths, educationLevel, effectiveEducationLevel } }`。失敗もエラーにせず `warnings` に `API Error` / `API Key Missing`(GAS版と同じ)。日報AIの3軸で絞り込んだプロンプトで生成し(02 6.1)、生成を `report_ai_generations` に記録する(記録できなければ `generationId` は null・ERROR `ai.daily_report.generation_log_failed`)。PSI 1 は `warnings` に「管理者へ連絡…」を必ず入れる。無いお客様は 404、お客様の世帯に無いお子様は 400 `care_recipient_mismatch`(AI を呼ばない)。`usedKeywords[].status` は `used`(候補に見せた語。`report_ai_generations.used_keyword_ids` に入る)/ `not_offered`(表にはあるが候補に見せていない語)/ `unknown`(表に無い答え)で、`not_offered`・`unknown` は使った語に数えず `unresolved_used_codes` に答えのまま残す。回数制限 |
+| `POST /accident/generate` | `generateReportRequestSchema`(`text`・`start?`・`end?`)/ `generateAccidentReportResponseSchema` | `{ draft: {…8項目} | { error } }`。回数制限は日報と共通 |
+| `POST /daily` | `saveDailyReportRequestSchema`(`reportId?`・`rowVersion?`・`staffId?`・`customerId`・`reportDate?`(実在する 2000〜2100年の日付。外は 400)・`startTime`・`endTime`・`inputText`・`internalText`・`customerText`・`riskRating?`・`esRating?`・`careRecipientId?`(日報のお子様。`null` = 選ばない、省略 = 世帯にアーカイブされていない子がちょうど1人ならその子)・`aiGenerationId?`(generate の `ai.generationId`))/ `saveDailyReportResponseSchema` | `{ success, message: '保存しました', report }`(`report.rowVersion`・`careRecipientId`・`psiAlert` を含む)。`aiGenerationId` は同じテナント・同じお客様で、保存する人が作った成功した生成だけ(違えば 400 `ai_generation_mismatch`、別の日報に結び付いていれば 409 `ai_generation_linked`)で、その生成の `care_record_id` に日報を結び付ける(上書きしても前の生成は結び付いたまま。結び付けはまだ結び付いていないか同じ日報のときだけ書くため、同じ生成を並んだ2つの保存で別々の日報に結び付けようとすると後の方が 409 `ai_generation_linked`)。お客様の世帯に無いお子様は 400 `care_recipient_mismatch`。PSI 2 以下で、新しい日報か前の保存から PSI が変わったとき(同じ PSI のままの保存し直しでは知らせない)は、在籍している管理者の全ての購読に `push.psi_alert` を積み(dedupe `push.psi_alert:<購読ID>:<記録ID>:<PSI>:<版>`)、日報の Google Chat に【PSI緊急】/【PSI注意】を送り、WARN `report.psi_alert`(`reportId`・`riskRating`・`rowVersion`・`pushQueued`)。`report.psiAlert` はこの保存で知らせたか(画面の「管理者に知らせました」)。404 `report_not_found`、403(他人の報告。SECURITY `report.daily.save_denied`)、409 `customer_mismatch` / `author_mismatch` / 古い版、400 `locked` |
 | `POST /accident` | `saveAccidentReportRequestSchema`(`reportType: '事故報告'｜'ヒヤリハット'`・`targetName`・`targetDob`・`occurrenceTime`・`location`・`accidentContent`・`situation`・`immediateResponse`・`parentCorrespondence`・`diagnosisTreatment`・`prevention`・`inputText` と上の共通項目)/ `saveAccidentReportResponseSchema` | `{ success, report }`。事故報告とヒヤリハットは上書きで切り替えられる。日報との切り替えは 404。エラーは日報と同じ |
 | `POST /visit-complete` | `visitCompleteRequestSchema`(`staffId?`・`customerId`・`visitDate`・`startTime`・`endTime`)/ `visitCompleteResponseSchema` | `{ success: true }`。DB に書かず Google Chat に知らせるだけ |
 | `GET /history?customerId=&before?` | `customerHistoryQuerySchema` / `customerHistoryResponseSchema` | `{ items, nextCursor }`(5件ずつ、`(occurred_at DESC, id DESC)` のキーセット。続きが無ければ `null`)。読めない `before` は 400 |
@@ -187,7 +189,7 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 
 | メソッド・パス | 権限 | 契約(要求 / 応答) | 応答・ログ |
 | --- | --- | --- | --- |
-| `GET /api/ui-config` | ログイン | — / `uiConfigResponseSchema` | `{ dailyPlaceholder, accidentPlaceholder, accidentHint, hiyariPlaceholder, assessments }`(テナントの上書き → `defaults/aiPrompts.ts`) |
+| `GET /api/ui-config` | ログイン | — / `uiConfigResponseSchema` | `{ dailyPlaceholder, accidentPlaceholder, accidentHint, hiyariPlaceholder, assessments }`(テナントの上書き → `defaults/aiPrompts.ts`)。PSI の定義・判定基準は日報AIの調整の PSI(段階ごと)があればその文言 |
 | `GET /api/data-version` | ログイン | — / `dataVersionResponseSchema` | `{ dataVersion: '12' }`(`tenant_settings.customer_data_version`) |
 | `GET /api/settings/admin` | 管理者 | — / `adminSettingsResponseSchema` | `{ settings: { geminiApiKey, geminiApiKeySet, geminiReportModel, geminiOcrModel, gchatReportWebhookUrl, gchatReportWebhookUrlSet, gchatReceiptWebhookUrl, gchatReceiptWebhookUrlSet } }`。秘密値は伏せ字 |
 | `POST /api/settings/admin/gemini-key` | 管理者 | `saveGeminiApiKeyRequestSchema`(`apiKey` 500字まで)/ `saveSettingsResponseSchema` | `{ ok, changed, message }`。空・伏せ字の一部だけ書き換えは 400。SECURITY `settings.gemini_api_key.changed` |
@@ -199,7 +201,7 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 
 同じ値の保存は `changed: false`「変更ありません」でログも残さない。秘密値の伏せ字: APIキーは `••••••••` + 末尾4文字(8文字以下は
 全て伏せる)、Webhook URL は `…/messages?••••••••`(文字は `SECRET_MASK_CHAR`)。プロンプトの key(`AI_PROMPT_KEYS`):
-`daily_report.generate`・`accident_report.generate`(kind=prompt)、`daily_report.memo_placeholder`・`accident_report.memo_placeholder`・
+`daily_report.generate`・`daily_report.company_policy`(保育日報の `{companyPolicy}`。既定は空)・`accident_report.generate`(kind=prompt)、`daily_report.memo_placeholder`・`accident_report.memo_placeholder`・
 `accident_report.writing_hint`・`hiyari.writing_hint`(kind=placeholder)。
 
 ### 2.9 管理者 `/api/admin`
@@ -215,7 +217,16 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 | `GET /api/admin/audit-logs.csv` | 同上(`cursor`・`limit` は使わない) | `text/csv; charset=utf-8`(BOM つき、CRLF、`attachment; filename="audit-logs_<from>_<to>.csv"`)。見出し: 日時(テナントのタイムゾーン)・レベル・操作・操作コード・操作者の種類・操作者・対象スタッフ・詳細・IPアドレス・ユーザーエージェント・リクエストID。条件に合う全件を500件ずつ別のトランザクションで読んで流す。`=`・`+`・`-`・`@` で始まる値は先頭に `'` を付ける。受け取る側が切ったら読むのをやめる。途中で失敗したら(状態コードは送った後なので 200 のまま)最後の行に「※ 書き出しが途中で失敗しました(request id <X-Request-Id>)…」を書き、ERROR を残す。読み始める前に SECURITY `audit_log.exported` |
 | `POST /api/admin/customers/import` | `customerCsvImportRequestSchema`(`force` 既定 true)/ `customerCsvImportResponseSchema` | `{ status, message, fileName, version, stats, dataVersion }`。`imported` / `up_to_date` / `no_files` / `not_configured` は 200、`review_required` 409、`busy` 409(他の顧客の取込(夜間の取込・外部連携の API)が5秒より長くロックを持っていた。`message`「別の顧客の取込が実行中です。しばらくしてから送り直してください。」、何も書かない)、`failed` 502 |
 
-拒否は WARN `<action>.access_denied`(`staff.admin.list` / `staff.admin.delete` / `staff.admin.password_guide` / `audit_log.view` / `audit_log.export` 等)・`staff.admin.create_rejected` / `update_rejected` / `delete_rejected` / `password_guide_rejected`(`details.reason` に理由コード)・`customer_csv.import.access_denied`。
+| `GET /api/admin/report-ai` | — / `reportAiMastersResponseSchema` | `{ keywords, ageBands, educationLevels, psiLevels, phrases, stanceRules }`(アーカイブしていない行。各行に `id`・`rowVersion`・`updatedAt`)。日報AIの調整(02 10.4) |
+| `POST /api/admin/report-ai/:kind` | `kind` = `keywords` / `age-bands` / `phrases` / `stance-rules`、`save*RequestSchema`(`row`)/ `reportAiRowSavedResponseSchema` | 201 `{ id, rowVersion, updatedAt }`。自然キー(ID・年齢帯・区分+表現・項目)が他の行と重なれば 409 `duplicate_key`(アーカイブした行と同じキーならその行を戻して書き換える)。年齢帯の月齢範囲が重なれば 400 `age_band_overlap`。INFO `settings.report_ai.row_saved` |
+| `PUT /api/admin/report-ai/:kind/:id` | 同上 + `rowVersion?` | 版が違えば 409(`stale_row_version`)、無ければ 404。自然キーが他の行(アーカイブした行も含む。キーの UNIQUE はアーカイブした行にもかかる)と重なれば 409 `duplicate_key`。同上 |
+| `DELETE /api/admin/report-ai/:kind/:id` | `archiveReportAiRowRequestSchema`(`rowVersion?`)/ `okResponseSchema` | アーカイブ(プロンプトに使わなくなる)。INFO `settings.report_ai.row_archived` |
+| `PUT /api/admin/report-ai/education-levels/:level`・`/psi-levels/:level` | `saveReportEducationLevelRequestSchema` / `saveReportPsiLevelRequestSchema`(`row`・`rowVersion?`)/ 同上 | 段階(1〜5)の行を書く(無ければ作る)。1〜5 の外は 404 |
+| `POST /api/admin/report-ai/import` | `reportAiImportRequestSchema`(`fileBase64`(xlsx。2MB まで)・`fileName?`・`dryRun`(既定 true))/ `reportAiImportResponseSchema` | `{ dryRun, applied, counts: { <表>: { rows, created, updated, unchanged } }, errors: [{ sheet, row, message }], warnings }`。`dryRun` は数えるだけ。誤りが無ければ全ての表を1つのトランザクションで反映し `import_runs`(`report_ai_xlsx`)に件数を残す(INFO `settings.report_ai.imported`)。誤りがあれば何も書かない(WARN `settings.report_ai.import_rejected`)。読めないファイルは 400 `invalid_xlsx`(シート30枚・2000行・40列まで) |
+| `GET /api/admin/report-ai/export.xlsx` | — | 取込と同じシート名・見出しの xlsx(`日報キーワード表現マスター.xlsx`)。INFO `settings.report_ai.exported` |
+| `GET /api/admin/report-ai/usage.csv?from&to` | `reportAiUsageQuerySchema`(業務日、両端を含む。366日まで) | `text/csv; charset=utf-8`(BOM つき)。ID・キーワード・カテゴリ・候補に出した回数・AIが使った回数(候補に出した語だけ)・候補外でAIが使ったと答えた回数(期間の生成の記録から。候補に出なかった語も並べる。候補外の答えは生成と同じ突き合わせで今の表の語に直し、直せない答えは最後の「(表に無い答え)」の行にまとめる)。INFO `settings.report_ai.usage_exported` |
+
+拒否は WARN `<action>.access_denied`(`staff.admin.list` / `staff.admin.delete` / `staff.admin.password_guide` / `audit_log.view` / `audit_log.export` / `settings.report_ai.view` / `settings.report_ai.import` 等)・`staff.admin.create_rejected` / `update_rejected` / `delete_rejected` / `password_guide_rejected`(`details.reason` に理由コード)・`customer_csv.import.access_denied`。
 操作コードの日本語の表示名は `@katahimo/shared` の `AUDIT_ACTION_LABELS`(画面と CSV で共有)。
 
 ### 2.10 通知 `/api/push`(`routes/push.ts`、全てログイン)

@@ -48,7 +48,6 @@ const careRecordColumns = {
   esRating: careRecords.esRating,
   body: careRecords.body,
   bodySchemaVer: careRecords.bodySchemaVer,
-  aiGenerated: careRecords.aiGenerated,
   retainUntil: careRecords.retainUntil,
   rowVersion: careRecords.rowVersion,
 };

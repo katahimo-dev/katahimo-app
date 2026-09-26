@@ -1,4 +1,5 @@
 import {
+  isPsiAlert,
   REPORT_KIND_LABELS,
   REPORT_KINDS,
   REPORT_LIST_DEFAULT_RANGE_DAYS,
@@ -48,6 +49,11 @@ function ReportItem({ report, onOpen }: { report: ReportListItem; onOpen: () => 
           </span>
           <span className="text-sm font-bold text-gray-700">{report.date.replaceAll('-', '/')}</span>
           <span className="text-sm text-gray-600">{report.time}</span>
+          {isPsiAlert(report.riskRating) ? (
+            <span className="text-sm font-bold text-red-800 bg-red-100 px-2 py-0.5 rounded">
+              {`⚠ PSI ${report.riskRating}`}
+            </span>
+          ) : null}
         </span>
         <span className="block font-bold text-gray-800 text-base">
           {report.customerName ?? UNKNOWN_CUSTOMER}

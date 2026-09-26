@@ -68,7 +68,10 @@ export type GasFunctions = Record<string, (...args: any[]) => any>;
  * 指定ファイルから指定の宣言を切り出して1つのスクリプトとして実行し、関数・定数を返す。
  * 宣言は列挙した順に連結するため、依存される定数を先に書くこと。
  */
-export function loadGasDeclarations(files: Record<string, string[]>): GasFunctions {
+export function loadGasDeclarations(
+  files: Record<string, string[]>,
+  globals: Record<string, unknown> = {},
+): GasFunctions {
   const parts: string[] = [];
   const names: string[] = [];
   for (const [file, declarations] of Object.entries(files)) {
@@ -82,6 +85,8 @@ export function loadGasDeclarations(files: Record<string, string[]>): GasFunctio
   const context: Record<string, unknown> = {
     // isSamePastScheduleValue_ 等が Date セルの場合にだけ使う。テストでは Date を渡さない。
     Utilities: { formatDate: () => '' },
+    // 切り出さなかった関数・GAS のサービスの代わり(テストが渡す)
+    ...globals,
   };
   vm.createContext(context);
   new vm.Script(parts.join('\n\n')).runInContext(context);

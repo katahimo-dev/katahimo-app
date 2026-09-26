@@ -7,11 +7,13 @@ import type {
   StaffCalendarRepository,
   TenantRetentionRepository,
 } from '@katahimo/core/ports';
-import { and, asc, eq, inArray, isNotNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, asc, eq, exists, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import {
+  careRecords,
   matchingRunCandidates,
   outboxMessages,
   passwordResetCodes,
+  reportAiGenerations,
   sessions,
   staffBusyBlocks,
   staffCalendars,
@@ -156,12 +158,40 @@ export class DrizzleTenantRetentionRepository extends TenantBound implements Ten
         ),
       )
       .returning({ id: matchingRunCandidates.id });
+    // AI 生成の記録: 日報に結び付いていないものは作成から一定期間、結び付いたものは日報の保存期限を過ぎたら
+    const deletedGenerations = await this.tx
+      .delete(reportAiGenerations)
+      .where(
+        and(
+          eq(reportAiGenerations.tenantId, t),
+          or(
+            and(
+              isNull(reportAiGenerations.careRecordId),
+              lt(reportAiGenerations.createdAt, cutoffs.aiGenerationsUnlinkedBefore),
+            ),
+            exists(
+              this.tx
+                .select({ id: careRecords.id })
+                .from(careRecords)
+                .where(
+                  and(
+                    eq(careRecords.tenantId, t),
+                    eq(careRecords.id, reportAiGenerations.careRecordId),
+                    lt(careRecords.retainUntil, cutoffs.aiGenerationsLinkedRetainUntilBefore),
+                  ),
+                ),
+            ),
+          ),
+        ),
+      )
+      .returning({ id: reportAiGenerations.id });
     return {
       sessions: deletedSessions.length,
       outbox_messages: deletedOutbox.length,
       password_reset_codes: deletedCodes.length,
       password_reset_mail_codes_cleared: clearedMailCodes.length,
       matching_run_candidates: deletedCandidates.length,
+      report_ai_generations: deletedGenerations.length,
     };
   }
 }

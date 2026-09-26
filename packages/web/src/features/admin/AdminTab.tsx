@@ -4,6 +4,7 @@ import { useConfirmModal } from '../../ui/confirm';
 import { useSession } from '../auth';
 import { AuditLogPanel } from './logs/AuditLogPanel';
 import { PromptsPanel } from './prompts/PromptsPanel';
+import { ReportAiPanel } from './reportAi/ReportAiPanel';
 import { ReportListPanel } from './reports/ReportListPanel';
 import { StaffAdminPanel } from './staff/StaffAdminPanel';
 
@@ -11,6 +12,7 @@ const ALL_SECTIONS = [
   { key: 'staff', label: '👤 スタッフ', adminOnly: true },
   { key: 'reports', label: '📋 報告一覧', adminOnly: false },
   { key: 'prompts', label: '🤖 AIプロンプト', adminOnly: true },
+  { key: 'reportAi', label: '🧩 日報AIの調整', adminOnly: true },
   { key: 'logs', label: '📄 操作ログ', adminOnly: true },
 ] as const;
 
@@ -19,6 +21,7 @@ type Section = (typeof ALL_SECTIONS)[number]['key'];
 /**
  * 「🛠 管理」タブ(管理者・コーディネーター)。GAS版で管理者がスプレッドシートを直接編集・閲覧していた作業
  * (スタッフ台帳・「ＡＩプロンプト」シート・「日報」「事故報告」シート)と、Drive の CSV ログの確認の置き換え。
+ * 「日報AIの調整」はお客様の日報キーワード表現マスター(xlsx)の取込・編集。
  * コーディネーターには「報告一覧」だけを出す。表示を切り替えると前の表示の中身は捨てるため、
  * AIプロンプトに保存していない変更があれば確かめる。
  */
@@ -71,6 +74,7 @@ export function AdminTab() {
       {section === 'staff' ? <StaffAdminPanel /> : null}
       {section === 'reports' ? <ReportListPanel /> : null}
       {section === 'prompts' ? <PromptsPanel onDirtyChange={onPromptsDirtyChange} /> : null}
+      {section === 'reportAi' ? <ReportAiPanel /> : null}
       {section === 'logs' ? <AuditLogPanel /> : null}
     </>
   );

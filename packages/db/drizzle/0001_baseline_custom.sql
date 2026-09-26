@@ -48,6 +48,8 @@ CREATE TRIGGER "customer_preferences_set_updated_at" BEFORE UPDATE ON "customer_
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "customer_recurring_slots_set_updated_at" BEFORE UPDATE ON "customer_recurring_slots"
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
+CREATE TRIGGER "customer_report_profiles_set_updated_at" BEFORE UPDATE ON "customer_report_profiles"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "customer_required_attributes_set_updated_at" BEFORE UPDATE ON "customer_required_attributes"
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "customer_source_records_set_updated_at" BEFORE UPDATE ON "customer_source_records"
@@ -63,6 +65,18 @@ CREATE TRIGGER "data_subject_requests_set_updated_at" BEFORE UPDATE ON "data_sub
 CREATE TRIGGER "matching_runs_set_updated_at" BEFORE UPDATE ON "matching_runs"
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "push_subscriptions_set_updated_at" BEFORE UPDATE ON "push_subscriptions"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
+CREATE TRIGGER "report_age_bands_set_updated_at" BEFORE UPDATE ON "report_age_bands"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
+CREATE TRIGGER "report_education_levels_set_updated_at" BEFORE UPDATE ON "report_education_levels"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
+CREATE TRIGGER "report_keywords_set_updated_at" BEFORE UPDATE ON "report_keywords"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
+CREATE TRIGGER "report_phrases_set_updated_at" BEFORE UPDATE ON "report_phrases"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
+CREATE TRIGGER "report_psi_levels_set_updated_at" BEFORE UPDATE ON "report_psi_levels"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
+CREATE TRIGGER "report_stance_rules_set_updated_at" BEFORE UPDATE ON "report_stance_rules"
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "reservation_assignments_set_updated_at" BEFORE UPDATE ON "reservation_assignments"
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
@@ -131,6 +145,11 @@ ALTER TABLE "staff_weekly_availability" ADD CONSTRAINT "staff_weekly_availabilit
 -- 同じスタッフ・同じ属性の有効期間は重ならない
 ALTER TABLE "staff_attributes" ADD CONSTRAINT "staff_attributes_tenant_id_staff_id_attribute_id_valid_excl"
   EXCLUDE USING gist ("tenant_id" WITH =, "staff_id" WITH =, "attribute_id" WITH =, "valid" WITH &&);--> statement-breakpoint
+-- 日報AIの年齢帯: アーカイブしていない帯の月齢範囲 [from, to) は重ならない。取込は1つのトランザクションで帯を
+-- 入れ替える(「0〜12ヶ月」を「0〜6」「6〜12」に分ける等)ため、確かめるのはコミットのとき
+ALTER TABLE "report_age_bands" ADD CONSTRAINT "report_age_bands_tenant_id_age_range_excl"
+  EXCLUDE USING gist ("tenant_id" WITH =, int4range("age_from_months", "age_to_months") WITH &&)
+  WHERE ("archived_at" IS NULL) DEFERRABLE INITIALLY DEFERRED;--> statement-breakpoint
 
 -- ─────────────────────────────────────────────────────────────
 -- 3. 移動 → 訪問の参照(訪問が消えたら列だけ null にする。PostgreSQL 15 以降の SET NULL (列))
@@ -456,6 +475,7 @@ ALTER TABLE "customer_addresses" FORCE ROW LEVEL SECURITY;--> statement-breakpoi
 ALTER TABLE "customer_contacts" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "customer_preferences" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "customer_recurring_slots" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "customer_report_profiles" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "customer_required_attributes" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "customer_source_records" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "customer_staff_affinities" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -472,6 +492,13 @@ ALTER TABLE "password_reset_codes" FORCE ROW LEVEL SECURITY;--> statement-breakp
 ALTER TABLE "push_subscriptions" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "receipt_uploads" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "receipts" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "report_age_bands" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "report_ai_generations" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "report_education_levels" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "report_keywords" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "report_phrases" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "report_psi_levels" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "report_stance_rules" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "reservation_assignments" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "reservation_recipients" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "reservations" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -548,6 +575,14 @@ GRANT SELECT, INSERT ON "receipt_uploads", "receipts" TO katahimo_app;--> statem
 GRANT UPDATE ("cancelled_at", "cancelled_by", "cancel_reason", "row_version", "dedupe_primary") ON "receipts" TO katahimo_app;--> statement-breakpoint
 -- Web Push の購読(本人の端末の登録・付け替え・削除)
 GRANT SELECT, INSERT, UPDATE, DELETE ON "push_subscriptions" TO katahimo_app;--> statement-breakpoint
+-- 日報AIの調整のマスター(行は消さずにアーカイブする)・家庭ごとの教育思考★
+GRANT SELECT, INSERT, UPDATE ON
+  "report_keywords", "report_age_bands", "report_education_levels", "report_psi_levels", "report_phrases",
+  "report_stance_rules", "customer_report_profiles"
+  TO katahimo_app;--> statement-breakpoint
+-- AI 生成の記録は追記のみ(後から書くのは日報への結び付けだけ)
+GRANT SELECT, INSERT ON "report_ai_generations" TO katahimo_app;--> statement-breakpoint
+GRANT UPDATE ("care_record_id") ON "report_ai_generations" TO katahimo_app;--> statement-breakpoint
 
 -- ── katahimo_worker(ワーカー・ジョブ)。ジョブが使う表・操作だけ(認証情報・テナントの秘密値・AIプロンプト・
 --    マッチングの表には権限を与えない)。ジョブを足すときはここと catalog.integration.test.ts の一覧を直す ──
@@ -572,4 +607,6 @@ GRANT SELECT, UPDATE, DELETE ON "push_subscriptions" TO katahimo_worker;--> stat
 GRANT SELECT, INSERT, DELETE ON "staff_busy_blocks" TO katahimo_worker;--> statement-breakpoint
 -- 保守(保存期間の削除。参照されないファイルの判定に staff_attributes・data_export_requests を読む)
 GRANT SELECT, DELETE ON "sessions", "matching_run_candidates", "stored_files", "platform"."rate_limit_buckets" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT ON "staff_attributes", "data_export_requests" TO katahimo_worker;
+GRANT SELECT ON "staff_attributes", "data_export_requests" TO katahimo_worker;--> statement-breakpoint
+-- 保守(AI 生成の記録の保存期間の削除。結び付いた日報の保存期限は care_records を読む)
+GRANT SELECT, DELETE ON "report_ai_generations" TO katahimo_worker;

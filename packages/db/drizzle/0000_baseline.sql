@@ -57,6 +57,7 @@ CREATE TABLE "travel_legs" (
 	"planned_minutes" integer,
 	"distance_km" numeric(6, 2),
 	"weather" text,
+	"transport_mode" text,
 	"overridden_fields" text[] DEFAULT '{}'::text[] NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -64,6 +65,7 @@ CREATE TABLE "travel_legs" (
 	CONSTRAINT "travel_legs_tenant_id_staff_id_business_date_kind_seq_key" UNIQUE("tenant_id","staff_id","business_date","kind","seq"),
 	CONSTRAINT "travel_legs_kind_check" CHECK ("travel_legs"."kind" in ('commute', 'between', 'return')),
 	CONSTRAINT "travel_legs_weather_check" CHECK ("travel_legs"."weather" in ('sunny', 'cloudy', 'rain', 'snow')),
+	CONSTRAINT "travel_legs_transport_mode_check" CHECK ("travel_legs"."transport_mode" in ('car', 'bicycle', 'transit', 'walk')),
 	CONSTRAINT "travel_legs_planned_minutes_check" CHECK ("travel_legs"."planned_minutes" >= 0),
 	CONSTRAINT "travel_legs_distance_km_check" CHECK ("travel_legs"."distance_km" >= 0),
 	CONSTRAINT "travel_legs_seq_check" CHECK ("travel_legs"."seq" >= 1)
@@ -556,7 +558,7 @@ CREATE TABLE "outbox_messages" (
 	"completed_at" timestamp with time zone,
 	CONSTRAINT "outbox_messages_pkey" PRIMARY KEY("tenant_id","id"),
 	CONSTRAINT "outbox_messages_tenant_id_dedupe_key_key" UNIQUE("tenant_id","dedupe_key"),
-	CONSTRAINT "outbox_messages_topic_check" CHECK ("outbox_messages"."topic" in ('mirror.attendance_day', 'mirror.attendance_aggregate', 'mirror.care_record', 'mirror.receipt', 'mail.password_reset', 'push.route_notice', 'push.test')),
+	CONSTRAINT "outbox_messages_topic_check" CHECK ("outbox_messages"."topic" in ('mirror.attendance_day', 'mirror.attendance_aggregate', 'mirror.care_record', 'mirror.receipt', 'mail.password_reset', 'push.route_notice', 'push.test', 'push.psi_alert')),
 	CONSTRAINT "outbox_messages_status_check" CHECK ("outbox_messages"."status" in ('pending', 'processing', 'done', 'failed', 'dead')),
 	CONSTRAINT "outbox_messages_attempts_check" CHECK ("outbox_messages"."attempts" >= 0 and "outbox_messages"."max_attempts" >= 1),
 	CONSTRAINT "outbox_messages_lock_check" CHECK (("outbox_messages"."status" = 'processing') = ("outbox_messages"."locked_until" is not null))
@@ -712,10 +714,6 @@ CREATE TABLE "care_records" (
 	"es_rating" smallint,
 	"body" jsonb NOT NULL,
 	"body_schema_ver" smallint DEFAULT 1 NOT NULL,
-	"ai_generated" boolean DEFAULT false NOT NULL,
-	"ai_model" text,
-	"ai_prompt_key" text,
-	"ai_prompt_revision" integer,
 	"reviewed_at" timestamp with time zone,
 	"retain_until" date,
 	"row_version" integer DEFAULT 1 NOT NULL,
@@ -789,6 +787,195 @@ CREATE TABLE "stored_files" (
 );
 --> statement-breakpoint
 ALTER TABLE "stored_files" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+CREATE TABLE "customer_report_profiles" (
+	"tenant_id" uuid NOT NULL,
+	"customer_id" uuid NOT NULL,
+	"education_level" smallint NOT NULL,
+	"updated_by" uuid,
+	"row_version" integer DEFAULT 1 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "customer_report_profiles_pkey" PRIMARY KEY("tenant_id","customer_id"),
+	CONSTRAINT "customer_report_profiles_education_level_check" CHECK ("customer_report_profiles"."education_level" between 1 and 5)
+);
+--> statement-breakpoint
+ALTER TABLE "customer_report_profiles" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+CREATE TABLE "report_age_bands" (
+	"tenant_id" uuid NOT NULL,
+	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
+	"label" text NOT NULL,
+	"age_from_months" smallint NOT NULL,
+	"age_to_months" smallint NOT NULL,
+	"behavior_words" text,
+	"development_topics" text,
+	"keyword_codes" text[] DEFAULT '{}'::text[] NOT NULL,
+	"scene_examples" text,
+	"sort_order" integer DEFAULT 0 NOT NULL,
+	"archived_at" timestamp with time zone,
+	"updated_by" uuid,
+	"row_version" integer DEFAULT 1 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "report_age_bands_pkey" PRIMARY KEY("tenant_id","id"),
+	CONSTRAINT "report_age_bands_tenant_id_label_key" UNIQUE("tenant_id","label"),
+	CONSTRAINT "report_age_bands_age_check" CHECK ("report_age_bands"."age_from_months" >= 0 and "report_age_bands"."age_to_months" <= 144 and "report_age_bands"."age_from_months" < "report_age_bands"."age_to_months")
+);
+--> statement-breakpoint
+ALTER TABLE "report_age_bands" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+CREATE TABLE "report_ai_generations" (
+	"tenant_id" uuid NOT NULL,
+	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
+	"staff_id" uuid NOT NULL,
+	"customer_id" uuid NOT NULL,
+	"care_recipient_id" uuid,
+	"care_record_id" uuid,
+	"prompt_key" text NOT NULL,
+	"prompt_revision" integer,
+	"default_prompt_sha256" text,
+	"app_version" text,
+	"model" text,
+	"prompt_text" text NOT NULL,
+	"input_text" text NOT NULL,
+	"time_info" text NOT NULL,
+	"started_at" timestamp with time zone NOT NULL,
+	"finished_at" timestamp with time zone NOT NULL,
+	"child_age_months" smallint,
+	"education_level" smallint NOT NULL,
+	"effective_education_level" smallint,
+	"risk_rating" smallint,
+	"escalation_required" boolean NOT NULL,
+	"candidate_keyword_ids" uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+	"used_keyword_ids" uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+	"unresolved_used_codes" text[] DEFAULT '{}'::text[] NOT NULL,
+	"output" jsonb,
+	"error_code" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "report_ai_generations_pkey" PRIMARY KEY("tenant_id","id"),
+	CONSTRAINT "report_ai_generations_error_code_check" CHECK ("report_ai_generations"."error_code" in ('api_key_missing', 'api_error')),
+	CONSTRAINT "report_ai_generations_outcome_check" CHECK (("report_ai_generations"."output" is null) <> ("report_ai_generations"."error_code" is null)),
+	CONSTRAINT "report_ai_generations_prompt_check" CHECK (("report_ai_generations"."prompt_revision" is null) = ("report_ai_generations"."default_prompt_sha256" is not null)),
+	CONSTRAINT "report_ai_generations_levels_check" CHECK ("report_ai_generations"."education_level" between 1 and 5 and "report_ai_generations"."effective_education_level" between 1 and 5 and "report_ai_generations"."risk_rating" between 1 and 5),
+	CONSTRAINT "report_ai_generations_child_age_months_check" CHECK ("report_ai_generations"."child_age_months" >= 0),
+	CONSTRAINT "report_ai_generations_finished_at_check" CHECK ("report_ai_generations"."finished_at" >= "report_ai_generations"."started_at")
+);
+--> statement-breakpoint
+ALTER TABLE "report_ai_generations" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+CREATE TABLE "report_education_levels" (
+	"tenant_id" uuid NOT NULL,
+	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
+	"level" smallint NOT NULL,
+	"label" text,
+	"customer_profile" text,
+	"usage" text,
+	"word_scope" text,
+	"term_name_rule" text,
+	"term_name_policy" text NOT NULL,
+	"keywords_min" smallint NOT NULL,
+	"keywords_max" smallint NOT NULL,
+	"tone_focus" text,
+	"example_direction" text,
+	"updated_by" uuid,
+	"row_version" integer DEFAULT 1 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "report_education_levels_pkey" PRIMARY KEY("tenant_id","id"),
+	CONSTRAINT "report_education_levels_tenant_id_level_key" UNIQUE("tenant_id","level"),
+	CONSTRAINT "report_education_levels_level_check" CHECK ("report_education_levels"."level" between 1 and 5),
+	CONSTRAINT "report_education_levels_term_name_policy_check" CHECK ("report_education_levels"."term_name_policy" in ('forbid', 'sparing', 'allow')),
+	CONSTRAINT "report_education_levels_keywords_check" CHECK ("report_education_levels"."keywords_min" >= 0 and "report_education_levels"."keywords_min" <= "report_education_levels"."keywords_max" and "report_education_levels"."keywords_max" <= 9)
+);
+--> statement-breakpoint
+ALTER TABLE "report_education_levels" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+CREATE TABLE "report_keywords" (
+	"tenant_id" uuid NOT NULL,
+	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
+	"code" text NOT NULL,
+	"category" text,
+	"keyword" text NOT NULL,
+	"sub_concept" text,
+	"age_label" text,
+	"age_from_months" smallint NOT NULL,
+	"age_to_months" smallint NOT NULL,
+	"age_band_label" text,
+	"education_level_min" smallint NOT NULL,
+	"education_level_max" smallint NOT NULL,
+	"psi_min" smallint NOT NULL,
+	"tone" text,
+	"parent_explanation" text,
+	"phrase_examples" text,
+	"usage_scene" text,
+	"ng_example" text,
+	"sort_order" integer DEFAULT 0 NOT NULL,
+	"archived_at" timestamp with time zone,
+	"updated_by" uuid,
+	"row_version" integer DEFAULT 1 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "report_keywords_pkey" PRIMARY KEY("tenant_id","id"),
+	CONSTRAINT "report_keywords_tenant_id_code_key" UNIQUE("tenant_id","code"),
+	CONSTRAINT "report_keywords_age_check" CHECK ("report_keywords"."age_from_months" >= 0 and "report_keywords"."age_to_months" <= 144 and "report_keywords"."age_from_months" <= "report_keywords"."age_to_months"),
+	CONSTRAINT "report_keywords_education_level_check" CHECK ("report_keywords"."education_level_min" between 1 and 5 and "report_keywords"."education_level_max" between 1 and 5 and "report_keywords"."education_level_min" <= "report_keywords"."education_level_max"),
+	CONSTRAINT "report_keywords_psi_min_check" CHECK ("report_keywords"."psi_min" between 1 and 5),
+	CONSTRAINT "report_keywords_code_check" CHECK ("report_keywords"."code" ~ '^[A-Z0-9_-]{1,20}$')
+);
+--> statement-breakpoint
+ALTER TABLE "report_keywords" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+CREATE TABLE "report_phrases" (
+	"tenant_id" uuid NOT NULL,
+	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
+	"kind" text NOT NULL,
+	"body" text NOT NULL,
+	"message" text,
+	"psi_min" smallint NOT NULL,
+	"psi_max" smallint NOT NULL,
+	"note" text,
+	"sort_order" integer DEFAULT 0 NOT NULL,
+	"archived_at" timestamp with time zone,
+	"updated_by" uuid,
+	"row_version" integer DEFAULT 1 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "report_phrases_pkey" PRIMARY KEY("tenant_id","id"),
+	CONSTRAINT "report_phrases_tenant_id_kind_body_key" UNIQUE("tenant_id","kind","body"),
+	CONSTRAINT "report_phrases_kind_check" CHECK ("report_phrases"."kind" in ('warm', 'avoid')),
+	CONSTRAINT "report_phrases_psi_check" CHECK ("report_phrases"."psi_min" between 1 and 5 and "report_phrases"."psi_max" between 1 and 5 and "report_phrases"."psi_min" <= "report_phrases"."psi_max" and ("report_phrases"."kind" = 'warm' or ("report_phrases"."psi_min" = 1 and "report_phrases"."psi_max" = 5)))
+);
+--> statement-breakpoint
+ALTER TABLE "report_phrases" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+CREATE TABLE "report_psi_levels" (
+	"tenant_id" uuid NOT NULL,
+	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
+	"level" smallint NOT NULL,
+	"label" text NOT NULL,
+	"criteria" text,
+	"updated_by" uuid,
+	"row_version" integer DEFAULT 1 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "report_psi_levels_pkey" PRIMARY KEY("tenant_id","id"),
+	CONSTRAINT "report_psi_levels_tenant_id_level_key" UNIQUE("tenant_id","level"),
+	CONSTRAINT "report_psi_levels_level_check" CHECK ("report_psi_levels"."level" between 1 and 5)
+);
+--> statement-breakpoint
+ALTER TABLE "report_psi_levels" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+CREATE TABLE "report_stance_rules" (
+	"tenant_id" uuid NOT NULL,
+	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
+	"topic" text NOT NULL,
+	"avoid_text" text,
+	"recommended_text" text,
+	"reason" text,
+	"sort_order" integer DEFAULT 0 NOT NULL,
+	"archived_at" timestamp with time zone,
+	"updated_by" uuid,
+	"row_version" integer DEFAULT 1 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "report_stance_rules_pkey" PRIMARY KEY("tenant_id","id"),
+	CONSTRAINT "report_stance_rules_tenant_id_topic_key" UNIQUE("tenant_id","topic")
+);
+--> statement-breakpoint
+ALTER TABLE "report_stance_rules" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "reservation_assignments" (
 	"tenant_id" uuid NOT NULL,
 	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -1008,7 +1195,7 @@ CREATE TABLE "import_runs" (
 	"started_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"finished_at" timestamp with time zone,
 	CONSTRAINT "import_runs_pkey" PRIMARY KEY("tenant_id","id"),
-	CONSTRAINT "import_runs_source_check" CHECK ("import_runs"."source" in ('reserva_csv', 'staff_master_csv', 'external_api')),
+	CONSTRAINT "import_runs_source_check" CHECK ("import_runs"."source" in ('reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx')),
 	CONSTRAINT "import_runs_status_check" CHECK ("import_runs"."status" in ('running', 'applied', 'review_required', 'failed', 'skipped')),
 	CONSTRAINT "import_runs_finished_at_check" CHECK (("import_runs"."status" = 'running') = ("import_runs"."finished_at" is null))
 );
@@ -1162,6 +1349,26 @@ ALTER TABLE "receipts" ADD CONSTRAINT "receipts_tenant_id_customer_id_fkey" FORE
 ALTER TABLE "receipts" ADD CONSTRAINT "receipts_tenant_id_cancelled_by_fkey" FOREIGN KEY ("tenant_id","cancelled_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "stored_files" ADD CONSTRAINT "stored_files_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "stored_files" ADD CONSTRAINT "stored_files_tenant_id_created_by_fkey" FOREIGN KEY ("tenant_id","created_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "customer_report_profiles" ADD CONSTRAINT "customer_report_profiles_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "customer_report_profiles" ADD CONSTRAINT "customer_report_profiles_tenant_id_customer_id_fkey" FOREIGN KEY ("tenant_id","customer_id") REFERENCES "public"."customers"("tenant_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "customer_report_profiles" ADD CONSTRAINT "customer_report_profiles_tenant_id_updated_by_fkey" FOREIGN KEY ("tenant_id","updated_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_age_bands" ADD CONSTRAINT "report_age_bands_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_age_bands" ADD CONSTRAINT "report_age_bands_tenant_id_updated_by_fkey" FOREIGN KEY ("tenant_id","updated_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_ai_generations" ADD CONSTRAINT "report_ai_generations_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_ai_generations" ADD CONSTRAINT "report_ai_generations_tenant_id_staff_id_fkey" FOREIGN KEY ("tenant_id","staff_id") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_ai_generations" ADD CONSTRAINT "report_ai_generations_tenant_id_customer_id_fkey" FOREIGN KEY ("tenant_id","customer_id") REFERENCES "public"."customers"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_ai_generations" ADD CONSTRAINT "report_ai_generations_tenant_id_care_recipient_id_fkey" FOREIGN KEY ("tenant_id","care_recipient_id") REFERENCES "public"."care_recipients"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_ai_generations" ADD CONSTRAINT "report_ai_generations_tenant_id_care_record_id_fkey" FOREIGN KEY ("tenant_id","care_record_id") REFERENCES "public"."care_records"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_education_levels" ADD CONSTRAINT "report_education_levels_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_education_levels" ADD CONSTRAINT "report_education_levels_tenant_id_updated_by_fkey" FOREIGN KEY ("tenant_id","updated_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_keywords" ADD CONSTRAINT "report_keywords_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_keywords" ADD CONSTRAINT "report_keywords_tenant_id_updated_by_fkey" FOREIGN KEY ("tenant_id","updated_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_phrases" ADD CONSTRAINT "report_phrases_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_phrases" ADD CONSTRAINT "report_phrases_tenant_id_updated_by_fkey" FOREIGN KEY ("tenant_id","updated_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_psi_levels" ADD CONSTRAINT "report_psi_levels_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_psi_levels" ADD CONSTRAINT "report_psi_levels_tenant_id_updated_by_fkey" FOREIGN KEY ("tenant_id","updated_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_stance_rules" ADD CONSTRAINT "report_stance_rules_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "report_stance_rules" ADD CONSTRAINT "report_stance_rules_tenant_id_updated_by_fkey" FOREIGN KEY ("tenant_id","updated_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "reservation_assignments" ADD CONSTRAINT "reservation_assignments_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "reservation_assignments" ADD CONSTRAINT "reservation_assignments_tenant_id_reservation_id_fkey" FOREIGN KEY ("tenant_id","reservation_id") REFERENCES "public"."reservations"("tenant_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "reservation_assignments" ADD CONSTRAINT "reservation_assignments_tenant_id_staff_id_fkey" FOREIGN KEY ("tenant_id","staff_id") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -1230,6 +1437,8 @@ CREATE INDEX "receipts_tenant_id_staff_id_receipted_at_idx" ON "receipts" USING 
 CREATE INDEX "receipts_tenant_id_receipted_at_id_idx" ON "receipts" USING btree ("tenant_id","receipted_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_upload_id_idx" ON "receipts" USING btree ("tenant_id","upload_id");--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_file_id_idx" ON "receipts" USING btree ("tenant_id","file_id");--> statement-breakpoint
+CREATE INDEX "report_ai_generations_tenant_id_created_at_idx" ON "report_ai_generations" USING btree ("tenant_id","created_at");--> statement-breakpoint
+CREATE INDEX "report_ai_generations_tenant_id_care_record_id_idx" ON "report_ai_generations" USING btree ("tenant_id","care_record_id");--> statement-breakpoint
 CREATE INDEX "reservation_assignments_tenant_id_reservation_id_idx" ON "reservation_assignments" USING btree ("tenant_id","reservation_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "reservation_assignments_tenant_id_reservation_id_staff_id_key" ON "reservation_assignments" USING btree ("tenant_id","reservation_id","staff_id") WHERE status in ('proposed', 'confirmed');--> statement-breakpoint
 CREATE INDEX "reservations_tenant_id_business_date_idx" ON "reservations" USING btree ("tenant_id","business_date");--> statement-breakpoint
@@ -1281,6 +1490,14 @@ CREATE POLICY "tenant_isolation" ON "care_records" AS PERMISSIVE FOR ALL TO publ
 CREATE POLICY "tenant_isolation" ON "receipt_uploads" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "receipts" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "stored_files" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "customer_report_profiles" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "report_age_bands" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "report_ai_generations" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "report_education_levels" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "report_keywords" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "report_phrases" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "report_psi_levels" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "report_stance_rules" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "reservation_assignments" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "reservation_recipients" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "reservations" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint

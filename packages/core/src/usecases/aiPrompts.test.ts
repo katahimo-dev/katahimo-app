@@ -1,9 +1,6 @@
 import { AI_PROMPT_KEYS, findAiPromptDefinition } from '@katahimo/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ReportAiPort } from '../ports/ai';
 import { getUiConfig, listAiPromptsForAdmin, updateAiPrompts } from './aiPrompts';
-import type { ReportAiDeps } from './reportAi';
-import { generateDailyReportDraft } from './reportAi';
 import type { TestContext } from './testContext';
 import { createTestContext } from './testContext';
 import type { FakeAppLogPort, FakeUnitOfWork } from './testDoubles';
@@ -109,41 +106,5 @@ describe('AIプロンプト・UI設定', () => {
     );
     expect(result).toEqual({ ok: false, reason: 'unknown_key', keys: ['no.such.key'] });
     expect(ctx.data().aiPrompts).toEqual([]);
-  });
-
-  it('日報のAI生成はテナントのプロンプトを使い、無ければ既定のプロンプトを使う', async () => {
-    const templates: string[] = [];
-    const port: ReportAiPort = {
-      async generateDailyReport(input) {
-        templates.push(input.promptTemplate);
-        return { warnings: [], internal: '', customer: '' };
-      },
-      async generateAccidentReport() {
-        return { error: 'unused' };
-      },
-      async extractReceiptAmount() {
-        return { amount: '', storeName: '', receiptDate: '' };
-      },
-    };
-    const deps: ReportAiDeps = {
-      uow,
-      reportAi: port,
-      secretBox: ctx.secretBox,
-      reportAiFactory: { create: () => port },
-      appLog,
-    };
-    const caller = { tenantId, staffId: ADMIN };
-    await generateDailyReportDraft(deps, caller, { text: 'メモ' });
-    await uow.run(tenantId, (r) =>
-      r.aiPrompts.save({
-        kind: 'prompt',
-        key: AI_PROMPT_KEYS.DAILY_REPORT_GENERATE,
-        body: '独自プロンプト {anonymizedText}',
-        updatedBy: ADMIN,
-      }),
-    );
-    await generateDailyReportDraft(deps, caller, { text: 'メモ' });
-    expect(templates[0]).toBe(findAiPromptDefinition(AI_PROMPT_KEYS.DAILY_REPORT_GENERATE)?.defaultBody);
-    expect(templates[1]).toBe('独自プロンプト {anonymizedText}');
   });
 });

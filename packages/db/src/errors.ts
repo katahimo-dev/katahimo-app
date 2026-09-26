@@ -46,6 +46,14 @@ export function mapDatabaseError(error: unknown): unknown {
       if (pg.constraint === 'staff_login_emails_pkey') {
         return conflict('このメールアドレスは他のスタッフが使用しています', undefined, pg.constraint);
       }
+      if (pg.constraint && /^report_[a-z_]+_tenant_id_[a-z_]+_key$/.test(pg.constraint)) {
+        // 日報AIのマスターの自然キー(アーカイブした行も含む)。アプリの確かめの後に同時に保存された場合等
+        return conflict(
+          '同じキーの行が既にあります(アーカイブした行も含みます)。画面を開きなおしてください。',
+          undefined,
+          'duplicate_key',
+        );
+      }
       if (pg.constraint?.startsWith('ai_prompts_') || pg.constraint?.startsWith('ai_prompt_revisions_')) {
         return conflict(
           '他の管理者が同時にプロンプトを保存しました。画面を開きなおしてから保存してください。',

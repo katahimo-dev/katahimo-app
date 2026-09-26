@@ -1,8 +1,11 @@
+import { isPsiAlert } from '@katahimo/shared';
 import {
   addIsoDays,
   buildAccidentHistoryInternalText,
   buildAccidentReportNotificationText,
   buildDailyReportNotificationText,
+  buildPsiAlertChatText,
+  buildPsiAlertNotice,
   CARE_RECORD_BODY_SCHEMA_VERSION,
   canActForOthers,
   conflict,
@@ -17,6 +20,7 @@ import {
   outboxDedupeKey,
   parseCareRecordBody,
   parseTimeToMinutes,
+  psiAlertTopic,
   recordTypeOfAccidentReport,
   reportTypeLabelOf,
   resolveTargetStaffId,
@@ -29,6 +33,8 @@ import type { NotifierPort } from '../ports/notifier';
 import type { CareRecordRow } from '../ports/records';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
 import { notifyWithLog } from './notify';
+import { enqueueForSubscriptions } from './pushNotifications';
+import { resolveReportCareRecipient } from './reportCareRecipient';
 import type { Actor, Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
 
@@ -156,11 +162,11 @@ async function persist(
           recordType: fields.recordType,
           occurredAt: fields.occurredAt,
           servicePeriod: fields.servicePeriod,
+          careRecipientId: fields.careRecipientId,
           riskRating: fields.riskRating,
           esRating: fields.esRating,
           body,
           bodySchemaVer: CARE_RECORD_BODY_SCHEMA_VERSION,
-          aiGenerated: fields.aiGenerated,
         },
         rowVersion,
       )
@@ -202,6 +208,13 @@ export interface SaveDailyReportInput extends SaveReportCommon {
   customerText: string;
   riskRating: number | null;
   esRating: number | null;
+  /**
+   * 日報の対象のお子様(お客様の世帯の子。違えば 400。null = 選ばない、省略 = 世帯の子が1人ならその子。
+   * resolveReportCareRecipient)。
+   */
+  careRecipientId?: string | null | undefined;
+  /** 下書きを作った AI 生成の記録(同じスタッフ・同じお客様の生成だけ。違えば 400)。 */
+  aiGenerationId?: string | undefined;
 }
 
 export interface DailyReportView {
@@ -211,9 +224,99 @@ export interface DailyReportView {
   customerId: string;
   riskRating: number | null;
   esRating: number | null;
+  careRecipientId: string | null;
+  /** 管理者へ PSI の知らせを出した(PSI 2 以下で、新しい日報か PSI が変わった保存。shouldAlertPsi)。 */
+  psiAlert: boolean;
   rowVersion: number;
   content: DailyReportContent;
 }
+
+/**
+ * 結び付ける AI 生成の記録を確かめる: このテナントの記録で、同じお客様・同じスタッフ(生成した人 = 保存する人)が
+ * 作った成功した生成であること、別の日報に結び付いていないこと(同じ日報の保存し直しは認める)。
+ * 読んでから結び付けるまでの間に別の保存が結び付けた場合は、結び付け(linkToCareRecord)が書けずに 409 になる。
+ */
+async function resolveAiGeneration(
+  r: TenantRepositories,
+  actor: Actor,
+  input: SaveDailyReportInput,
+  existingId: string | null,
+) {
+  if (!input.aiGenerationId) return null;
+  const generation = await r.reportAiGenerations.findById(input.aiGenerationId);
+  if (
+    !generation ||
+    generation.customerId !== input.customerId ||
+    generation.staffId !== actor.staffId ||
+    generation.errorCode !== null
+  ) {
+    throw invalid(
+      'AIの下書きの記録がこの日報と合いません。もう一度AIに書いてもらってください',
+      undefined,
+      'ai_generation_mismatch',
+    );
+  }
+  if (generation.careRecordId && generation.careRecordId !== existingId) throw aiGenerationLinked();
+  return generation;
+}
+
+const aiGenerationLinked = () =>
+  conflict(
+    'このAIの下書きは別の日報で保存済みです。画面を開きなおしてください',
+    undefined,
+    'ai_generation_linked',
+  );
+
+/**
+ * 保存した日報で管理者へ PSI の知らせを出すか: PSI 2 以下で、新しい日報か PSI が前の保存から変わったとき。
+ * 同じ PSI のまま保存し直す(文面の手直し等)たびには知らせない。
+ */
+export function shouldAlertPsi(savedRiskRating: number | null, previous: CareRecordRow | null): boolean {
+  if (!isPsiAlert(savedRiskRating)) return false;
+  return !previous || previous.riskRating !== savedRiskRating;
+}
+
+/**
+ * PSI の知らせを、在籍している管理者の全ての端末に積む(記録・PSI ごとに1回)。積んだ数。
+ * 知らせるかは呼び出し側が shouldAlertPsi で決める。
+ */
+async function enqueuePsiAlerts(
+  r: TenantRepositories,
+  saved: CareRecordRow,
+  write: ResolvedWrite,
+  date: string,
+  now: Date,
+): Promise<number> {
+  const today = zonedBusinessDate(now, write.timeZone);
+  const admins = (await r.staff.listActiveOn(today)).filter((s) => s.role === 'admin');
+  const notice = buildPsiAlertNotice({
+    recordId: saved.id,
+    riskRating: saved.riskRating as number,
+    staffName: write.staffName,
+    customerName: write.customerName,
+    date,
+  });
+  let count = 0;
+  for (const admin of admins) {
+    const subscriptions = await r.pushSubscriptions.listForStaff(admin.id);
+    await enqueueForSubscriptions(
+      r,
+      'push.psi_alert',
+      subscriptions,
+      `${saved.id}:${saved.riskRating}:${saved.rowVersion}`,
+      {
+        notice,
+        expiresAt: new Date(now.getTime() + PSI_ALERT_VALID_MS).toISOString(),
+        topic: psiAlertTopic(saved.id),
+      },
+    );
+    count += subscriptions.length;
+  }
+  return count;
+}
+
+/** 管理者への PSI の知らせを端末に届けるまで待つ時間(過ぎたら送らない)。 */
+const PSI_ALERT_VALID_MS = 24 * 60 * 60 * 1000;
 
 function servicePeriodOf(date: string | undefined, start: string, end: string, timeZone: string) {
   const s = parseTimeToMinutes(start);
@@ -239,12 +342,20 @@ export async function saveDailyReport(
     customerText: input.customerText,
   };
   const now = currentTime(deps);
-  let result: { saved: CareRecordRow; write: ResolvedWrite };
+  let result: {
+    saved: CareRecordRow;
+    write: ResolvedWrite;
+    date: string;
+    psiAlert: boolean;
+    pushQueued: number;
+  };
   try {
     result = await deps.uow.run(
       actor.tenantId,
       async (r) => {
         const write = await resolveWrite(r, actor, 'daily', input);
+        const recipient = await resolveReportCareRecipient(r, input.customerId, input.careRecipientId);
+        const generation = await resolveAiGeneration(r, actor, input, write.existing?.id ?? null);
         const startMinutes = parseTimeToMinutes(input.startTime);
         const occurredAt = input.reportDate
           ? zonedInstant(input.reportDate, startMinutes ?? 0, write.timeZone)
@@ -256,19 +367,25 @@ export async function saveDailyReport(
             recordType: 'daily_report',
             visitId: null,
             customerId: input.customerId,
-            careRecipientId: null,
+            careRecipientId: recipient?.id ?? null,
             authorStaffId: write.authorStaffId,
             occurredAt,
             servicePeriod: servicePeriodOf(input.reportDate, input.startTime, input.endTime, write.timeZone),
             riskRating: input.riskRating,
             esRating: input.esRating,
             bodySchemaVer: CARE_RECORD_BODY_SCHEMA_VERSION,
-            aiGenerated: false,
             body: content,
           },
           input.rowVersion,
         );
-        return { saved, write };
+        if (generation && !(await r.reportAiGenerations.linkToCareRecord(generation.id, saved.id))) {
+          // 読んでから書くまでの間に、別の保存が同じ生成を別の日報に結び付けた(トランザクションごと戻す)
+          throw aiGenerationLinked();
+        }
+        const date = input.reportDate ?? zonedBusinessDate(occurredAt, write.timeZone);
+        const psiAlert = shouldAlertPsi(saved.riskRating, write.existing);
+        const pushQueued = psiAlert ? await enqueuePsiAlerts(r, saved, write, date, now) : 0;
+        return { saved, write, date, psiAlert, pushQueued };
       },
       { actorId: actor.staffId },
     );
@@ -276,7 +393,7 @@ export async function saveDailyReport(
     await logDenied(deps, actor, 'daily', input, error);
     throw error;
   }
-  const { saved, write } = result;
+  const { saved, write, psiAlert } = result;
   await notifyWithLog(
     deps,
     actor.tenantId,
@@ -290,6 +407,36 @@ export async function saveDailyReport(
     }),
     actor.staffId,
   );
+  if (psiAlert) {
+    await notifyWithLog(
+      deps,
+      actor.tenantId,
+      'report',
+      buildPsiAlertChatText({
+        recordId: saved.id,
+        riskRating: saved.riskRating as number,
+        staffName: write.staffName,
+        customerName: write.customerName,
+        date: result.date,
+      }),
+      actor.staffId,
+    );
+    await deps.appLog.write({
+      tenantId: actor.tenantId,
+      level: 'WARN',
+      action: 'report.psi_alert',
+      actorStaffId: actor.staffId,
+      targetStaffId: saved.authorStaffId === actor.staffId ? null : saved.authorStaffId,
+      details: {
+        reportId: saved.id,
+        customerId: saved.customerId,
+        riskRating: saved.riskRating,
+        rowVersion: saved.rowVersion,
+        pushQueued: result.pushQueued,
+      },
+      ...actor.meta,
+    });
+  }
   await logSaved(deps, actor, 'daily', saved, !write.existing);
   return {
     id: saved.id,
@@ -298,6 +445,8 @@ export async function saveDailyReport(
     customerId: saved.customerId,
     riskRating: saved.riskRating,
     esRating: saved.esRating,
+    careRecipientId: saved.careRecipientId,
+    psiAlert,
     rowVersion: saved.rowVersion,
     content,
   };
@@ -374,7 +523,6 @@ export async function saveAccidentReport(
             riskRating: null,
             esRating: null,
             bodySchemaVer: CARE_RECORD_BODY_SCHEMA_VERSION,
-            aiGenerated: false,
             body: content,
           },
           input.rowVersion,

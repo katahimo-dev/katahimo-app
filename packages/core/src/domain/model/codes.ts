@@ -29,7 +29,8 @@ export const TENANT_SECRET_NAMES = [
 export type TenantSecretName = (typeof TENANT_SECRET_NAMES)[number];
 
 /** 取込の経路(import_runs.source)。external_api は外部システムからの顧客の受け取り(POST /api/integrations/customers)。 */
-export const IMPORT_SOURCES = ['reserva_csv', 'staff_master_csv', 'external_api'] as const;
+/** report_ai_xlsx は管理画面「日報AIの調整」の日報キーワード表現マスター(xlsx)の取込。 */
+export const IMPORT_SOURCES = ['reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx'] as const;
 export type ImportSource = (typeof IMPORT_SOURCES)[number];
 export const IMPORT_RUN_STATUSES = ['running', 'applied', 'review_required', 'failed', 'skipped'] as const;
 export type ImportRunStatus = (typeof IMPORT_RUN_STATUSES)[number];
@@ -92,6 +93,21 @@ export type StoredFilePurpose = (typeof STORED_FILE_PURPOSES)[number];
 
 export const AI_PROMPT_KINDS = ['prompt', 'placeholder'] as const;
 
+/** 日報AIの調整の区分(値は管理画面の API 契約と共有するため @katahimo/shared に置く)。 */
+export {
+  REPORT_PHRASE_KINDS,
+  type ReportPhraseKind,
+  TERM_NAME_POLICIES,
+  type TermNamePolicy,
+} from '@katahimo/shared';
+
+/**
+ * AI 生成の失敗の種類(report_ai_generations.error_code)。api_key_missing: Gemini の API キーが無い /
+ * api_error: 呼び出しの失敗(HTTP の失敗・応答を読めない)。
+ */
+export const REPORT_AI_ERROR_CODES = ['api_key_missing', 'api_error'] as const;
+export type ReportAiErrorCode = (typeof REPORT_AI_ERROR_CODES)[number];
+
 export const ATTRIBUTE_CATEGORIES = ['skill', 'qualification', 'trait', 'language', 'other'] as const;
 export const ATTRIBUTE_VALUE_TYPES = ['boolean', 'level', 'text'] as const;
 export const AFFINITY_SOURCES = ['manual', 'feedback'] as const;
@@ -103,6 +119,7 @@ export const MATCHING_RUN_STATUSES = ['queued', 'running', 'succeeded', 'failed'
 /**
  * outbox のトピック。ミラー・メールのペイロードはIDのみ(個人情報を入れない。ワーカーがDBから読み直す)。
  * Web Push(push.*)のペイロードは送る通知の文面(PushNotice: 表示名と時刻だけ。住所・電話番号は入れない)。
+ * push.psi_alert は PSI 2 以下(注意・危険)の日報が保存されたことの管理者への知らせ(管理者の購読ごとに1件)。
  */
 export const OUTBOX_TOPICS = [
   'mirror.attendance_day',
@@ -112,6 +129,7 @@ export const OUTBOX_TOPICS = [
   'mail.password_reset',
   'push.route_notice',
   'push.test',
+  'push.psi_alert',
 ] as const;
 export type OutboxTopic = (typeof OUTBOX_TOPICS)[number];
 /** スプレッドシートへのミラー(MIRROR_TO_GOOGLE_SHEETS が有効な時、GAS_BRIDGE_TENANT のテナントだけ積む・送る。domain/outbox/topicPolicy.ts)。 */
@@ -122,7 +140,7 @@ export const MIRROR_TOPICS: readonly OutboxTopic[] = [
   'mirror.receipt',
 ];
 /** Web Push の通知(VAPID が設定されている時だけ積む・送る)。 */
-export const PUSH_TOPICS: readonly OutboxTopic[] = ['push.route_notice', 'push.test'];
+export const PUSH_TOPICS: readonly OutboxTopic[] = ['push.route_notice', 'push.test', 'push.psi_alert'];
 export const OUTBOX_STATUSES = ['pending', 'processing', 'done', 'failed', 'dead'] as const;
 export type OutboxStatus = (typeof OUTBOX_STATUSES)[number];
 

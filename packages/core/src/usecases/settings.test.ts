@@ -279,6 +279,7 @@ describe('管理者設定(app_settings)', () => {
     it('AIの下書きは .env の設定(deps.reportAi)に戻す', async () => {
       const used: string[] = [];
       const portOf = (label: string): ReportAiPort => ({
+        reportModel: label,
         async generateDailyReport() {
           used.push(label);
           return { warnings: [], internal: '', customer: '' };
@@ -297,9 +298,10 @@ describe('管理者設定(app_settings)', () => {
         reportAi: portOf('env'),
         reportAiFactory: { create: () => portOf('tenant') },
       };
-      await generateDailyReportDraft(aiDeps, actor, { text: 'メモ' });
+      const customerId = await ctx.addCustomer('田中 花子');
+      await generateDailyReportDraft(aiDeps, actor, { text: 'メモ', customerId });
       ctx.secretBox.failOpen = false;
-      await generateDailyReportDraft(aiDeps, actor, { text: 'メモ' });
+      await generateDailyReportDraft(aiDeps, actor, { text: 'メモ', customerId });
       expect(used).toEqual(['env', 'tenant']);
     });
 

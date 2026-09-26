@@ -65,6 +65,8 @@ export interface Container {
   /** テナントが独自の Gemini API キーを設定していない場合のフォールバック(.env の設定か Noop)。 */
   reportAi: ReportAiPort;
   reportAiFactory: ReportAiPortFactory;
+  /** AI 生成の記録に残すアプリの版(Cloud Run のリビジョン)。 */
+  appVersion: string | null;
   listGeminiModels: typeof listAvailableGeminiModels;
   /** 「今日/明日の予定」(SCHEDULE_PROVIDER で Google / GAS Bridge / Noop を切り替える)。 */
   schedule: SchedulePort;
@@ -147,6 +149,7 @@ export function createContainer(env: Env, db: Database): Container {
         })
       : new NoopReportAiPort(),
     reportAiFactory: { create: (options) => new GeminiAiPort(options) },
+    appVersion: env.K_REVISION ?? null,
     listGeminiModels: listAvailableGeminiModels,
     schedule: scheduleServices.schedule,
     scheduleProvider: scheduleServices.provider,

@@ -14,20 +14,6 @@ export interface AiPromptDeps {
   uow: UnitOfWorkPort;
 }
 
-/**
- * テナントの上書きがあればその本文、無ければ既定値を返す。GAS版GeminiReport.js getPromptに対応
- * (GAS版は行が無いと既定値をシートへ書き足していたが、本アプリは既定値をコード側に持つため書き込まない)。
- */
-export async function resolvePromptBody(
-  deps: AiPromptDeps,
-  tenantId: string,
-  key: AiPromptKey,
-): Promise<string> {
-  const row = await deps.uow.run(tenantId, (r) => r.aiPrompts.findByKey(key));
-  if (row?.body) return row.body;
-  return findAiPromptDefinition(key)?.defaultBody ?? '';
-}
-
 export interface UiConfigView {
   dailyPlaceholder: string;
   accidentPlaceholder: string;
@@ -36,18 +22,32 @@ export interface UiConfigView {
   assessments: AssessmentDefinitions;
 }
 
-/** 日報/事故報告画面の文言・評価定義。GAS版Main.js getUiConfigに対応。 */
+/**
+ * 日報/事故報告画面の文言・評価定義。GAS版Main.js getUiConfigに対応。PSI の定義・判定基準は、テナントが
+ * 「日報AIの調整」の PSI(日報キーワード表現マスターのシート04)を入れていればその文言にする(段階ごと)。
+ */
 export async function getUiConfig(deps: AiPromptDeps, tenantId: string): Promise<UiConfigView> {
-  const overrides = new Map(
-    (await deps.uow.run(tenantId, (r) => r.aiPrompts.listAll())).map((p) => [p.key, p.body]),
-  );
+  const { prompts, psiLevels } = await deps.uow.run(tenantId, async (r) => ({
+    prompts: await r.aiPrompts.listAll(),
+    psiLevels: (await r.reportAi.loadActive()).psiLevels,
+  }));
+  const overrides = new Map(prompts.map((p) => [p.key, p.body]));
+  const risk = {
+    ...ASSESSMENT_DEFINITIONS.risk,
+    levels: ASSESSMENT_DEFINITIONS.risk.levels.map((level) => {
+      const tenantLevel = psiLevels.find((p) => p.level === level.score);
+      return tenantLevel
+        ? { score: level.score, label: tenantLevel.label, desc: tenantLevel.criteria ?? level.desc }
+        : level;
+    }),
+  };
   const body = (key: AiPromptKey) => overrides.get(key) || findAiPromptDefinition(key)?.defaultBody || '';
   return {
     dailyPlaceholder: body(AI_PROMPT_KEYS.DAILY_MEMO_PLACEHOLDER),
     accidentPlaceholder: body(AI_PROMPT_KEYS.ACCIDENT_MEMO_PLACEHOLDER),
     accidentHint: body(AI_PROMPT_KEYS.ACCIDENT_WRITING_HINT),
     hiyariPlaceholder: body(AI_PROMPT_KEYS.HIYARI_WRITING_HINT),
-    assessments: ASSESSMENT_DEFINITIONS,
+    assessments: { risk, es: ASSESSMENT_DEFINITIONS.es },
   };
 }
 

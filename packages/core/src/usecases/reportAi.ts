@@ -1,4 +1,19 @@
-import { AI_PROMPT_KEYS } from '@katahimo/shared';
+import { createHash } from 'node:crypto';
+import { AI_PROMPT_KEYS, type AiPromptKey, findAiPromptDefinition } from '@katahimo/shared';
+import {
+  accidentTimeInfo,
+  ageInMonths,
+  assembleDailyReportPrompt,
+  dailyTimeInfo,
+  enforceEscalationWarning,
+  newId,
+  notFound,
+  type ReportAiErrorCode,
+  type ResolvedUsedKeywords,
+  renderAccidentReportPrompt,
+  resolveUsedKeywords,
+  zonedBusinessDate,
+} from '../domain';
 import type {
   AccidentReportDraft,
   AccidentReportDraftError,
@@ -8,23 +23,30 @@ import type {
   ReportAiPortFactory,
 } from '../ports/ai';
 import type { AppLogPort } from '../ports/appLog';
+import type { ReportAiGenerationInput } from '../ports/reportAi';
 import type { SecretBoxPort } from '../ports/secretBox';
 import type { TenantSettingsRecord } from '../ports/settings';
+import type { TenantRepositories } from '../ports/unitOfWork';
 import type { AiPromptDeps } from './aiPrompts';
-import { resolvePromptBody } from './aiPrompts';
+import { resolveReportCareRecipient } from './reportCareRecipient';
+import type { Actor, Clock } from './requestMeta';
+import { currentTime } from './requestMeta';
 import { readTenantSecret } from './settings';
 
-export interface ReportAiDeps extends AiPromptDeps {
+export interface ReportAiDeps extends AiPromptDeps, Clock {
   /** テナントが独自の Gemini API キーを設定していない場合に使うフォールバック(.env の設定か Noop)。 */
   reportAi: ReportAiPort;
   secretBox: SecretBoxPort;
   reportAiFactory: ReportAiPortFactory;
   appLog: AppLogPort;
+  /** 生成の記録に残すアプリの版(Cloud Run の K_REVISION など。無ければ null)。 */
+  appVersion?: string | null;
 }
 
 export interface ReportAiCaller {
   tenantId: string;
   staffId: string;
+  meta?: Actor['meta'];
 }
 
 /**
@@ -64,28 +86,180 @@ function logAiError(deps: ReportAiDeps, caller: ReportAiCaller, action: string, 
     action,
     actorStaffId: caller.staffId,
     details: { error: error.slice(0, 300) },
+    ...caller.meta,
   });
 }
 
+/** テナントの上書き(版つき)か既定の文面。 */
+interface ResolvedPrompt {
+  body: string;
+  /** テナントの上書きの版(既定の文面なら null)。 */
+  revision: number | null;
+}
+
+async function resolvePrompt(r: TenantRepositories, key: AiPromptKey): Promise<ResolvedPrompt> {
+  const row = await r.aiPrompts.findByKey(key);
+  if (row?.body) return { body: row.body, revision: row.revision };
+  return { body: findAiPromptDefinition(key)?.defaultBody ?? '', revision: null };
+}
+
+export interface GenerateDailyReportDraftInput {
+  text: string;
+  start?: string | undefined;
+  end?: string | undefined;
+  customerId: string;
+  /** 対象のお子様(null = 選ばない、省略 = 世帯の子が1人ならその子。resolveReportCareRecipient)。 */
+  careRecipientId?: string | null | undefined;
+  riskRating?: number | null | undefined;
+  /** 月齢を数える日('YYYY-MM-DD')。省略時はテナントの今日。 */
+  reportDate?: string | undefined;
+}
+
+export interface DailyReportGeneration {
+  draft: DailyReportDraft;
+  ai: {
+    generationId: string | null;
+    usedKeywords: ResolvedUsedKeywords['items'];
+    candidateCount: number;
+    escalationRequired: boolean;
+    childAgeMonths: number | null;
+    educationLevel: number;
+    effectiveEducationLevel: number | null;
+  };
+}
+
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
+function errorCodeOf(draft: DailyReportDraft): ReportAiErrorCode | null {
+  if (draft.warnings.includes('API Key Missing')) return 'api_key_missing';
+  if (draft.warnings.includes('API Error')) return 'api_error';
+  return null;
+}
+
 /**
- * 保育日報のメモ(口語)からAI下書きを生成する。GAS版GeminiReport.js generateReportWithWarningsに対応。
- * プロンプトはテナントが管理画面で編集したもの(無ければ既定値)を使う。失敗時も例外にはせず、
- * warnings/internalにその旨を詰めた同じ形のオブジェクトを返す(GAS版と同じ)。
+ * 保育日報のメモ(口語)からAI下書きを生成する(GAS版 GeminiReport.js generateReportWithWarnings + 日報AIの3軸)。
+ * 1. 1つ目のトランザクションで お客様・対象のお子様・家庭の★・マスター・プロンプト を読む(対象のお子様が
+ *    そのお客様の世帯の子でなければ 400。他の家庭の子の月齢で書く取り違えは生成の前に止める)
+ * 2. プロンプトを組み立て(core/domain/reports/promptAssembly.ts)、トランザクションの外で Gemini を呼ぶ
+ * 3. 生成の記録(report_ai_generations)を別のトランザクションで書く。記録に失敗しても生成の結果は返す
+ *    (ERROR `ai.daily_report.generation_log_failed`。記録の ID は null)
+ * PSI 1 は AI の答えに関わらず warnings に「管理者へ連絡」を入れる。失敗しても例外にはせず、warnings/internal に
+ * その旨を詰めた同じ形を返す(GAS版と同じ)。プロンプト・メモの本文は操作ログに書かない。
  */
 export async function generateDailyReportDraft(
   deps: ReportAiDeps,
   caller: ReportAiCaller,
-  input: { text: string; start?: string | undefined; end?: string | undefined },
-): Promise<DailyReportDraft> {
-  const [reportAi, promptTemplate] = await Promise.all([
-    resolveReportAiPort(deps, caller.tenantId),
-    resolvePromptBody(deps, caller.tenantId, AI_PROMPT_KEYS.DAILY_REPORT_GENERATE),
-  ]);
-  const draft = await reportAi.generateDailyReport({ ...input, promptTemplate });
-  if (draft.warnings.includes('API Error') || draft.warnings.includes('API Key Missing')) {
-    await logAiError(deps, caller, 'ai.daily_report.generate_failed', draft.internal);
+  input: GenerateDailyReportDraftInput,
+): Promise<DailyReportGeneration> {
+  const startedAt = currentTime(deps);
+  const context = await deps.uow.run(caller.tenantId, async (r) => {
+    const customer = await r.customers.findById(input.customerId);
+    if (!customer) throw notFound('お客様が見つかりません', 'customer_not_found');
+    const recipient = await resolveReportCareRecipient(r, input.customerId, input.careRecipientId);
+    const [profile, masters, template, companyPolicy, tenant] = await Promise.all([
+      r.customerReportProfiles.find(input.customerId),
+      r.reportAi.loadActive(),
+      resolvePrompt(r, AI_PROMPT_KEYS.DAILY_REPORT_GENERATE),
+      resolvePrompt(r, AI_PROMPT_KEYS.DAILY_REPORT_COMPANY_POLICY),
+      r.tenant(),
+    ]);
+    return { recipient, profile, masters, template, companyPolicy, timeZone: tenant.timezone };
+  });
+
+  const onDate = input.reportDate ?? zonedBusinessDate(startedAt, context.timeZone);
+  const birthDate = context.recipient?.birthDate ?? null;
+  const childAgeMonths = birthDate ? ageInMonths(birthDate, onDate) : null;
+  const timeInfo = dailyTimeInfo(input.start, input.end);
+  const riskRating = input.riskRating ?? null;
+  const assembled = assembleDailyReportPrompt({
+    template: context.template.body,
+    companyPolicy: context.companyPolicy.body,
+    anonymizedText: input.text,
+    timeInfo,
+    childAgeMonths,
+    educationLevel: context.profile?.educationLevel ?? null,
+    riskRating,
+    masters: context.masters,
+  });
+
+  const reportAi = await resolveReportAiPort(deps, caller.tenantId);
+  const raw = await reportAi.generateDailyReport({ prompt: assembled.prompt });
+  const errorCode = errorCodeOf(raw);
+  if (errorCode) await logAiError(deps, caller, 'ai.daily_report.generate_failed', raw.internal);
+  const used = resolveUsedKeywords(
+    errorCode ? [] : raw.usedKeywords,
+    assembled.candidates,
+    context.masters.keywords,
+  );
+  const { adjustment } = assembled;
+  const warnings =
+    !errorCode && adjustment.escalationRequired ? enforceEscalationWarning(raw.warnings) : raw.warnings;
+  const draft: DailyReportDraft = { warnings, internal: raw.internal, customer: raw.customer };
+
+  const generationId = newId();
+  const recorded = await recordGeneration(deps, caller, {
+    id: generationId,
+    staffId: caller.staffId,
+    customerId: input.customerId,
+    careRecipientId: context.recipient?.id ?? null,
+    promptKey: AI_PROMPT_KEYS.DAILY_REPORT_GENERATE,
+    promptRevision: context.template.revision,
+    defaultPromptSha256: context.template.revision === null ? sha256(context.template.body) : null,
+    appVersion: deps.appVersion ?? null,
+    model: reportAi.reportModel,
+    promptText: assembled.prompt,
+    inputText: input.text,
+    timeInfo,
+    startedAt,
+    finishedAt: currentTime(deps),
+    childAgeMonths,
+    educationLevel: adjustment.educationLevel,
+    effectiveEducationLevel: adjustment.effectiveEducationLevel,
+    riskRating,
+    escalationRequired: adjustment.escalationRequired,
+    candidateKeywordIds: assembled.candidates.map((k) => k.id),
+    usedKeywordIds: used.keywordIds,
+    unresolvedUsedCodes: used.unresolved,
+    output: errorCode ? null : { ...raw, warnings },
+    errorCode,
+  });
+
+  return {
+    draft,
+    ai: {
+      generationId: recorded ? generationId : null,
+      usedKeywords: used.items,
+      candidateCount: assembled.candidates.length,
+      escalationRequired: adjustment.escalationRequired,
+      childAgeMonths,
+      educationLevel: adjustment.educationLevel,
+      effectiveEducationLevel: adjustment.effectiveEducationLevel,
+    },
+  };
+}
+
+/** 生成の記録を書く(失敗しても生成の結果は壊さない。false を返して ERROR を残す)。 */
+async function recordGeneration(
+  deps: ReportAiDeps,
+  caller: ReportAiCaller,
+  input: ReportAiGenerationInput,
+): Promise<boolean> {
+  try {
+    await deps.uow.run(caller.tenantId, (r) => r.reportAiGenerations.insert(input), {
+      actorId: caller.staffId,
+    });
+    return true;
+  } catch (e) {
+    await deps.appLog.write({
+      tenantId: caller.tenantId,
+      level: 'ERROR',
+      action: 'ai.daily_report.generation_log_failed',
+      actorStaffId: caller.staffId,
+      details: { customerId: input.customerId, error: e instanceof Error ? e.name : 'unknown' },
+      ...caller.meta,
+    });
+    return false;
   }
-  return draft;
 }
 
 /** GAS版GeminiReport.js generateAccidentReportに対応。失敗時は{error}を返す。 */
@@ -94,11 +268,16 @@ export async function generateAccidentReportDraft(
   caller: ReportAiCaller,
   input: { text: string; start?: string | undefined; end?: string | undefined },
 ): Promise<AccidentReportDraft | AccidentReportDraftError> {
-  const [reportAi, promptTemplate] = await Promise.all([
+  const [reportAi, template] = await Promise.all([
     resolveReportAiPort(deps, caller.tenantId),
-    resolvePromptBody(deps, caller.tenantId, AI_PROMPT_KEYS.ACCIDENT_REPORT_GENERATE),
+    deps.uow.run(caller.tenantId, (r) => resolvePrompt(r, AI_PROMPT_KEYS.ACCIDENT_REPORT_GENERATE)),
   ]);
-  const draft = await reportAi.generateAccidentReport({ ...input, promptTemplate });
+  const prompt = renderAccidentReportPrompt(
+    template.body,
+    input.text,
+    accidentTimeInfo(input.start, input.end),
+  );
+  const draft = await reportAi.generateAccidentReport({ prompt });
   if ('error' in draft) await logAiError(deps, caller, 'ai.accident_report.generate_failed', draft.error);
   return draft;
 }

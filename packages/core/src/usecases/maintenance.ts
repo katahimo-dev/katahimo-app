@@ -1,3 +1,4 @@
+import { zonedBusinessDate } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
 import type { PlatformMaintenancePort } from '../ports/maintenance';
 import type { StoragePort } from '../ports/storage';
@@ -19,6 +20,11 @@ export const RETENTION_DAYS = {
   rateLimitBuckets: 2,
   /** どこからも参照されないファイル(登録の途中で止まった画像等)を消すまでの猶予。 */
   unreferencedFiles: 1,
+  /**
+   * 日報に結び付いていない AI 生成の記録(保存されなかった下書き。プロンプト・メモ・AI の答えを含む)。日報に
+   * 結び付いた記録はその日報の保存期限(care_records.retain_until)に従う。
+   */
+  unlinkedAiGenerations: 365,
 } as const;
 
 export interface MaintenanceDeps extends Clock {
@@ -49,7 +55,7 @@ export interface MaintenanceSummary {
 /**
  * 保守ジョブ(毎日1回): 操作ログの月のパーティションを先に作り(既定のパーティションに入った行は月のパーティションへ
  * 移す)・古いものを消し、消去されていない全てのテナント(停止中・解約済みを含む)について保存期間を過ぎた
- * セッション・outbox・再設定コード・マッチングの候補を消し、期限切れ・使用済みの再設定コードのメール用の値を消し、
+ * セッション・outbox・再設定コード・マッチングの候補・AI 生成の記録を消し、期限切れ・使用済みの再設定コードのメール用の値を消し、
  * どこからも参照されないファイルを消す。
  * 1つの処理・1テナントの失敗で他を止めない。失敗は ERROR ログに残し、summary の errors / tenants[].error に入れる
  * (ジョブは失敗として終わる)。
@@ -105,6 +111,8 @@ export async function runMaintenance(deps: MaintenanceDeps): Promise<Maintenance
           passwordResetCodesBefore: ago(RETENTION_DAYS.passwordResetCodes),
           mailCodesExpiredAt: now,
           matchingCandidatesBefore: ago(RETENTION_DAYS.matchingCandidates),
+          aiGenerationsUnlinkedBefore: ago(RETENTION_DAYS.unlinkedAiGenerations),
+          aiGenerationsLinkedRetainUntilBefore: zonedBusinessDate(now, tenant.timezone),
         }),
         files: await r.storedFiles.listUnreferenced(ago(RETENTION_DAYS.unreferencedFiles), 500),
       }));

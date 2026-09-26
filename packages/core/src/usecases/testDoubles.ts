@@ -107,6 +107,11 @@ import type {
 } from '../ports/tenants';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
 import type { PasswordHasherPort } from './auth/deps';
+import {
+  emptyReportAiFakeData,
+  fakeReportAiRepositories,
+  type ReportAiFakeData,
+} from './reportAiTestDoubles';
 
 // ─────────────────────────────────────────────────────────────
 // 入れ物
@@ -132,7 +137,7 @@ export interface OutboxRow extends OutboxMessageInput {
 }
 
 /** 1テナント分のデータ。 */
-export interface TenantData {
+export interface TenantData extends ReportAiFakeData {
   staff: StaffRow[];
   sessions: (SessionRecord & { tokenHash: Uint8Array })[];
   resetCodes: PasswordResetCodeRecord[];
@@ -207,6 +212,7 @@ function emptyTenantData(): TenantData {
     outbox: [],
     entityChanges: [],
     appLogs: [],
+    ...emptyReportAiFakeData(),
   };
 }
 
@@ -1291,6 +1297,7 @@ export function fakeRepositories(
         return {};
       },
     },
+    ...fakeReportAiRepositories(d),
   };
 }
 

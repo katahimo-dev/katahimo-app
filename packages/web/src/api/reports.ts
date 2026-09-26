@@ -1,4 +1,5 @@
 import {
+  type GenerateDailyReportRequest,
   type GenerateReportRequest,
   generateAccidentReportResponseSchema,
   generateDailyReportResponseSchema,
@@ -23,8 +24,11 @@ export type ReportListFilters = Omit<ReportListQuery, 'cursor' | 'limit'>;
  * saveAccidentReport / sendVisitCompleteNotification)。
  */
 export const reportsApi = {
-  /** POST /api/reports/daily/generate: メモから日報の下書きを作る(失敗しても warnings に理由を入れて返る) */
-  generateDaily: (body: GenerateReportRequest) =>
+  /**
+   * POST /api/reports/daily/generate: メモから日報の下書きを作る(失敗しても warnings に理由を入れて返る)。
+   * お客様・対象のお子様・PSI で日報AIの言葉を絞り込み、生成の記録の ID(保存のときに送る)を返す
+   */
+  generateDaily: (body: GenerateDailyReportRequest) =>
     api.post('/api/reports/daily/generate', generateDailyReportResponseSchema, body),
   /** POST /api/reports/accident/generate: メモから事故報告書の下書きを作る(失敗時は draft.error) */
   generateAccident: (body: GenerateReportRequest) =>

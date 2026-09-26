@@ -16,7 +16,6 @@ export interface CareRecordRow {
   esRating: number | null;
   body: CareRecordContent;
   bodySchemaVer: number;
-  aiGenerated: boolean;
   retainUntil: string | null;
   rowVersion: number;
 }
@@ -28,11 +27,11 @@ export type CareRecordPatch = Partial<
     | 'recordType'
     | 'occurredAt'
     | 'servicePeriod'
+    | 'careRecipientId'
     | 'riskRating'
     | 'esRating'
     | 'body'
     | 'bodySchemaVer'
-    | 'aiGenerated'
     | 'status'
   >
 >;

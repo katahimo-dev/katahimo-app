@@ -19,7 +19,15 @@ vi.mock('../../../api/reports', () => ({
 }));
 vi.mock('../../../api/customers', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../../api/customers')>();
-  return { ...original, customersApi: { ...original.customersApi, detail: vi.fn() } };
+  return {
+    ...original,
+    customersApi: {
+      ...original.customersApi,
+      detail: vi.fn(),
+      reportProfile: vi.fn(),
+      saveReportProfile: vi.fn(),
+    },
+  };
 });
 vi.mock('../../../api/system', () => ({
   systemApi: { uiConfig: vi.fn(() => new Promise(() => undefined)), dataVersion: vi.fn() },
@@ -62,6 +70,7 @@ describe('useReportController', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(customersApi.detail).mockImplementation(() => new Promise(() => undefined));
+    vi.mocked(customersApi.reportProfile).mockImplementation(() => new Promise(() => undefined));
     toastStore.hide();
   });
 
@@ -146,5 +155,99 @@ describe('useReportController', () => {
     await waitFor(() => expect(toastStore.getState()).toMatchObject({ visible: true, isError: true }));
     expect(result.current.form.saved.daily.reportId).toBeNull();
     expect(localStorage.getItem(DRAFT_KEY)).not.toBeNull();
+  });
+
+  describe('日報AI(対象のお子様・PSI・家庭の★)', () => {
+    const profile = (educationLevel: number | null, rowVersion: number | null) => ({
+      profile: { customerId: 'c1', educationLevel, rowVersion, updatedAt: null, updatedByName: null },
+    });
+    const detailWith = (familyMembers: { id: string; name: string; dob: string | null }[]) =>
+      ({
+        customer: {
+          id: 'c1',
+          name: 'お客様c1',
+          addressDetail: '',
+          familyMembers: familyMembers.map((m) => ({ ...m, info: null, allergy: null })),
+        },
+      }) as never;
+    const AI = {
+      generationId: '00000000-0000-7000-8000-0000000000e1',
+      usedKeywords: [{ code: 'K01', keyword: '見守りの語', status: 'used' as const }],
+      candidateCount: 3,
+      escalationRequired: true,
+      childAgeMonths: 14,
+      educationLevel: 2,
+      effectiveEducationLevel: null,
+    };
+
+    it('お子様が1人なら最初から選び、PSI・お客様・訪問日と一緒に AI に送り、保存で生成の記録を結び付ける', async () => {
+      vi.mocked(customersApi.detail).mockResolvedValue(
+        detailWith([{ id: '00000000-0000-7000-8000-00000000c001', name: 'はな', dob: '2025/07/10' }]),
+      );
+      vi.mocked(customersApi.reportProfile).mockResolvedValue(profile(null, null));
+      const { result } = renderController(sessionFor('c1', 1));
+      await waitFor(() =>
+        expect(result.current.dailyAi.childId).toBe('00000000-0000-7000-8000-00000000c001'),
+      );
+      await waitFor(() => expect(result.current.dailyAi.educationLevel).toBeNull());
+      act(() => {
+        result.current.actions.setMemo('メモ');
+        result.current.actions.setRating('risk', 1);
+      });
+      generateDaily.mockResolvedValueOnce({
+        draft: { internal: '社内', customer: '保護者', warnings: ['管理者へ連絡してください'] },
+        ai: AI,
+      });
+      await act(async () => {
+        result.current.generate();
+      });
+      expect(generateDaily).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customerId: 'c1',
+          careRecipientId: '00000000-0000-7000-8000-00000000c001',
+          riskRating: 1,
+          reportDate: result.current.form.reportDate,
+        }),
+      );
+      await waitFor(() => expect(result.current.dailyAi.info?.escalationRequired).toBe(true));
+      saveDaily.mockResolvedValueOnce(savedReport('r1', 'c1'));
+      await act(async () => {
+        result.current.save();
+      });
+      expect(saveDaily).toHaveBeenCalledWith(
+        expect.objectContaining({
+          careRecipientId: '00000000-0000-7000-8000-00000000c001',
+          aiGenerationId: AI.generationId,
+          riskRating: 1,
+        }),
+      );
+    });
+
+    it('お子様が何人もいれば選ばない(選ばなければ送らない)。家庭の★は読んだ版と一緒に変える', async () => {
+      vi.mocked(customersApi.detail).mockResolvedValue(
+        detailWith([
+          { id: '00000000-0000-7000-8000-00000000c001', name: 'はな', dob: null },
+          { id: '00000000-0000-7000-8000-00000000c002', name: 'そら', dob: null },
+        ]),
+      );
+      vi.mocked(customersApi.reportProfile).mockResolvedValue(profile(3, 2));
+      vi.mocked(customersApi.saveReportProfile).mockResolvedValue(profile(5, 3));
+      const { result } = renderController(sessionFor('c1', 1));
+      await waitFor(() => expect(result.current.dailyAi.educationLevel).toBe(3));
+      expect(result.current.dailyAi.childId).toBe('');
+      await act(async () => {
+        result.current.dailyAi.setEducationLevel(5);
+      });
+      expect(customersApi.saveReportProfile).toHaveBeenCalledWith('c1', { educationLevel: 5, rowVersion: 2 });
+      await waitFor(() => expect(result.current.dailyAi.educationLevel).toBe(5));
+      act(() => result.current.actions.setMemo('メモ'));
+      generateDaily.mockResolvedValueOnce({ draft: { internal: 'i', customer: 'c', warnings: [] }, ai: AI });
+      await act(async () => {
+        result.current.generate();
+      });
+      expect(generateDaily).toHaveBeenCalledWith(
+        expect.objectContaining({ careRecipientId: null, riskRating: null }),
+      );
+    });
   });
 });

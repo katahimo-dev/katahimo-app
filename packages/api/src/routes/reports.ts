@@ -13,6 +13,7 @@ import {
   customerHistoryQuerySchema,
   customerHistoryResponseSchema,
   generateAccidentReportResponseSchema,
+  generateDailyReportRequestSchema,
   generateDailyReportResponseSchema,
   generateReportRequestSchema,
   idSchema,
@@ -47,9 +48,9 @@ const AI_QUOTA_MESSAGE = '本日のAI生成の利用回数の上限に達しま�
 export function createReportRoutes(container: Container) {
   const app = new Hono<SessionEnv>();
 
-  /** 保育日報の下書きをAI生成する(GAS版 generateReportWithWarnings)。 */
+  /** 保育日報の下書きをAI生成する(GAS版 generateReportWithWarnings + 日報AIの3軸。生成の記録を残す)。 */
   app.post('/daily/generate', requireSession(container), async (c) => {
-    const body = await parseJsonBody(c, generateReportRequestSchema);
+    const body = await parseJsonBody(c, generateDailyReportRequestSchema);
     if (!body.ok) return body.response;
     const limited = await enforceStaffQuota(
       c,
@@ -58,8 +59,8 @@ export function createReportRoutes(container: Container) {
       AI_QUOTA_MESSAGE,
     );
     if (limited) return limited;
-    const draft = await generateDailyReportDraft(container, c.get('session'), body.data);
-    return jsonOk(c, generateDailyReportResponseSchema, { draft });
+    const result = await generateDailyReportDraft(container, actorOf(c), body.data);
+    return jsonOk(c, generateDailyReportResponseSchema, result);
   });
 
   /** 事故報告/ヒヤリハットの下書きをAI生成する(GAS版 generateAccidentReport)。 */
@@ -73,7 +74,7 @@ export function createReportRoutes(container: Container) {
       AI_QUOTA_MESSAGE,
     );
     if (limited) return limited;
-    const draft = await generateAccidentReportDraft(container, c.get('session'), body.data);
+    const draft = await generateAccidentReportDraft(container, actorOf(c), body.data);
     return jsonOk(c, generateAccidentReportResponseSchema, { draft });
   });
 

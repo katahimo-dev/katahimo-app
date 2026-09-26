@@ -14,6 +14,7 @@ import {
 import { registerWebStatic } from './http/webStatic';
 import { createAdminAuditLogRoutes } from './routes/adminAuditLogs';
 import { createAdminImportRoutes } from './routes/adminImport';
+import { createAdminReportAiRoutes } from './routes/adminReportAi';
 import { createAdminStaffRoutes } from './routes/adminStaff';
 import { createAttendanceRoutes } from './routes/attendance';
 import { createAuthRoutes } from './routes/auth';
@@ -79,6 +80,7 @@ export function createApp(deps: AppDeps) {
   app.route('/api/admin/customers', createAdminImportRoutes(container));
   app.route('/api/data-version', createDataVersionRoutes(container));
   app.route('/api/admin/staff', createAdminStaffRoutes(container));
+  app.route('/api/admin/report-ai', createAdminReportAiRoutes(container));
   app.route('/api/admin', createAdminAuditLogRoutes(container));
   app.route('/api/ui-config', createUiConfigRoutes(container));
   app.route('/api/push', createPushRoutes(container));

@@ -5,7 +5,7 @@
 import type { StaffRole } from '../domain/model';
 import type { TenantRecord } from '../ports/tenants';
 import { registerStaff } from './auth/staffRegistration';
-import { applyCustomerSnapshot } from './customers';
+import { applyCustomerSnapshot, type CustomerSnapshotRecipient } from './customers';
 import { drainOutbox } from './outboxWorker';
 import { DEFAULT_RATE_LIMIT_POLICY } from './rateLimits';
 import type { Actor } from './requestMeta';
@@ -108,7 +108,7 @@ export function createTestContext(options: { now?: string } = {}) {
       return { staff, actor };
     },
     /** 顧客を1件登録し、その ID を返す(取込と同じ経路)。 */
-    async addCustomer(name: string, externalId = name) {
+    async addCustomer(name: string, externalId = name, recipients: CustomerSnapshotRecipient[] = []) {
       const [familyName = '', givenName = ''] = name.split(' ');
       await uow.run(tenant.id, (r) =>
         applyCustomerSnapshot(
@@ -124,7 +124,7 @@ export function createTestContext(options: { now?: string } = {}) {
             home: { addressLine: '渋谷1-2-3', city: '渋谷区' },
             secondary: null,
             emergencyContact: null,
-            recipients: [],
+            recipients,
           },
           clock.now,
         ),

@@ -26,6 +26,16 @@ export const saveDailyReportRequestSchema = z.object({
   customerText: textSchema,
   riskRating: ratingSchema.default(null),
   esRating: ratingSchema.default(null),
+  /**
+   * 日報の対象のお子様(お客様の世帯の子)。null = 選ばない。省略すると、世帯にアーカイブされていない子が
+   * ちょうど1人ならその子(画面の自動選択と同じ)。
+   */
+  careRecipientId: idSchema.nullable().optional(),
+  /**
+   * この日報の下書きを作った AI 生成の記録(generate の応答の generationId)。同じスタッフ・同じお客様の生成だけを
+   * 結び付ける(違えば 400)。AI を使わずに書いたときは省略。
+   */
+  aiGenerationId: idSchema.optional(),
 });
 export type SaveDailyReportRequest = z.infer<typeof saveDailyReportRequestSchema>;
 
@@ -36,6 +46,12 @@ export const dailyReportViewSchema = z.object({
   customerId: idSchema,
   riskRating: ratingSchema,
   esRating: ratingSchema,
+  careRecipientId: idSchema.nullable(),
+  /**
+   * この保存で管理者へ PSI の知らせを出した(PSI 2 以下(注意・危険)で、新しい日報か PSI が前の保存から
+   * 変わったとき。同じ PSI のまま保存し直しても知らせない)。
+   */
+  psiAlert: z.boolean(),
   rowVersion: rowVersionSchema,
   content: z.object({
     startTime: z.string(),
@@ -88,8 +104,7 @@ export const saveAccidentReportResponseSchema = z.object({
 });
 
 /**
- * POST /api/reports/daily/generate・/accident/generate のリクエスト(GAS版 generateReportWithWarnings /
- * generateAccidentReport の引数)。start/end は 'HH:mm'。
+ * POST /api/reports/accident/generate のリクエスト(GAS版 generateAccidentReport の引数)。start/end は 'HH:mm'。
  */
 export const generateReportRequestSchema = z.object({
   text: freeText(z.string().trim().min(1, 'text が必要です').max(20_000, 'メモが長すぎます')),
@@ -97,6 +112,22 @@ export const generateReportRequestSchema = z.object({
   end: z.string().optional(),
 });
 export type GenerateReportRequest = z.infer<typeof generateReportRequestSchema>;
+
+/**
+ * POST /api/reports/daily/generate のリクエスト(GAS版 generateReportWithWarnings の引数 + 日報AIの3軸)。
+ * - customerId: 日報を書くお客様(家庭の教育思考★を読む)
+ * - careRecipientId: 対象のお子様(月齢 → 年齢帯)。null = 選ばない(年齢帯の言葉を使わない)。省略すると
+ *   世帯にアーカイブされていない子がちょうど1人ならその子(画面の自動選択と同じ)
+ * - riskRating: 生成の前に付けた PSI(未評価は省略。言葉の絞り込みは PSI 4 = 通常運用として扱う)
+ * - reportDate: 訪問日(月齢を数える日。省略時はテナントの今日)
+ */
+export const generateDailyReportRequestSchema = generateReportRequestSchema.extend({
+  customerId: idSchema,
+  careRecipientId: idSchema.nullable().optional(),
+  riskRating: z.number().int().min(1).max(5).nullable().optional(),
+  reportDate: recordDateSchema.optional(),
+});
+export type GenerateDailyReportRequest = z.input<typeof generateDailyReportRequestSchema>;
 
 /**
  * POST /api/reports/daily/generate の応答。失敗してもエラーにはせず、warnings に 'API Error' /
@@ -108,7 +139,38 @@ export const dailyReportDraftSchema = z.object({
   customer: z.string(),
 });
 export type DailyReportDraft = z.infer<typeof dailyReportDraftSchema>;
-export const generateDailyReportResponseSchema = z.object({ draft: dailyReportDraftSchema });
+
+/**
+ * AI が使ったと答えた教育キーワード。status: used = 候補として見せた語 / not_offered = 表にはあるが候補に
+ * 見せていない語(使った語には数えない) / unknown = 表に無い答え(code にそのまま出し、keyword は null)。
+ */
+export const usedReportKeywordSchema = z.object({
+  code: z.string(),
+  keyword: z.string().nullable(),
+  status: z.enum(['used', 'not_offered', 'unknown']),
+});
+export type UsedReportKeyword = z.infer<typeof usedReportKeywordSchema>;
+
+export const dailyReportAiInfoSchema = z.object({
+  /** 生成の記録(保存のときに aiGenerationId として送る)。記録できなかったときは null。 */
+  generationId: idSchema.nullable(),
+  usedKeywords: z.array(usedReportKeywordSchema),
+  /** 候補として AI に見せたキーワードの数。 */
+  candidateCount: z.number().int(),
+  /** PSI 1(危険・緊急): 文面より安全対応を最優先し、管理者へ連絡する。 */
+  escalationRequired: z.boolean(),
+  /** 対象のお子様の月齢(訪問日の時点。未選択・生年月日不明は null)。 */
+  childAgeMonths: z.number().int().nullable(),
+  /** 家庭の教育思考★(未設定は既定の★2)。 */
+  educationLevel: z.number().int(),
+  /** PSI で調整したあとの★(PSI 2 以下は教育語を使わないので null)。 */
+  effectiveEducationLevel: z.number().int().nullable(),
+});
+export type DailyReportAiInfo = z.infer<typeof dailyReportAiInfoSchema>;
+export const generateDailyReportResponseSchema = z.object({
+  draft: dailyReportDraftSchema,
+  ai: dailyReportAiInfoSchema,
+});
 
 /** POST /api/reports/accident/generate の応答。失敗時は draft が { error }(GAS版と同じ)。 */
 export const accidentReportDraftSchema = z.object({

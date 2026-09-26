@@ -2,10 +2,12 @@ import type { CustomerListItem } from '@katahimo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { customerQueryKeys, customersApi } from '../../api/customers';
 import { NETWORK_ERROR_MESSAGE } from '../../lib/messages';
+import { EducationLevelPicker } from '../../ui/EducationLevelPicker';
 import { Modal, ModalFooter, ModalHeader } from '../../ui/modal';
 import { ErrorState, Loading } from '../../ui/StatusViews';
 import { MapPinIcon } from '../schedule/MapPinIcon';
 import { buildDetailRows, buildFamilyRows, type DetailAction, type DetailRow } from './customerDetailRows';
+import { useCustomerReportProfile } from './useCustomerReportProfile';
 
 /**
  * 「お客様の情報」ダイアログ(GAS版 #customerDetailModal / showCustomerDetail)。
@@ -28,6 +30,7 @@ export function CustomerDetailModal({
     select: (res) => res.customer,
   });
   const detail = detailQuery.data;
+  const reportProfile = useCustomerReportProfile(customerId || null, open);
 
   return (
     <Modal
@@ -65,6 +68,26 @@ export function CustomerDetailModal({
                     <p className="text-gray-600 text-base">登録なし</p>
                   )}
                 </div>
+              </div>
+              <div>
+                <h4
+                  id="customerEducationLevelLabel"
+                  className="font-bold text-gray-800 text-base mb-2 border-l-4 border-yellow-500 pl-2"
+                >
+                  ご家庭の教育への関心（教育思考★）
+                </h4>
+                <p className="text-sm text-gray-600 mb-2">
+                  日報のAIが、教育の言葉をどのくらい使うかの目安です（スタッフ全員が変えられます）。
+                </p>
+                <EducationLevelPicker
+                  labelId="customerEducationLevelLabel"
+                  educationLevel={reportProfile.educationLevel}
+                  disabled={reportProfile.saving}
+                  onSelect={reportProfile.setEducationLevel}
+                />
+                {reportProfile.updatedByName ? (
+                  <p className="text-sm text-gray-500 mt-1">{`最後に変えた人: ${reportProfile.updatedByName}`}</p>
+                ) : null}
               </div>
               <div>
                 <h4 className="font-bold text-gray-800 text-base mb-2 border-l-4 border-green-600 pl-2">

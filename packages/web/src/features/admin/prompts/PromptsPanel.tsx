@@ -1,4 +1,4 @@
-import type { AiPromptView } from '@katahimo/shared';
+import { type AiPromptView, REPORT_PROMPT_PLACEHOLDERS } from '@katahimo/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { aiPromptsApi } from '../../../api/admin';
@@ -135,6 +135,22 @@ export function PromptsPanel({ onDirtyChange }: { onDirtyChange: (dirty: boolean
         日報・事故報告のAI生成への指示と、入力欄に出す例・ヒントです。{'{anonymizedText}'}(入力メモ)・
         {'{timeInfo}'}(時間)は消さないでください。
       </p>
+      <details className="text-sm text-gray-600 bg-gray-50 rounded-xl p-3">
+        <summary className="font-bold cursor-pointer">使える差し込み</summary>
+        <ul className="mt-2 space-y-1">
+          {REPORT_PROMPT_PLACEHOLDERS.map((p) => (
+            <li key={p.name}>
+              <code>{`{${p.name}}`}</code>
+              {`: ${p.label}${p.accident ? '' : '(保育日報だけ)'}`}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-2">
+          {'{#keywords} 〜 {/keywords}'}
+          の行は、日報AIの調整にキーワードがあるときだけ使われます。差し込みだけの行は、値が無ければ行ごと消えます。
+          {'{{eduLevel}}'} のように二重に囲むと、差し込まずに {'{eduLevel}'} と書かれます。
+        </p>
+      </details>
       <ul className="space-y-4">
         {query.data.prompts.map((prompt) => (
           <PromptEditor

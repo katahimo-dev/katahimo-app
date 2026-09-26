@@ -16,28 +16,27 @@
  */
 
 export interface GenerateDailyReportInput {
-  text: string;
-  start?: string | undefined;
-  end?: string | undefined;
   /**
-   * プロンプトテンプレート({anonymizedText}/{timeInfo}を含む)。テナントが管理画面で上書きしていれば
-   * その本文、無ければ @katahimo/shared の既定値(usecases/reportAi.tsが解決して渡す)。
+   * モデルに送るプロンプトの全文。テナントの文面(無ければ @katahimo/shared の既定値)に入力メモ・時間情報・
+   * 日報AIの3軸の差し込みを入れたもの(usecases/reportAi.ts が core/domain/reports/promptAssembly.ts で組み立てる)。
    */
-  promptTemplate: string;
+  prompt: string;
 }
 
 export interface DailyReportDraft {
   warnings: string[];
   internal: string;
   customer: string;
+  /** AI が使ったと答えた教育キーワード(「K11 粗大運動」など。答えが無ければ undefined)。 */
+  usedKeywords?: string[];
+  /** AI が判定・確認した PSI・教育思考★(検証用。答えが無ければ undefined)。 */
+  psi?: number;
+  eduLevel?: number;
 }
 
 export interface GenerateAccidentReportInput {
-  text: string;
-  start?: string | undefined;
-  end?: string | undefined;
-  /** GenerateDailyReportInput.promptTemplateと同じ。 */
-  promptTemplate: string;
+  /** GenerateDailyReportInput.prompt と同じ(入力メモ・時間情報を差し込んだ全文)。 */
+  prompt: string;
 }
 
 export interface AccidentReportDraft {
@@ -69,6 +68,8 @@ export interface ReceiptOcrResult {
 }
 
 export interface ReportAiPort {
+  /** 日報・事故報告に使うモデル名(記録に残す。API キーが無い実装は null)。 */
+  readonly reportModel: string | null;
   generateDailyReport(input: GenerateDailyReportInput): Promise<DailyReportDraft>;
   generateAccidentReport(
     input: GenerateAccidentReportInput,
