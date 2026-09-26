@@ -6,10 +6,10 @@ const header =
   'No,氏名,カナ,電話,メール,住所,入社日,退職日,備考,パスワード,管理者,LW_ID,サブメール,Token,Expiry';
 
 describe('parseStaffMasterCsv', () => {
-  it('GAS版スタッフ台帳の列位置(B/E/H/J/K/M)を意味のある項目に変換する', () => {
+  it('GAS版スタッフ台帳の列位置(B/C/D/E/F/H/J/K/M)を意味のある項目に変換する。空欄は null', () => {
     const csv = [
       `﻿${header}`,
-      `1,佐藤 花子,サトウ,090,hanako@gmail.com,,2020/4/1,,,${HASH},1,lw1,hanako@cutest.biz,tok,2026/01/01`,
+      `1,佐藤 花子,サトウ ハナコ,090-1234-5678,hanako@gmail.com,東京都世田谷区用賀4-1-1,2020/4/1,,,${HASH},1,lw1,hanako@cutest.biz,tok,2026/01/01`,
       `2,鈴木 次郎,,,jiro@gmail.com,,,2026/3/31,,plain,,,chat-id-123`,
       ',,,,,,,,,,,,',
     ].join('\n');
@@ -18,7 +18,10 @@ describe('parseStaffMasterCsv', () => {
       {
         rowNumber: 2,
         name: '佐藤 花子',
+        kana: 'サトウ ハナコ',
+        phone: '090-1234-5678',
         email: 'hanako@gmail.com',
+        homeAddress: '東京都世田谷区用賀4-1-1',
         altEmail: 'hanako@cutest.biz',
         password: HASH,
         isAdmin: true,
@@ -27,7 +30,10 @@ describe('parseStaffMasterCsv', () => {
       {
         rowNumber: 3,
         name: '鈴木 次郎',
+        kana: null,
+        phone: null,
         email: 'jiro@gmail.com',
+        homeAddress: null,
         altEmail: null,
         password: 'plain',
         isAdmin: false,

@@ -8,6 +8,7 @@ import type {
 import { type Database, type Tx, withTenant } from './client';
 import { mapDatabaseError } from './errors';
 import { findTenantById } from './repositories/platform/tenants';
+import { DrizzleAppLogReadRepository } from './repositories/tenant/appLogs';
 import { DrizzleAttendanceRepository } from './repositories/tenant/attendance';
 import {
   DrizzleStaffBusyBlockRepository,
@@ -78,6 +79,7 @@ export function bindRepositories(
     staffCalendars: new DrizzleStaffCalendarRepository(tx, tenantId),
     busyBlocks: new DrizzleStaffBusyBlockRepository(tx, tenantId),
     outbox: new DrizzleOutboxWriter(tx, tenantId, skip),
+    appLogs: new DrizzleAppLogReadRepository(tx, tenantId),
     entityChanges: new DrizzleEntityChangeWriter(tx, tenantId),
     retention: new DrizzleTenantRetentionRepository(tx, tenantId),
   };

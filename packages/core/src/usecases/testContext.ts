@@ -32,7 +32,7 @@ export function createTestContext(options: { now?: string; mirrorEnabled?: boole
   const clock = { now: new Date(options.now ?? '2026-09-25T03:00:00Z') };
   const now = () => clock.now;
   const uow = new FakeUnitOfWork(db);
-  const appLog = new FakeAppLogPort();
+  const appLog = new FakeAppLogPort(db, now);
   const secretBox = new FakeSecretBox();
   const mailer = new FakeMailerPort();
   const notifier = new FakeNotifierPort();

@@ -1,5 +1,6 @@
 export * from './aiPrompts';
 export * from './attendance';
+export * from './auditLogs';
 export * from './auth';
 export * from './customers';
 export * from './maintenance';
@@ -16,5 +17,6 @@ export * from './settings';
 export * from './staff';
 export * from './staffAdmin';
 export * from './staffBusyBlocks';
+export * from './staffHome';
 export * from './staffMasterImport';
 export * from './tenantProvisioning';

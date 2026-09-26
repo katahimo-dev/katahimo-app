@@ -9,9 +9,14 @@ interface ResetRequestModalProps {
   submitting: boolean;
   onCancel: () => void;
   onSubmit: () => void;
+  /** 番号がもうメールで届いている(管理者の「パスワード設定の案内」等)ので、番号の入力へ進む。 */
+  onHaveCode: () => void;
 }
 
-/** GAS版 #resetRequestModal と同じ見た目(中身は <form>。Enter でも送れる)。 */
+/**
+ * GAS版 #resetRequestModal と同じ見た目(中身は <form>。Enter でも送れる)。「番号が届いている方はこちら」は
+ * 管理者が送ったパスワード設定の案内の番号を入力するための、GAS版に無い入口。
+ */
 export function ResetRequestModal({
   email,
   onEmailChange,
@@ -22,6 +27,7 @@ export function ResetRequestModal({
   submitting,
   onCancel,
   onSubmit,
+  onHaveCode,
 }: ResetRequestModalProps) {
   return (
     <div className="fixed inset-0 bg-gray-900 z-[60] flex items-center justify-center p-4">
@@ -82,6 +88,13 @@ export function ResetRequestModal({
             {submitting ? '送信中...' : '番号をメールで受け取る'}
           </button>
         </div>
+        <button
+          type="button"
+          onClick={onHaveCode}
+          className="w-full min-h-11 text-base text-blue-600 underline"
+        >
+          番号が届いている方はこちら
+        </button>
       </form>
     </div>
   );

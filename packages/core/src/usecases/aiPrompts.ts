@@ -59,11 +59,14 @@ export interface AiPromptView {
   defaultBody: string;
   customized: boolean;
   updatedAt: string | null;
+  /** 最新の版(保存したことが無ければ 0)。更新のときに渡すと、他の管理者の保存との競合を検出する。 */
+  revision: number;
 }
 
 function toView(
   definition: (typeof AI_PROMPT_DEFINITIONS)[number],
   row: AiPromptRecord | undefined,
+  revision: number,
 ): AiPromptView {
   return {
     key: definition.key,
@@ -73,20 +76,27 @@ function toView(
     defaultBody: definition.defaultBody,
     customized: Boolean(row?.body),
     updatedAt: row ? row.updatedAt.toISOString() : null,
+    revision,
   };
 }
 
 /** 管理画面「AIプロンプト」の一覧(既定値の定義順)。 */
 export async function listAiPromptsForAdmin(deps: AiPromptDeps, tenantId: string): Promise<AiPromptView[]> {
-  const rows = new Map((await deps.uow.run(tenantId, (r) => r.aiPrompts.listAll())).map((p) => [p.key, p]));
-  return AI_PROMPT_DEFINITIONS.map((d) => toView(d, rows.get(d.key)));
+  const { rows, revisions } = await deps.uow.run(tenantId, async (r) => ({
+    rows: new Map((await r.aiPrompts.listAll()).map((p) => [p.key, p])),
+    revisions: await r.aiPrompts.latestRevisions(),
+  }));
+  return AI_PROMPT_DEFINITIONS.map((d) => toView(d, rows.get(d.key), revisions.get(d.key) ?? 0));
 }
 
 export interface UpdateAiPromptsInput {
   tenantId: string;
   staffId: string;
-  /** bodyがnull/空文字なら上書きを削除して既定値に戻す。 */
-  prompts: { key: string; body: string | null }[];
+  /**
+   * bodyがnull/空文字なら上書きを削除して既定値に戻す。revision(一覧で読んだ版)を渡すと、その後に他の管理者が
+   * 保存していれば全体を conflict にする。
+   */
+  prompts: { key: string; body: string | null; revision?: number | undefined }[];
   meta?: RequestMeta;
 }
 
@@ -104,27 +114,48 @@ export async function updateAiPrompts(
 
   const updated: string[] = [];
   const reset: string[] = [];
-  await deps.uow.run(
-    input.tenantId,
-    async (r) => {
-      const current = new Map((await r.aiPrompts.listAll()).map((p) => [p.key, p.body]));
-      for (const p of input.prompts) {
-        const definition = findAiPromptDefinition(p.key);
-        if (!definition) continue;
-        const body = p.body?.trim() ? p.body : '';
-        if (!body || body === definition.defaultBody) {
-          if (current.has(p.key)) {
-            await r.aiPrompts.reset(p.key, input.staffId);
-            reset.push(p.key);
+  try {
+    await deps.uow.run(
+      input.tenantId,
+      async (r) => {
+        const current = new Map((await r.aiPrompts.listAll()).map((p) => [p.key, p.body]));
+        for (const p of input.prompts) {
+          const definition = findAiPromptDefinition(p.key);
+          if (!definition) continue;
+          const body = p.body?.trim() ? p.body : '';
+          if (!body || body === definition.defaultBody) {
+            if (current.has(p.key)) {
+              await r.aiPrompts.reset(p.key, input.staffId, p.revision);
+              reset.push(p.key);
+            }
+          } else if (current.get(p.key) !== body) {
+            await r.aiPrompts.save({
+              key: p.key,
+              kind: definition.kind,
+              body,
+              updatedBy: input.staffId,
+              expectedRevision: p.revision,
+            });
+            updated.push(p.key);
           }
-        } else if (current.get(p.key) !== body) {
-          await r.aiPrompts.save({ key: p.key, kind: definition.kind, body, updatedBy: input.staffId });
-          updated.push(p.key);
         }
-      }
-    },
-    { actorId: input.staffId },
-  );
+      },
+      { actorId: input.staffId },
+    );
+  } catch (error) {
+    const reason = (error as { reason?: string }).reason;
+    if (reason) {
+      await deps.appLog.write({
+        tenantId: input.tenantId,
+        level: 'WARN',
+        action: 'settings.ai_prompts.update_rejected',
+        actorStaffId: input.staffId,
+        details: { reason },
+        ...input.meta,
+      });
+    }
+    throw error;
+  }
   await deps.appLog.write({
     tenantId: input.tenantId,
     level: 'INFO',

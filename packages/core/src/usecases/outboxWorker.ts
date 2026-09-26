@@ -18,7 +18,7 @@ import type { ClaimedOutboxMessage, OutboxQueuePort } from '../ports/outbox';
 import type { StoragePort } from '../ports/storage';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
 import { toSheetDay } from './attendance/records';
-import { sendPasswordResetMail } from './auth/passwordReset';
+import { passwordResetMailPurposeOf, sendPasswordResetMail } from './auth/passwordReset';
 import type { Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
 
@@ -183,7 +183,12 @@ const HANDLERS: Record<OutboxTopic, Handler> = {
   'mirror.attendance_day': mirrorAttendanceDay,
   'mirror.attendance_aggregate': mirrorAttendanceAggregate,
   'mail.password_reset': (deps, message) =>
-    sendPasswordResetMail(deps, message.tenantId, message.aggregateId),
+    sendPasswordResetMail(
+      deps,
+      message.tenantId,
+      message.aggregateId,
+      passwordResetMailPurposeOf(message.payload),
+    ),
 };
 
 export type ProcessOutcome = 'idle' | 'done' | 'skipped' | 'retried' | 'failed' | 'lease_lost';

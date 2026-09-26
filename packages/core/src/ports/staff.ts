@@ -18,7 +18,20 @@ export interface StaffRecord {
   /** 'YYYY-MM-DD'。この日以降はログインできない。 */
   retiredOn: string | null;
   gender: Gender | null;
+  /** 自宅住所(出勤・退勤経路の起点)。 */
+  homeAddress: string | null;
+  /** 自宅の緯度経度(住所をジオコーディングできたとき)。無ければルート計算で住所をジオコーディングする。 */
+  homeGeo: GeoPoint | null;
+  travelMode: TravelModeCode | null;
   rowVersion: number;
+}
+
+/** 自宅。住所を変えたら緯度経度も必ず一緒に置き換える(古い住所の緯度経度を残さない)。 */
+export interface StaffHome {
+  address: string | null;
+  geo: GeoPoint | null;
+  /** geo の区画(geohash 6文字。geo が無ければ null)。 */
+  geoCell: string | null;
 }
 
 export interface StaffCredentials {
@@ -32,10 +45,15 @@ export interface NewStaffInput {
   familyName: string;
   givenName: string;
   email: string;
+  familyNameKana?: string | null;
+  givenNameKana?: string | null;
   altEmail?: string | null;
   phone?: string | null;
   role: StaffRole;
   retiredOn?: string | null;
+  home?: StaffHome;
+  travelMode?: TravelModeCode | null;
+  gender?: Gender | null;
   passwordHash?: string | null;
   legacyPasswordHash?: string | null;
 }
@@ -45,12 +63,20 @@ export interface StaffPatch {
   displayName?: string;
   familyName?: string;
   givenName?: string;
+  familyNameKana?: string | null;
+  givenNameKana?: string | null;
   email?: string;
   altEmail?: string | null;
   phone?: string | null;
   role?: StaffRole;
   retiredOn?: string | null;
+  home?: StaffHome;
+  travelMode?: TravelModeCode | null;
+  gender?: Gender | null;
 }
+
+/** 削除の結果。referenced は業務の記録(勤怠・報告・領収書等)から参照されていて消せなかった。 */
+export type StaffDeleteOutcome = 'deleted' | 'not_found' | 'referenced';
 
 /** 予定・ルート計算に使うスタッフの属性(自宅・移動手段・予定を読むカレンダー)。 */
 export interface StaffRouteProfile {
@@ -79,6 +105,11 @@ export interface StaffRepository {
   create(input: NewStaffInput): Promise<StaffRecord>;
   /** expectedVersion を渡すと row_version が一致するときだけ更新する(違えば conflict)。無ければ null。 */
   update(id: string, patch: StaffPatch, expectedVersion?: number): Promise<StaffRecord | null>;
+  /**
+   * 業務の記録から参照されていなければ削除する(認証情報・ログイン用メール・セッション・カレンダー設定等の
+   * スタッフに従属する行も一緒に消える)。参照されていれば何も変えずに referenced を返す。
+   */
+  deleteIfUnreferenced(id: string): Promise<StaffDeleteOutcome>;
   getCredentials(staffId: string): Promise<StaffCredentials | null>;
   /** argon2id のハッシュを設定し、GAS版のハッシュを消す(移行・変更・再設定)。 */
   setPasswordHash(staffId: string, passwordHash: string): Promise<void>;

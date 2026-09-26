@@ -40,8 +40,21 @@ export interface AiPromptRecord {
 export interface AiPromptRepository {
   listAll(): Promise<AiPromptRecord[]>;
   findByKey(key: string): Promise<AiPromptRecord | null>;
-  /** 上書きを保存し、版を上げて履歴(ai_prompt_revisions)に残す。 */
-  save(input: { key: string; kind: AiPromptKindValue; body: string; updatedBy: string }): Promise<void>;
-  /** 上書きを消して既定値に戻す(履歴には body = null の版を残す)。 */
-  reset(key: string, updatedBy: string): Promise<void>;
+  /**
+   * キーごとの最新の版(履歴 ai_prompt_revisions の最大値。既定値に戻した後も続く。保存したことの無いキーは無い)。
+   */
+  latestRevisions(): Promise<Map<string, number>>;
+  /**
+   * 上書きを保存し、版を上げて履歴(ai_prompt_revisions)に残す。expectedRevision を渡すと、最新の版が違えば
+   * (他の管理者が先に保存した)conflict。
+   */
+  save(input: {
+    key: string;
+    kind: AiPromptKindValue;
+    body: string;
+    updatedBy: string;
+    expectedRevision?: number | undefined;
+  }): Promise<void>;
+  /** 上書きを消して既定値に戻す(履歴には body = null の版を残す)。expectedRevision は save と同じ。 */
+  reset(key: string, updatedBy: string, expectedRevision?: number): Promise<void>;
 }

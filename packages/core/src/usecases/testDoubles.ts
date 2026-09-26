@@ -4,11 +4,17 @@
  * (ログイン用メール・領収書の重複・outbox の dedupe_key)は同じように弾く。
  */
 import type { RateLimitBucket, RateLimitDecision, RateLimitRule } from '../domain';
-import { conflict, consumeRateLimit, DomainError, refundRateLimit, STALE_WRITE_MESSAGE } from '../domain';
-import type { GeoPoint } from '../domain/geo';
+import {
+  conflict,
+  consumeRateLimit,
+  DomainError,
+  refundRateLimit,
+  STALE_PROMPT_MESSAGE,
+  STALE_WRITE_MESSAGE,
+} from '../domain';
 import type { OutboxTopic, TenantSecretName } from '../domain/model';
 import type { CareRecordContent } from '../domain/reports/careRecord';
-import type { AppLogEntry, AppLogPort } from '../ports/appLog';
+import type { AppLogEntry, AppLogPort, AppLogRecord } from '../ports/appLog';
 import type {
   AttendanceDayRow,
   AttendanceDayRows,
@@ -84,9 +90,7 @@ import type { PasswordHasherPort } from './auth/deps';
 interface StaffRow {
   record: StaffRecord;
   credentials: StaffCredentials & { failedCount: number; lockedUntil: Date | null };
-  homeAddress: string | null;
-  homeGeo: GeoPoint | null;
-  travelMode: 'car' | 'bicycle' | 'transit' | 'walk' | null;
+  homeGeoCell: string | null;
 }
 
 export interface OutboxRow extends OutboxMessageInput {
@@ -125,11 +129,14 @@ export interface TenantData {
   settings: TenantSettingsRecord;
   secrets: TenantSecretRecord[];
   aiPrompts: AiPromptRecord[];
+  /** キー → 最新の版(ai_prompt_revisions の最大値)。 */
+  aiPromptRevisions: Record<string, number>;
   importRuns: (ImportRunRecord & { message: string | null })[];
   calendars: StaffCalendarRecord[];
   busyBlocks: { staffId: string; start: Date; end: Date }[];
   outbox: OutboxRow[];
   entityChanges: EntityChangeInput[];
+  appLogs: AppLogRecord[];
 }
 
 function emptyTenantData(): TenantData {
@@ -160,11 +167,13 @@ function emptyTenantData(): TenantData {
     },
     secrets: [],
     aiPrompts: [],
+    aiPromptRevisions: {},
     importRuns: [],
     calendars: [],
     busyBlocks: [],
     outbox: [],
     entityChanges: [],
+    appLogs: [],
   };
 }
 
@@ -235,6 +244,14 @@ export function fakeRepositories(
 ): TenantRepositories {
   const d = () => detached ?? db.of(tenantId);
   const staffById = (id: string) => d().staff.find((s) => s.record.id === id);
+  /** AIプロンプトの次の版(DB と同じく履歴の最大値から数え、期待した版と違えば conflict)。 */
+  const nextPromptRevision = (key: string, expectedRevision: number | undefined) => {
+    const latest = d().aiPromptRevisions[key] ?? 0;
+    if (expectedRevision !== undefined && latest !== expectedRevision) {
+      throw conflict(STALE_PROMPT_MESSAGE, undefined, 'stale_revision');
+    }
+    return latest + 1;
+  };
   const assertEmailFree = (email: string, selfId: string | null) => {
     const owner = d().staff.find((s) => s.record.email === email || s.record.altEmail === email);
     if (owner && owner.record.id !== selfId) {
@@ -378,14 +395,17 @@ export function fakeRepositories(
           displayName: input.displayName,
           familyName: input.familyName,
           givenName: input.givenName,
-          familyNameKana: null,
-          givenNameKana: null,
+          familyNameKana: input.familyNameKana ?? null,
+          givenNameKana: input.givenNameKana ?? null,
           email: input.email,
           altEmail: input.altEmail ?? null,
           phone: input.phone ?? null,
           role: input.role,
           retiredOn: input.retiredOn ?? null,
-          gender: null,
+          gender: input.gender ?? null,
+          homeAddress: input.home?.address ?? null,
+          homeGeo: input.home?.geo ?? null,
+          travelMode: input.travelMode ?? null,
           rowVersion: 1,
         };
         d().staff.push({
@@ -396,9 +416,7 @@ export function fakeRepositories(
             failedCount: 0,
             lockedUntil: null,
           },
-          homeAddress: null,
-          homeGeo: null,
-          travelMode: null,
+          homeGeoCell: input.home?.geoCell ?? null,
         });
         return structuredClone(record);
       },
@@ -410,8 +428,29 @@ export function fakeRepositories(
         }
         if (patch.email) assertEmailFree(patch.email, id);
         if (patch.altEmail) assertEmailFree(patch.altEmail, id);
-        Object.assign(row.record, patch, { rowVersion: row.record.rowVersion + 1 });
+        const { home, ...columns } = patch;
+        Object.assign(row.record, columns, { rowVersion: row.record.rowVersion + 1 });
+        if (home) {
+          Object.assign(row.record, { homeAddress: home.address, homeGeo: home.geo });
+          row.homeGeoCell = home.geoCell;
+        }
         return staffRecordOf(row);
+      },
+      async deleteIfUnreferenced(id) {
+        if (!staffById(id)) return 'not_found';
+        const data = d();
+        // DB の外部キー(ON DELETE の無い参照)と同じく、業務の記録があれば消さない
+        const referenced =
+          data.days.some((x) => x.staffId === id) ||
+          data.careRecords.some((x) => x.authorStaffId === id) ||
+          data.receipts.some((x) => x.staffId === id) ||
+          data.uploads.some((x) => x.staffId === id);
+        if (referenced) return 'referenced';
+        data.staff = data.staff.filter((s) => s.record.id !== id);
+        data.sessions = data.sessions.filter((s) => s.staffId !== id);
+        data.resetCodes = data.resetCodes.filter((c) => c.staffId !== id);
+        data.calendars = data.calendars.filter((c) => c.staffId !== id);
+        return 'deleted';
       },
       async getCredentials(staffId) {
         const row = staffById(staffId);
@@ -451,9 +490,9 @@ export function fakeRepositories(
         return d().staff.map((s) => ({
           id: s.record.id,
           displayName: s.record.displayName,
-          homeAddress: s.homeAddress,
-          homeGeo: s.homeGeo,
-          travelMode: s.travelMode,
+          homeAddress: s.record.homeAddress,
+          homeGeo: s.record.homeGeo,
+          travelMode: s.record.travelMode,
           scheduleCalendarId:
             d().calendars.find((c) => c.staffId === s.record.id && c.purpose === 'schedule')?.calendarId ??
             null,
@@ -784,15 +823,43 @@ export function fakeRepositories(
         const p = d().aiPrompts.find((x) => x.key === key);
         return p ? structuredClone(p) : null;
       },
-      async save(input) {
-        const current = d().aiPrompts.find((x) => x.key === input.key);
+      async latestRevisions() {
+        return new Map(Object.entries(d().aiPromptRevisions));
+      },
+      async save({ expectedRevision, ...input }) {
+        const revision = nextPromptRevision(input.key, expectedRevision);
+        d().aiPromptRevisions[input.key] = revision;
         d().aiPrompts = [
           ...d().aiPrompts.filter((x) => x.key !== input.key),
-          { ...input, revision: (current?.revision ?? 0) + 1, updatedAt: new Date() },
+          { ...input, revision, updatedAt: new Date() },
         ];
       },
-      async reset(key) {
+      async reset(key, _updatedBy, expectedRevision) {
+        const revision = nextPromptRevision(key, expectedRevision);
+        if (!d().aiPrompts.some((x) => x.key === key)) return;
+        d().aiPromptRevisions[key] = revision;
         d().aiPrompts = d().aiPrompts.filter((x) => x.key !== key);
+      },
+    },
+    appLogs: {
+      async list(filter, page) {
+        const before = (x: AppLogRecord) =>
+          !page.after ||
+          x.position.at < page.after.at ||
+          (x.position.at === page.after.at && x.id < page.after.id);
+        return d()
+          .appLogs.filter(
+            (x) =>
+              x.createdAt >= filter.from &&
+              x.createdAt < filter.to &&
+              (!filter.level || x.level === filter.level) &&
+              (!filter.staffId || x.actorStaffId === filter.staffId || x.targetStaffId === filter.staffId) &&
+              (!filter.actionPrefix || x.action.startsWith(filter.actionPrefix)) &&
+              before(x),
+          )
+          .sort((a, b) => b.position.at.localeCompare(a.position.at) || b.id.localeCompare(a.id))
+          .slice(0, page.limit)
+          .map((x) => structuredClone(x));
       },
     },
     importRuns: {
@@ -1033,9 +1100,33 @@ export class FakeNotifierPort implements NotifierPort {
 
 export class FakeAppLogPort implements AppLogPort {
   readonly entries: AppLogEntry[] = [];
+  private seq = 0;
+
+  /** db を渡すと、テナントのある記録を操作ログの閲覧(r.appLogs)でも読めるように残す。 */
+  constructor(
+    private readonly db?: MemoryDatabase,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
   async write(entry: AppLogEntry): Promise<void> {
     this.entries.push(entry);
+    if (!entry.tenantId || !this.db?.data.has(entry.tenantId)) return;
+    const createdAt = this.now();
+    const id = `00000000-0000-7000-8000-${String(++this.seq).padStart(12, '0')}`;
+    this.db.of(entry.tenantId).appLogs.push({
+      id,
+      createdAt,
+      position: { at: createdAt.toISOString(), id },
+      level: entry.level,
+      action: entry.action,
+      actorType: entry.actorStaffId ? 'staff' : (entry.actorType ?? 'system'),
+      actorStaffId: entry.actorStaffId ?? null,
+      targetStaffId: entry.targetStaffId ?? null,
+      details: structuredClone(entry.details ?? {}),
+      ip: entry.ip ?? null,
+      userAgent: entry.userAgent ?? null,
+      requestId: entry.requestId ?? null,
+    });
   }
 
   actions(): string[] {

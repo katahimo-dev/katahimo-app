@@ -45,8 +45,8 @@ async function setup() {
   const { staff } = await ctx.addStaff('佐藤 美咲', 'misaki@example.com');
   const row = ctx.data().staff.find((s) => s.record.id === staff.id);
   if (row) {
-    row.homeAddress = '東京都世田谷区用賀4-1-1';
-    row.homeGeo = { lat: 35.6264, lng: 139.6336 };
+    row.record.homeAddress = '東京都世田谷区用賀4-1-1';
+    row.record.homeGeo = { lat: 35.6264, lng: 139.6336 };
   }
   return { ctx, staffId: staff.id };
 }

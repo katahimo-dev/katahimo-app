@@ -29,3 +29,46 @@ export interface AppLogEntry {
 export interface AppLogPort {
   write(entry: AppLogEntry): Promise<void>;
 }
+
+/**
+ * 一覧の位置(並び順 created_at DESC, id DESC のキー)。at は DB の時刻の文字列そのもの(マイクロ秒まで保つ。
+ * Date にするとミリ秒に丸まり、同じミリ秒の行を読み飛ばすため)。
+ */
+export interface AppLogPosition {
+  at: string;
+  id: string;
+}
+
+/** 管理者の操作ログの閲覧の条件。期間は [from, to)。 */
+export interface AppLogFilter {
+  from: Date;
+  to: Date;
+  level?: AppLogLevel | undefined;
+  /** 操作者または対象がこのスタッフ。 */
+  staffId?: string | undefined;
+  /** 操作コードの前方一致。 */
+  actionPrefix?: string | undefined;
+}
+
+export interface AppLogRecord {
+  id: string;
+  createdAt: Date;
+  position: AppLogPosition;
+  level: AppLogLevel;
+  action: string;
+  actorType: ActorType;
+  actorStaffId: string | null;
+  targetStaffId: string | null;
+  details: Record<string, unknown>;
+  ip: string | null;
+  userAgent: string | null;
+  requestId: string | null;
+}
+
+/**
+ * 操作ログの読み取り(UoW のテナントのものだけ。RLS でも同じ。テナントの無い行 = ログイン前の記録は読めない)。
+ * 並びは新しい順。after を渡すとその位置より古いものから読む。
+ */
+export interface AppLogReadRepository {
+  list(filter: AppLogFilter, page: { after: AppLogPosition | null; limit: number }): Promise<AppLogRecord[]>;
+}

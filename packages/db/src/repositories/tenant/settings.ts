@@ -1,4 +1,11 @@
-import { type ImportSource, newId, type OutboxTopic, type TenantSecretName } from '@katahimo/core/domain';
+import {
+  conflict,
+  type ImportSource,
+  newId,
+  type OutboxTopic,
+  STALE_PROMPT_MESSAGE,
+  type TenantSecretName,
+} from '@katahimo/core/domain';
 import type {
   AiPromptKindValue,
   AiPromptRecord,
@@ -109,7 +116,7 @@ export class DrizzleAiPromptRepository extends TenantBound implements AiPromptRe
    * 数えないよう、先にキーごとのアドバイザリロック(トランザクションの終わりまで)を取る。ai_prompts の行は
    * 未保存・既定値に戻した後には無いため、行ロックでは足りない。
    */
-  private async nextRevision(key: string): Promise<number> {
+  private async nextRevision(key: string, expectedRevision: number | undefined): Promise<number> {
     await this.tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${`ai_prompts/${this.tenantId}/${key}`}, 0))`,
     );
@@ -117,16 +124,33 @@ export class DrizzleAiPromptRepository extends TenantBound implements AiPromptRe
       .select({ revision: max(aiPromptRevisions.revision) })
       .from(aiPromptRevisions)
       .where(and(eq(aiPromptRevisions.tenantId, this.tenantId), eq(aiPromptRevisions.key, key)));
-    return (row?.revision ?? 0) + 1;
+    const latest = row?.revision ?? 0;
+    if (expectedRevision !== undefined && latest !== expectedRevision) {
+      throw conflict(STALE_PROMPT_MESSAGE, undefined, 'stale_revision');
+    }
+    return latest + 1;
   }
 
-  async save(input: {
+  async latestRevisions(): Promise<Map<string, number>> {
+    const rows = await this.tx
+      .select({ key: aiPromptRevisions.key, revision: max(aiPromptRevisions.revision) })
+      .from(aiPromptRevisions)
+      .where(eq(aiPromptRevisions.tenantId, this.tenantId))
+      .groupBy(aiPromptRevisions.key);
+    return new Map(rows.map((r) => [r.key, r.revision ?? 0]));
+  }
+
+  async save({
+    expectedRevision,
+    ...input
+  }: {
     key: string;
     kind: AiPromptKindValue;
     body: string;
     updatedBy: string;
+    expectedRevision?: number | undefined;
   }): Promise<void> {
-    const revision = await this.nextRevision(input.key);
+    const revision = await this.nextRevision(input.key, expectedRevision);
     await this.tx
       .insert(aiPrompts)
       .values({ tenantId: this.tenantId, ...input, revision })
@@ -143,8 +167,8 @@ export class DrizzleAiPromptRepository extends TenantBound implements AiPromptRe
     });
   }
 
-  async reset(key: string, updatedBy: string): Promise<void> {
-    const revision = await this.nextRevision(key);
+  async reset(key: string, updatedBy: string, expectedRevision?: number): Promise<void> {
+    const revision = await this.nextRevision(key, expectedRevision);
     const deleted = await this.tx
       .delete(aiPrompts)
       .where(and(eq(aiPrompts.tenantId, this.tenantId), eq(aiPrompts.key, key)))

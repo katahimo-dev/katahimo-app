@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitJapaneseFullName } from './japaneseName';
+import { splitJapaneseFullName, splitJapaneseKana } from './japaneseName';
 
 describe('splitJapaneseFullName', () => {
   it('半角スペース区切りを姓・名に分割する', () => {
@@ -32,5 +32,13 @@ describe('splitJapaneseFullName', () => {
       givenName: '',
       isAmbiguous: true,
     });
+  });
+});
+
+describe('splitJapaneseKana', () => {
+  it('姓・名に分け、半角カナは全角にそろえる。区切りが無ければ姓だけ、空なら両方 null', () => {
+    expect(splitJapaneseKana('ｻﾄｳ　ﾊﾅｺ')).toEqual({ familyNameKana: 'サトウ', givenNameKana: 'ハナコ' });
+    expect(splitJapaneseKana('サトウ')).toEqual({ familyNameKana: 'サトウ', givenNameKana: null });
+    expect(splitJapaneseKana(' ')).toEqual({ familyNameKana: null, givenNameKana: null });
   });
 });
