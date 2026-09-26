@@ -17,9 +17,12 @@ export function isUuid(value: unknown): value is string {
 const TIMESTAMP_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::?\d{2})?)$/;
 
-/** 続きの位置に入りうる年の範囲(業務のデータの範囲。これ外の値は書き換えられたもの)。 */
-const MIN_YEAR = 2000;
-const MAX_YEAR = 2100;
+/**
+ * 続きの位置に入りうる年の範囲: サーバーが toISOString() で4桁に書け、PostgreSQL の timestamptz が受け付ける年
+ * (0001〜9999。0000 は PostgreSQL では範囲外のエラーになる)。業務の年の範囲はここではなく書き込むときに確かめる。
+ */
+const MIN_YEAR = 1;
+const MAX_YEAR = 9999;
 
 /** 続きの位置の時刻の文字列を確かめて Date にする(形・範囲の誤りは null)。 */
 export function parseCursorTimestamp(value: unknown): Date | null {
@@ -39,7 +42,9 @@ export function parseCursorTimestamp(value: unknown): Date | null {
   const at = new Date(value.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00'));
   if (Number.isNaN(at.getTime())) return null;
   // 2月30日等の存在しない日は Date が翌月に繰り上げるため、書かれた年月日がその月にあるかを確かめる
-  const probe = new Date(Date.UTC(year, month - 1, day));
+  // (Date.UTC は 0〜99年を 1900年代にするため setUTCFullYear で作る)
+  const probe = new Date(0);
+  probe.setUTCFullYear(year, month - 1, day);
   if (probe.getUTCMonth() !== month - 1) return null;
   return at;
 }

@@ -1,10 +1,23 @@
 import { z } from 'zod';
-import { businessDateSchema, freeText, idSchema, timeOfDaySchema, yearMonthSchema } from './common';
+import {
+  freeText,
+  idSchema,
+  isRecordDate,
+  RECORD_YEAR_MAX,
+  RECORD_YEAR_MIN,
+  recordDateSchema,
+  timeOfDaySchema,
+  yearMonthSchema,
+} from './common';
 
 /** 'yyyy/MM/dd HH:mm' または 'yyyy/MM/dd HH:mm:ss'(JST)。GAS版の領収書日時の書式。 */
 export const receiptTimestampSchema = z
   .string()
-  .regex(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}(:\d{2})?$/, 'yyyy/MM/dd HH:mm[:ss] 形式で指定してください');
+  .regex(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}(:\d{2})?$/, 'yyyy/MM/dd HH:mm[:ss] 形式で指定してください')
+  .refine((value) => {
+    const [year, month, day] = value.slice(0, 10).split('/').map(Number) as [number, number, number];
+    return isRecordDate(year, month, day);
+  }, `${RECORD_YEAR_MIN}〜${RECORD_YEAR_MAX}年の実在する日付を指定してください`);
 
 /** 1回の登録で送れる領収書画像の枚数(GAS版と同じ6枚)。 */
 export const RECEIPT_MAX_IMAGES = 6;
@@ -54,7 +67,7 @@ export const uploadReceiptsRequestSchema = z.object({
     .min(1, '領収書画像がありません。')
     .max(RECEIPT_MAX_IMAGES, `領収書画像は${RECEIPT_MAX_IMAGES}枚までです。`),
   receiptTimestamp: receiptTimestampSchema.optional(),
-  reportDate: businessDateSchema.optional(),
+  reportDate: recordDateSchema.optional(),
   startTime: timeOfDaySchema.optional(),
   handoffText: freeText(z.string().default('')),
 });

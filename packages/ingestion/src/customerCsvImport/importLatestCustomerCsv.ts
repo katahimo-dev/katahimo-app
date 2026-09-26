@@ -1,4 +1,9 @@
-import { isNewerCustomerCsvVersion, pickLatestCustomerCsv } from '@katahimo/core/domain';
+import {
+  CUSTOMER_IMPORT_BUSY_REASON,
+  isDomainError,
+  isNewerCustomerCsvVersion,
+  pickLatestCustomerCsv,
+} from '@katahimo/core/domain';
 import type { AppLogPort, CustomerCsvSourcePort, CustomerCsvSourceTenant } from '@katahimo/core/ports';
 import type { CustomerCsvImportStatus } from '@katahimo/shared';
 import { parseReservaCsv } from '../reservaCsv/parse';
@@ -133,6 +138,11 @@ export async function importLatestCustomerCsv(
       dataVersion: String(outcome.customerDataVersion),
     };
   } catch (error) {
+    if (isDomainError(error) && error.reason === CUSTOMER_IMPORT_BUSY_REASON) {
+      // 他の取込(外部連携の API 等)が長くロックを持っていた。何も書いていないため、送り直せば通る
+      await log('WARN', 'customer_csv.import_failed', { fileName, version, error: error.reason });
+      return { ...base, fileName, version, status: 'busy', message: error.message };
+    }
     const reason = error instanceof Error ? error.message : String(error);
     await log('ERROR', 'customer_csv.import_failed', { fileName, version, error: reason });
     return {

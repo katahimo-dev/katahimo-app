@@ -30,9 +30,15 @@ describe('parseJstTimestamp(領収書日時。GAS版のシートが日時とし�
       '2026/02/30',
       '2026/09/05 25:00',
       '2026/09/05 9:60',
+      // 業務であり得ない年(OCR の読み違い等。2000〜2100年の外)
+      '1999/12/31 23:59',
+      '2101/01/01',
+      '0026/09/05',
     ]) {
       expect(parseJstTimestamp(value)).toBeNull();
     }
     expect(parseJstTimestamp(null)).toBeNull();
+    expect(jst('2000/01/01 00:00')).toBe('2000/01/01 00:00:00');
+    expect(jst('2100/12/31 23:59')).toBe('2100/12/31 23:59:00');
   });
 });

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { businessDateSchema, freeText, idSchema } from './common';
+import { businessDateSchema, freeText, idSchema, recordDateSchema } from './common';
 
 const ratingSchema = z.number().int().min(1).max(5).nullable();
 const textSchema = freeText(z.string().default(''));
@@ -17,8 +17,8 @@ export const saveDailyReportRequestSchema = z.object({
   rowVersion: rowVersionSchema.optional(),
   staffId: idSchema.optional(),
   customerId: idSchema,
-  /** 訪問日。省略時は保存時刻を記録日時にする(GAS版saveReportと同じ)。 */
-  reportDate: businessDateSchema.optional(),
+  /** 訪問日。省略時は保存時刻を記録日時にする(GAS版saveReportと同じ)。実在する 2000〜2100年の日付だけ。 */
+  reportDate: recordDateSchema.optional(),
   startTime: textSchema,
   endTime: textSchema,
   inputText: textSchema,
