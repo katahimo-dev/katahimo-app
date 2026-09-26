@@ -15,6 +15,11 @@ terraform {
       source  = "hashicorp/google-beta"
       version = "~> 8.0"
     }
+    # 鍵の権限が広まるまでの待ち(time_sleep。kms.tf)だけに使う
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.14"
+    }
   }
 
   # 初回は `terraform init -backend-config="bucket=<state用バケット>"` で指定する(doc/07_インフラ・運用.md 3章)。

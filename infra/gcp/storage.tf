@@ -55,8 +55,8 @@ resource "google_storage_bucket" "receipts" {
     prevent_destroy = true
   }
 
-  # GCS のサービスエージェントが鍵を使えるようになってから作る
-  depends_on = [google_kms_crypto_key_iam_member.storage_cmek]
+  # GCS のサービスエージェントが鍵を使えるようになってから作る(権限の反映を待つ)
+  depends_on = [time_sleep.cmek_iam_propagation]
 }
 
 # API は保存・取得・削除、ワーカーは GAS 版 Drive へのミラー用に取得だけ

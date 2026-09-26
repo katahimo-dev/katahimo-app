@@ -58,6 +58,6 @@ resource "google_sql_database_instance" "main" {
     }
   }
 
-  # Cloud SQL のサービスエージェントが鍵を使えるようになってから作る
-  depends_on = [google_project_service.enabled, google_kms_crypto_key_iam_member.cloudsql_cmek]
+  # Cloud SQL のサービスエージェントが鍵を使えるようになってから作る(権限の反映を待つ)
+  depends_on = [google_project_service.enabled, time_sleep.cmek_iam_propagation]
 }

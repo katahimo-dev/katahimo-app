@@ -6,7 +6,7 @@
 # どの鍵も90日ごとに自動でローテーションする(新しい鍵バージョンで暗号化し、古いバージョンは復号のために残る)。
 # 鍵(の全バージョン)を無効化・破棄すると、その鍵で暗号化したデータはバックアップも含めて二度と読めない。
 # キーリング・鍵は GCP 上で削除できない(鍵バージョンの破棄のみ)ため、全て prevent_destroy にする
-# (doc/07_インフラ・運用.md 3.4)。
+# (doc/07_インフラ・運用.md 3.8)。
 
 resource "google_kms_key_ring" "katahimo" {
   name     = "katahimo"
@@ -77,6 +77,17 @@ resource "google_kms_crypto_key_iam_member" "storage_cmek" {
   crypto_key_id = google_kms_crypto_key.storage.id
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
   member        = data.google_storage_project_service_account.gcs.member
+}
+
+# IAM の付与は反映まで数十秒かかることがあり、直後に CMEK のインスタンス・バケットを作ると鍵の権限エラーになる。
+# 付与のあと少し待ってから作る(sql.tf・storage.tf の depends_on)。
+resource "time_sleep" "cmek_iam_propagation" {
+  create_duration = "60s"
+
+  depends_on = [
+    google_kms_crypto_key_iam_member.cloudsql_cmek,
+    google_kms_crypto_key_iam_member.storage_cmek,
+  ]
 }
 
 # 秘密値の封と開封は API だけ(ワーカーは tenant_secrets を読まない)
