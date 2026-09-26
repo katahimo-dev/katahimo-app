@@ -26,7 +26,7 @@ describe('保育日報・事故報告', () => {
     inputText: 'メモ',
     internalText: '社内向け',
     customerText: '保護者向け',
-    riskRating: 1,
+    riskRating: 4,
     esRating: 4,
     ...overrides,
   });

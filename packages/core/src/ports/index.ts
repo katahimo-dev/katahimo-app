@@ -17,6 +17,7 @@ export * from './outbox';
 export * from './push';
 export * from './rateLimiter';
 export * from './records';
+export * from './reportAi';
 export * from './schedule';
 export * from './scheduleDirectory';
 export * from './secretBox';

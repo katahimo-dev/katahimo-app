@@ -1,18 +1,32 @@
 import type { CustomerSummary } from '@katahimo/core/ports';
-import { getCustomerDetail, listCustomers, searchCustomersByFamilyName } from '@katahimo/core/usecases';
+import type { CustomerReportProfileView } from '@katahimo/core/usecases';
+import {
+  getCustomerDetail,
+  getCustomerReportProfile,
+  listCustomers,
+  saveCustomerReportProfile,
+  searchCustomersByFamilyName,
+} from '@katahimo/core/usecases';
 import {
   customerDetailResponseSchema,
   customerListQuerySchema,
   customerListResponseSchema,
+  customerReportProfileResponseSchema,
   idSchema,
+  saveCustomerReportProfileRequestSchema,
 } from '@katahimo/shared';
 import { Hono } from 'hono';
 import type { Container } from '../container';
-import { apiError, jsonOk, parseQuery } from '../http/responses';
+import { apiError, jsonOk, parseJsonBody, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
 import { actorOf, requireSession } from '../session';
 
 const toListItem = (c: CustomerSummary) => ({ id: c.id, name: c.displayName, phone: c.phone, city: c.city });
+
+const profileView = (profile: CustomerReportProfileView) => ({
+  ...profile,
+  updatedAt: profile.updatedAt?.toISOString() ?? null,
+});
 
 export function createCustomerRoutes(container: Container) {
   const app = new Hono<SessionEnv>();
@@ -56,6 +70,24 @@ export function createCustomerRoutes(container: Container) {
       ...actor.meta,
     });
     return jsonOk(c, customerDetailResponseSchema, { customer });
+  });
+
+  /** 家庭の教育思考★(日報AIの言葉選び。ログインしているスタッフなら誰でも見られる)。 */
+  app.get('/:id/report-profile', async (c) => {
+    const id = idSchema.safeParse(c.req.param('id'));
+    if (!id.success) return apiError(c, 404, 'not_found', '顧客が見つかりません');
+    const profile = await getCustomerReportProfile(container, actorOf(c), id.data);
+    return jsonOk(c, customerReportProfileResponseSchema, { profile: profileView(profile) });
+  });
+
+  /** 家庭の教育思考★を変える(ログインしているスタッフなら誰でも。rowVersion が古ければ 409)。 */
+  app.put('/:id/report-profile', async (c) => {
+    const id = idSchema.safeParse(c.req.param('id'));
+    if (!id.success) return apiError(c, 404, 'not_found', '顧客が見つかりません');
+    const body = await parseJsonBody(c, saveCustomerReportProfileRequestSchema);
+    if (!body.ok) return body.response;
+    const profile = await saveCustomerReportProfile(container, actorOf(c), id.data, body.data);
+    return jsonOk(c, customerReportProfileResponseSchema, { profile: profileView(profile) });
   });
 
   return app;

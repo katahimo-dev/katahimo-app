@@ -16,6 +16,11 @@ import type { TenantRetentionRepository } from './maintenance';
 import type { EntityChangeWriter, OutboxWriter } from './outbox';
 import type { PushSubscriptionRepository } from './push';
 import type { CareRecordRepository, ReceiptRepository, StoredFileRepository } from './records';
+import type {
+  CustomerReportProfileRepository,
+  ReportAiGenerationRepository,
+  ReportAiMasterRepository,
+} from './reportAi';
 import type { AiPromptRepository, TenantSecretRepository, TenantSettingsRepository } from './settings';
 import type { PasswordResetCodeRepository, SessionRepository, StaffRepository } from './staff';
 import type { TenantRecord } from './tenants';
@@ -47,6 +52,10 @@ export interface TenantRepositories {
   settings: TenantSettingsRepository;
   secrets: TenantSecretRepository;
   aiPrompts: AiPromptRepository;
+  /** 日報AIの調整のマスター(年齢帯・キーワード・★・PSI・表現・見ていた人スタンス)。 */
+  reportAi: ReportAiMasterRepository;
+  customerReportProfiles: CustomerReportProfileRepository;
+  reportAiGenerations: ReportAiGenerationRepository;
   importRuns: ImportRunRepository;
   integrationApiKeys: IntegrationApiKeyRepository;
   staffCalendars: StaffCalendarRepository;

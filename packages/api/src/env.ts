@@ -41,6 +41,8 @@ const envSchema = z.object({
   GEMINI_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
   GEMINI_MODEL_REPORT: z.preprocess(emptyToUndefined, z.string().optional()),
   GEMINI_MODEL_OCR: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Cloud Run が付けるリビジョン名(AI 生成の記録にアプリの版として残す。ローカルは未設定)。 */
+  K_REVISION: z.preprocess(emptyToUndefined, z.string().max(200).optional()),
 
   // Google Chat Incoming Webhook の既定(テナントが管理者設定で保存していない場合)。未設定なら通知しない。
   GCHAT_REPORT_WEBHOOK_URL: z.preprocess(emptyToUndefined, z.string().optional()),

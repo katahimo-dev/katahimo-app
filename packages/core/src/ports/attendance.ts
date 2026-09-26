@@ -1,4 +1,4 @@
-import type { TravelLegKind, VisitSource, VisitStatus, WeatherCode } from '../domain/model';
+import type { TravelLegKind, TravelModeCode, VisitSource, VisitStatus, WeatherCode } from '../domain/model';
 
 /** 時間帯 `[start, end)`。片方だけ入力された時間帯は他方が null。 */
 export interface InstantRangeValue {
@@ -47,6 +47,8 @@ export interface TravelLegRow {
   /** numeric(6,2) の文字列('6.00')。 */
   distanceKm: string | null;
   weather: WeatherCode | null;
+  /** 移動手段(移動を作る・計算し直すときのスタッフの staff.travel_mode。未設定のスタッフは car)。 */
+  transportMode: TravelModeCode | null;
   overriddenFields: string[];
 }
 

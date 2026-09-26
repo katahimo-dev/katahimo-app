@@ -152,11 +152,11 @@ function parsePushPayload(payload: Record<string, unknown>): PushOutboxPayload |
 
 /**
  * スタッフの全ての購読に、購読ごとに1件ずつ積む。dedupeVersion は同じ知らせを表す版(お知らせは `<スタッフID>:<日付>`、
- * テストは押すたびに新しい値)。1件でも新しく積めたら true。
+ * テストは押すたびに新しい値、PSI の知らせは `<記録ID>:<記録の版>`)。1件でも新しく積めたら true。
  */
-async function enqueueForSubscriptions(
+export async function enqueueForSubscriptions(
   r: TenantRepositories,
-  topic: 'push.route_notice' | 'push.test',
+  topic: 'push.route_notice' | 'push.test' | 'push.psi_alert',
   subscriptions: readonly PushSubscriptionRecord[],
   dedupeVersion: string,
   message: Omit<PushOutboxPayload, 'subscriptionId' | 'staffId'>,

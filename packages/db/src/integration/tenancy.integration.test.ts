@@ -151,7 +151,6 @@ async function insertRecord(
     esRating: null,
     body: reportBody('v1'),
     bodySchemaVer: 1,
-    aiGenerated: false,
     retainUntil: null,
   });
   return record.id;
@@ -358,7 +357,6 @@ describe('活動記録', () => {
         esRating: null,
         body: reportBody('v1'),
         bodySchemaVer: 1,
-        aiGenerated: false,
         retainUntil: null,
       });
       return { recordId: record.id, staffId };
@@ -442,7 +440,6 @@ describe('活動記録', () => {
           esRating: null,
           body: reportBody(`r${i}`),
           bodySchemaVer: 1,
-          aiGenerated: false,
           retainUntil: null,
         });
       }

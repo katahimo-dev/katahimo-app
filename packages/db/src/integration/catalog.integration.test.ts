@@ -119,6 +119,13 @@ describe('スキーマの約束事(カタログ)', () => {
       'retention_policies',
       'data_subject_requests',
       'travel_time_cache',
+      'report_keywords',
+      'report_age_bands',
+      'report_education_levels',
+      'report_psi_levels',
+      'report_phrases',
+      'report_stance_rules',
+      'customer_report_profiles',
     ];
     expect(none.filter((t) => of(`public.${t}`).length > 0)).toEqual([]);
     // 読むだけ・消すだけの表
@@ -129,7 +136,41 @@ describe('スキーマの約束事(カタログ)', () => {
     expect(of('public.entity_changes')).toEqual(['INSERT']);
     expect(of('public.customers')).toEqual(['INSERT', 'SELECT', 'UPDATE']);
     expect(of('public.push_subscriptions')).toEqual(['DELETE', 'SELECT', 'UPDATE']);
+    // AI 生成の記録は保存期間の削除だけ
+    expect(of('public.report_ai_generations')).toEqual(['DELETE', 'SELECT']);
     expect(of('platform.plans')).toEqual([]);
+  });
+
+  it('アプリは AI 生成の記録を追記するだけ(後から書けるのは日報への結び付けの列だけ)・日報AIのマスターは消せない', async () => {
+    const tablePrivileges = async (table: string) =>
+      (
+        await rows<{ privilege: string }>(sql`
+          select p.privilege from unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE']) as p(privilege)
+          where has_table_privilege('katahimo_app', ${table}, p.privilege)`)
+      )
+        .map((r) => r.privilege)
+        .sort();
+    const columnUpdate = async (column: string) =>
+      (
+        await rows<{ ok: boolean }>(
+          sql`select has_column_privilege('katahimo_app', 'report_ai_generations', ${column}, 'UPDATE') as ok`,
+        )
+      )[0]?.ok;
+    expect(await tablePrivileges('report_ai_generations')).toEqual(['INSERT', 'SELECT']);
+    expect(await columnUpdate('care_record_id')).toBe(true);
+    expect(await columnUpdate('output')).toBe(false);
+    expect(await columnUpdate('prompt_text')).toBe(false);
+    for (const table of [
+      'report_keywords',
+      'report_age_bands',
+      'report_education_levels',
+      'report_psi_levels',
+      'report_phrases',
+      'report_stance_rules',
+      'customer_report_profiles',
+    ]) {
+      expect(await tablePrivileges(table)).toEqual(['INSERT', 'SELECT', 'UPDATE']);
+    }
   });
 
   it('アプリ・ワーカーは月の締めを削除できない(解除・削除は所有者の関数だけ)', async () => {

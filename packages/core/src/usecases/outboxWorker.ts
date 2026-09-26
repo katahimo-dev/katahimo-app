@@ -209,6 +209,7 @@ const HANDLERS: Record<OutboxTopic, Handler> = {
     ),
   'push.route_notice': pushNotice,
   'push.test': pushNotice,
+  'push.psi_alert': pushNotice,
 };
 
 export type ProcessOutcome = 'idle' | 'done' | 'skipped' | 'retried' | 'failed' | 'lease_lost';

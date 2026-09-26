@@ -86,31 +86,31 @@
         "attendance_days_tenant_id_fkey": {
           "name": "attendance_days_tenant_id_fkey",
           "tableFrom": "attendance_days",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "attendance_days_tenant_id_staff_id_fkey": {
           "name": "attendance_days_tenant_id_staff_id_fkey",
           "tableFrom": "attendance_days",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -125,12 +125,12 @@
       "uniqueConstraints": {
         "attendance_days_tenant_id_staff_id_business_date_key": {
           "name": "attendance_days_tenant_id_staff_id_business_date_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "staff_id",
             "business_date"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -218,46 +218,46 @@
         "attendance_periods_tenant_id_fkey": {
           "name": "attendance_periods_tenant_id_fkey",
           "tableFrom": "attendance_periods",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "attendance_periods_tenant_id_staff_id_fkey": {
           "name": "attendance_periods_tenant_id_staff_id_fkey",
           "tableFrom": "attendance_periods",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "attendance_periods_tenant_id_locked_by_fkey": {
           "name": "attendance_periods_tenant_id_locked_by_fkey",
           "tableFrom": "attendance_periods",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "locked_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -371,6 +371,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "transport_mode": {
+          "name": "transport_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "overridden_fields": {
           "name": "overridden_fields",
           "type": "text[]",
@@ -398,31 +404,31 @@
         "travel_legs_tenant_id_fkey": {
           "name": "travel_legs_tenant_id_fkey",
           "tableFrom": "travel_legs",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "travel_legs_tenant_id_staff_id_fkey": {
           "name": "travel_legs_tenant_id_staff_id_fkey",
           "tableFrom": "travel_legs",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -437,14 +443,14 @@
       "uniqueConstraints": {
         "travel_legs_tenant_id_staff_id_business_date_kind_seq_key": {
           "name": "travel_legs_tenant_id_staff_id_business_date_kind_seq_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "staff_id",
             "business_date",
             "kind",
             "seq"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -467,6 +473,10 @@
         "travel_legs_weather_check": {
           "name": "travel_legs_weather_check",
           "value": "\"travel_legs\".\"weather\" in ('sunny', 'cloudy', 'rain', 'snow')"
+        },
+        "travel_legs_transport_mode_check": {
+          "name": "travel_legs_transport_mode_check",
+          "value": "\"travel_legs\".\"transport_mode\" in ('car', 'bicycle', 'transit', 'walk')"
         },
         "travel_legs_planned_minutes_check": {
           "name": "travel_legs_planned_minutes_check",
@@ -620,70 +630,70 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "visits_tenant_id_fkey": {
           "name": "visits_tenant_id_fkey",
           "tableFrom": "visits",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "visits_tenant_id_staff_id_fkey": {
           "name": "visits_tenant_id_staff_id_fkey",
           "tableFrom": "visits",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "visits_tenant_id_customer_id_fkey": {
           "name": "visits_tenant_id_customer_id_fkey",
           "tableFrom": "visits",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "visits_tenant_id_assignment_id_fkey": {
           "name": "visits_tenant_id_assignment_id_fkey",
           "tableFrom": "visits",
+          "tableTo": "reservation_assignments",
           "columnsFrom": [
             "tenant_id",
             "assignment_id"
           ],
-          "tableTo": "reservation_assignments",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -698,22 +708,22 @@
       "uniqueConstraints": {
         "visits_tenant_id_staff_id_business_date_seq_key": {
           "name": "visits_tenant_id_staff_id_business_date_seq_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "staff_id",
             "business_date",
             "seq"
-          ],
-          "nullsNotDistinct": false
+          ]
         },
         "visits_tenant_id_staff_id_external_event_id_key": {
           "name": "visits_tenant_id_staff_id_external_event_id_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "staff_id",
             "external_event_id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -833,31 +843,31 @@
         "work_segments_tenant_id_fkey": {
           "name": "work_segments_tenant_id_fkey",
           "tableFrom": "work_segments",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "work_segments_tenant_id_staff_id_fkey": {
           "name": "work_segments_tenant_id_staff_id_fkey",
           "tableFrom": "work_segments",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -872,13 +882,13 @@
       "uniqueConstraints": {
         "work_segments_tenant_id_staff_id_business_date_seq_key": {
           "name": "work_segments_tenant_id_staff_id_business_date_seq_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "staff_id",
             "business_date",
             "seq"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -1014,40 +1024,40 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "care_recipients_tenant_id_fkey": {
           "name": "care_recipients_tenant_id_fkey",
           "tableFrom": "care_recipients",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "care_recipients_tenant_id_customer_id_fkey": {
           "name": "care_recipients_tenant_id_customer_id_fkey",
           "tableFrom": "care_recipients",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1222,9 +1232,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "customer_addresses_tenant_id_city_idx": {
           "name": "customer_addresses_tenant_id_city_idx",
@@ -1243,9 +1253,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "customer_addresses_tenant_id_customer_id_primary_key": {
           "name": "customer_addresses_tenant_id_customer_id_primary_key",
@@ -1264,41 +1274,41 @@
             }
           ],
           "isUnique": true,
-          "with": {},
-          "method": "btree",
           "where": "is_primary",
-          "concurrently": false
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
         "customer_addresses_tenant_id_fkey": {
           "name": "customer_addresses_tenant_id_fkey",
           "tableFrom": "customer_addresses",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_addresses_tenant_id_customer_id_fkey": {
           "name": "customer_addresses_tenant_id_customer_id_fkey",
           "tableFrom": "customer_addresses",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1437,40 +1447,40 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "customer_contacts_tenant_id_fkey": {
           "name": "customer_contacts_tenant_id_fkey",
           "tableFrom": "customer_contacts",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_contacts_tenant_id_customer_id_fkey": {
           "name": "customer_contacts_tenant_id_customer_id_fkey",
           "tableFrom": "customer_contacts",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1553,31 +1563,31 @@
         "customer_preferences_tenant_id_fkey": {
           "name": "customer_preferences_tenant_id_fkey",
           "tableFrom": "customer_preferences",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_preferences_tenant_id_customer_id_fkey": {
           "name": "customer_preferences_tenant_id_customer_id_fkey",
           "tableFrom": "customer_preferences",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1697,55 +1707,55 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "customer_recurring_slots_tenant_id_fkey": {
           "name": "customer_recurring_slots_tenant_id_fkey",
           "tableFrom": "customer_recurring_slots",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_recurring_slots_tenant_id_customer_id_fkey": {
           "name": "customer_recurring_slots_tenant_id_customer_id_fkey",
           "tableFrom": "customer_recurring_slots",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_recurring_slots_tenant_id_service_item_id_fkey": {
           "name": "customer_recurring_slots_tenant_id_service_item_id_fkey",
           "tableFrom": "customer_recurring_slots",
+          "tableTo": "service_items",
           "columnsFrom": [
             "tenant_id",
             "service_item_id"
           ],
-          "tableTo": "service_items",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1875,55 +1885,55 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "customer_source_records_tenant_id_fkey": {
           "name": "customer_source_records_tenant_id_fkey",
           "tableFrom": "customer_source_records",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_source_records_tenant_id_customer_id_fkey": {
           "name": "customer_source_records_tenant_id_customer_id_fkey",
           "tableFrom": "customer_source_records",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_source_records_tenant_id_last_import_run_id_fkey": {
           "name": "customer_source_records_tenant_id_last_import_run_id_fkey",
           "tableFrom": "customer_source_records",
+          "tableTo": "import_runs",
           "columnsFrom": [
             "tenant_id",
             "last_import_run_id"
           ],
-          "tableTo": "import_runs",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1938,12 +1948,12 @@
       "uniqueConstraints": {
         "customer_source_records_tenant_id_source_external_id_key": {
           "name": "customer_source_records_tenant_id_source_external_id_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "source",
             "external_id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -2109,9 +2119,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "customers_tenant_id_family_name_kana_idx": {
           "name": "customers_tenant_id_family_name_kana_idx",
@@ -2124,31 +2134,31 @@
             },
             {
               "expression": "\"family_name_kana\" text_pattern_ops",
-              "isExpression": true,
               "asc": true,
+              "isExpression": true,
               "nulls": "last"
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "customers_tenant_id_fkey": {
           "name": "customers_tenant_id_fkey",
           "tableFrom": "customers",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2259,46 +2269,46 @@
         "data_export_requests_tenant_id_fkey": {
           "name": "data_export_requests_tenant_id_fkey",
           "tableFrom": "data_export_requests",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "data_export_requests_tenant_id_requested_by_fkey": {
           "name": "data_export_requests_tenant_id_requested_by_fkey",
           "tableFrom": "data_export_requests",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "requested_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "data_export_requests_tenant_id_file_id_fkey": {
           "name": "data_export_requests_tenant_id_file_id_fkey",
           "tableFrom": "data_export_requests",
+          "tableTo": "stored_files",
           "columnsFrom": [
             "tenant_id",
             "file_id"
           ],
-          "tableTo": "stored_files",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2432,31 +2442,31 @@
         "data_subject_requests_tenant_id_fkey": {
           "name": "data_subject_requests_tenant_id_fkey",
           "tableFrom": "data_subject_requests",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "data_subject_requests_tenant_id_handled_by_fkey": {
           "name": "data_subject_requests_tenant_id_handled_by_fkey",
           "tableFrom": "data_subject_requests",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "handled_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2546,16 +2556,16 @@
         "retention_policies_tenant_id_fkey": {
           "name": "retention_policies_tenant_id_fkey",
           "tableFrom": "retention_policies",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2673,16 +2683,16 @@
         "attribute_definitions_tenant_id_fkey": {
           "name": "attribute_definitions_tenant_id_fkey",
           "tableFrom": "attribute_definitions",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2697,11 +2707,11 @@
       "uniqueConstraints": {
         "attribute_definitions_tenant_id_key_key": {
           "name": "attribute_definitions_tenant_id_key_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "key"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -2794,46 +2804,46 @@
         "customer_required_attributes_tenant_id_fkey": {
           "name": "customer_required_attributes_tenant_id_fkey",
           "tableFrom": "customer_required_attributes",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_required_attributes_tenant_id_customer_id_fkey": {
           "name": "customer_required_attributes_tenant_id_customer_id_fkey",
           "tableFrom": "customer_required_attributes",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_required_attributes_tenant_id_attribute_id_fkey": {
           "name": "customer_required_attributes_tenant_id_attribute_id_fkey",
           "tableFrom": "customer_required_attributes",
+          "tableTo": "attribute_definitions",
           "columnsFrom": [
             "tenant_id",
             "attribute_id"
           ],
-          "tableTo": "attribute_definitions",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2848,12 +2858,12 @@
       "uniqueConstraints": {
         "customer_required_attributes_customer_id_attribute_id_key": {
           "name": "customer_required_attributes_customer_id_attribute_id_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "customer_id",
             "attribute_id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -2971,70 +2981,70 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "customer_staff_affinities_tenant_id_fkey": {
           "name": "customer_staff_affinities_tenant_id_fkey",
           "tableFrom": "customer_staff_affinities",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_staff_affinities_tenant_id_customer_id_fkey": {
           "name": "customer_staff_affinities_tenant_id_customer_id_fkey",
           "tableFrom": "customer_staff_affinities",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_staff_affinities_tenant_id_staff_id_fkey": {
           "name": "customer_staff_affinities_tenant_id_staff_id_fkey",
           "tableFrom": "customer_staff_affinities",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "customer_staff_affinities_tenant_id_updated_by_fkey": {
           "name": "customer_staff_affinities_tenant_id_updated_by_fkey",
           "tableFrom": "customer_staff_affinities",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "updated_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -3049,12 +3059,12 @@
       "uniqueConstraints": {
         "customer_staff_affinities_tenant_id_customer_id_staff_id_key": {
           "name": "customer_staff_affinities_tenant_id_customer_id_staff_id_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "customer_id",
             "staff_id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -3162,70 +3172,70 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "matching_run_candidates_tenant_id_fkey": {
           "name": "matching_run_candidates_tenant_id_fkey",
           "tableFrom": "matching_run_candidates",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "matching_run_candidates_tenant_id_run_id_fkey": {
           "name": "matching_run_candidates_tenant_id_run_id_fkey",
           "tableFrom": "matching_run_candidates",
+          "tableTo": "matching_runs",
           "columnsFrom": [
             "tenant_id",
             "run_id"
           ],
-          "tableTo": "matching_runs",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "matching_run_candidates_tenant_id_reservation_id_fkey": {
           "name": "matching_run_candidates_tenant_id_reservation_id_fkey",
           "tableFrom": "matching_run_candidates",
+          "tableTo": "reservations",
           "columnsFrom": [
             "tenant_id",
             "reservation_id"
           ],
-          "tableTo": "reservations",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "matching_run_candidates_tenant_id_staff_id_fkey": {
           "name": "matching_run_candidates_tenant_id_staff_id_fkey",
           "tableFrom": "matching_run_candidates",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -3240,13 +3250,13 @@
       "uniqueConstraints": {
         "matching_run_candidates_run_id_reservation_id_staff_id_key": {
           "name": "matching_run_candidates_run_id_reservation_id_staff_id_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "run_id",
             "reservation_id",
             "staff_id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -3363,40 +3373,40 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "matching_runs_tenant_id_fkey": {
           "name": "matching_runs_tenant_id_fkey",
           "tableFrom": "matching_runs",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "matching_runs_tenant_id_requested_by_fkey": {
           "name": "matching_runs_tenant_id_requested_by_fkey",
           "tableFrom": "matching_runs",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "requested_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -3485,16 +3495,16 @@
         "service_areas_tenant_id_fkey": {
           "name": "service_areas_tenant_id_fkey",
           "tableFrom": "service_areas",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -3509,11 +3519,11 @@
       "uniqueConstraints": {
         "service_areas_tenant_id_name_key": {
           "name": "service_areas_tenant_id_name_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "name"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -3636,85 +3646,85 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "staff_attributes_tenant_id_fkey": {
           "name": "staff_attributes_tenant_id_fkey",
           "tableFrom": "staff_attributes",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "staff_attributes_tenant_id_staff_id_fkey": {
           "name": "staff_attributes_tenant_id_staff_id_fkey",
           "tableFrom": "staff_attributes",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "staff_attributes_tenant_id_attribute_id_fkey": {
           "name": "staff_attributes_tenant_id_attribute_id_fkey",
           "tableFrom": "staff_attributes",
+          "tableTo": "attribute_definitions",
           "columnsFrom": [
             "tenant_id",
             "attribute_id"
           ],
-          "tableTo": "attribute_definitions",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "staff_attributes_tenant_id_verified_by_fkey": {
           "name": "staff_attributes_tenant_id_verified_by_fkey",
           "tableFrom": "staff_attributes",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "verified_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "staff_attributes_tenant_id_evidence_file_id_fkey": {
           "name": "staff_attributes_tenant_id_evidence_file_id_fkey",
           "tableFrom": "staff_attributes",
+          "tableTo": "stored_files",
           "columnsFrom": [
             "tenant_id",
             "evidence_file_id"
           ],
-          "tableTo": "stored_files",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -3831,40 +3841,40 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "gist",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "staff_availability_exceptions_tenant_id_fkey": {
           "name": "staff_availability_exceptions_tenant_id_fkey",
           "tableFrom": "staff_availability_exceptions",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "staff_availability_exceptions_tenant_id_staff_id_fkey": {
           "name": "staff_availability_exceptions_tenant_id_staff_id_fkey",
           "tableFrom": "staff_availability_exceptions",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -3988,40 +3998,40 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "gist",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "staff_busy_blocks_tenant_id_fkey": {
           "name": "staff_busy_blocks_tenant_id_fkey",
           "tableFrom": "staff_busy_blocks",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "staff_busy_blocks_tenant_id_staff_id_fkey": {
           "name": "staff_busy_blocks_tenant_id_staff_id_fkey",
           "tableFrom": "staff_busy_blocks",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -4036,13 +4046,13 @@
       "uniqueConstraints": {
         "staff_busy_blocks_staff_id_source_external_event_id_key": {
           "name": "staff_busy_blocks_staff_id_source_external_event_id_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "staff_id",
             "source",
             "external_event_id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -4155,41 +4165,41 @@
             }
           ],
           "isUnique": true,
-          "with": {},
-          "method": "btree",
           "where": "purpose = 'schedule'",
-          "concurrently": false
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
         "staff_calendars_tenant_id_fkey": {
           "name": "staff_calendars_tenant_id_fkey",
           "tableFrom": "staff_calendars",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "staff_calendars_tenant_id_staff_id_fkey": {
           "name": "staff_calendars_tenant_id_staff_id_fkey",
           "tableFrom": "staff_calendars",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -4204,13 +4214,13 @@
       "uniqueConstraints": {
         "staff_calendars_tenant_id_staff_id_calendar_id_purpose_key": {
           "name": "staff_calendars_tenant_id_staff_id_calendar_id_purpose_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "staff_id",
             "calendar_id",
             "purpose"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -4275,46 +4285,46 @@
         "staff_service_areas_tenant_id_fkey": {
           "name": "staff_service_areas_tenant_id_fkey",
           "tableFrom": "staff_service_areas",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "staff_service_areas_tenant_id_staff_id_fkey": {
           "name": "staff_service_areas_tenant_id_staff_id_fkey",
           "tableFrom": "staff_service_areas",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "staff_service_areas_tenant_id_service_area_id_fkey": {
           "name": "staff_service_areas_tenant_id_service_area_id_fkey",
           "tableFrom": "staff_service_areas",
+          "tableTo": "service_areas",
           "columnsFrom": [
             "tenant_id",
             "service_area_id"
           ],
-          "tableTo": "service_areas",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -4416,31 +4426,31 @@
         "staff_weekly_availability_tenant_id_fkey": {
           "name": "staff_weekly_availability_tenant_id_fkey",
           "tableFrom": "staff_weekly_availability",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "staff_weekly_availability_tenant_id_staff_id_fkey": {
           "name": "staff_weekly_availability_tenant_id_staff_id_fkey",
           "tableFrom": "staff_weekly_availability",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -4540,16 +4550,16 @@
         "travel_time_cache_tenant_id_fkey": {
           "name": "travel_time_cache_tenant_id_fkey",
           "tableFrom": "travel_time_cache",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -4680,25 +4690,25 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "entity_changes_tenant_id_fkey": {
           "name": "entity_changes_tenant_id_fkey",
           "tableFrom": "entity_changes",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -4855,10 +4865,10 @@
             }
           ],
           "isUnique": false,
-          "with": {},
-          "method": "btree",
           "where": "status = 'pending'",
-          "concurrently": false
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "outbox_messages_locked_until_idx": {
           "name": "outbox_messages_locked_until_idx",
@@ -4871,10 +4881,10 @@
             }
           ],
           "isUnique": false,
-          "with": {},
-          "method": "btree",
           "where": "status = 'processing'",
-          "concurrently": false
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "outbox_messages_tenant_id_aggregate_id_id_idx": {
           "name": "outbox_messages_tenant_id_aggregate_id_id_idx",
@@ -4899,9 +4909,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "outbox_messages_completed_at_idx": {
           "name": "outbox_messages_completed_at_idx",
@@ -4914,26 +4924,26 @@
             }
           ],
           "isUnique": false,
-          "with": {},
-          "method": "btree",
           "where": "status in ('done', 'failed', 'dead')",
-          "concurrently": false
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
         "outbox_messages_tenant_id_fkey": {
           "name": "outbox_messages_tenant_id_fkey",
           "tableFrom": "outbox_messages",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -4948,11 +4958,11 @@
       "uniqueConstraints": {
         "outbox_messages_tenant_id_dedupe_key_key": {
           "name": "outbox_messages_tenant_id_dedupe_key_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "dedupe_key"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -4970,7 +4980,7 @@
       "checkConstraints": {
         "outbox_messages_topic_check": {
           "name": "outbox_messages_topic_check",
-          "value": "\"outbox_messages\".\"topic\" in ('mirror.attendance_day', 'mirror.attendance_aggregate', 'mirror.care_record', 'mirror.receipt', 'mail.password_reset', 'push.route_notice', 'push.test')"
+          "value": "\"outbox_messages\".\"topic\" in ('mirror.attendance_day', 'mirror.attendance_aggregate', 'mirror.care_record', 'mirror.receipt', 'mail.password_reset', 'push.route_notice', 'push.test', 'push.psi_alert')"
         },
         "outbox_messages_status_check": {
           "name": "outbox_messages_status_check",
@@ -5037,16 +5047,16 @@
         "plan_features_plan_id_fkey": {
           "name": "plan_features_plan_id_fkey",
           "tableFrom": "plan_features",
+          "tableTo": "plans",
+          "schemaTo": "platform",
           "columnsFrom": [
             "plan_id"
           ],
-          "tableTo": "plans",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -5113,10 +5123,10 @@
       "uniqueConstraints": {
         "plans_code_key": {
           "name": "plans_code_key",
+          "nullsNotDistinct": false,
           "columns": [
             "code"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -5173,10 +5183,10 @@
       "uniqueConstraints": {
         "platform_operators_email_key": {
           "name": "platform_operators_email_key",
+          "nullsNotDistinct": false,
           "columns": [
             "email"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -5237,9 +5247,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {},
@@ -5324,9 +5334,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {},
@@ -5437,26 +5447,26 @@
         "tenants_plan_id_fkey": {
           "name": "tenants_plan_id_fkey",
           "tableFrom": "tenants",
+          "tableTo": "plans",
+          "schemaTo": "platform",
           "columnsFrom": [
             "plan_id"
           ],
-          "tableTo": "plans",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "tenants_slug_key": {
           "name": "tenants_slug_key",
+          "nullsNotDistinct": false,
           "columns": [
             "slug"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -5712,16 +5722,16 @@
         "ai_prompt_revisions_tenant_id_fkey": {
           "name": "ai_prompt_revisions_tenant_id_fkey",
           "tableFrom": "ai_prompt_revisions",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -5736,12 +5746,12 @@
       "uniqueConstraints": {
         "ai_prompt_revisions_tenant_id_key_revision_key": {
           "name": "ai_prompt_revisions_tenant_id_key_revision_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "key",
             "revision"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -5820,31 +5830,31 @@
         "ai_prompts_tenant_id_fkey": {
           "name": "ai_prompts_tenant_id_fkey",
           "tableFrom": "ai_prompts",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "ai_prompts_tenant_id_updated_by_fkey": {
           "name": "ai_prompts_tenant_id_updated_by_fkey",
           "tableFrom": "ai_prompts",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "updated_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -5941,31 +5951,31 @@
         "care_record_revisions_tenant_id_fkey": {
           "name": "care_record_revisions_tenant_id_fkey",
           "tableFrom": "care_record_revisions",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "care_record_revisions_tenant_id_care_record_id_fkey": {
           "name": "care_record_revisions_tenant_id_care_record_id_fkey",
           "tableFrom": "care_record_revisions",
+          "tableTo": "care_records",
           "columnsFrom": [
             "tenant_id",
             "care_record_id"
           ],
-          "tableTo": "care_records",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -5980,12 +5990,12 @@
       "uniqueConstraints": {
         "care_record_revisions_tenant_id_care_record_id_revision_no_key": {
           "name": "care_record_revisions_tenant_id_care_record_id_revision_no_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "care_record_id",
             "revision_no"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -6093,31 +6103,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": 1
-        },
-        "ai_generated": {
-          "name": "ai_generated",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "ai_model": {
-          "name": "ai_model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "ai_prompt_key": {
-          "name": "ai_prompt_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "ai_prompt_revision": {
-          "name": "ai_prompt_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
         },
         "reviewed_at": {
           "name": "reviewed_at",
@@ -6258,85 +6243,85 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "care_records_tenant_id_fkey": {
           "name": "care_records_tenant_id_fkey",
           "tableFrom": "care_records",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "care_records_tenant_id_visit_id_fkey": {
           "name": "care_records_tenant_id_visit_id_fkey",
           "tableFrom": "care_records",
+          "tableTo": "visits",
           "columnsFrom": [
             "tenant_id",
             "visit_id"
           ],
-          "tableTo": "visits",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "care_records_tenant_id_customer_id_fkey": {
           "name": "care_records_tenant_id_customer_id_fkey",
           "tableFrom": "care_records",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "care_records_tenant_id_care_recipient_id_fkey": {
           "name": "care_records_tenant_id_care_recipient_id_fkey",
           "tableFrom": "care_records",
+          "tableTo": "care_recipients",
           "columnsFrom": [
             "tenant_id",
             "care_recipient_id"
           ],
-          "tableTo": "care_recipients",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "care_records_tenant_id_author_staff_id_fkey": {
           "name": "care_records_tenant_id_author_staff_id_fkey",
           "tableFrom": "care_records",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "author_staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -6449,61 +6434,61 @@
         "receipt_uploads_tenant_id_fkey": {
           "name": "receipt_uploads_tenant_id_fkey",
           "tableFrom": "receipt_uploads",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "receipt_uploads_tenant_id_staff_id_fkey": {
           "name": "receipt_uploads_tenant_id_staff_id_fkey",
           "tableFrom": "receipt_uploads",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "receipt_uploads_tenant_id_customer_id_fkey": {
           "name": "receipt_uploads_tenant_id_customer_id_fkey",
           "tableFrom": "receipt_uploads",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "receipt_uploads_tenant_id_created_by_fkey": {
           "name": "receipt_uploads_tenant_id_created_by_fkey",
           "tableFrom": "receipt_uploads",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "created_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -6628,10 +6613,10 @@
             }
           ],
           "isUnique": true,
-          "with": {},
-          "method": "btree",
           "where": "dedupe_hash is not null",
-          "concurrently": false
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "receipts_tenant_id_staff_id_receipted_at_idx": {
           "name": "receipts_tenant_id_staff_id_receipted_at_idx",
@@ -6656,9 +6641,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "receipts_tenant_id_receipted_at_id_idx": {
           "name": "receipts_tenant_id_receipted_at_id_idx",
@@ -6704,9 +6689,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "receipts_tenant_id_file_id_idx": {
           "name": "receipts_tenant_id_file_id_idx",
@@ -6725,85 +6710,85 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "receipts_tenant_id_fkey": {
           "name": "receipts_tenant_id_fkey",
           "tableFrom": "receipts",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "receipts_tenant_id_upload_id_fkey": {
           "name": "receipts_tenant_id_upload_id_fkey",
           "tableFrom": "receipts",
+          "tableTo": "receipt_uploads",
           "columnsFrom": [
             "tenant_id",
             "upload_id"
           ],
-          "tableTo": "receipt_uploads",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "receipts_tenant_id_file_id_fkey": {
           "name": "receipts_tenant_id_file_id_fkey",
           "tableFrom": "receipts",
+          "tableTo": "stored_files",
           "columnsFrom": [
             "tenant_id",
             "file_id"
           ],
-          "tableTo": "stored_files",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "receipts_tenant_id_staff_id_fkey": {
           "name": "receipts_tenant_id_staff_id_fkey",
           "tableFrom": "receipts",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "receipts_tenant_id_customer_id_fkey": {
           "name": "receipts_tenant_id_customer_id_fkey",
           "tableFrom": "receipts",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -6908,31 +6893,31 @@
         "stored_files_tenant_id_fkey": {
           "name": "stored_files_tenant_id_fkey",
           "tableFrom": "stored_files",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "stored_files_tenant_id_created_by_fkey": {
           "name": "stored_files_tenant_id_created_by_fkey",
           "tableFrom": "stored_files",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "created_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -6947,11 +6932,11 @@
       "uniqueConstraints": {
         "stored_files_tenant_id_storage_key_key": {
           "name": "stored_files_tenant_id_storage_key_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "storage_key"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -6976,6 +6961,1526 @@
           "value": "\"stored_files\".\"byte_size\" >= 0"
         }
       },
+      "isRLSEnabled": true
+    },
+    "public.customer_report_profiles": {
+      "name": "customer_report_profiles",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "education_level": {
+          "name": "education_level",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "customer_report_profiles_tenant_id_fkey": {
+          "name": "customer_report_profiles_tenant_id_fkey",
+          "tableFrom": "customer_report_profiles",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "customer_report_profiles_tenant_id_customer_id_fkey": {
+          "name": "customer_report_profiles_tenant_id_customer_id_fkey",
+          "tableFrom": "customer_report_profiles",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "customer_report_profiles_tenant_id_updated_by_fkey": {
+          "name": "customer_report_profiles_tenant_id_updated_by_fkey",
+          "tableFrom": "customer_report_profiles",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "tenant_id",
+            "updated_by"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "customer_report_profiles_pkey": {
+          "name": "customer_report_profiles_pkey",
+          "columns": [
+            "tenant_id",
+            "customer_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "tenant_id = app_current_tenant()",
+          "withCheck": "tenant_id = app_current_tenant()"
+        }
+      },
+      "checkConstraints": {
+        "customer_report_profiles_education_level_check": {
+          "name": "customer_report_profiles_education_level_check",
+          "value": "\"customer_report_profiles\".\"education_level\" between 1 and 5"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.report_age_bands": {
+      "name": "report_age_bands",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "age_from_months": {
+          "name": "age_from_months",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "age_to_months": {
+          "name": "age_to_months",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "behavior_words": {
+          "name": "behavior_words",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "development_topics": {
+          "name": "development_topics",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "keyword_codes": {
+          "name": "keyword_codes",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "scene_examples": {
+          "name": "scene_examples",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "report_age_bands_tenant_id_fkey": {
+          "name": "report_age_bands_tenant_id_fkey",
+          "tableFrom": "report_age_bands",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "report_age_bands_tenant_id_updated_by_fkey": {
+          "name": "report_age_bands_tenant_id_updated_by_fkey",
+          "tableFrom": "report_age_bands",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "tenant_id",
+            "updated_by"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "report_age_bands_pkey": {
+          "name": "report_age_bands_pkey",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "report_age_bands_tenant_id_label_key": {
+          "name": "report_age_bands_tenant_id_label_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "label"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "tenant_id = app_current_tenant()",
+          "withCheck": "tenant_id = app_current_tenant()"
+        }
+      },
+      "checkConstraints": {
+        "report_age_bands_age_check": {
+          "name": "report_age_bands_age_check",
+          "value": "\"report_age_bands\".\"age_from_months\" >= 0 and \"report_age_bands\".\"age_to_months\" <= 144 and \"report_age_bands\".\"age_from_months\" < \"report_age_bands\".\"age_to_months\""
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.report_ai_generations": {
+      "name": "report_ai_generations",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "staff_id": {
+          "name": "staff_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "care_recipient_id": {
+          "name": "care_recipient_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "care_record_id": {
+          "name": "care_record_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "prompt_key": {
+          "name": "prompt_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prompt_revision": {
+          "name": "prompt_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "default_prompt_sha256": {
+          "name": "default_prompt_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "app_version": {
+          "name": "app_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "prompt_text": {
+          "name": "prompt_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "input_text": {
+          "name": "input_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "time_info": {
+          "name": "time_info",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "child_age_months": {
+          "name": "child_age_months",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "education_level": {
+          "name": "education_level",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "effective_education_level": {
+          "name": "effective_education_level",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "risk_rating": {
+          "name": "risk_rating",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "escalation_required": {
+          "name": "escalation_required",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "candidate_keyword_ids": {
+          "name": "candidate_keyword_ids",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::uuid[]"
+        },
+        "used_keyword_ids": {
+          "name": "used_keyword_ids",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::uuid[]"
+        },
+        "unresolved_used_codes": {
+          "name": "unresolved_used_codes",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "output": {
+          "name": "output",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "report_ai_generations_tenant_id_created_at_idx": {
+          "name": "report_ai_generations_tenant_id_created_at_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "report_ai_generations_tenant_id_care_record_id_idx": {
+          "name": "report_ai_generations_tenant_id_care_record_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "care_record_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "report_ai_generations_tenant_id_fkey": {
+          "name": "report_ai_generations_tenant_id_fkey",
+          "tableFrom": "report_ai_generations",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "report_ai_generations_tenant_id_staff_id_fkey": {
+          "name": "report_ai_generations_tenant_id_staff_id_fkey",
+          "tableFrom": "report_ai_generations",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "tenant_id",
+            "staff_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "report_ai_generations_tenant_id_customer_id_fkey": {
+          "name": "report_ai_generations_tenant_id_customer_id_fkey",
+          "tableFrom": "report_ai_generations",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "report_ai_generations_tenant_id_care_recipient_id_fkey": {
+          "name": "report_ai_generations_tenant_id_care_recipient_id_fkey",
+          "tableFrom": "report_ai_generations",
+          "tableTo": "care_recipients",
+          "columnsFrom": [
+            "tenant_id",
+            "care_recipient_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "report_ai_generations_tenant_id_care_record_id_fkey": {
+          "name": "report_ai_generations_tenant_id_care_record_id_fkey",
+          "tableFrom": "report_ai_generations",
+          "tableTo": "care_records",
+          "columnsFrom": [
+            "tenant_id",
+            "care_record_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "report_ai_generations_pkey": {
+          "name": "report_ai_generations_pkey",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "tenant_id = app_current_tenant()",
+          "withCheck": "tenant_id = app_current_tenant()"
+        }
+      },
+      "checkConstraints": {
+        "report_ai_generations_error_code_check": {
+          "name": "report_ai_generations_error_code_check",
+          "value": "\"report_ai_generations\".\"error_code\" in ('api_key_missing', 'api_error')"
+        },
+        "report_ai_generations_outcome_check": {
+          "name": "report_ai_generations_outcome_check",
+          "value": "(\"report_ai_generations\".\"output\" is null) <> (\"report_ai_generations\".\"error_code\" is null)"
+        },
+        "report_ai_generations_prompt_check": {
+          "name": "report_ai_generations_prompt_check",
+          "value": "(\"report_ai_generations\".\"prompt_revision\" is null) = (\"report_ai_generations\".\"default_prompt_sha256\" is not null)"
+        },
+        "report_ai_generations_levels_check": {
+          "name": "report_ai_generations_levels_check",
+          "value": "\"report_ai_generations\".\"education_level\" between 1 and 5 and \"report_ai_generations\".\"effective_education_level\" between 1 and 5 and \"report_ai_generations\".\"risk_rating\" between 1 and 5"
+        },
+        "report_ai_generations_child_age_months_check": {
+          "name": "report_ai_generations_child_age_months_check",
+          "value": "\"report_ai_generations\".\"child_age_months\" >= 0"
+        },
+        "report_ai_generations_finished_at_check": {
+          "name": "report_ai_generations_finished_at_check",
+          "value": "\"report_ai_generations\".\"finished_at\" >= \"report_ai_generations\".\"started_at\""
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.report_education_levels": {
+      "name": "report_education_levels",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "level": {
+          "name": "level",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer_profile": {
+          "name": "customer_profile",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "usage": {
+          "name": "usage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "word_scope": {
+          "name": "word_scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "term_name_rule": {
+          "name": "term_name_rule",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "term_name_policy": {
+          "name": "term_name_policy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "keywords_min": {
+          "name": "keywords_min",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "keywords_max": {
+          "name": "keywords_max",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tone_focus": {
+          "name": "tone_focus",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "example_direction": {
+          "name": "example_direction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "report_education_levels_tenant_id_fkey": {
+          "name": "report_education_levels_tenant_id_fkey",
+          "tableFrom": "report_education_levels",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "report_education_levels_tenant_id_updated_by_fkey": {
+          "name": "report_education_levels_tenant_id_updated_by_fkey",
+          "tableFrom": "report_education_levels",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "tenant_id",
+            "updated_by"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "report_education_levels_pkey": {
+          "name": "report_education_levels_pkey",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "report_education_levels_tenant_id_level_key": {
+          "name": "report_education_levels_tenant_id_level_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "level"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "tenant_id = app_current_tenant()",
+          "withCheck": "tenant_id = app_current_tenant()"
+        }
+      },
+      "checkConstraints": {
+        "report_education_levels_level_check": {
+          "name": "report_education_levels_level_check",
+          "value": "\"report_education_levels\".\"level\" between 1 and 5"
+        },
+        "report_education_levels_term_name_policy_check": {
+          "name": "report_education_levels_term_name_policy_check",
+          "value": "\"report_education_levels\".\"term_name_policy\" in ('forbid', 'sparing', 'allow')"
+        },
+        "report_education_levels_keywords_check": {
+          "name": "report_education_levels_keywords_check",
+          "value": "\"report_education_levels\".\"keywords_min\" >= 0 and \"report_education_levels\".\"keywords_min\" <= \"report_education_levels\".\"keywords_max\" and \"report_education_levels\".\"keywords_max\" <= 9"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.report_keywords": {
+      "name": "report_keywords",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "keyword": {
+          "name": "keyword",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sub_concept": {
+          "name": "sub_concept",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "age_label": {
+          "name": "age_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "age_from_months": {
+          "name": "age_from_months",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "age_to_months": {
+          "name": "age_to_months",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "age_band_label": {
+          "name": "age_band_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "education_level_min": {
+          "name": "education_level_min",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "education_level_max": {
+          "name": "education_level_max",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "psi_min": {
+          "name": "psi_min",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tone": {
+          "name": "tone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parent_explanation": {
+          "name": "parent_explanation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "phrase_examples": {
+          "name": "phrase_examples",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "usage_scene": {
+          "name": "usage_scene",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ng_example": {
+          "name": "ng_example",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "report_keywords_tenant_id_fkey": {
+          "name": "report_keywords_tenant_id_fkey",
+          "tableFrom": "report_keywords",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "report_keywords_tenant_id_updated_by_fkey": {
+          "name": "report_keywords_tenant_id_updated_by_fkey",
+          "tableFrom": "report_keywords",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "tenant_id",
+            "updated_by"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "report_keywords_pkey": {
+          "name": "report_keywords_pkey",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "report_keywords_tenant_id_code_key": {
+          "name": "report_keywords_tenant_id_code_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "code"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "tenant_id = app_current_tenant()",
+          "withCheck": "tenant_id = app_current_tenant()"
+        }
+      },
+      "checkConstraints": {
+        "report_keywords_age_check": {
+          "name": "report_keywords_age_check",
+          "value": "\"report_keywords\".\"age_from_months\" >= 0 and \"report_keywords\".\"age_to_months\" <= 144 and \"report_keywords\".\"age_from_months\" <= \"report_keywords\".\"age_to_months\""
+        },
+        "report_keywords_education_level_check": {
+          "name": "report_keywords_education_level_check",
+          "value": "\"report_keywords\".\"education_level_min\" between 1 and 5 and \"report_keywords\".\"education_level_max\" between 1 and 5 and \"report_keywords\".\"education_level_min\" <= \"report_keywords\".\"education_level_max\""
+        },
+        "report_keywords_psi_min_check": {
+          "name": "report_keywords_psi_min_check",
+          "value": "\"report_keywords\".\"psi_min\" between 1 and 5"
+        },
+        "report_keywords_code_check": {
+          "name": "report_keywords_code_check",
+          "value": "\"report_keywords\".\"code\" ~ '^[A-Z0-9_-]{1,20}$'"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.report_phrases": {
+      "name": "report_phrases",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "psi_min": {
+          "name": "psi_min",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "psi_max": {
+          "name": "psi_max",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "report_phrases_tenant_id_fkey": {
+          "name": "report_phrases_tenant_id_fkey",
+          "tableFrom": "report_phrases",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "report_phrases_tenant_id_updated_by_fkey": {
+          "name": "report_phrases_tenant_id_updated_by_fkey",
+          "tableFrom": "report_phrases",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "tenant_id",
+            "updated_by"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "report_phrases_pkey": {
+          "name": "report_phrases_pkey",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "report_phrases_tenant_id_kind_body_key": {
+          "name": "report_phrases_tenant_id_kind_body_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "kind",
+            "body"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "tenant_id = app_current_tenant()",
+          "withCheck": "tenant_id = app_current_tenant()"
+        }
+      },
+      "checkConstraints": {
+        "report_phrases_kind_check": {
+          "name": "report_phrases_kind_check",
+          "value": "\"report_phrases\".\"kind\" in ('warm', 'avoid')"
+        },
+        "report_phrases_psi_check": {
+          "name": "report_phrases_psi_check",
+          "value": "\"report_phrases\".\"psi_min\" between 1 and 5 and \"report_phrases\".\"psi_max\" between 1 and 5 and \"report_phrases\".\"psi_min\" <= \"report_phrases\".\"psi_max\" and (\"report_phrases\".\"kind\" = 'warm' or (\"report_phrases\".\"psi_min\" = 1 and \"report_phrases\".\"psi_max\" = 5))"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.report_psi_levels": {
+      "name": "report_psi_levels",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "level": {
+          "name": "level",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "criteria": {
+          "name": "criteria",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "report_psi_levels_tenant_id_fkey": {
+          "name": "report_psi_levels_tenant_id_fkey",
+          "tableFrom": "report_psi_levels",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "report_psi_levels_tenant_id_updated_by_fkey": {
+          "name": "report_psi_levels_tenant_id_updated_by_fkey",
+          "tableFrom": "report_psi_levels",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "tenant_id",
+            "updated_by"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "report_psi_levels_pkey": {
+          "name": "report_psi_levels_pkey",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "report_psi_levels_tenant_id_level_key": {
+          "name": "report_psi_levels_tenant_id_level_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "level"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "tenant_id = app_current_tenant()",
+          "withCheck": "tenant_id = app_current_tenant()"
+        }
+      },
+      "checkConstraints": {
+        "report_psi_levels_level_check": {
+          "name": "report_psi_levels_level_check",
+          "value": "\"report_psi_levels\".\"level\" between 1 and 5"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.report_stance_rules": {
+      "name": "report_stance_rules",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "topic": {
+          "name": "topic",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "avoid_text": {
+          "name": "avoid_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "recommended_text": {
+          "name": "recommended_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "report_stance_rules_tenant_id_fkey": {
+          "name": "report_stance_rules_tenant_id_fkey",
+          "tableFrom": "report_stance_rules",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "report_stance_rules_tenant_id_updated_by_fkey": {
+          "name": "report_stance_rules_tenant_id_updated_by_fkey",
+          "tableFrom": "report_stance_rules",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "tenant_id",
+            "updated_by"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "report_stance_rules_pkey": {
+          "name": "report_stance_rules_pkey",
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "report_stance_rules_tenant_id_topic_key": {
+          "name": "report_stance_rules_tenant_id_topic_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "topic"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "tenant_id = app_current_tenant()",
+          "withCheck": "tenant_id = app_current_tenant()"
+        }
+      },
+      "checkConstraints": {},
       "isRLSEnabled": true
     },
     "public.reservation_assignments": {
@@ -7089,9 +8594,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "reservation_assignments_tenant_id_reservation_id_staff_id_key": {
           "name": "reservation_assignments_tenant_id_reservation_id_staff_id_key",
@@ -7116,86 +8621,86 @@
             }
           ],
           "isUnique": true,
-          "with": {},
-          "method": "btree",
           "where": "status in ('proposed', 'confirmed')",
-          "concurrently": false
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
         "reservation_assignments_tenant_id_fkey": {
           "name": "reservation_assignments_tenant_id_fkey",
           "tableFrom": "reservation_assignments",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "reservation_assignments_tenant_id_reservation_id_fkey": {
           "name": "reservation_assignments_tenant_id_reservation_id_fkey",
           "tableFrom": "reservation_assignments",
+          "tableTo": "reservations",
           "columnsFrom": [
             "tenant_id",
             "reservation_id"
           ],
-          "tableTo": "reservations",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "reservation_assignments_tenant_id_staff_id_fkey": {
           "name": "reservation_assignments_tenant_id_staff_id_fkey",
           "tableFrom": "reservation_assignments",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "reservation_assignments_tenant_id_matching_run_id_fkey": {
           "name": "reservation_assignments_tenant_id_matching_run_id_fkey",
           "tableFrom": "reservation_assignments",
+          "tableTo": "matching_runs",
           "columnsFrom": [
             "tenant_id",
             "matching_run_id"
           ],
-          "tableTo": "matching_runs",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "reservation_assignments_tenant_id_assigned_by_fkey": {
           "name": "reservation_assignments_tenant_id_assigned_by_fkey",
           "tableFrom": "reservation_assignments",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "assigned_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -7275,46 +8780,46 @@
         "reservation_recipients_tenant_id_fkey": {
           "name": "reservation_recipients_tenant_id_fkey",
           "tableFrom": "reservation_recipients",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "reservation_recipients_tenant_id_reservation_id_fkey": {
           "name": "reservation_recipients_tenant_id_reservation_id_fkey",
           "tableFrom": "reservation_recipients",
+          "tableTo": "reservations",
           "columnsFrom": [
             "tenant_id",
             "reservation_id"
           ],
-          "tableTo": "reservations",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "reservation_recipients_tenant_id_care_recipient_id_fkey": {
           "name": "reservation_recipients_tenant_id_care_recipient_id_fkey",
           "tableFrom": "reservation_recipients",
+          "tableTo": "care_recipients",
           "columnsFrom": [
             "tenant_id",
             "care_recipient_id"
           ],
-          "tableTo": "care_recipients",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -7468,9 +8973,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "reservations_tenant_id_customer_id_idx": {
           "name": "reservations_tenant_id_customer_id_idx",
@@ -7489,85 +8994,85 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "reservations_tenant_id_fkey": {
           "name": "reservations_tenant_id_fkey",
           "tableFrom": "reservations",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "reservations_tenant_id_customer_id_fkey": {
           "name": "reservations_tenant_id_customer_id_fkey",
           "tableFrom": "reservations",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "reservations_tenant_id_address_id_fkey": {
           "name": "reservations_tenant_id_address_id_fkey",
           "tableFrom": "reservations",
+          "tableTo": "customer_addresses",
           "columnsFrom": [
             "tenant_id",
             "address_id"
           ],
-          "tableTo": "customer_addresses",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "reservations_tenant_id_service_item_id_fkey": {
           "name": "reservations_tenant_id_service_item_id_fkey",
           "tableFrom": "reservations",
+          "tableTo": "service_items",
           "columnsFrom": [
             "tenant_id",
             "service_item_id"
           ],
-          "tableTo": "service_items",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "reservations_tenant_id_recurring_slot_id_fkey": {
           "name": "reservations_tenant_id_recurring_slot_id_fkey",
           "tableFrom": "reservations",
+          "tableTo": "customer_recurring_slots",
           "columnsFrom": [
             "tenant_id",
             "recurring_slot_id"
           ],
-          "tableTo": "customer_recurring_slots",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -7582,12 +9087,12 @@
       "uniqueConstraints": {
         "reservations_tenant_id_external_source_external_id_key": {
           "name": "reservations_tenant_id_external_source_external_id_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "external_source",
             "external_id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -7689,16 +9194,16 @@
         "service_items_tenant_id_fkey": {
           "name": "service_items_tenant_id_fkey",
           "tableFrom": "service_items",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -7713,11 +9218,11 @@
       "uniqueConstraints": {
         "service_items_tenant_id_code_key": {
           "name": "service_items_tenant_id_code_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "code"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -7837,10 +9342,10 @@
             }
           ],
           "isUnique": true,
-          "with": {},
-          "method": "btree",
           "where": "used_at is null",
-          "concurrently": false
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "password_reset_codes_expires_at_idx": {
           "name": "password_reset_codes_expires_at_idx",
@@ -7853,40 +9358,40 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "password_reset_codes_tenant_id_fkey": {
           "name": "password_reset_codes_tenant_id_fkey",
           "tableFrom": "password_reset_codes",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "password_reset_codes_tenant_id_staff_id_fkey": {
           "name": "password_reset_codes_tenant_id_staff_id_fkey",
           "tableFrom": "password_reset_codes",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -8011,9 +9516,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "sessions_absolute_expires_at_idx": {
           "name": "sessions_absolute_expires_at_idx",
@@ -8026,40 +9531,40 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "sessions_tenant_id_fkey": {
           "name": "sessions_tenant_id_fkey",
           "tableFrom": "sessions",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "sessions_tenant_id_staff_id_fkey": {
           "name": "sessions_tenant_id_staff_id_fkey",
           "tableFrom": "sessions",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -8074,10 +9579,10 @@
       "uniqueConstraints": {
         "sessions_token_hash_key": {
           "name": "sessions_token_hash_key",
+          "nullsNotDistinct": false,
           "columns": [
             "token_hash"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -8262,9 +9767,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "staff_tenant_id_family_name_kana_idx": {
           "name": "staff_tenant_id_family_name_kana_idx",
@@ -8277,31 +9782,31 @@
             },
             {
               "expression": "\"family_name_kana\" text_pattern_ops",
-              "isExpression": true,
               "asc": true,
+              "isExpression": true,
               "nulls": "last"
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "staff_tenant_id_fkey": {
           "name": "staff_tenant_id_fkey",
           "tableFrom": "staff",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -8421,31 +9926,31 @@
         "staff_credentials_tenant_id_fkey": {
           "name": "staff_credentials_tenant_id_fkey",
           "tableFrom": "staff_credentials",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "staff_credentials_tenant_id_staff_id_fkey": {
           "name": "staff_credentials_tenant_id_staff_id_fkey",
           "tableFrom": "staff_credentials",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -8545,31 +10050,31 @@
         "staff_employment_terms_tenant_id_fkey": {
           "name": "staff_employment_terms_tenant_id_fkey",
           "tableFrom": "staff_employment_terms",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "staff_employment_terms_tenant_id_staff_id_fkey": {
           "name": "staff_employment_terms_tenant_id_staff_id_fkey",
           "tableFrom": "staff_employment_terms",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -8668,10 +10173,10 @@
             }
           ],
           "isUnique": true,
-          "with": {},
-          "method": "btree",
           "where": "is_primary",
-          "concurrently": false
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "staff_login_emails_tenant_id_staff_id_idx": {
           "name": "staff_login_emails_tenant_id_staff_id_idx",
@@ -8690,40 +10195,40 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "staff_login_emails_tenant_id_fkey": {
           "name": "staff_login_emails_tenant_id_fkey",
           "tableFrom": "staff_login_emails",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "staff_login_emails_tenant_id_staff_id_fkey": {
           "name": "staff_login_emails_tenant_id_staff_id_fkey",
           "tableFrom": "staff_login_emails",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -8838,16 +10343,16 @@
         "custom_field_definitions_tenant_id_fkey": {
           "name": "custom_field_definitions_tenant_id_fkey",
           "tableFrom": "custom_field_definitions",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -8862,12 +10367,12 @@
       "uniqueConstraints": {
         "custom_field_definitions_tenant_id_entity_type_key_key": {
           "name": "custom_field_definitions_tenant_id_entity_type_key_key",
+          "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
             "entity_type",
             "key"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {
@@ -9002,31 +10507,31 @@
         "import_runs_tenant_id_fkey": {
           "name": "import_runs_tenant_id_fkey",
           "tableFrom": "import_runs",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "import_runs_tenant_id_triggered_by_fkey": {
           "name": "import_runs_tenant_id_triggered_by_fkey",
           "tableFrom": "import_runs",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "triggered_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -9054,7 +10559,7 @@
       "checkConstraints": {
         "import_runs_source_check": {
           "name": "import_runs_source_check",
-          "value": "\"import_runs\".\"source\" in ('reserva_csv', 'staff_master_csv', 'external_api')"
+          "value": "\"import_runs\".\"source\" in ('reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx')"
         },
         "import_runs_status_check": {
           "name": "import_runs_status_check",
@@ -9237,16 +10742,16 @@
         "tenant_features_tenant_id_fkey": {
           "name": "tenant_features_tenant_id_fkey",
           "tableFrom": "tenant_features",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -9329,31 +10834,31 @@
         "tenant_secrets_tenant_id_fkey": {
           "name": "tenant_secrets_tenant_id_fkey",
           "tableFrom": "tenant_secrets",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "tenant_secrets_tenant_id_updated_by_fkey": {
           "name": "tenant_secrets_tenant_id_updated_by_fkey",
           "tableFrom": "tenant_secrets",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "updated_by"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -9442,16 +10947,16 @@
         "tenant_settings_tenant_id_fkey": {
           "name": "tenant_settings_tenant_id_fkey",
           "tableFrom": "tenant_settings",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -9488,10 +10993,10 @@
   "schemas": {
     "platform": "platform"
   },
-  "views": {},
   "sequences": {},
   "roles": {},
   "policies": {},
+  "views": {},
   "_meta": {
     "columns": {},
     "schemas": {},

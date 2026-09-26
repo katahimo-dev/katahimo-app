@@ -22,6 +22,7 @@ import type {
   VisitRow,
   WorkSegmentRow,
 } from '../../ports/attendance';
+import { DEFAULT_TRAVEL_MODE } from '../../ports/maps';
 import type { TenantRepositories } from '../../ports/unitOfWork';
 
 /**
@@ -205,6 +206,12 @@ export async function writeSheetDiff(
     description: s.description || null,
     overriddenFields: s.overriddenFields,
   });
+  // 移動手段: 前からある移動はその値のまま、新しい移動・値の無い移動はスタッフの移動手段(未設定は car)
+  const legModes = new Map(rows.legs.map((l) => [l.id, l.transportMode]));
+  const staffMode =
+    diff.legs.insert.length > 0 || next.legs.some((l) => !legModes.get(l.id))
+      ? ((await r.staff.findById(rows.staffId))?.travelMode ?? DEFAULT_TRAVEL_MODE)
+      : DEFAULT_TRAVEL_MODE;
   const visitIdBySeq = new Map(next.visits.map((v) => [v.seq, v.id]));
   const slotVisits = next.visits.filter((v) => v.seq <= 3).sort((a, b) => a.seq - b.seq);
   const legRow = (l: TravelLegEntity): TravelLegRow => ({
@@ -226,6 +233,7 @@ export async function writeSheetDiff(
     plannedMinutes: l.plannedMinutes,
     distanceKm: l.distanceKm === null ? null : l.distanceKm.toFixed(2),
     weather: l.weather,
+    transportMode: legModes.get(l.id) ?? staffMode,
     overriddenFields: l.overriddenFields,
   });
 

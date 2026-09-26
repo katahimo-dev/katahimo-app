@@ -26,9 +26,8 @@ import {
   refreshAttendanceAggregateResponseSchema,
   updateAttendanceDayRequestSchema,
   updateAttendanceDayResponseSchema,
-  XLSX_CONTENT_TYPE,
 } from '@katahimo/shared';
-import { type Context, Hono } from 'hono';
+import { Hono } from 'hono';
 import type { Container } from '../container';
 import {
   allStaffWorkbookSheets,
@@ -36,7 +35,7 @@ import {
   staffWorkbookSheets,
   yearMonthLabel,
 } from '../export/attendanceWorkbook';
-import { attachmentDisposition, safeFileName } from '../http/download';
+import { xlsxResponse } from '../http/download';
 import { enforceStaffQuota } from '../http/quota';
 import { jsonOk, parseJsonBody, parseQuery, rateLimited } from '../http/responses';
 import { actorOf, requireAdmin, requireSession, type SessionEnv, targetStaffIdOf } from '../session';
@@ -50,20 +49,6 @@ const EXPORT_RATE_LIMITED_MESSAGE =
  */
 const MAX_CONCURRENT_BULK_EXPORTS = 1;
 let bulkExportsInFlight = 0;
-
-/** .xlsx の応答(保存用。キャッシュさせない)。 */
-function xlsxResponse(
-  c: Context<SessionEnv>,
-  body: Buffer,
-  filename: string,
-  asciiFallback: string,
-): Response {
-  c.header('Content-Type', XLSX_CONTENT_TYPE);
-  c.header('Content-Disposition', attachmentDisposition(safeFileName(filename), asciiFallback));
-  c.header('Content-Length', String(body.byteLength));
-  c.header('Cache-Control', 'no-store');
-  return c.body(new Uint8Array(body));
-}
 
 /**
  * 出勤簿(過去の予定タブ)の API。GAS版 PastSchedule.js の各関数に対応する(doc/04_API仕様.md 2.5)。

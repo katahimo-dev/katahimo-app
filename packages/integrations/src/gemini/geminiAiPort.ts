@@ -138,47 +138,66 @@ export interface GeminiAiPortOptions {
 }
 
 /** GAS版GeminiReport.jsのAPI呼び出しロジックを実装するReportAiPort。GEMINI_API_KEYが設定されている場合に使う。 */
+/**
+ * 保育日報の応答のスキーマ。warnings / internal / customer は GAS版 generateReportWithWarnings の dailyReportSchema と
+ * 同じ(必須)。日報AIの3軸で足した psi / eduLevel / usedKeywords(お客様のプロンプト変更案の出力フォーマット)は
+ * 任意(キーワード表を使わないテナントでも同じスキーマで通る)。
+ */
+export const DAILY_REPORT_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    warnings: { type: 'ARRAY', items: { type: 'STRING' } },
+    internal: { type: 'STRING' },
+    customer: { type: 'STRING' },
+    psi: { type: 'INTEGER' },
+    eduLevel: { type: 'INTEGER' },
+    usedKeywords: { type: 'ARRAY', items: { type: 'STRING' } },
+  },
+  required: ['warnings', 'internal', 'customer'],
+} as const;
+
+/** 応答を日報の下書きにする(形が違う値は落とす。warnings・internal・customer は無ければ空)。 */
+function toDailyDraft(value: unknown): DailyReportDraft {
+  const v = (value ?? {}) as Record<string, unknown>;
+  const strings = (x: unknown) =>
+    Array.isArray(x) ? x.filter((s): s is string => typeof s === 'string') : [];
+  const draft: DailyReportDraft = {
+    warnings: strings(v.warnings),
+    internal: typeof v.internal === 'string' ? v.internal : '',
+    customer: typeof v.customer === 'string' ? v.customer : '',
+  };
+  if (Array.isArray(v.usedKeywords)) draft.usedKeywords = strings(v.usedKeywords);
+  if (typeof v.psi === 'number' && Number.isInteger(v.psi)) draft.psi = v.psi;
+  if (typeof v.eduLevel === 'number' && Number.isInteger(v.eduLevel)) draft.eduLevel = v.eduLevel;
+  return draft;
+}
+
 export class GeminiAiPort implements ReportAiPort {
   constructor(private readonly options: GeminiAiPortOptions) {}
 
+  get reportModel(): string {
+    return this.options.reportModel || DEFAULT_MODEL_REPORT;
+  }
+
   async generateDailyReport(input: GenerateDailyReportInput): Promise<DailyReportDraft> {
-    const timeInfo = input.start && input.end ? `${input.start}〜${input.end}` : '時間指定なし';
-    const prompt = input.promptTemplate
-      .replace('{anonymizedText}', input.text)
-      .replace('{timeInfo}', timeInfo);
-
-    const schema = {
-      type: 'OBJECT',
-      properties: {
-        warnings: { type: 'ARRAY', items: { type: 'STRING' } },
-        internal: { type: 'STRING' },
-        customer: { type: 'STRING' },
-      },
-      required: ['warnings', 'internal', 'customer'],
-    };
-
     const result = await callGemini(
       this.options.apiKey,
-      [{ text: prompt }],
-      { responseMimeType: 'application/json', responseSchema: schema },
-      this.options.reportModel || DEFAULT_MODEL_REPORT,
+      [{ text: input.prompt }],
+      { responseMimeType: 'application/json', responseSchema: DAILY_REPORT_RESPONSE_SCHEMA },
+      this.reportModel,
     );
 
     if (!result.ok) {
       const detail = result.rawError ? `${result.error}\n\n[詳細] ${result.rawError}` : result.error;
       return { warnings: ['API Error'], internal: detail, customer: '' };
     }
-    return result.value as DailyReportDraft;
+    return toDailyDraft(result.value);
   }
 
   async generateAccidentReport(
     input: GenerateAccidentReportInput,
   ): Promise<AccidentReportDraft | AccidentReportDraftError> {
-    const timeInfo =
-      input.start && input.end ? `${input.start}〜${input.end}` : input.start || '時間指定なし';
-    const prompt = input.promptTemplate
-      .replace('{anonymizedText}', input.text)
-      .replace('{timeInfo}', timeInfo);
+    const prompt = input.prompt;
 
     const schema = {
       type: 'OBJECT',
@@ -208,7 +227,7 @@ export class GeminiAiPort implements ReportAiPort {
       this.options.apiKey,
       [{ text: prompt }],
       { responseMimeType: 'application/json', responseSchema: schema },
-      this.options.reportModel || DEFAULT_MODEL_REPORT,
+      this.reportModel,
     );
 
     if (!result.ok) return { error: result.error };
@@ -246,6 +265,8 @@ export class GeminiAiPort implements ReportAiPort {
 
 /** GEMINI_API_KEY未設定時のフォールバック。GAS版のapiKey未設定時の挙動と同じ値を返す。 */
 export class NoopReportAiPort implements ReportAiPort {
+  readonly reportModel = null;
+
   async generateDailyReport(): Promise<DailyReportDraft> {
     return { warnings: ['API Key Missing'], internal: 'Error: API Key not set', customer: '' };
   }

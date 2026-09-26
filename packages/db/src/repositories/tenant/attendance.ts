@@ -55,6 +55,7 @@ const legColumns = {
   plannedMinutes: travelLegs.plannedMinutes,
   distanceKm: travelLegs.distanceKm,
   weather: travelLegs.weather,
+  transportMode: travelLegs.transportMode,
   overriddenFields: travelLegs.overriddenFields,
 };
 

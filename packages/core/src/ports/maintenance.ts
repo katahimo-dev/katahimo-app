@@ -17,6 +17,13 @@ export interface RetentionCutoffs {
   mailCodesExpiredAt: Date;
   /** 作成がこの日時より前のマッチングの候補。 */
   matchingCandidatesBefore: Date;
+  /** 日報に結び付いていない AI 生成の記録で、作成がこの日時より前のもの(保存されなかった下書き)。 */
+  aiGenerationsUnlinkedBefore: Date;
+  /**
+   * 日報に結び付いた AI 生成の記録は、その日報の保存期限(care_records.retain_until)がこの日('YYYY-MM-DD'。
+   * テナントのタイムゾーンの今日)より前なら消す(日報の保存期間に従う)。
+   */
+  aiGenerationsLinkedRetainUntilBefore: string;
 }
 
 /** テナントの中(RLS)で消す。消した件数を表ごとに返す。 */

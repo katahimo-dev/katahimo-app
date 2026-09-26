@@ -9,6 +9,7 @@ export * from './outbox';
 export * from './platform';
 export * from './push';
 export * from './records';
+export * from './reportAi';
 export * from './services';
 export * from './staff';
 export * from './tenancy';

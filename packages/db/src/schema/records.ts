@@ -7,7 +7,6 @@ import {
 } from '@katahimo/core/domain';
 import { sql } from 'drizzle-orm';
 import {
-  boolean,
   check,
   date,
   index,
@@ -61,10 +60,6 @@ export const careRecords = pgTable(
     esRating: smallint(),
     body: jsonb().$type<CareRecordContent>().notNull(),
     bodySchemaVer: smallint().notNull().default(1),
-    aiGenerated: boolean().notNull().default(false),
-    aiModel: text(),
-    aiPromptKey: text(),
-    aiPromptRevision: integer(),
     reviewedAt: timestamp({ withTimezone: true }),
     retainUntil: date(),
     rowVersion: rowVersion(),
