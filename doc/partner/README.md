@@ -37,14 +37,14 @@ python3 -c "import pymupdf; d=pymupdf.open('doc/partner/新アプリ切替のご
 | 3 いまの課題 | Apps Script の実行時間上限(1回6分、Google の公式の制限)、`doc/01_システム概要.md`(GAS版との関係)、GAS版 `CLAUDE.md` / `README.md`(IDの散在・LockService・`ANYONE_ANONYMOUS`) |
 | 4 全体図 | `doc/01_システム概要.md`(構成)、`doc/07_インフラ・運用.md` 1章(Cloud Run asia-northeast1 = 東京) |
 | 5〜7 画面 | `tools/gas-preview`(124場面、差分 0.05% 以下)、`packages/web/README.md`「GAS版と意図的に変えているところ」 |
-| 8〜11 良くなること | `doc/03_データベース設計.md`・`doc/06_セキュリティ設計.md`(RLS・暗号化・UoW・楽観ロック・月ロック・レート制限・パスワード再設定)、`doc/02_機能仕様.md`(領収書の重複・顧客CSVの20%の歯止め)、`packages/core/src/domain/pii/encryptionPurposes.ts`(暗号化する項目)、`doc/07_インフラ・運用.md`(監視・アラート) |
+| 8〜11 良くなること | `doc/03_データベース設計.md`・`doc/06_セキュリティ設計.md`(RLS・UoW・楽観ロック・月ロック・レート制限・パスワード再設定・監査ログ)、`doc/06_セキュリティ設計.md` 8章と `infra/gcp/kms.tf`(保存データの CMEK による暗号化・3省2ガイドライン)、`doc/02_機能仕様.md`(領収書の重複・顧客CSVの20%の歯止め)、`doc/07_インフラ・運用.md`(監視・アラート、3.8 CMEK の鍵) |
 | 12 将来 | `doc/10_マッチング拡張設計.md`(テーブルのみ。アプリは未作成) |
 | 13 変わること | `README.md`「GAS版のトリガー」(`gas-root-serach` の `main()` = LINE WORKS 通知は代替なし)、`MIRROR_TO_GOOGLE_SHEETS`(既定 off) |
 | 14〜15 移行・切替日 | `doc/09_移行計画.md` |
 | 16 戻し方 | `doc/07_インフラ・運用.md`(ロールバック: 直前のリビジョン、PITR 7日・自動バックアップ14世代)、`doc/09_移行計画.md`(切り戻し) |
 | 17 お願い | `doc/09_移行計画.md`(前提・切替前の準備)、`doc/07_インフラ・運用.md`(カレンダー・Drive の共有設定) |
 | 18 費用 | `doc/07_インフラ・運用.md` 10章(ドル建ての目安を 1ドル=150円で換算。Maps は `doc/05_バッチ・外部連携.md`)、予算アラート(`monitoring.tf`、既定 30,000円) |
-| 19〜20 よくある質問 | `doc/06_セキュリティ設計.md`・`doc/04_API仕様.md`(GAS版のパスワードハッシュは初回ログインで argon2id に移行) |
+| 19〜20 よくある質問 | `doc/06_セキュリティ設計.md`(8章 保存データの保護)・`doc/04_API仕様.md`(GAS版のパスワードハッシュは初回ログインで argon2id に移行) |
 | 21 次のステップ | `doc/09_移行計画.md`、`doc/07_インフラ・運用.md` |
 
 まだ済んでいないこと(本番の GCP 環境の構築、本番テナントと最初の管理者を作る手順、スタッフの自宅住所の登録、
