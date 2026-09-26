@@ -48,6 +48,8 @@ prs.slide_width = Inches(SW)
 prs.slide_height = Inches(SH)
 BLANK = prs.slide_layouts[6]
 page = 0
+# 後のスライドのページ番号(先のスライドから「(nページ)」で参照する。作り終えてから埋める)
+page_of = {}
 
 
 def _font(run, size, color=INK, bold=False):
@@ -63,6 +65,38 @@ def _font(run, size, color=INK, bold=False):
             el = rpr.makeelement(qn(tag), {})
             rpr.append(el)
         el.set("typeface", FONT)
+
+
+def jp_text(t):
+    """
+    スライドに出す文字。括弧は中の文字に合わせて全角・半角を選ぶ(開き括弧は次の文字、閉じ括弧は前の文字が日本語なら全角)。
+    LibreOffice の PDF は日本語と半角の文字の間に空きを入れるため、括弧と中の文字の間に空きが入らないようにする。
+    """
+    out = []
+    for i, c in enumerate(t):
+        if c == "(" and i + 1 < len(t) and not t[i + 1].isascii():
+            c = "（"
+        elif c == ")" and i > 0 and not t[i - 1].isascii():
+            c = "）"
+        out.append(c)
+    return "".join(out)
+
+
+def page_ref(key):
+    """後のスライドのページ番号の埋め込み先(fill_page_refs で埋める)。"""
+    return "{page:" + key + "}"
+
+
+def fill_page_refs():
+    for slide in prs.slides:
+        for shp in slide.shapes:
+            if not shp.has_text_frame:
+                continue
+            for para in shp.text_frame.paragraphs:
+                for r in para.runs:
+                    for key, n in page_of.items():
+                        r.text = r.text.replace(page_ref(key), str(n))
+                    assert "{page:" not in r.text, f"ページ番号を埋められません: {r.text}"
 
 
 def text(slide, x, y, w, h, paras, size=18, color=INK, bold=False, align=PP_ALIGN.LEFT,
@@ -85,7 +119,7 @@ def text(slide, x, y, w, h, paras, size=18, color=INK, bold=False, align=PP_ALIG
         runs = [(p, {})] if isinstance(p, str) else p
         for t, opt in runs:
             r = para.add_run()
-            r.text = t
+            r.text = jp_text(t)
             _font(r, opt.get("size", size), opt.get("color", color), opt.get("bold", bold))
     return tb
 
@@ -330,28 +364,29 @@ notes(s, "速さについては、スプレッドシートを毎回読み書き�
 s = new_slide("良くなること② データの安全", kicker="何が良くなるか")
 safe = [
     ("鍵", "データは保管場所ごと、このアプリ専用の鍵で暗号化",
-     "データベースとそのバックアップ、領収書の画像を丸ごと暗号化します(Google Cloudのディスク暗号化。"
+     "データベースとそのバックアップ、領収書の画像を丸ごと暗号化します(Google Cloudの保存データの暗号化。"
      "鍵はGoogle Cloudの鍵管理サービスで厳重に管理)。医療機関向けの国のガイドライン(3省2ガイドライン)でも一般的な保護の水準です"),
     ("分", "会社ごとにデータを分離", "仕組みの一番下で会社ごとに区切るので、他の会社のデータは見えず、触れません"),
-    ("人", "見られる人を制限", "スタッフが見て直せるのは自分の予定・出勤簿だけ。他の人の日報は上書きできません"),
-    ("記", "誰がいつ見たかを記録", "誰が・いつ・何を見たか、何をしたかを残します。日報を書き直しても、前の内容が履歴に残ります"),
+    ("人", "できることを役割で分ける", "スタッフが見て直せるのは自分の予定・出勤簿だけ。他の人の日報は上書きできません。管理の画面は管理者だけ"),
+    ("記", "開いた人・変えた内容を記録", "お客様の情報を誰がいつ開いたか、誰が何を変えたかを残します。日報を書き直しても、前の内容が履歴に残ります"),
     ("P", "ログインの回数を制限", "続けて間違えると一時的にロックします。パスワードも安全な方式で保存します"),
 ]
 for i, (ic, head, body) in enumerate(safe):
-    # 1枚目(暗号化)は3行の説明が入るよう横いっぱい・少し高く、残りの4枚は2列
+    # 1枚目(暗号化)は横いっぱい、残りの4枚は2列。どれも説明が3行まで入る高さ
     if i == 0:
-        x, y, w, h = 0.6, 1.5, 12.08, 1.85
+        x, y, w, h = 0.6, 1.5, 12.08, 1.68
     else:
         col, row = (i - 1) % 2, (i - 1) // 2
-        x, y, w, h = 0.6 + col * 6.13, 3.5 + row * 1.6, 5.95, 1.45
+        x, y, w, h = 0.6 + col * 6.13, 3.33 + row * 1.74, 5.95, 1.66
     card(s, x, y, w, h)
     badge(s, x + 0.25, y + (h - 0.8) / 2, 0.8, ic, size=24)
     text(s, x + 1.25, y + 0.12, w - 1.45, 0.5, head, size=20, color=DEEP, bold=True)
     text(s, x + 1.25, y + 0.62, w - 1.45, h - 0.7, body, size=16, line=1.2)
 notes(s, "お預かりするデータは、保管場所ごと、つまりデータベースとそのバックアップ、領収書の画像を丸ごと、このアプリ専用の鍵で暗号化します。"
-         "Google Cloud のディスク暗号化の仕組みで、鍵は Google Cloud の鍵管理サービスで厳重に管理します。"
+         "Google Cloud の保存データの暗号化の仕組みで、鍵は Google Cloud の鍵管理サービスで厳重に管理します。"
          "医療機関向けの国のガイドライン(3省2ガイドライン)でも一般的な保護の水準ですので、ご安心ください。"
-         "加えて、会社ごとのデータの分離、見られる人の制限、誰がいつ見たかの記録、ログインの回数の制限で守ります。"
+         "ガイドラインの認証を受けたという意味ではありません。"
+         "加えて、会社ごとのデータの分離、役割ごとにできることの制限、お客様の情報を誰がいつ開いたかの記録、ログインの回数の制限で守ります。"
          "パスワードの再設定は今と同じく、メールで届く6桁の番号(30分有効)で行います。")
 
 # 10. 正確さ
@@ -430,7 +465,7 @@ diff = [
     "アプリのURL(ホーム画面に追加し直します)",
     "記録の正本はデータベースに(今はシート)",
     "シートへの書き写しは必要な間だけ(選べます)",
-    "毎月のクラウド利用料がかかります(15ページ)",
+    f"毎月のクラウド利用料がかかります({page_ref('cost')}ページ)",
     "LINE WORKSの翌日道順の通知は無し",
 ]
 for i, (head, items, fill, hc) in enumerate((("変わらないこと", same, TINT, DEEP), ("変わること", diff, WHITE, TEAL))):
@@ -529,6 +564,7 @@ notes(s, "カレンダーと顧客CSVのフォルダは、新しいアプリ専�
 
 # 18. 費用
 s = new_slide("費用の目安(毎月のクラウド利用料)", kicker="費用")
+page_of["cost"] = page
 card(s, 0.6, 1.5, 5.0, 4.6, fill=DEEP)
 text(s, 0.9, 1.75, 4.4, 0.5, "月額の目安", size=20, color=RGBColor(0xCF, 0xEB, 0xE8), bold=True)
 text(s, 0.9, 2.35, 4.4, 1.2, [[("約", {"size": 24}), ("1.1万〜1.6万", {"size": 38}), ("円", {"size": 24})]], size=38, color=WHITE, bold=True)
@@ -566,7 +602,7 @@ faq1 = [
 ]
 faq2 = [
     ("お子様やご家族の情報は安全ですか?",
-     "データは保管場所(データベースとそのバックアップ、領収書の画像)ごと、このアプリ専用の鍵で暗号化します。"
+     "データベースとそのバックアップ、領収書の画像を、このアプリ専用の鍵で保管場所ごと暗号化します。"
      "医療機関向けの国のガイドラインでも一般的な保護の水準です。"),
     ("今までのデータは消えませんか?",
      "消えません。スタッフ・お客様・今月の出勤簿を取り込んでから切り替えます。今のスプレッドシートも消さずに残します。"),
@@ -592,7 +628,7 @@ for part, faq in ((1, faq1), (2, faq2)):
             text(s, 1.7, y + 0.18, 10.8, 0.62, q, size=21, color=DEEP, bold=True, anchor=MSO_ANCHOR.MIDDLE)
             text(s, 1.7, y + 0.78, 10.8, 0.78, a, size=17, line=1.2)
     notes(s, "ご質問の答えは、新しいアプリの今の作り(2026年9月時点)に合わせています。"
-             + ("個人情報は、保管場所ごとの暗号化に加えて、会社ごとの分離・見られる人の制限・誰がいつ見たかの記録・ログインの回数の制限で守ります。"
+             + ("個人情報は、保管場所ごとの暗号化に加えて、会社ごとの分離・役割ごとにできることの制限・お客様の情報を誰がいつ開いたかの記録・ログインの回数の制限で守ります。"
                 if part == 2 else ""))
 
 # 21. 今後の予定
@@ -622,5 +658,6 @@ text(s, 0.6, 6.45, 12.1, 0.45, paras, size=16, color=WHITE)
 notes(s, "本番の環境の設定ファイルはできていますが、実際のGoogle Cloudでの構築と確認はこれからです。切替日の前に済ませます。")
 
 assert page == TOTAL, f"TOTAL({TOTAL}) とスライド数({page})が違います"
+fill_page_refs()
 prs.save(OUT)
 print(f"保存しました: {OUT}({page}枚)")
