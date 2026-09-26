@@ -137,15 +137,25 @@ export function StaffAdminPanel() {
           ＋ 登録
         </button>
       </div>
-      <label className="flex items-center gap-2 min-h-11 text-base text-gray-800">
-        <input
-          type="checkbox"
-          checked={showRetired}
-          onChange={(e) => setShowRetired(e.target.checked)}
-          className="w-5 h-5"
-        />
-        退職者も表示する{retiredCount > 0 ? `（${retiredCount}人）` : ''}
-      </label>
+      <div className="flex items-center justify-between gap-2">
+        <label className="flex items-center gap-2 min-h-11 text-base text-gray-800">
+          <input
+            type="checkbox"
+            checked={showRetired}
+            onChange={(e) => setShowRetired(e.target.checked)}
+            className="w-5 h-5"
+          />
+          退職者も表示する{retiredCount > 0 ? `（${retiredCount}人）` : ''}
+        </label>
+        <button
+          type="button"
+          onClick={() => void list.refetch()}
+          disabled={list.isFetching}
+          className="shrink-0 min-h-11 px-3 text-sm font-bold text-gray-800 bg-gray-200 rounded-xl"
+        >
+          🔄 読み込み直す
+        </button>
+      </div>
 
       {list.isPending ? (
         <Loading />

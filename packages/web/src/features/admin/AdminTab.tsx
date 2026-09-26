@@ -40,12 +40,21 @@ export function AdminTab() {
     tabRefs.current[next]?.focus();
   };
 
-  // 矢印キーでタブを移る(WAI-ARIA のタブの操作)
+  // 矢印キー・Home・End でタブを移る(WAI-ARIA のタブの操作)
   const onKeyDown = (event: KeyboardEvent, index: number) => {
-    const delta = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
-    if (!delta) return;
+    const target =
+      event.key === 'ArrowRight'
+        ? (index + 1) % SECTIONS.length
+        : event.key === 'ArrowLeft'
+          ? (index - 1 + SECTIONS.length) % SECTIONS.length
+          : event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? SECTIONS.length - 1
+              : null;
+    if (target === null) return;
     event.preventDefault();
-    const next = SECTIONS[(index + delta + SECTIONS.length) % SECTIONS.length];
+    const next = SECTIONS[target];
     if (next) void switchTo(next.key);
   };
 
@@ -65,7 +74,7 @@ export function AdminTab() {
               role="tab"
               id={`adminTab-${s.key}`}
               aria-selected={selected}
-              aria-controls={`adminPanel-${s.key}`}
+              aria-controls={selected ? `adminPanel-${s.key}` : undefined}
               tabIndex={selected ? 0 : -1}
               onClick={() => void switchTo(s.key)}
               onKeyDown={(e) => onKeyDown(e, index)}

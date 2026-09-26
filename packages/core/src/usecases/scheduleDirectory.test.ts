@@ -81,6 +81,16 @@ describe('createScheduleDirectory', () => {
     ]);
   });
 
+  it('テナントのカレンダーの設定(共有カレンダー・許可)も一緒に読む', async () => {
+    const { ctx } = await setup();
+    const settings = {
+      sharedCalendars: [{ calendarId: 'reserva@group.calendar.google.com' }],
+      allowedStaffCalendars: ['@cutest.co.jp'],
+    };
+    ctx.db.calendarSettings.set(ctx.tenantId, settings);
+    expect((await createScheduleDirectory(ctx.deps).load(ctx.tenantId)).calendarSettings).toEqual(settings);
+  });
+
   it('キャッシュは顧客データの版数ごと。取込で版数が上がれば読み直す。同時の読み込みは1回にまとめる', async () => {
     const { ctx } = await setup();
     const cache = new MapCache();

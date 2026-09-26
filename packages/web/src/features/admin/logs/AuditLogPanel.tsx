@@ -96,7 +96,9 @@ export function AuditLogPanel() {
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
-          setApplied(form);
+          // 同じ条件でもう一度押したら読み直す(新しい記録を見るため)
+          if (JSON.stringify(form) === JSON.stringify(applied)) void logs.refetch();
+          else setApplied(form);
         }}
         className="bg-gray-50 p-3 rounded-2xl space-y-3"
       >
@@ -187,15 +189,26 @@ export function AuditLogPanel() {
           >
             絞り込む
           </button>
-          <a
-            href={auditLogsApi.csvUrl(applied)}
-            download
-            className="flex-1 min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl text-center"
-          >
-            ⬇ CSVで保存
-          </a>
+          {logs.isError ? (
+            // 条件が誤っている(期間が長すぎる等)間は保存できない(CSV の代わりに誤りの JSON が届くため)
+            <button
+              type="button"
+              disabled
+              className="flex-1 min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl opacity-50"
+            >
+              ⬇ CSVで保存
+            </button>
+          ) : (
+            <a
+              href={auditLogsApi.csvUrl(applied)}
+              download
+              className="flex-1 min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl text-center"
+            >
+              ⬇ CSVで保存
+            </a>
+          )}
         </div>
-        <p className="text-sm text-gray-600">期間は93日まで指定できます。CSVは今の条件の全件です。</p>
+        <p className="text-sm text-gray-600">期間は93日まで指定できます。CSVは絞り込んだ条件の全件です。</p>
       </form>
 
       {logs.isPending ? (
