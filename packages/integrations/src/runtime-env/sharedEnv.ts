@@ -68,6 +68,7 @@ export const sharedEnvShape = {
   // 顧客CSV(RESERVA「Kokyaku_YYYYMMDDHHmm_N.csv」)の取込元。Drive のフォルダはテナントごとに
   // platform.tenants.customer_import_settings(運用担当者の `pnpm tenant:customer-source`)に持つ。
   // CUSTOMER_CSV_LOCAL_DIR はローカル開発用: その設定の無いテナントは <dir>/<テナントslug>/ に置いた CSV を読む。
+  // 本番(NODE_ENV=production)では起動を止める(Cloud Run のディスクの CSV を取り込ませない。sharedEnvProblems)。
   CUSTOMER_CSV_LOCAL_DIR: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // Web Push(翌日の予定のお知らせ)の VAPID の公開鍵。API は画面に渡し、ワーカーは秘密鍵と組にして署名する。
@@ -85,6 +86,12 @@ export function sharedEnvProblems(env: SharedEnv): string[] {
     ...storageEnvProblems(env, isProduction),
     ...scheduleEnvProblems(env, isProduction),
     ...gasBridgeEnvProblems(env),
+    ...(isProduction && env.CUSTOMER_CSV_LOCAL_DIR
+      ? [
+          '  - CUSTOMER_CSV_LOCAL_DIR: ローカル開発用です。本番では設定しないでください(顧客CSVの取込元はテナントごとの' +
+            ' Drive のフォルダ。`pnpm tenant:customer-source`)',
+        ]
+      : []),
   ];
 }
 
