@@ -299,11 +299,17 @@ async function enqueuePsiAlerts(
   let count = 0;
   for (const admin of admins) {
     const subscriptions = await r.pushSubscriptions.listForStaff(admin.id);
-    await enqueueForSubscriptions(r, 'push.psi_alert', subscriptions, `${saved.id}:${saved.riskRating}`, {
-      notice,
-      expiresAt: new Date(now.getTime() + PSI_ALERT_VALID_MS).toISOString(),
-      topic: psiAlertTopic(saved.id),
-    });
+    await enqueueForSubscriptions(
+      r,
+      'push.psi_alert',
+      subscriptions,
+      `${saved.id}:${saved.riskRating}:${saved.rowVersion}`,
+      {
+        notice,
+        expiresAt: new Date(now.getTime() + PSI_ALERT_VALID_MS).toISOString(),
+        topic: psiAlertTopic(saved.id),
+      },
+    );
     count += subscriptions.length;
   }
   return count;

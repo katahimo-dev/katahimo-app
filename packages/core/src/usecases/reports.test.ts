@@ -345,8 +345,8 @@ describe('保育日報・事故報告', () => {
       expect(saved.psiAlert).toBe(true);
       const pushes = ctx.data().outbox.filter((m) => m.topic === 'push.psi_alert');
       expect(pushes.map((m) => m.dedupeKey).sort()).toEqual([
-        `push.psi_alert:00000000-0000-7000-8000-00000000f001:${saved.id}:1`,
-        `push.psi_alert:00000000-0000-7000-8000-00000000f002:${saved.id}:1`,
+        `push.psi_alert:00000000-0000-7000-8000-00000000f001:${saved.id}:1:${saved.rowVersion}`,
+        `push.psi_alert:00000000-0000-7000-8000-00000000f002:${saved.id}:1:${saved.rowVersion}`,
       ]);
       expect(pushes[0]?.payload).toMatchObject({
         staffId: admin.staffId,
@@ -375,7 +375,7 @@ describe('保育日報・事故報告', () => {
           .data()
           .outbox.filter((m) => m.topic === 'push.psi_alert')
           .map((m) => m.dedupeKey)
-          .filter((k) => k.endsWith(`:${saved.id}:2`)),
+          .filter((k) => k.endsWith(`:${saved.id}:2:${changed.rowVersion}`)),
       ).toHaveLength(2);
       const calm = await saveDailyReport(ctx.deps, staff, daily({ reportId: saved.id, riskRating: 3 }));
       expect(calm.psiAlert).toBe(false);
