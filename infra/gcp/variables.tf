@@ -127,7 +127,7 @@ variable "optional_secrets" {
   description = <<-EOT
     値を登録して Cloud Run に渡す任意のシークレット(secrets.tf の名前)。Cloud Run はバージョンの無い
     シークレットを参照すると起動できないため、値を登録したものだけをここに列挙する。
-    database-url / migration-database-url / session-secret / blind-index-key は常に必須。
+    database-url / worker-database-url / migration-database-url / session-secret は常に必須。
   EOT
   type        = set(string)
   default     = ["smtp-pass", "google-maps-api-key", "gemini-api-key", "legacy-auth-salt"]

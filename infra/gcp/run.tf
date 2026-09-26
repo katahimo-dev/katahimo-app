@@ -11,8 +11,6 @@ locals {
   # API・ワーカー・夜間ジョブ共通(packages/api/src/env.ts / packages/worker/src/env.ts)。空の値は渡さない。
   common_env = { for k, v in {
     NODE_ENV                   = "production"
-    KMS_PROVIDER               = "gcp"
-    GCP_KMS_KEY_NAME           = google_kms_crypto_key.tenant_kek.id
     STORAGE_PROVIDER           = "gcs"
     GCS_BUCKET                 = google_storage_bucket.receipts.name
     SCHEDULE_PROVIDER          = var.schedule_provider
@@ -23,6 +21,8 @@ locals {
 
   api_env = merge(local.common_env, { for k, v in {
     DB_POOL_MAX             = tostring(var.api_db_pool_max)
+    SECRET_BOX_PROVIDER     = "gcp"
+    SECRET_BOX_KMS_KEY      = google_kms_crypto_key.tenant_secrets.id
     MIRROR_TO_GOOGLE_SHEETS = tostring(var.mirror_to_google_sheets)
     GEMINI_MODEL_REPORT     = var.gemini_models.report
     GEMINI_MODEL_OCR        = var.gemini_models.ocr
@@ -40,9 +40,8 @@ locals {
   # 環境変数名 = シークレット名(secrets.tf)。optional のものは var.optional_secrets にあるときだけ渡す。
   api_secret_env = merge(
     {
-      DATABASE_URL           = "database-url"
-      SESSION_SECRET         = "session-secret"
-      BLIND_INDEX_MASTER_KEY = "blind-index-key"
+      DATABASE_URL   = "database-url"
+      SESSION_SECRET = "session-secret"
     },
     { for k, v in {
       GOOGLE_MAPS_API_KEY = "google-maps-api-key"
