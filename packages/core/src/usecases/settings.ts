@@ -164,7 +164,11 @@ type SecretInput = { kind: 'unchanged' } | { kind: 'new'; value: string } | { ki
  * 書き換えた値(伏せ字の文字を含むが今の伏せ字と違う)は、意図した値にならないため拒否する。
  * 今の値が開けないときは伏せ字が空文字なので、伏せ字を含まない値だけが新しい値になる。
  */
-function resolveSecretInput(input: string | undefined, current: StoredSecret, mask: (value: string) => string): SecretInput {
+function resolveSecretInput(
+  input: string | undefined,
+  current: StoredSecret,
+  mask: (value: string) => string,
+): SecretInput {
   if (input === undefined) return { kind: 'unchanged' };
   const trimmed = input.trim();
   const currentMasked = mask(usableSecretValue(current));
