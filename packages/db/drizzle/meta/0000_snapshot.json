@@ -6609,6 +6609,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "dedupe_primary": {
+          "name": "dedupe_primary",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "cancelled_at": {
           "name": "cancelled_at",
           "type": "timestamp with time zone",
@@ -6660,6 +6667,28 @@
             }
           ],
           "isUnique": true,
+          "where": "dedupe_primary and cancelled_at is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "receipts_tenant_id_dedupe_hash_idx": {
+          "name": "receipts_tenant_id_dedupe_hash_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "dedupe_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
           "where": "dedupe_hash is not null and cancelled_at is null",
           "concurrently": false,
           "method": "btree",
@@ -6879,6 +6908,10 @@
         "receipts_amount_yen_check": {
           "name": "receipts_amount_yen_check",
           "value": "\"receipts\".\"amount_yen\" >= 0"
+        },
+        "receipts_dedupe_primary_check": {
+          "name": "receipts_dedupe_primary_check",
+          "value": "not \"receipts\".\"dedupe_primary\" or \"receipts\".\"dedupe_hash\" is not null"
         },
         "receipts_cancel_check": {
           "name": "receipts_cancel_check",

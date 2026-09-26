@@ -185,9 +185,11 @@ export const receiptUploads = pgTable(
 ).enableRLS();
 
 /**
- * 領収書1枚。金額は整数(円)。重複の判定は dedupe_hash(スタッフ・顧客・日時・金額・店名を正規化した
- * キーの SHA-256。core/domain/reports/receiptDedupe.ts)の部分UNIQUE で、INSERT … ON CONFLICT DO NOTHING が
- * 同時の登録でも原子的に重複を弾く。取消済みの行は UNIQUE の対象外(同じ領収書を登録し直せる)。
+ * 領収書1枚。金額は整数(円)。重複の判定のキー(スタッフ・顧客・日時・金額・店名を正規化したキーの SHA-256。
+ * core/domain/reports/receiptDedupe.ts)を dedupe_hash に持つ。同じ登録の中の同じ内容(往復の運賃等)は全て登録する
+ * ため、同じキーの取消していない行のうち1行だけが代表(dedupe_primary)になり、代表の部分UNIQUE と
+ * INSERT … ON CONFLICT DO NOTHING が同時の登録でも原子的に重複を弾く。取消済みの行は UNIQUE の対象外(同じ領収書を
+ * 登録し直せる)。代表を取消したら、同じキーの取消していない行の1つに代表を移す(同じトランザクション)。
  *
  * 会計の記録なので行は消さない(アプリのロールに DELETE の権限は無い)。間違えた登録は取消(cancelled_at・
  * cancelled_by・cancel_reason を入れる論理削除)にして一覧に残し、合計・CSV・Excel からは除く。登録後に
@@ -211,7 +213,13 @@ export const receipts = pgTable(
      * お客様には請求しない。登録のときに決め、後から変えない(直すときは取消して登録し直す)。
      */
     companyPaid: boolean().notNull().default(false),
+    /** 重複の判定のキーの SHA-256(金額か店名が無い領収書は null。同じ内容の行は全て同じ値)。 */
     dedupeHash: bytea(),
+    /**
+     * 同じ dedupe_hash の取消していない行の代表(部分UNIQUE の対象)。登録のときは束の最初の1枚、代表を取消したら
+     * 残りの1行に移る。
+     */
+    dedupePrimary: boolean().notNull().default(false),
     /** 取消の日時(取消済みの行は合計・CSV・Excel・重複の判定から除く)。null は有効な領収書。 */
     cancelledAt: timestamp({ withTimezone: true }),
     /** 取消したスタッフ(本人、または管理者・コーディネーター)。 */
@@ -230,6 +238,10 @@ export const receipts = pgTable(
     tenantRef('receipts', 'cancelled_by', t, t.cancelledBy, staff),
     uniqueIndex('receipts_tenant_id_dedupe_hash_key')
       .on(t.tenantId, t.dedupeHash)
+      .where(sql`dedupe_primary and cancelled_at is null`),
+    // 代表を取消したときに、同じキーの残りの行を探す
+    index('receipts_tenant_id_dedupe_hash_idx')
+      .on(t.tenantId, t.dedupeHash)
       .where(sql`dedupe_hash is not null and cancelled_at is null`),
     index('receipts_tenant_id_staff_id_receipted_at_idx').on(t.tenantId, t.staffId, t.receiptedAt),
     // テナント全体の領収書の一覧(月の範囲・新しい順・keyset(receipted_at, id))
@@ -241,6 +253,8 @@ export const receipts = pgTable(
     index('receipts_tenant_id_upload_id_idx').on(t.tenantId, t.uploadId),
     index('receipts_tenant_id_file_id_idx').on(t.tenantId, t.fileId),
     check('receipts_amount_yen_check', sql`${t.amountYen} >= 0`),
+    // 代表はキーのある行だけ
+    check('receipts_dedupe_primary_check', sql`not ${t.dedupePrimary} or ${t.dedupeHash} is not null`),
     // 取消の列は揃って入る(理由は任意)。有効な行に取消の理由・取消した人だけが残ることはない
     check(
       'receipts_cancel_check',

@@ -503,6 +503,7 @@ describe('並行性', () => {
           storeName: null,
           companyPaid: false,
           dedupeHash,
+          dedupePrimary: true,
         });
       });
     const results = await Promise.all(Array.from({ length: 6 }, attempt));

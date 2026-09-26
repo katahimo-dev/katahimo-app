@@ -66,6 +66,18 @@ async function readCatalog(schema: string, name: string): Promise<TableCatalog> 
     where table_schema = ${schema} and table_name = ${name}
       and grantee in ('katahimo_app', 'katahimo_worker', 'katahimo_readonly')
     group by grantee`;
+  // 列ごとの権限(GRANT UPDATE (列, …) ON …)。表の権限とは別に pg_attribute.attacl にある
+  const columnGrants = await sql<{ grantee: string; privilege: string; columns: string[] }[]>`
+    select g.grantee::regrole::text as grantee, g.privilege_type as privilege,
+           array_agg(a.attname::text order by a.attnum) as columns
+    from pg_attribute a cross join lateral aclexplode(a.attacl) g
+    where a.attrelid = ${table.oid} and a.attnum > 0 and not a.attisdropped
+      and g.grantee::regrole::text in ('katahimo_app', 'katahimo_worker', 'katahimo_readonly')
+    group by 1, 2 order by 1, 2`;
+  const columnGrantsOf: TableCatalog['columnGrants'] = {};
+  for (const g of columnGrants) {
+    columnGrantsOf[g.grantee] = { ...columnGrantsOf[g.grantee], [g.privilege]: g.columns };
+  }
   return {
     schema,
     name,
@@ -77,6 +89,7 @@ async function readCatalog(schema: string, name: string): Promise<TableCatalog> 
     triggers: triggers.map((t) => t.name),
     policies: policies.map((p) => p.name),
     grants: Object.fromEntries(grants.map((g) => [g.grantee, g.privileges])),
+    columnGrants: columnGrantsOf,
   };
 }
 
@@ -103,7 +116,7 @@ async function main() {
     '- 目的: 全テーブルの列・型・NULL・既定値・制約・索引・トリガー・RLS・アプリ/ワーカーの権限を一覧にする。',
     '- 対象読者: DB を変更・レビューする開発者、運用者。設計の考え方は [03_データベース設計.md](03_データベース設計.md)。',
     '- 省略: 全テーブル共通の `tenant_id → platform.tenants(id) ON DELETE CASCADE` の FK。権限の app は `katahimo_app`(API)、',
-    '  worker は `katahimo_worker`。`katahimo_readonly` にはどの表の権限も無い。',
+    '  worker は `katahimo_worker`。`katahimo_readonly` にはどの表の権限も無い。`UPDATE(列, …)` は列ごとの権限(その列だけ変えられる)。',
     `- テーブル数: ${count}(\`app_logs\` の月のパーティションは除く)。`,
     '',
   ].join('\n');

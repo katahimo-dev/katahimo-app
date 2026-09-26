@@ -150,25 +150,31 @@ export interface ReceiptCancelContext {
   timeZone: string;
   /** 今日(テナントのタイムゾーンの暦日)。 */
   today: string;
-  /** 今日の月の出勤簿が締め済みのスタッフ。 */
+  /** 判定する領収書の月('YYYY-MM')。一覧は選んだ月、取消はその領収書の月。 */
+  yearMonth: string;
+  /** その月の出勤簿が締め済みのスタッフ。 */
   lockedStaffIds: ReadonlySet<string>;
 }
 
-/** 今日の月の締め済みのスタッフを読み、取消の可否の判定に使う文脈を作る(UoW の中で呼ぶ)。 */
+/**
+ * 判定する領収書の月(yearMonth)の締め済みのスタッフを読み、取消の可否の判定に使う文脈を作る(UoW の中で呼ぶ)。
+ * 管理者は前の月の領収書も締めるまでは取消せるため、今日の月ではなく領収書の月の締めを読む。
+ */
 export async function loadReceiptCancelContext(
   r: TenantRepositories,
   deps: Clock,
   actor: Actor,
   timeZone: string,
+  yearMonth: string,
 ): Promise<ReceiptCancelContext> {
   const today = zonedBusinessDate(currentTime(deps), timeZone);
-  const lockedStaffIds = new Set(await r.attendance.listLockedStaffIds(yearMonthOf(today)));
-  return { actor, timeZone, today, lockedStaffIds };
+  const lockedStaffIds = new Set(await r.attendance.listLockedStaffIds(yearMonth));
+  return { actor, timeZone, today, yearMonth, lockedStaffIds };
 }
 
 /**
  * 領収書を取消せない理由(取消せるなら null)。他人の領収書(一般スタッフ)・取消済み・期間の外
- * (domain/reports/receiptCancel.ts)・出勤簿の締め済みの月は取消せない。
+ * (domain/reports/receiptCancel.ts)・領収書の月のそのスタッフの出勤簿が締め済みなら取消せない。
  */
 export function receiptCancelBlock(
   row: Pick<ReceiptListRow, 'staffId' | 'receiptedAt' | 'cancelledAt'>,
@@ -176,13 +182,13 @@ export function receiptCancelBlock(
 ): ReceiptCancelRefusal | 'period_locked' | 'already_cancelled' | 'forbidden' | null {
   if (row.staffId !== ctx.actor.staffId && !canActForOthers(ctx.actor.role)) return 'forbidden';
   if (row.cancelledAt !== null) return 'already_cancelled';
-  const refusal = receiptCancelRefusal({
-    receiptDate: zonedBusinessDate(row.receiptedAt, ctx.timeZone),
-    today: ctx.today,
-    role: ctx.actor.role,
-  });
+  const receiptDate = zonedBusinessDate(row.receiptedAt, ctx.timeZone);
+  const refusal = receiptCancelRefusal({ receiptDate, today: ctx.today, role: ctx.actor.role });
   if (refusal) return refusal;
-  // 期間の中なら領収書の月は今日の月(締め済みのスタッフの一覧と同じ月)
+  if (yearMonthOf(receiptDate) !== ctx.yearMonth) {
+    // 締めの一覧は ctx.yearMonth の分だけ(別の月の領収書を判定するのは呼び出し側の誤り)
+    throw new Error(`領収書の月 ${yearMonthOf(receiptDate)} は取消の判定の月 ${ctx.yearMonth} と違います`);
+  }
   if (ctx.lockedStaffIds.has(row.staffId)) return 'period_locked';
   return null;
 }
@@ -276,7 +282,7 @@ export async function listReceipts(
     const [rows, summary, cancelContext] = await Promise.all([
       r.receipts.list({ ...resolved.filter, includeCancelled: true }, after, criteria.limit + 1),
       r.receipts.summarize(resolved.filter),
-      loadReceiptCancelContext(r, deps, actor, resolved.timeZone),
+      loadReceiptCancelContext(r, deps, actor, resolved.timeZone, criteria.yearMonth),
     ]);
     return { resolved, rows, summary, cancelContext };
   });

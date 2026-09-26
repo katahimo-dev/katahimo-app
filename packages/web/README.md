@@ -160,8 +160,8 @@ src/
   管理者・コーディネーター以外は `undefined`(= 本人。サーバーも一般スタッフの staffId は無視する)。
 - **顧客データのクエリ**は `queryKeys.customers.all` で始まるキーにする(新しい顧客CSVが取り込まれたとき、版数の監視が
   まとめて読み直すため)。領収書の一覧のクエリは `queryKeys.receipts.all` で始まるキーにする(日報の画面の `useReceipts` が
-  領収書を送れたら、領収書の一覧の「取消」が取消せたら読み直す。取消は今月のまとめの合計も変えるので `useAttendanceInvalidation().reloadMonths()`
-  も呼ぶ)。
+  領収書を送れたら、領収書の一覧の「取消」が取消せたら・断られた(409・400)ら読み直す。取消は今月のまとめの合計も変えるので
+  `useAttendanceInvalidation().reloadMonths()` も呼ぶ)。
 - **localStorage**: キーは `src/lib/storage.ts` の `STORAGE_KEYS` に足してから使う。GAS版と同じ意味の値はGAS版と同じキー名。
   使う人の値(書きかけ・前回値など)は `USER_SCOPED_KEYS` に足し、`userStorageKey(key, storageScope)` のキーで読み書きする。
 - **日付**: 業務日は端末の時刻帯に関係なく JST の `'YYYY-MM-DD'`(契約の `businessDateSchema`)。「今日」「いまの時刻」は
@@ -199,7 +199,8 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
 - 人ごとに分ける前の(キー名だけの)値は、誰のものか分からないのでログインしたときに消す。
 - 領収書の重複チェック用のキー(`GAS_RECEIPT_KEYS_V1_<スタッフ名>`)はスタッフごとに分かれており、同じ領収書を二重に
   送らないためのものなので消さない。領収書の一覧で取消した領収書の印だけは、その端末から消す(`features/report/model/receiptDedup.ts`
-  の `forgetSentReceipt`。取消して送り直すときに「前に送ってあります」で止めないように)。
+  の `forgetSentReceipt`。取消して送り直すときに「前に送ってあります」で止めないように)。印は送った人(ログインしている人)の名前で
+  残るので、消すのはログインしている人の領収書(`item.staffId === user.staffId`)を取消したときだけ。
 
 ### z-index(GAS版と同じ)
 

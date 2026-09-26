@@ -7,6 +7,8 @@ import {
   notFound,
   RECEIPT_CANCEL_REFUSAL_MESSAGES,
   STALE_WRITE_MESSAGE,
+  yearMonthOf,
+  zonedBusinessDate,
 } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
 import type { NotifierPort } from '../ports/notifier';
@@ -43,8 +45,9 @@ const ALREADY_CANCELLED_MESSAGE = 'この領収書はもう取消されていま
  * 合計・CSV・Excel・重複の判定から除く。直すときは取消して登録し直す(編集はしない)。
  *
  * - 本人の領収書は本人が、他のスタッフの領収書は管理者・コーディネーターが取消せる(一般スタッフは 403 + WARN)。
- * - 取消せる期間は domain/reports/receiptCancel.ts(管理者は今月の分ならいつでも、他はその日+2日までで月の
- *   最終日を除く)。期間の外・締め済みの月は 400 locked + WARN `receipt.cancel_refused`。
+ * - 取消せる期間は domain/reports/receiptCancel.ts(管理者は今月・前の月以前の分ならいつでも、他はその日+2日
+ *   までで同じ月・月の最終日を除く)。期間の外・領収書の月の出勤簿が締め済みなら 400 locked + WARN
+ *   `receipt.cancel_refused`。
  * - 取消済みは 409(already_cancelled)、版が違えば 409(stale_row_version)。
  * - 取消したら INFO `receipt.cancelled` を残し、領収書の通知先(Google Chat)へ知らせる。スプレッドシートへの
  *   ミラーには送らない(ミラーは登録だけを写す。doc/05 §9)。
@@ -61,7 +64,13 @@ export async function cancelReceipt(
       const row = await r.receipts.findListRow(input.receiptId);
       if (!row) throw notFound('領収書が見つかりません。');
       const timeZone = (await r.tenant()).timezone;
-      const context = await loadReceiptCancelContext(r, deps, actor, timeZone);
+      const context = await loadReceiptCancelContext(
+        r,
+        deps,
+        actor,
+        timeZone,
+        yearMonthOf(zonedBusinessDate(row.receiptedAt, timeZone)),
+      );
       const block = receiptCancelBlock(row, context);
       // 断った記録は UoW の外で書く(ロールバックで消えないように)
       if (block === 'forbidden') return { kind: 'forbidden' as const, row };

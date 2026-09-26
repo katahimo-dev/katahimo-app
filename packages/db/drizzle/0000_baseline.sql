@@ -757,6 +757,7 @@ CREATE TABLE "receipts" (
 	"store_name" text,
 	"company_paid" boolean DEFAULT false NOT NULL,
 	"dedupe_hash" "bytea",
+	"dedupe_primary" boolean DEFAULT false NOT NULL,
 	"cancelled_at" timestamp with time zone,
 	"cancelled_by" uuid,
 	"cancel_reason" text,
@@ -764,6 +765,7 @@ CREATE TABLE "receipts" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "receipts_pkey" PRIMARY KEY("tenant_id","id"),
 	CONSTRAINT "receipts_amount_yen_check" CHECK ("receipts"."amount_yen" >= 0),
+	CONSTRAINT "receipts_dedupe_primary_check" CHECK (not "receipts"."dedupe_primary" or "receipts"."dedupe_hash" is not null),
 	CONSTRAINT "receipts_cancel_check" CHECK (("receipts"."cancelled_at" is null and "receipts"."cancelled_by" is null and "receipts"."cancel_reason" is null) or ("receipts"."cancelled_at" is not null and "receipts"."cancelled_by" is not null)),
 	CONSTRAINT "receipts_cancel_reason_check" CHECK (char_length("receipts"."cancel_reason") <= 100 and "receipts"."cancel_reason" !~ '[[:cntrl:]]')
 );
@@ -1222,7 +1224,8 @@ CREATE INDEX "care_records_tenant_id_customer_id_occurred_at_id_idx" ON "care_re
 CREATE INDEX "care_records_tenant_id_occurred_at_id_idx" ON "care_records" USING btree ("tenant_id","occurred_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_author_staff_id_occurred_at_idx" ON "care_records" USING btree ("tenant_id","author_staff_id","occurred_at" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_visit_id_idx" ON "care_records" USING btree ("tenant_id","visit_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "receipts_tenant_id_dedupe_hash_key" ON "receipts" USING btree ("tenant_id","dedupe_hash") WHERE dedupe_hash is not null and cancelled_at is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "receipts_tenant_id_dedupe_hash_key" ON "receipts" USING btree ("tenant_id","dedupe_hash") WHERE dedupe_primary and cancelled_at is null;--> statement-breakpoint
+CREATE INDEX "receipts_tenant_id_dedupe_hash_idx" ON "receipts" USING btree ("tenant_id","dedupe_hash") WHERE dedupe_hash is not null and cancelled_at is null;--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_staff_id_receipted_at_idx" ON "receipts" USING btree ("tenant_id","staff_id","receipted_at");--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_receipted_at_id_idx" ON "receipts" USING btree ("tenant_id","receipted_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_upload_id_idx" ON "receipts" USING btree ("tenant_id","upload_id");--> statement-breakpoint

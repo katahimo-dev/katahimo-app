@@ -91,7 +91,8 @@ export function parseAmountYen(value: string | number | null | undefined): numbe
  *   トランザクションが失敗したら保存した画像を消す。
  * - 「スタッフ・顧客・日時・金額・店名」が既存の登録と一致する画像は重複として登録しない。判定は dedupe_hash の
  *   部分UNIQUE と INSERT … ON CONFLICT DO NOTHING で行い、同時の登録でも1件だけが残る。金額か店名が未入力の画像は
- *   判定しない。同じ操作の中の同じ内容(往復の運賃等)は全て登録する(dedupe_hash を持つのは束の最初の1枚だけ)。
+ *   判定しない。同じ操作の中の同じ内容(往復の運賃等)は全て登録する(どれも同じ dedupe_hash を持ち、判定の代表
+ *   (dedupe_primary)は束の最初の1枚。代表を取消したら残りの1枚が代表を引き継ぐ。usecases/receiptCancel.ts)。
  *   最初の1枚が既存と重複したら、同じ内容の残りの画像も全て重複にする(GAS版と同じく、同じ束を送り直しても
  *   1枚も増えない)。取消済みの領収書とは重複にしない(取消して登録し直せるように)。会社負担かどうかは判定に
  *   入れない。
@@ -141,7 +142,8 @@ export async function uploadReceipts(
       key,
       fileId: newId(),
       receiptId: newId(),
-      dedupeHash: first && key ? receiptDedupeHash(key) : null,
+      dedupeHash: key ? receiptDedupeHash(key) : null,
+      dedupePrimary: first,
     };
   });
 
@@ -215,6 +217,7 @@ export async function uploadReceipts(
             storeName: normalizeText(c.img.storeName) || null,
             companyPaid: c.img.companyPaid === true,
             dedupeHash: c.dedupeHash,
+            dedupePrimary: c.dedupePrimary,
           });
           if (!inserted) {
             await r.storedFiles.delete(c.fileId);

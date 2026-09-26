@@ -5,7 +5,7 @@ import {
   type ReceiptListItem,
 } from '@katahimo/shared';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiRequestError, userMessageOf } from '../../../api/client';
 import { queryKeys } from '../../../api/queryKeys';
 import { type ReceiptListFilters, receiptsApi } from '../../../api/receipts';
@@ -15,6 +15,7 @@ import { useFileDownload } from '../../../lib/useFileDownload';
 import { Modal, ModalFooter, ModalHeader } from '../../../ui/modal';
 import { EmptyState, ErrorState, Loading } from '../../../ui/StatusViews';
 import { showErrorToast, showToast } from '../../../ui/toast';
+import { useSession } from '../../auth/session';
 import { forgetSentReceipt, loadReceiptKeyMap, saveReceiptKeyMap } from '../../report/model/receiptDedup';
 import { useAttendanceInvalidation } from '../hooks/attendanceQueries';
 import {
@@ -313,32 +314,44 @@ function ReceiptRow({
 }
 
 /**
- * 「取消」の確かめ(理由は任意の1行)。取消したら一覧・今月のまとめを読み直し、この端末の「送った領収書の印」も
- * 消す(同じ領収書を送り直せるように)。取消済み・他の人が先に変えた(409)・取消せる期間を過ぎた(400 locked)ときも一覧を読み直す。
+ * 「取消」の確かめ(理由は任意の1行)。取消したら一覧・今月のまとめを読み直し、本人の領収書ならこの端末の
+ * 「送った領収書の印」も消す(同じ領収書を送り直せるように。印は送った人の名前ごとに残るため、他のスタッフの
+ * 領収書の取消では消さない)。取消済み・他の人が先に変えた(409)・取消せる期間を過ぎた(400 locked)ときも
+ * 一覧・今月のまとめを読み直す。二重に押しても1回だけ送る。
  */
 function ReceiptCancelModal({ target, onClose }: { target: CancelTarget | null; onClose: () => void }) {
   const item = target?.item ?? null;
   const timeZone = target?.timeZone ?? BUSINESS_TIME_ZONE;
   const queryClient = useQueryClient();
   const { reloadMonths } = useAttendanceInvalidation();
+  const { user } = useSession();
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  // 同じ描画の中で2回押された(Enter と「取消す」等)ときも1回だけ送る(busy は次の描画まで変わらない)
+  const submittingRef = useRef(false);
   const [shownId, setShownId] = useState<string | null>(null);
   if ((item?.id ?? null) !== shownId) {
     setShownId(item?.id ?? null);
     setReason('');
   }
 
+  const reloadAll = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.receipts.all });
+    reloadMonths();
+  };
+
   const submit = async () => {
-    if (!item || busy) return;
+    if (!item || submittingRef.current) return;
+    submittingRef.current = true;
     setBusy(true);
     try {
       await receiptsApi.cancel(item.id, { reason, rowVersion: item.rowVersion });
-      if (item.staffName) {
+      // 印はこの端末から送った人(ログインしている人)の名前で残る(useReceipts)
+      if (item.staffId === user.staffId) {
         const now = Date.now();
         saveReceiptKeyMap(
-          item.staffName,
-          forgetSentReceipt(loadReceiptKeyMap(item.staffName, now), {
+          user.name,
+          forgetSentReceipt(loadReceiptKeyMap(user.name, now), {
             receiptedAt: formatZonedDateTime(item.receiptedAt, timeZone).replaceAll('-', '/'),
             customerId: item.customerId,
             amountYen: item.amountYen,
@@ -348,16 +361,17 @@ function ReceiptCancelModal({ target, onClose }: { target: CancelTarget | null; 
         );
       }
       showToast('領収書を取消しました');
-      void queryClient.invalidateQueries({ queryKey: queryKeys.receipts.all });
-      reloadMonths();
+      reloadAll();
       onClose();
     } catch (e) {
       showErrorToast(e);
+      // 先に取消された・期間を過ぎた等は、一覧も今月のまとめも今の状態に読み直す
       if (e instanceof ApiRequestError && (e.code === 'conflict' || e.code === 'locked')) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.receipts.all });
+        reloadAll();
         onClose();
       }
     } finally {
+      submittingRef.current = false;
       setBusy(false);
     }
   };

@@ -240,6 +240,7 @@ const receiptColumns = {
   storeName: receipts.storeName,
   companyPaid: receipts.companyPaid,
   dedupeHash: receipts.dedupeHash,
+  dedupePrimary: receipts.dedupePrimary,
   cancelledAt: receipts.cancelledAt,
   cancelledBy: receipts.cancelledBy,
   cancelReason: receipts.cancelReason,
@@ -296,9 +297,9 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
       .insert(receipts)
       .values({ tenantId: this.tenantId, ...input })
       .onConflictDoNothing({
-        // 部分UNIQUE receipts_tenant_id_dedupe_hash_key と同じ条件(取消済みの行とは重ならない)
+        // 部分UNIQUE receipts_tenant_id_dedupe_hash_key と同じ条件(取消していない代表とだけ重なる)
         target: [receipts.tenantId, receipts.dedupeHash],
-        where: sql`dedupe_hash is not null and cancelled_at is null`,
+        where: sql`dedupe_primary and cancelled_at is null`,
       })
       .returning({ id: receipts.id });
     return rows.length > 0;
@@ -442,6 +443,20 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
     cancellation: { cancelledAt: Date; cancelledBy: string; cancelReason: string | null },
     expectedVersion: number,
   ): Promise<void> {
+    const [target] = await this.tx
+      .select({ dedupeHash: receipts.dedupeHash })
+      .from(receipts)
+      .where(and(eq(receipts.tenantId, this.tenantId), eq(receipts.id, id)));
+    const dedupeHash = target?.dedupeHash ?? null;
+    if (dedupeHash) {
+      // 同じ内容の行の取消を順に進める(代表を移す先が同時に取消されないように)。ロックの順は ID の順
+      await this.tx
+        .select({ id: receipts.id })
+        .from(receipts)
+        .where(this.activeTwinsOf(dedupeHash))
+        .orderBy(asc(receipts.id))
+        .for('update');
+    }
     const rows = await this.tx
       .update(receipts)
       .set({ ...cancellation, rowVersion: sql`${receipts.rowVersion} + 1` })
@@ -453,7 +468,30 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
           isNull(receipts.cancelledAt),
         ),
       )
-      .returning({ id: receipts.id });
+      .returning({ dedupePrimary: receipts.dedupePrimary });
     if (!rows[0]) throw conflict(STALE_WRITE_MESSAGE, undefined, 'stale_row_version');
+    if (!rows[0].dedupePrimary || !dedupeHash) return;
+    // 代表を取消したら、同じ内容の残りの行(最も古いもの)を代表にする。取消した行は部分UNIQUE の対象から外れて
+    // いるため重ならない。版(row_version)は上げない
+    const [next] = await this.tx
+      .select({ id: receipts.id })
+      .from(receipts)
+      .where(this.activeTwinsOf(dedupeHash))
+      .orderBy(asc(receipts.receiptedAt), asc(receipts.id))
+      .limit(1);
+    if (!next) return;
+    await this.tx
+      .update(receipts)
+      .set({ dedupePrimary: true })
+      .where(and(eq(receipts.tenantId, this.tenantId), eq(receipts.id, next.id)));
+  }
+
+  /** 同じ重複の判定のキーの取消していない行(索引 receipts_tenant_id_dedupe_hash_idx)。 */
+  private activeTwinsOf(dedupeHash: Uint8Array) {
+    return and(
+      eq(receipts.tenantId, this.tenantId),
+      eq(receipts.dedupeHash, dedupeHash),
+      isNull(receipts.cancelledAt),
+    );
   }
 }

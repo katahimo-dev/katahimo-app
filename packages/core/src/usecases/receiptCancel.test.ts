@@ -175,7 +175,7 @@ describe('領収書の取消(論理削除)', () => {
     await cancelReceipt(ctx.deps, admin, { receiptId: d22.id, rowVersion: 1 });
   });
 
-  it('月の最終日はスタッフ・コーディネーターは取消せず、管理者は取消せる。月をまたぐと管理者も取消せない', async () => {
+  it('月の最終日はスタッフ・コーディネーターは取消せず、管理者は取消せる', async () => {
     const receipt = await upload(staff, '2026/09/29 10:00');
     setNow('2026-09-30 23:30');
     for (const actor of [staff, coordinator]) {
@@ -185,21 +185,98 @@ describe('領収書の取消(論理削除)', () => {
     }
     const lastDay = await upload(other, '2026/09/30 10:00');
     await cancelReceipt(ctx.deps, admin, { receiptId: lastDay.id, rowVersion: 1 });
-
-    setNow('2026-10-01 00:00');
-    await expect(
-      cancelReceipt(ctx.deps, admin, { receiptId: receipt.id, rowVersion: 1 }),
-    ).rejects.toMatchObject({ code: 'locked', reason: 'other_month' });
+    await cancelReceipt(ctx.deps, admin, { receiptId: receipt.id, rowVersion: 1 });
   });
 
-  it('出勤簿が締め済みの月は管理者も取消せない', async () => {
-    const receipt = await upload(staff, '2026/09/25 09:00');
-    ctx.data().lockedPeriods.push({ staffId: staff.staffId, yearMonth: '2026-09' });
+  describe('前の月の日付の領収書(登録はできる)', () => {
+    // 今日は 10/1。9/30 の領収書(D+1)と、10/1 に登録した 8月の日付の領収書
+    const cases: {
+      name: string;
+      receiptDate: string;
+      role: 'staff' | 'coordinator' | 'admin';
+      locked: boolean;
+      expected: string | null;
+    }[] = [
+      {
+        name: 'スタッフは D+1 でも前の月は不可',
+        receiptDate: '2026/09/30 10:00',
+        role: 'staff',
+        locked: false,
+        expected: 'other_month',
+      },
+      {
+        name: 'コーディネーターも不可',
+        receiptDate: '2026/09/30 10:00',
+        role: 'coordinator',
+        locked: false,
+        expected: 'other_month',
+      },
+      {
+        name: '管理者は締める前なら取消せる',
+        receiptDate: '2026/09/30 10:00',
+        role: 'admin',
+        locked: false,
+        expected: null,
+      },
+      {
+        name: '管理者も締め済みの月は不可',
+        receiptDate: '2026/09/30 10:00',
+        role: 'admin',
+        locked: true,
+        expected: 'period_locked',
+      },
+      {
+        name: '管理者は2か月前の日付の分も締める前なら取消せる',
+        receiptDate: '2026/08/05 10:00',
+        role: 'admin',
+        locked: false,
+        expected: null,
+      },
+      {
+        name: 'スタッフは締めていなくても不可(締めより期間の判定が先)',
+        receiptDate: '2026/08/05 10:00',
+        role: 'staff',
+        locked: true,
+        expected: 'other_month',
+      },
+    ];
+    it.each(cases)('$name', async ({ receiptDate, role, locked, expected }) => {
+      setNow('2026-10-01 09:00');
+      const receipt = await upload(staff, receiptDate);
+      const month = receiptDate.slice(0, 7).replace('/', '-');
+      if (locked) ctx.data().lockedPeriods.push({ staffId: staff.staffId, yearMonth: month });
+      // 今月(10月)の締めは関係ない(領収書の月の締めを見る)
+      ctx.data().lockedPeriods.push({ staffId: other.staffId, yearMonth: month });
+      const actor = { staff, coordinator, admin }[role];
+      const flags = await listReceipts(
+        ctx.deps,
+        actor,
+        criteria(actor, { yearMonth: month, targetStaffId: staff.staffId }),
+      );
+      expect(flags.receipts.find((r) => r.id === receipt.id)?.cancellable).toBe(expected === null);
+      const result = cancelReceipt(ctx.deps, actor, { receiptId: receipt.id, rowVersion: 1 });
+      if (expected === null) {
+        await expect(result).resolves.toMatchObject({ id: receipt.id, cancellable: false });
+      } else {
+        await expect(result).rejects.toMatchObject({ code: 'locked', reason: expected });
+      }
+    });
+  });
+
+  it('来月以降の日付の領収書は、その月になるまで管理者も取消せない', async () => {
+    const receipt = await upload(staff, '2026/10/01 10:00');
     await expect(
       cancelReceipt(ctx.deps, admin, { receiptId: receipt.id, rowVersion: 1 }),
-    ).rejects.toMatchObject({ code: 'locked', reason: 'period_locked' });
-    const page = await listReceipts(ctx.deps, admin, criteria(admin, { targetStaffId: staff.staffId }));
-    expect(page.receipts[0]?.cancellable).toBe(false);
+    ).rejects.toMatchObject({ code: 'locked', reason: 'future_month' });
+    setNow('2026-10-01 09:00');
+    await cancelReceipt(ctx.deps, staff, { receiptId: receipt.id, rowVersion: 1 });
+  });
+
+  it('今月の締めは前の月の領収書の取消に関係しない(領収書の月の締めを見る)', async () => {
+    setNow('2026-10-02 09:00');
+    const receipt = await upload(staff, '2026/09/30 10:00');
+    ctx.data().lockedPeriods.push({ staffId: staff.staffId, yearMonth: '2026-10' });
+    await cancelReceipt(ctx.deps, admin, { receiptId: receipt.id, rowVersion: 1 });
   });
 
   it('一覧には灰色で残り(取消の情報つき)、合計・件数・CSV・今月のまとめからは除く', async () => {
@@ -247,6 +324,60 @@ describe('領収書の取消(論理削除)', () => {
     expect(await again()).toMatchObject({ uploadedCount: 1, duplicateCount: 0 });
     // 登録し直した分は重複として弾く
     expect(await again()).toMatchObject({ uploadedCount: 0, duplicateCount: 1 });
+  });
+
+  describe('同じ束の同じ内容(往復の運賃等)', () => {
+    const twin = { data: JPEG, amount: '300', storeName: 'バス', receiptDate: '2026/09/24 10:00' };
+    const send = (count: number) =>
+      uploadReceipts(ctx.deps, staff, {
+        customerId,
+        images: Array.from({ length: count }, () => twin),
+        fallbackTimestamp: '2026/09/25 10:00:00',
+        handoffText: '',
+      });
+    const twins = () =>
+      ctx
+        .data()
+        .receipts.filter((r) => r.storeName === 'バス')
+        .map((r) => ({ id: r.id, primary: r.dedupePrimary, cancelled: r.cancelledAt !== null }));
+
+    it('どれも同じキーを持ち、代表は最初の1枚だけ', async () => {
+      await send(2);
+      const [a, b] = ctx.data().receipts.filter((r) => r.storeName === 'バス');
+      expect(a?.dedupeHash).toEqual(b?.dedupeHash);
+      expect(twins().map((t) => t.primary)).toEqual([true, false]);
+    });
+
+    it('代表を取消すと残りの1枚が代表を引き継ぎ、同じ内容の送り直しは残った1枚と重複になる', async () => {
+      await send(2);
+      const [first, second] = twins().map((t) => t.id) as [string, string];
+      await cancelReceipt(ctx.deps, staff, { receiptId: first, rowVersion: 1 });
+      expect(twins()).toEqual([
+        { id: first, primary: true, cancelled: true },
+        { id: second, primary: true, cancelled: false },
+      ]);
+      // 引き継いだ行の版は変わらない(一覧で読んだ版のまま取消せる)
+      expect(ctx.data().receipts.find((r) => r.id === second)?.rowVersion).toBe(1);
+      expect(await send(1)).toMatchObject({ uploadedCount: 0, duplicateCount: 1 });
+
+      // 全て取消すと登録し直せる
+      await cancelReceipt(ctx.deps, staff, { receiptId: second, rowVersion: 1 });
+      expect(await send(1)).toMatchObject({ uploadedCount: 1, duplicateCount: 0 });
+      expect(await send(1)).toMatchObject({ uploadedCount: 0, duplicateCount: 1 });
+    });
+
+    it('代表でない1枚を取消しても代表は動かず、送り直しは重複のまま', async () => {
+      await send(2);
+      const [first, second] = twins().map((t) => t.id) as [string, string];
+      await cancelReceipt(ctx.deps, staff, { receiptId: second, rowVersion: 1 });
+      expect(twins()).toEqual([
+        { id: first, primary: true, cancelled: false },
+        { id: second, primary: false, cancelled: true },
+      ]);
+      expect(await send(1)).toMatchObject({ uploadedCount: 0, duplicateCount: 1 });
+      await cancelReceipt(ctx.deps, staff, { receiptId: first, rowVersion: 1 });
+      expect(await send(1)).toMatchObject({ uploadedCount: 1, duplicateCount: 0 });
+    });
   });
 
   it('一覧の cancellable は見ている人の役割・本人かどうか・期間で決まる', async () => {

@@ -118,8 +118,16 @@ export interface NewReceiptInput {
   storeName: string | null;
   /** 会社負担(お客様に請求しない)。登録の後は変えない。 */
   companyPaid: boolean;
-  /** 重複判定のキーの SHA-256(domain/reports/receiptDedupe.ts)。判定しない領収書は null。 */
+  /**
+   * 重複判定のキーの SHA-256(domain/reports/receiptDedupe.ts)。判定しない領収書は null。同じ登録の中の同じ内容の
+   * 画像は全て同じ値を持つ。
+   */
   dedupeHash: Uint8Array | null;
+  /**
+   * 同じ dedupeHash の取消していない行の代表(部分UNIQUE の対象。束の最初の1枚)。代表でない行は重複の判定をせずに
+   * 登録する(同じ登録の中の同じ内容)。
+   */
+  dedupePrimary: boolean;
 }
 
 /** 領収書の取消(論理削除)の状態。取消していなければ全て null。 */
@@ -194,8 +202,8 @@ export interface ReceiptRepository {
   createUpload(input: ReceiptUploadRow): Promise<void>;
   findUpload(id: string): Promise<ReceiptUploadRow | null>;
   /**
-   * 重複でなければ登録して true。取消していない行に同じ dedupe_hash があれば(同時の登録を含め)何もせず false
-   * (INSERT … ON CONFLICT DO NOTHING)。
+   * 重複でなければ登録して true。代表(dedupePrimary)の行は、取消していない代表に同じ dedupe_hash があれば
+   * (同時の登録を含め)何もせず false(INSERT … ON CONFLICT DO NOTHING)。代表でない行はそのまま登録する。
    */
   insertIfNew(input: NewReceiptInput): Promise<boolean>;
   findById(id: string): Promise<ReceiptRow | null>;
@@ -220,7 +228,10 @@ export interface ReceiptRepository {
   findImage(receiptId: string): Promise<ReceiptImageRef | null>;
   /**
    * 取消す(取消の列を入れ、row_version を上げる)。取消していない行で row_version が expectedVersion の
-   * ときだけ書き、それ以外(先に取消された・更新された)は conflict。
+   * ときだけ書き、それ以外(先に取消された・更新された)は conflict。取消した行が重複の判定の代表なら、同じ
+   * dedupe_hash の取消していない行のうち最も古いもの(領収書日時・ID の順)を代表にする(同じトランザクション。
+   * 同じ内容の行の取消は同時に進まないように、先に同じ内容の行をまとめてロックする)。代表を移した行の
+   * row_version は上げない(画面の版は変わらない)。
    */
   cancel(
     id: string,

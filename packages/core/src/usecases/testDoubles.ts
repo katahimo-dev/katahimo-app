@@ -913,10 +913,12 @@ export function fakeRepositories(
         return u ? structuredClone(u) : null;
       },
       async insertIfNew(input) {
-        // 部分UNIQUE と同じく、取消していない行とだけ重なりを確かめる
+        // 部分UNIQUE と同じく、代表どうしで取消していない行とだけ重なりを確かめる
         if (
-          input.dedupeHash &&
-          d().receipts.some((r) => r.cancelledAt === null && sameBytes(r.dedupeHash, input.dedupeHash))
+          input.dedupePrimary &&
+          d().receipts.some(
+            (r) => r.dedupePrimary && r.cancelledAt === null && sameBytes(r.dedupeHash, input.dedupeHash),
+          )
         )
           return false;
         d().receipts.push({
@@ -996,6 +998,12 @@ export function fakeRepositories(
           throw conflict(STALE_WRITE_MESSAGE, undefined, 'stale_row_version');
         }
         Object.assign(r, structuredClone(cancellation), { rowVersion: r.rowVersion + 1 });
+        if (!r.dedupePrimary || !r.dedupeHash) return;
+        // 代表を取消したら、同じ内容の取消していない行のうち最も古いものを代表にする(版は上げない)
+        const next = d()
+          .receipts.filter((x) => x.cancelledAt === null && sameBytes(x.dedupeHash, r.dedupeHash))
+          .sort((a, b) => a.receiptedAt.getTime() - b.receiptedAt.getTime() || (a.id < b.id ? -1 : 1))[0];
+        if (next) next.dedupePrimary = true;
       },
     },
     storedFiles: {

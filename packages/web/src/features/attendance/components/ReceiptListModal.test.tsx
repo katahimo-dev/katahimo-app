@@ -1,5 +1,5 @@
 import type { ReceiptListItem, ReceiptListResponse, SessionUser } from '@katahimo/shared';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiRequestError } from '../../../api/client';
 import { receiptsApi } from '../../../api/receipts';
@@ -247,15 +247,65 @@ describe('領収書の一覧', () => {
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
   });
 
-  it('取消を断られたら理由を出す(409 は一覧を読み直して閉じる)', async () => {
+  it.each([
+    ['409', new ApiRequestError(409, { code: 'conflict', message: '先に更新されました' })],
+    ['400 locked', new ApiRequestError(400, { code: 'locked', message: '取消せる期間を過ぎました' })],
+  ])('取消を断られたら理由を出す(%s は一覧と今月のまとめを読み直して閉じる)', async (_, refused) => {
     listApi.mockResolvedValue(page({ receipts: [item({ cancellable: true })] }));
-    const stale = new ApiRequestError(409, { code: 'conflict', message: '先に更新されました' });
-    vi.mocked(receiptsApi.cancel).mockRejectedValueOnce(stale);
+    vi.mocked(receiptsApi.cancel).mockRejectedValueOnce(refused);
+    // 今月のまとめの端末のキャッシュ(読み直すために消す)
+    localStorage.setItem('attendanceMonthly_x_2026-09', '{}');
     renderModal({ ...TEST_USER, role: 'staff' });
     fireEvent.click(await screen.findByRole('button', { name: /^取消\(/ }));
     const dialog = await screen.findByRole('alertdialog');
+    const calls = listApi.mock.calls.length;
     fireEvent.click(within(dialog).getByRole('button', { name: '取消す' }));
-    await waitFor(() => expect(showErrorToast).toHaveBeenCalledWith(stale));
+    await waitFor(() => expect(showErrorToast).toHaveBeenCalledWith(refused));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await waitFor(() => expect(listApi.mock.calls.length).toBeGreaterThan(calls));
+    expect(localStorage.getItem('attendanceMonthly_x_2026-09')).toBeNull();
+  });
+
+  it('二重に押しても取消は1回だけ送る', async () => {
+    const target = item({ cancellable: true });
+    listApi.mockResolvedValue(page({ receipts: [target] }));
+    let resolve: (value: { receipt: ReceiptListItem }) => void = () => {};
+    vi.mocked(receiptsApi.cancel).mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    renderModal({ ...TEST_USER, role: 'staff' });
+    fireEvent.click(await screen.findByRole('button', { name: /^取消\(/ }));
+    const dialog = await screen.findByRole('alertdialog');
+    const reason = within(dialog).getByLabelText('取消の理由（あれば）');
+    const button = within(dialog).getByRole('button', { name: '取消す' });
+    // 同じ描画の中で Enter と「取消す」を続けて押す(間で描画し直さない)
+    act(() => {
+      fireEvent.keyDown(reason, { key: 'Enter' });
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+    resolve({ receipt: { ...target, cancellable: false, rowVersion: 2 } });
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('領収書を取消しました'));
+    expect(receiptsApi.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('他のスタッフの領収書を取消しても、この端末の送った印は消さない(本人の分だけ消す)', async () => {
+    const target = item({ cancellable: true, staffId: OTHER_ID, staffName: '一般 花子' });
+    listApi.mockResolvedValue(page({ receipts: [target], staff: { id: OTHER_ID, name: '一般 花子' } }));
+    vi.mocked(receiptsApi.cancel).mockResolvedValue({ receipt: { ...target, cancellable: false } });
+    const sent = { '2026/09/10 12:00||||1200||コンビニ': Date.now() };
+    const mine = `GAS_RECEIPT_KEYS_V1_${TEST_USER.name}`;
+    const theirs = 'GAS_RECEIPT_KEYS_V1_一般 花子';
+    localStorage.setItem(mine, JSON.stringify(sent));
+    localStorage.setItem(theirs, JSON.stringify(sent));
+    renderModal();
+    fireEvent.click(await screen.findByRole('button', { name: /^取消\(/ }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消す' }));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('領収書を取消しました'));
+    expect(JSON.parse(localStorage.getItem(mine) ?? '{}')).toEqual(sent);
+    expect(JSON.parse(localStorage.getItem(theirs) ?? '{}')).toEqual(sent);
   });
 });

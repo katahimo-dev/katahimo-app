@@ -8,6 +8,7 @@ import { connect } from './testDb';
 
 /**
  * 領収書の会社負担・取消(論理削除)を実際の DB で確かめる: 取消の列の CHECK、取消した行を除く部分 UNIQUE、
+ * 同じ内容の行の代表の引き継ぎ(同時の取消を含む)、
  * 行を消せない・取消の列しか変えられない権限、テナントの分離。
  */
 const { app, uow, createTenant, createStaff } = connect();
@@ -39,7 +40,15 @@ async function setup(tenantId: string) {
 async function insertReceipt(
   r: TenantRepositories,
   owner: { staffId: string; uploadId: string },
-  options: { id?: string; dedupeKey?: string; amountYen?: number; companyPaid?: boolean; at?: Date } = {},
+  options: {
+    id?: string;
+    dedupeKey?: string;
+    /** 重複の判定の代表(dedupeKey があるときの既定は true。同じ束の2枚目以降の同じ内容は false)。 */
+    primary?: boolean;
+    amountYen?: number;
+    companyPaid?: boolean;
+    at?: Date;
+  } = {},
 ) {
   const fileId = newId();
   await r.storedFiles.insert({
@@ -63,6 +72,7 @@ async function insertReceipt(
     storeName: '店',
     companyPaid: options.companyPaid ?? false,
     dedupeHash: options.dedupeKey ? receiptDedupeHash(options.dedupeKey) : null,
+    dedupePrimary: options.dedupeKey !== undefined && (options.primary ?? true),
   });
 }
 
@@ -138,6 +148,101 @@ describe('領収書の取消(論理削除)', () => {
     expect(await uow.run(tenant, (r) => insertReceipt(r, owner, { dedupeKey: 'same' }))).toBe(false);
   });
 
+  describe('同じ束の同じ内容(代表だけが部分 UNIQUE の対象)', () => {
+    const primaryOf = async (tenant: string, ids: string[]) =>
+      uow.run(tenant, async (r) => {
+        const rows = await Promise.all(ids.map((id) => r.receipts.findById(id)));
+        return rows.map((row) => [row?.dedupePrimary, row?.rowVersion, row?.cancelledAt !== null]);
+      });
+
+    it('代表を取消すと残りの1枚(古い順)が代表を引き継ぎ、全て取消すと同じ内容を登録し直せる', async () => {
+      const tenant = await createTenant('rc');
+      const owner = await setup(tenant);
+      const [a, b, c] = [newId(), newId(), newId()];
+      await uow.run(tenant, async (r) => {
+        expect(await insertReceipt(r, owner, { id: a, dedupeKey: 'twin' })).toBe(true);
+        // 代表でない行は重複の判定をせずに登録する
+        expect(await insertReceipt(r, owner, { id: b, dedupeKey: 'twin', primary: false })).toBe(true);
+        expect(await insertReceipt(r, owner, { id: c, dedupeKey: 'twin', primary: false })).toBe(true);
+      });
+      const resend = () => uow.run(tenant, (r) => insertReceipt(r, owner, { dedupeKey: 'twin' }));
+      expect(await resend()).toBe(false);
+
+      await uow.run(tenant, (r) => r.receipts.cancel(a, cancellation(owner.staffId), 1));
+      // b が代表になる(版は上げない)。取消した a は代表のまま部分 UNIQUE の対象から外れる
+      expect(await primaryOf(tenant, [a, b, c])).toEqual([
+        [true, 2, true],
+        [true, 1, false],
+        [false, 1, false],
+      ]);
+      expect(await resend()).toBe(false);
+
+      // 代表でない c を取消しても代表は動かない
+      await uow.run(tenant, (r) => r.receipts.cancel(c, cancellation(owner.staffId), 1));
+      expect(await primaryOf(tenant, [b, c])).toEqual([
+        [true, 1, false],
+        [false, 2, true],
+      ]);
+      expect(await resend()).toBe(false);
+
+      // 最後の1枚を取消すと、同じ内容を登録し直せる(登録し直した分が代表)
+      await uow.run(tenant, (r) => r.receipts.cancel(b, cancellation(owner.staffId), 1));
+      expect(await resend()).toBe(true);
+      expect(await resend()).toBe(false);
+    });
+
+    it('代表を移す先は同じキーの行だけ(別の内容の行は代表にならない)', async () => {
+      const tenant = await createTenant('rc');
+      const owner = await setup(tenant);
+      const [a, other] = [newId(), newId()];
+      await uow.run(tenant, async (r) => {
+        await insertReceipt(r, owner, { id: a, dedupeKey: 'one' });
+        await insertReceipt(r, owner, { id: other, dedupeKey: 'another', primary: false });
+      });
+      await uow.run(tenant, (r) => r.receipts.cancel(a, cancellation(owner.staffId), 1));
+      expect((await uow.run(tenant, (r) => r.receipts.findById(other)))?.dedupePrimary).toBe(false);
+    });
+
+    it('同じ内容の行を同時に取消しても、残った行が代表になる', async () => {
+      const tenant = await createTenant('rc');
+      const owner = await setup(tenant);
+      const ids = [newId(), newId(), newId()];
+      await uow.run(tenant, async (r) => {
+        for (const [i, id] of ids.entries()) {
+          // 領収書日時の順 = ID の順
+          await insertReceipt(r, owner, {
+            id,
+            dedupeKey: 'race',
+            primary: i === 0,
+            at: new Date(Date.UTC(2026, 8, 10, 3, i)),
+          });
+        }
+      });
+      const [first, second, third] = ids as [string, string, string];
+      await Promise.all(
+        [first, second].map((id) =>
+          uow.run(tenant, (r) => r.receipts.cancel(id, cancellation(owner.staffId), 1)),
+        ),
+      );
+      expect(await primaryOf(tenant, [third])).toEqual([[true, 1, false]]);
+      expect(await uow.run(tenant, (r) => insertReceipt(r, owner, { dedupeKey: 'race' }))).toBe(false);
+    });
+  });
+
+  it('CHECK: 代表はキーのある行だけ', async () => {
+    const tenant = await createTenant('rc');
+    const owner = await setup(tenant);
+    const id = newId();
+    await uow.run(tenant, (r) => insertReceipt(r, owner, { id }));
+    expect(
+      await sqlState(
+        withTenant(app, tenant, (tx) =>
+          tx.execute(sql`update receipts set dedupe_primary = true where id = ${id}`),
+        ),
+      ),
+    ).toBe('23514');
+  });
+
   it('CHECK: 取消の列は揃って入り、理由は1行・100文字まで', async () => {
     const tenant = await createTenant('rc');
     const owner = await setup(tenant);
@@ -156,7 +261,7 @@ describe('領収書の取消(論理削除)', () => {
     expect(await sqlState(cancel('あ'.repeat(100)))).toBeNull();
   });
 
-  it('アプリのロールは領収書を消せず、取消の列と版の他は変えられない', async () => {
+  it('アプリのロールは領収書を消せず、取消の列・版・重複の判定の代表の他は変えられない', async () => {
     const tenant = await createTenant('rc');
     const owner = await setup(tenant);
     const id = newId();
@@ -167,6 +272,7 @@ describe('領収書の取消(論理削除)', () => {
     expect(await sqlState(exec(sql`delete from receipt_uploads where id = ${owner.uploadId}`))).toBe('42501');
     expect(await sqlState(exec(sql`update receipts set amount_yen = 1 where id = ${id}`))).toBe('42501');
     expect(await sqlState(exec(sql`update receipts set company_paid = true where id = ${id}`))).toBe('42501');
+    expect(await sqlState(exec(sql`update receipts set dedupe_hash = null where id = ${id}`))).toBe('42501');
     expect(
       await sqlState(exec(sql`update receipt_uploads set handoff_text = 'x' where id = ${owner.uploadId}`)),
     ).toBe('42501');

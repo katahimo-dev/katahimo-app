@@ -88,7 +88,7 @@ describe('スキーマの約束事(カタログ)', () => {
     expect(await has('katahimo_app', 'platform.tenants', 'UPDATE')).toBe(false);
   });
 
-  it('領収書は会計の記録: アプリは消せず、登録の後に変えられるのは取消の列と版だけ', async () => {
+  it('領収書は会計の記録: アプリは消せず、登録の後に変えられるのは取消の列・版・重複の判定の代表だけ', async () => {
     const ok = async (query: ReturnType<typeof sql>) =>
       (await rows<{ ok: boolean }>(sql`select ${query} as ok`))[0]?.ok;
     for (const table of ['receipts', 'receipt_uploads']) {
@@ -105,6 +105,7 @@ describe('スキーマの約束事(カタログ)', () => {
       'cancel_reason',
       'cancelled_at',
       'cancelled_by',
+      'dedupe_primary',
       'row_version',
     ]);
   });

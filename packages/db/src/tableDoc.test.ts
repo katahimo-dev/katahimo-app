@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSchemaDocs, simplifyDefinition } from './tableDoc';
+import { formatGrants, parseSchemaDocs, simplifyDefinition } from './tableDoc';
 
 const SOURCE = `
 /**
@@ -34,5 +34,14 @@ describe('テーブル定義書の生成', () => {
     expect(simplifyDefinition("CHECK ((status = ANY (ARRAY['open'::text, 'locked'::text])))")).toBe(
       "CHECK ((status IN ('open', 'locked')))",
     );
+  });
+
+  it('権限は表の権限の後に列ごとの権限を足す(無ければ —)', () => {
+    expect(
+      formatGrants('INSERT,SELECT', { UPDATE: ['cancelled_at', 'row_version'], REFERENCES: ['id'] }),
+    ).toBe('INSERT,SELECT,REFERENCES(id),UPDATE(cancelled_at, row_version)');
+    expect(formatGrants('SELECT', undefined)).toBe('SELECT');
+    expect(formatGrants(undefined, { UPDATE: ['last_used_at'] })).toBe('UPDATE(last_used_at)');
+    expect(formatGrants(undefined, undefined)).toBe('—');
   });
 });

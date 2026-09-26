@@ -542,9 +542,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   "staff_login_emails", "staff_service_areas", "staff_weekly_availability", "stored_files", "tenant_features",
   "tenant_secrets", "travel_legs", "travel_time_cache", "visits", "work_segments"
   TO katahimo_app;--> statement-breakpoint
--- 領収書は会計の記録なので登録するだけ(消さない)。登録の後に変えられるのは取消の列と版だけ(論理削除の取消)
+-- 領収書は会計の記録なので登録するだけ(消さない)。登録の後に変えられるのは取消の列と版(論理削除の取消)と、
+-- 重複の判定の代表(代表を取消したら同じ内容の残りの行へ移す)だけ
 GRANT SELECT, INSERT ON "receipt_uploads", "receipts" TO katahimo_app;--> statement-breakpoint
-GRANT UPDATE ("cancelled_at", "cancelled_by", "cancel_reason", "row_version") ON "receipts" TO katahimo_app;--> statement-breakpoint
+GRANT UPDATE ("cancelled_at", "cancelled_by", "cancel_reason", "row_version", "dedupe_primary") ON "receipts" TO katahimo_app;--> statement-breakpoint
 -- Web Push の購読(本人の端末の登録・付け替え・削除)
 GRANT SELECT, INSERT, UPDATE, DELETE ON "push_subscriptions" TO katahimo_app;--> statement-breakpoint
 
