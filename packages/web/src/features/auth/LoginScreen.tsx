@@ -80,6 +80,17 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
     }
   };
 
+  /** 番号がもうメールで届いている(管理者のパスワード設定の案内)ときは、送り直さずに番号の入力へ進む。 */
+  const goToCodeEntry = () => {
+    if (!tenantSlug || !resetEmail) {
+      setResetRequestError(tenantSlug ? 'メールアドレスを入力してください' : '法人IDを入力してください');
+      return;
+    }
+    setResetRequestError('');
+    setResetTargetEmail(resetEmail);
+    setStep('resetVerify');
+  };
+
   const doCompleteReset = async () => {
     if (!resetCode || !resetNewPassword) {
       setResetVerifyError('全ての項目を入力してください');
@@ -115,6 +126,7 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
         submitting={requestingReset}
         onCancel={() => setStep('login')}
         onSubmit={doRequestReset}
+        onHaveCode={goToCodeEntry}
       />
     );
   }

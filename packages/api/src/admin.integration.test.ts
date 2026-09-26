@@ -243,7 +243,7 @@ describe('API: 操作ログ', () => {
     ).json()) as AuditLogListResponse;
     const ids = [...first.entries, ...second.entries].map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(second.entries[0]?.createdAt <= (first.entries[1]?.createdAt ?? '')).toBe(true);
+    expect((second.entries[0]?.createdAt ?? '') <= (first.entries[1]?.createdAt ?? '')).toBe(true);
 
     const byStaff = (await (
       await get(`/api/admin/audit-logs?staffId=${t.staffId}&limit=200`, t.adminCookie)
