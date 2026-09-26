@@ -694,6 +694,47 @@ async function runJourney() {
       return `${buf.length}バイト`;
     });
 
+    await step(page, 'admin-reports-list', async () => {
+      await page.getByRole('tab', { name: '📋 報告一覧' }).click();
+      await wait(page, 600);
+      const list = page.getByRole('list', { name: '報告一覧' });
+      await list.waitFor({ timeout: 10_000 });
+      await wait(page, 500);
+      const text = await list.innerText();
+      assert(text.includes('公園で外遊び(e2e)'), '報告一覧に今日保存した日報が出ない');
+      return undefined;
+    });
+
+    await step(page, 'admin-reports-detail', async () => {
+      await page
+        .getByRole('list', { name: '報告一覧' })
+        .getByRole('button', { name: /公園で外遊び\(e2e\)/ })
+        .first()
+        .click();
+      const dialog = page.getByRole('dialog', { name: '報告の中身' });
+      await dialog.getByText('本日もありがとうございました(e2e)').waitFor({ timeout: 10_000 });
+      await dialog.getByRole('button', { name: '閉じる' }).last().click();
+      await wait(page, 500);
+      return undefined;
+    });
+
+    await step(page, 'admin-reports-csv', async () => {
+      const res = await page.request.get(`${WEB_URL}/api/reports/export.csv?sheet=daily`);
+      assert(res.ok(), `GET /api/reports/export.csv が ${res.status()}`);
+      const buf = await res.body();
+      assert(buf.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), 'CSVの先頭にBOMが無い');
+      const [header = '', ...rows] = buf.toString('utf8').trimEnd().split('\r\n');
+      assert(
+        header.includes('事務局に送る文') && header.includes('記録ID'),
+        `CSVのヘッダーが想定と違う: ${header}`,
+      );
+      assert(
+        rows.some((r) => r.includes('本日もありがとうございました(e2e)')),
+        'CSVに今日保存した日報が無い',
+      );
+      return `${rows.length}行`;
+    });
+
     // 一般スタッフの用意(管理者のCookieで)
     const staffId = await ensureStaff(page.request).catch((e: unknown) => {
       results.push({ name: 'create-staff', ok: false, detail: e instanceof Error ? e.message : String(e) });
@@ -765,6 +806,7 @@ async function runJourney() {
           ],
           ['GET /api/settings/admin', req.get(`${WEB_URL}/api/settings/admin`)],
           ['GET /api/admin/audit-logs', req.get(`${WEB_URL}/api/admin/audit-logs`)],
+          ['GET /api/reports/export.csv', req.get(`${WEB_URL}/api/reports/export.csv?sheet=daily`)],
           ['DELETE /api/admin/staff/:id', req.delete(`${WEB_URL}/api/admin/staff/${staffId}`)],
           [
             'POST /api/admin/customers/import',

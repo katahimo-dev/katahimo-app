@@ -91,7 +91,8 @@ export interface RequestOptions {
 
 type Query = Record<string, string | number | boolean | null | undefined>;
 
-function buildUrl(path: string, query?: Query): string {
+/** クエリ文字列つきの URL(値の無い項目は付けない。CSV のダウンロードのリンクにも使う)。 */
+export function buildUrl(path: string, query?: Query): string {
   if (!query) return path;
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
