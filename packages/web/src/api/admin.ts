@@ -3,11 +3,20 @@ import {
   adminStaffListResponseSchema,
   adminStaffResponseSchema,
   aiPromptListResponseSchema,
+  archiveReportAiRowRequestSchema,
   auditLogListResponseSchema,
   type CreateStaffRequest,
   okResponseSchema,
+  type ReportAiImportRequest,
+  type ReportAiLevelKind,
+  type ReportAiRowKind,
+  type ReportAiUsageQuery,
+  reportAiImportResponseSchema,
+  reportAiMastersResponseSchema,
+  reportAiRowSavedResponseSchema,
   type UpdateAiPromptsRequest,
   type UpdateStaffRequest,
+  XLSX_CONTENT_TYPE,
 } from '@katahimo/shared';
 import { api } from './client';
 
@@ -45,4 +54,39 @@ export const auditLogsApi = {
   /** GET /api/admin/audit-logs.csv: 絞り込んだ条件の全件の CSV(断られたら理由つきのエラー。ファイルにしない) */
   downloadCsv: (filters: AuditLogFilters) =>
     api.download('/api/admin/audit-logs.csv', filters, 'text/csv', '操作ログ.csv'),
+};
+
+/** 管理画面「日報AIの調整」(日報キーワード表現マスター)。 */
+export const reportAiApi = {
+  masters: (signal?: AbortSignal) =>
+    api.get('/api/admin/report-ai', reportAiMastersResponseSchema, undefined, { signal }),
+  /** 行を足す(id が null)・書き換える(読んだときの版を送る。他の管理者が先に変えていれば 409)。 */
+  saveRow: (kind: ReportAiRowKind, id: string | null, body: { row: unknown; rowVersion?: number }) =>
+    id
+      ? api.put(`/api/admin/report-ai/${kind}/${id}`, reportAiRowSavedResponseSchema, body)
+      : api.post(`/api/admin/report-ai/${kind}`, reportAiRowSavedResponseSchema, body),
+  /** ★・PSI の段階を書く(無ければ作る)。 */
+  saveLevel: (kind: ReportAiLevelKind, level: number, body: { row: unknown; rowVersion?: number }) =>
+    api.put(`/api/admin/report-ai/${kind}/${level}`, reportAiRowSavedResponseSchema, body),
+  /** 行を外す(プロンプトに使わなくなる)。 */
+  archiveRow: (kind: ReportAiRowKind, id: string, rowVersion: number) =>
+    api.delete(
+      `/api/admin/report-ai/${kind}/${id}`,
+      okResponseSchema,
+      archiveReportAiRowRequestSchema.parse({ rowVersion }),
+    ),
+  /** xlsx の取込(dryRun=true は確かめるだけ)。 */
+  importXlsx: (body: ReportAiImportRequest) =>
+    api.post('/api/admin/report-ai/import', reportAiImportResponseSchema, body),
+  /** GET /api/admin/report-ai/export.xlsx: 取込と同じ形の xlsx。 */
+  downloadXlsx: () =>
+    api.download(
+      '/api/admin/report-ai/export.xlsx',
+      undefined,
+      XLSX_CONTENT_TYPE,
+      '日報キーワード表現マスター.xlsx',
+    ),
+  /** GET /api/admin/report-ai/usage.csv: 期間の教育キーワードの候補・使用の回数。 */
+  downloadUsageCsv: (query: ReportAiUsageQuery) =>
+    api.download('/api/admin/report-ai/usage.csv', query, 'text/csv', '日報キーワードの利用状況.csv'),
 };

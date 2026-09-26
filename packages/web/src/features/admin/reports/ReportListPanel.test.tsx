@@ -102,6 +102,8 @@ describe('報告一覧', () => {
     const list = await screen.findByRole('list', { name: '報告一覧' });
     expect(within(list).getByText('佐藤 はな')).toBeTruthy();
     expect(within(list).getByText('公園で遊びました')).toBeTruthy();
+    // PSI 2 以下(管理者に知らせた日報)には印を付ける
+    expect(within(list).getByText('⚠ PSI 2')).toBeTruthy();
     expect(screen.getByText('2026-08-27 〜 2026-09-26(新しい順)')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'もっと見る' }));
     expect(await within(list).findByText('ヒヤリハット')).toBeTruthy();

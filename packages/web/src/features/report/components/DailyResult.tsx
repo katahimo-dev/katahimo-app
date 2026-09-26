@@ -1,20 +1,24 @@
+import type { DailyReportAiInfo } from '@katahimo/shared';
 import { useRef } from 'react';
 import { showToast } from '../../../ui/toast';
 import { cx } from './cx';
 
 /**
  * AIが書いた日報(「事務局に送る文」「保護者に送る文」)。GAS版 #resultArea。
- * 保護者に送る文は「📋 コピーしてLINEに貼る」でコピーできる。
+ * 保護者に送る文は「📋 コピーしてLINEに貼る」でコピーできる。PSI 1(危険・緊急)は管理者への連絡を促す帯を出し、
+ * 日報AIが使った教育キーワードを並べる。
  */
 export function DailyResult({
   shown,
   internalText,
   customerText,
+  aiInfo,
   onChange,
 }: {
   shown: boolean;
   internalText: string;
   customerText: string;
+  aiInfo: DailyReportAiInfo | null;
   onChange: (field: 'internalText' | 'customerText', value: string) => void;
 }) {
   const customerTextRef = useRef<HTMLTextAreaElement>(null);
@@ -31,6 +35,14 @@ export function DailyResult({
 
   return (
     <div id="resultArea" className={cx(!shown && 'hidden', 'space-y-4 pt-4 border-t')}>
+      {aiInfo?.escalationRequired ? (
+        <div
+          role="alert"
+          className="p-3 rounded-xl bg-red-50 border border-red-300 text-red-800 text-base font-bold"
+        >
+          🚨 PSI 1（危険・緊急）: 日報より安全対応を優先し、すぐに管理者へ電話で連絡してください。
+        </div>
+      ) : null}
       <div className="space-y-1">
         <h3 className="text-base font-bold text-gray-800 flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-blue-600" />
@@ -65,6 +77,22 @@ export function DailyResult({
             📋 コピーしてLINEに貼る
           </button>
         </div>
+        {aiInfo && aiInfo.usedKeywords.length > 0 ? (
+          <div id="usedKeywords" className="flex flex-wrap items-center gap-1 text-sm">
+            <span className="text-gray-600">使った教育キーワード:</span>
+            {aiInfo.usedKeywords.map((k) => (
+              <span
+                key={k.code}
+                className={cx(
+                  'px-2 py-0.5 rounded-full font-bold',
+                  k.known ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600',
+                )}
+              >
+                {k.keyword ? `${k.code} ${k.keyword}` : k.code}
+              </span>
+            ))}
+          </div>
+        ) : null}
         <textarea
           id="customerResult"
           ref={customerTextRef}

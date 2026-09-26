@@ -11,6 +11,7 @@ import type { ReportSession } from '../types';
 import { AccidentDraft } from './AccidentDraft';
 import { AssessmentSection } from './AssessmentSection';
 import { cx } from './cx';
+import { DailyAiSection } from './DailyAiSection';
 import { DailyResult } from './DailyResult';
 import { DateTimeSection } from './DateTimeSection';
 import { FamilySelector } from './FamilySelector';
@@ -85,6 +86,25 @@ export function ReportModal({
                 onEndChange={c.actions.setEnd}
               />
 
+              <DailyAiSection
+                hidden={standalone || !isDaily}
+                childrenOfFamily={c.customer?.family ?? []}
+                childId={c.dailyAi.childId}
+                today={c.today}
+                educationLevel={c.dailyAi.educationLevel}
+                savingLevel={c.dailyAi.savingLevel}
+                onSelectChild={c.dailyAi.selectChild}
+                onSetLevel={c.dailyAi.setEducationLevel}
+              />
+
+              <AssessmentSection
+                hidden={standalone || !isDaily}
+                ratings={f.ratings}
+                assessments={c.uiConfig?.assessments}
+                onRate={c.actions.setRating}
+                onShowHint={c.openAssessmentHint}
+              />
+
               <FamilySelector
                 hidden={standalone || isDaily}
                 family={c.customer?.family ?? []}
@@ -112,6 +132,7 @@ export function ReportModal({
                 shown={!standalone && isDaily && f.dailyResultShown}
                 internalText={f.internalText}
                 customerText={f.customerText}
+                aiInfo={c.dailyAi.info}
                 onChange={c.actions.setDailyText}
               />
 
@@ -120,14 +141,6 @@ export function ReportModal({
                 values={f.accident}
                 containerRef={c.scrollRefs.accidentResult}
                 onChange={c.actions.setAccidentField}
-              />
-
-              <AssessmentSection
-                hidden={standalone || !isDaily}
-                ratings={f.ratings}
-                assessments={c.uiConfig?.assessments}
-                onRate={c.actions.setRating}
-                onShowHint={c.openAssessmentHint}
               />
 
               <ReceiptSection

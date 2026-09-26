@@ -1,4 +1,4 @@
-import type { UiConfigResponse } from '@katahimo/shared';
+import { isPsiAlert, PSI_ESCALATION_LEVEL, type UiConfigResponse } from '@katahimo/shared';
 import type { KeyboardEvent } from 'react';
 import type { RatingType } from '../model/reportForm';
 import { cx } from './cx';
@@ -15,7 +15,8 @@ const QUESTIONS: { type: RatingType; label: string }[] = [
 
 /**
  * 星で答える2つの質問(日報モードのみ。GAS版 #assessmentSection / setRating / updateStarDisplay)。
- * 1番目の★が選ばれているときにもう一度押すと、未評価に戻る。
+ * 1番目の★が選ばれているときにもう一度押すと、未評価に戻る。PSI は AI に書いてもらう前に付けると、日報AIが
+ * 言葉を選ぶ材料になる(PSI 2 以下は保存すると管理者に知らせる)。
  */
 export function AssessmentSection({
   hidden,
@@ -67,6 +68,17 @@ export function AssessmentSection({
           </div>
         );
       })}
+      {isPsiAlert(ratings.risk) ? (
+        <p
+          id="psiAlertNotice"
+          role="status"
+          className="text-base font-bold text-red-700 bg-red-50 rounded-xl p-3"
+        >
+          {ratings.risk === PSI_ESCALATION_LEVEL
+            ? '🚨 危険・緊急: 安全対応を最優先し、すぐに管理者へ電話で連絡してください。保存すると管理者にも知らせます。'
+            : '⚠️ 注意: 保存すると管理者に知らせます。'}
+        </p>
+      ) : null}
     </div>
   );
 }
