@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from 'react';
 import { ReportModal } from './components/ReportModal';
 import { usePendingDraftRestore } from './hooks/usePendingDraftRestore';
 import type { ReportModalApi, ReportSession, ReportTarget } from './types';
@@ -35,16 +35,6 @@ export function ReportModalProvider({ children }: { children: ReactNode }) {
 
   // アプリを開いた直後に一度だけ、保存されずに残っている日報のお客様を開く(GAS版 restoreReportDraftIfAny)
   usePendingDraftRestore(openReport);
-
-  // 見比べハーネス(tools/gas-preview)から開けるようにする。開発サーバーのときだけ。
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const w = window as unknown as { __katahimoReport?: ReportModalApi };
-    w.__katahimoReport = api;
-    return () => {
-      delete w.__katahimoReport;
-    };
-  }, [api]);
 
   return (
     <ReportModalContext value={api}>

@@ -11,8 +11,9 @@
 
 ```bash
 pip install python-pptx pillow pymupdf           # pymupdf は確認用の画像を作るときだけ
-# 1. 画面の見比べ画像を撮る(架空のデータ。tools/gas-preview/out/ に出る)
-cd tools/gas-preview && npx tsx src/shoot.ts --only '^(login|schedule-today|customer-detail|report-daily-result|att-week-list)$' && cd -
+# 1. 画面の画像を用意する(架空のデータ。GAS版との自動見比べハーネスは廃止したため、
+#    GAS版・新アプリとも手で撮って doc/partner/.build/source/<場面>.gas.png・.web.png に置く)
+pnpm --filter @katahimo/web dev   # 別ターミナルで API も起動しておく
 # 2. スライドを作る
 python3 doc/partner/build_deck.py
 # 3. PDF にする(LibreOffice Impress が必要。Debian/Ubuntu は libreoffice-impress)
@@ -27,8 +28,8 @@ python3 -c "import pymupdf; d=pymupdf.open('doc/partner/新アプリ切替のご
 
 - フォントは **IPA Pゴシック**(`IPAPGothic`、Debian/Ubuntu は `fonts-ipafont-gothic`)。PDF には埋め込まれる。
   PowerPoint で開く端末に無い場合は代わりのフォントで表示される(MS Pゴシックと字幅が同じため、崩れは小さい)。
-- 画面の画像は `tools/gas-preview` の撮影結果(`<場面>.gas.png` / `.web.png`)を上から切り出して使う
-  (ログインだけ上を少し切る。`CROP_TOP`)。人物・住所は `tools/gas-preview/src/fixtures.ts` の架空のもの。
+- 画面の画像は手で撮って `doc/partner/.build/` に置き、上から切り出して使う(ログインだけ上を少し切る。`CROP_TOP`)。
+  架空のデータ(人物・住所)で撮ること。
 
 ## 内容の出典(2026-09 時点)
 
@@ -38,7 +39,7 @@ python3 -c "import pymupdf; d=pymupdf.open('doc/partner/新アプリ切替のご
 | --- | --- |
 | 3 いまの課題 | Apps Script の実行時間上限(1回6分、Google の公式の制限)、`doc/01_システム概要.md`(GAS版との関係)、GAS版 `CLAUDE.md` / `README.md`(IDの散在・LockService・`ANYONE_ANONYMOUS`) |
 | 4 全体図 | `doc/01_システム概要.md`(構成)、`doc/07_インフラ・運用.md` 1章(Cloud Run asia-northeast1 = 東京) |
-| 5〜7 画面 | `tools/gas-preview`(124場面、差分 0.05% 以下)、`packages/web/README.md`「GAS版と意図的に変えているところ」 |
+| 5〜7 画面 | 新アプリの画面(手で撮影)、`packages/web/README.md`「GAS版と意図的に変えているところ」 |
 | 8〜11 良くなること | `doc/03_データベース設計.md`・`doc/06_セキュリティ設計.md`(RLS・UoW・楽観ロック・月ロック・レート制限・パスワード再設定・監査ログ、4章 役割ごとの権限、10章 お客様の詳細の閲覧の記録)、`doc/06_セキュリティ設計.md` 8章と `infra/gcp/kms.tf`(保存データの CMEK による暗号化・3省2ガイドライン)、`doc/02_機能仕様.md`(領収書の重複・顧客CSVの20%の歯止め)、`doc/07_インフラ・運用.md`(監視・アラート、3.8 CMEK の鍵) |
 | 12 将来 | `doc/10_マッチング拡張設計.md`(テーブルのみ。アプリは未作成) |
 | 13 変わること | `README.md`「GAS版のトリガー」(`gas-root-serach` の `main()` = LINE WORKS 通知は代替なし)、`MIRROR_TO_GOOGLE_SHEETS`(既定 off) |

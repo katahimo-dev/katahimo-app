@@ -31,8 +31,7 @@
     "job:csv-import": "pnpm --filter @katahimo/worker job:csv-import",
     "job:maintenance": "pnpm --filter @katahimo/worker job:maintenance",
     "job:sync-busy-blocks": "pnpm --filter @katahimo/worker job:sync-busy-blocks",
-    "preview:shoot": "pnpm --filter @katahimo/gas-preview shoot",
-    "preview:e2e": "pnpm --filter @katahimo/gas-preview e2e"
+    "e2e": "pnpm --filter @katahimo/e2e e2e"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",

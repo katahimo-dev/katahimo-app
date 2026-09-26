@@ -30,7 +30,6 @@ katahimo-app は GAS版 `gas-childcare-visit-app` と同じ画面・同じ結果
 - [`README.md`](../README.md): このリポジトリの紹介とすぐに動かす手順。
 - [`CLAUDE.md`](../CLAUDE.md): コーディングエージェント向けの要約(英語)。
 - [`packages/web/README.md`](../packages/web/README.md): 画面の作り方の決まり(クラス名・ダイアログ・localStorage のキー・z-index)。
-- [`tools/gas-preview/README.md`](../tools/gas-preview/README.md): GAS版との見比べハーネスと通し確認(e2e)の使い方。
 - [`CHANGELOG.md`](../CHANGELOG.md): 変更履歴(ベースラインから)。
 - GAS版の仕様: `legacy/gas-childcare-visit-app`(サブモジュール)の `gas-childcare-visit-app/` と、その `CLAUDE.md`。
 

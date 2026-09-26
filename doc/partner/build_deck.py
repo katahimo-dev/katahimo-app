@@ -1,11 +1,12 @@
 """キューテスト様向け「新アプリ切替のご説明」スライドを作る。
 
 使い方(doc/partner/README.md):
-    cd tools/gas-preview && npx tsx src/shoot.ts --only '^(login|schedule-today|customer-detail|report-daily-result|att-week-list)$'
+    # 画面の画像(架空のデータ)を手で撮って doc/partner/.build/source/<場面>.gas.png・.web.png に置く
+    # (GAS版との自動見比べハーネスは廃止したため、GAS版・新アプリともに手で撮影する)
     python3 doc/partner/build_deck.py
     (PDF) soffice --headless --convert-to pdf --outdir doc/partner doc/partner/新アプリ切替のご説明_キューテスト様.pptx
 
-画面の画像は tools/gas-preview/out/<場面>.gas.png / .web.png(架空のデータ)を上から切り出して使う。
+画面の画像は doc/partner/.build/source/<場面>.gas.png / .web.png(架空のデータ)を上から切り出して使う。
 切り出した画像は doc/partner/.build/(gitignore 済み)に置く。
 """
 
@@ -23,7 +24,7 @@ from pptx.util import Emu, Inches, Pt
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
-SHOTS = ROOT / "tools" / "gas-preview" / "out"
+SHOTS = HERE / ".build" / "source"
 BUILD = HERE / ".build"
 OUT = HERE / "新アプリ切替のご説明_キューテスト様.pptx"
 
@@ -199,7 +200,7 @@ CROP_TOP = {"login": 260}  # ログインは画面の中ほどにあるため、
 def crop_shot(name, variant, height=1200):
     src = SHOTS / f"{name}.{variant}.png"
     if not src.exists():
-        raise SystemExit(f"画面の画像がありません: {src}\n先に tools/gas-preview で撮影してください(README.md)")
+        raise SystemExit(f"画面の画像がありません: {src}\n先に doc/partner/.build/source/ に手で撮って置いてください(README.md)")
     BUILD.mkdir(exist_ok=True)
     dst = BUILD / f"{name}.{variant}.png"
     im = Image.open(src)

@@ -5,10 +5,10 @@ import type { BrowserContext } from 'playwright-core';
 import { TOOL_ROOT } from './paths';
 
 /**
- * Google Fonts(GAS版・新アプリとも BIZ UDPGothic / Zen Maru Gothic を読む)を、ブラウザではなく
+ * Google Fonts(新アプリが読む BIZ UDPGothic / Zen Maru Gothic)を、ブラウザではなく
  * Node側で取得してディスクにためておき、ブラウザにはそれを返す。
  *
- * - 撮影のたびにフォントの読み込み具合で結果が揺れないようにするため(2回目からはネットに出ない)
+ * - 通し確認のたびにフォントの読み込み具合で結果が揺れないようにするため(2回目からはネットに出ない)
  * - この環境のようにブラウザがプロキシの証明書を信頼しない環境でもフォントを使えるようにするため
  *   (Node側は NODE_EXTRA_CA_CERTS と NODE_USE_ENV_PROXY=1 で社内プロキシを通る)
  */
@@ -57,7 +57,7 @@ export async function installFontCache(context: BrowserContext) {
         headers: { 'Access-Control-Allow-Origin': '*' },
       });
     } catch (e) {
-      console.warn(`[gas-preview] フォントを取得できませんでした(${request.url()}): ${String(e)}`);
+      console.warn(`[e2e] フォントを取得できませんでした(${request.url()}): ${String(e)}`);
       await route.abort();
     }
   });

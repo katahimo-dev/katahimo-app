@@ -18,7 +18,7 @@ export async function launchChromium(): Promise<Browser> {
   } catch (e) {
     const executablePath = findInstalledChromium();
     if (!executablePath) throw e;
-    console.warn(`[gas-preview] 既定のChromiumが見つからないため ${executablePath} を使います`);
+    console.warn(`[e2e] 既定のChromiumが見つからないため ${executablePath} を使います`);
     return chromium.launch({ args, executablePath });
   }
 }

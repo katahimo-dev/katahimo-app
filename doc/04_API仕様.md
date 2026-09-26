@@ -204,4 +204,4 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
    `targetStaffIdOf` で決め、usecase でも確かめる。
 3. ルートは `parseJsonBody` / `parseQuery` → usecase → `jsonOk(c, 応答の契約, …)`。
 4. `packages/api/src/routes.integration.test.ts` にエラーの形・権限のテストを足し、この資料の2章に行を足す。
-5. 画面は `packages/web/src/api/<機能>.ts` から同じ契約で呼ぶ。見比べのモック(`tools/gas-preview/src/webMock.ts`)にも足す。
+5. 画面は `packages/web/src/api/<機能>.ts` から同じ契約で呼ぶ。

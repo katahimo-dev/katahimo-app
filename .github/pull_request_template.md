@@ -14,7 +14,7 @@
 
 - [ ] `pnpm lint` / `pnpm typecheck` / `pnpm test`
 - [ ] スキーマを変えた場合: `pnpm db:generate` の結果(SQL・`drizzle/meta`)をコミットし、再実行で差分が出ない
-- [ ] 画面を変えた場合: `tools/gas-preview` の見比べ(差分 0.05% 以下)/ 通し確認(e2e)
+- [ ] 画面・機能を変えた場合: 通し確認(`pnpm e2e`)
 - [ ] GAS版の挙動を移した場合: 一致テスト(gasParity)を追加・更新した
 - [ ] 手元で動作を確認した(手順・結果):
 

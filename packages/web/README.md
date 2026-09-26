@@ -1,8 +1,9 @@
 # @katahimo/web(スタッフ用Webアプリ)
 
-GAS版 `gas-childcare-visit-app` の画面(`legacy/gas-childcare-visit-app/gas-childcare-visit-app/index.html`)を、
-見た目・文言・操作の流れを変えずに React + TypeScript で作り直したもの。**GAS版が正**であり、迷ったら
-GAS版のマークアップ・クラス名・文言・`<script>` の処理をそのまま再現する(`tools/gas-preview` で並べて撮影して確かめる)。
+GAS版 `gas-childcare-visit-app` の画面(`legacy/gas-childcare-visit-app/gas-childcare-visit-app/index.html`)を
+出発点に React + TypeScript で作り直したもの。**業務ロジック・計算結果は GAS版が正**(gasParity テストで一致を
+確かめる)。画面は GAS版のマークアップ・クラス名・文言をそのまま引き継いだが、以後の見た目・操作の流れの変更は
+このアプリの中だけで判断する(GAS版と見比べて揃える運用はしていない)。
 画面ごとの振る舞い・業務ルール・権限は [`doc/02_機能仕様.md`](../../doc/02_機能仕様.md)、API は [`doc/04_API仕様.md`](../../doc/04_API仕様.md)。
 
 ## 動かし方
@@ -94,7 +95,6 @@ src/
 - 出勤簿タブはGAS版と同じく**初めて開いたときに作られる**(`AttendanceTab` の初回描画 = GAS版 `initPastScheduleTab`)。
   タブを切り替えても作り直さない(隠すだけ)ので、入力途中の値は残る。
 - 共有部分(`app/`・`api/client.ts`・`api/queryKeys.ts`・`lib/`・`ui/`)は全機能が使う。既存の関数の形を変えるときは使っている所を全て直す。
-- 見比べのモック(`tools/gas-preview/src/webMock.ts`・`fixtures.ts`)は機能ごとのまとまりで足す。
 
 ## 書き方の決まり
 
@@ -193,18 +193,6 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
 | `z-[120]` | 予定の修正 |
 | `z-[130]` | お知らせ(トースト) |
 
-## GAS版との見比べ(tools/gas-preview)
-
-GAS版の `index.html` をモックの `google.script.run` 付きでローカルに開き、新アプリと同じ場面を同じデータで撮影して
-横に並べる。使い方は `tools/gas-preview/README.md`。
-
-```bash
-pnpm --filter @katahimo/gas-preview shoot             # tools/gas-preview/out/<場面>.png(Vite もこのコマンドが起動する)
-pnpm --filter @katahimo/gas-preview shoot -- --only settings
-```
-
-新しい画面を作ったら、`tools/gas-preview/src/shots/<機能>.ts` に場面を足し、差分(3列目)が黒くなるまで直す。
-
 ## GAS版と意図的に変えているところ
 
 - ログイン状態は httpOnly Cookie(GAS版はトークンを localStorage に置いていた)。法人IDの欄は上記の条件のときだけ出る。
@@ -236,4 +224,3 @@ pnpm --filter @katahimo/gas-preview shoot -- --only settings
     保存も同じで、開き直す前に送った保存の結果が届いても、今の入力を「✅ 保存しました」にせず、上書き用の報告IDも持たない
     (お知らせ「保存しました」は出す)。サーバーも、別のお客様の報告IDでの上書きは 409 で断る。
   - 「🎤 話して入力」は、ダイアログを閉じたとき・開き直したときに止める(聞き取り途中の文は捨てる)。
-  - 開発サーバーのときだけ `window.__katahimoReport`(`openReport` / `openStandaloneReceipt`)を置く(見比べハーネス用)。

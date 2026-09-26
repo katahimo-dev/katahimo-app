@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { REPO_ROOT } from './paths';
 
 /**
- * 新アプリ(packages/web)の Vite 開発サーバーを、このプロセスの中で起動する(shoot / e2e を1つの
+ * 新アプリ(packages/web)の Vite 開発サーバーを、このプロセスの中で起動する(e2e を1つの
  * コマンドで動かすため)。`--web-url`(または環境変数 KATAHIMO_WEB_URL)を指定したときは起動せず、
  * すでに動いているサーバーを使う。
  */
@@ -56,6 +56,6 @@ export async function ensureWebServer({
   const address = server.httpServer?.address();
   const actualPort = typeof address === 'object' && address ? address.port : port;
   const url = `http://127.0.0.1:${actualPort}`;
-  console.log(`[gas-preview] 新アプリの開発サーバーを起動しました: ${url}`);
+  console.log(`[e2e] 新アプリの開発サーバーを起動しました: ${url}`);
   return { url, close: () => server.close() };
 }

@@ -24,7 +24,7 @@ updates:
         applies-to: security-updates
         patterns: ['*']
     ignore:
-      # playwright-core は見比べハーネスの Chromium(revision)に合わせて固定している(tools/gas-preview/README.md)
+      # playwright-core は e2e(通し確認)が使う Chromium(revision)に合わせて固定している(tools/e2e/package.json)
       - dependency-name: playwright-core
       # Web は Tailwind v3 を前提にしている(packages/web/README.md)
       - dependency-name: tailwindcss

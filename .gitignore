@@ -11,6 +11,6 @@ coverage/
 # 実データを含みうるためコミットしない。
 packages/api/data/
 
-# GAS版との見比べハーネスの撮影結果・フォントのキャッシュ
-tools/gas-preview/out/
-tools/gas-preview/.cache/
+# 通し確認(e2e)の画面・フォントのキャッシュ
+tools/e2e/out/
+tools/e2e/.cache/

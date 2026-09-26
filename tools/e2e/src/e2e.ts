@@ -10,18 +10,18 @@ import { ensureWebServer } from './webServer';
 
 /**
  * 実際のAPI・DBにつないだ新アプリを、スマホの大きさ(390×844)で最初から最後まで操作する通し確認。
- * GAS版との見比べ(shoot.ts)とは別に、並行して作った機能をつないだときに壊れていないかを確かめる。
+ * 並行して作った機能をつないだときに壊れていないかを確かめる。
  *
  *   # pnpm db:migrate && pnpm db:seed 済みであること。API(--api-url、既定 :8080)が動いていなければ起動し、
  *   # 新アプリの Vite もこのコマンドの中で起動する(終わったら両方止める)
- *   cd tools/gas-preview && npx tsx src/e2e.ts
+ *   cd tools/e2e && npx tsx src/e2e.ts
  *   npx tsx src/e2e.ts --web-url http://127.0.0.1:8484 --only '^(login|logout)$'   # 本番ビルドの配信で
  *
  * 各手順の画面を out/e2e/<番号>-<手順>.png に保存し、手順ごとの成否を表にして出す(1つでも失敗なら終了コード1)。
  * 一般スタッフの確認用に、管理者API(POST /api/admin/staff)で「e2e 一般スタッフ」を作る(既にあれば使い回す)。
  * 日報・領収書・出勤簿はDBに書き込まれる(開発用DB向け。本番に向けて動かさないこと)。
  */
-// pnpm 11 は `pnpm … shoot -- --only x` の `--` もそのまま渡す。parseArgs は `--` 以降をオプションとして
+// pnpm 11 は `pnpm … e2e -- --only x` の `--` もそのまま渡す。parseArgs は `--` 以降をオプションとして
 // 読まないため取り除く
 const { values } = parseArgs({
   args: process.argv.slice(2).filter((a) => a !== '--'),

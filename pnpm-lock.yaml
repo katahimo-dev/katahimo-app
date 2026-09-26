@@ -219,14 +219,7 @@ importers:
         specifier: ^8.3.5
         version: 8.5.1(jiti@1.21.7)(postcss@8.5.26)(tsx@4.23.12)(typescript@5.9.3)(yaml@2.9.1)
 
-  tools/gas-preview:
-    dependencies:
-      '@katahimo/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
-      zod:
-        specifier: ^3.25.76
-        version: 3.25.76
+  tools/e2e:
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -234,12 +227,6 @@ importers:
       playwright-core:
         specifier: 1.56.1
         version: 1.56.1
-      postcss:
-        specifier: ^8.5.26
-        version: 8.5.26
-      tailwindcss:
-        specifier: 3.4.17
-        version: 3.4.17
       tsx:
         specifier: ^4.19.2
         version: 4.23.12
