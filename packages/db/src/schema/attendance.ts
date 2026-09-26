@@ -79,7 +79,8 @@ export const attendanceDays = pgTable(
 /**
  * 訪問(実績)。seq はその日の中での並び(1〜3 が出勤簿の訪問#1〜#3。4件目以降も保存するが出勤簿には出ない)。
  * 顧客が特定できない予定(カレンダーのタイトルだけ)は customer_id を null にし、表示名を label_enc に持つ。
- * 同じスタッフの取消以外の訪問の実績の時間帯の重なりは EXCLUDE で禁止(0001_baseline_custom.sql)。
+ * 時間帯の重なりは禁止しない(GAS版と同じく重なる予定もそのまま反映する。二重予約の防止は将来の
+ * reservation_assignments の EXCLUDE が受け持つ)。
  */
 export const visits = pgTable(
   'visits',

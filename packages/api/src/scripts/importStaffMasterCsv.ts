@@ -9,6 +9,7 @@ import { closeDatabase, createDatabase } from '@katahimo/db';
 import { parseStaffMasterCsv } from '@katahimo/ingestion';
 import { createContainer } from '../container';
 import { loadEnv } from '../env';
+import { cliArgs, resolveInputPath } from './cliArgs';
 
 /**
  * GAS版スタッフ台帳(Staffシート)をCSVに書き出したものを一括取込する。メールアドレス(E列)で照合し、
@@ -18,9 +19,9 @@ import { loadEnv } from '../env';
  * 使い方: pnpm --filter @katahimo/api import:staff-master -- <tenantSlug> <CSVファイルパス> [--dry-run]
  */
 async function main() {
-  const [tenantSlug, csvPath, ...rest] = process.argv.slice(2).filter((a) => a !== '--');
+  const [tenantSlug, csvArg, ...rest] = cliArgs();
   const dryRun = rest.includes('--dry-run');
-  if (!tenantSlug || !csvPath) {
+  if (!tenantSlug || !csvArg) {
     console.error(
       '使い方: pnpm --filter @katahimo/api import:staff-master -- <tenantSlug> <CSVファイルパス> [--dry-run]',
     );
@@ -30,7 +31,7 @@ async function main() {
   const env = loadEnv();
   const db = createDatabase(env.DATABASE_URL, { max: 2 });
   try {
-    await run(env, createContainer(env, db), tenantSlug, csvPath, dryRun);
+    await run(env, createContainer(env, db), tenantSlug, resolveInputPath(csvArg), dryRun);
   } finally {
     await closeDatabase(db);
   }

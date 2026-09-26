@@ -64,7 +64,6 @@ export const sharedEnvShape = {
 
   // スプレッドシートへのミラー。false ならミラーのトピックを outbox に積まず(API)、残っていても送らない(ワーカー)。
   MIRROR_TO_GOOGLE_SHEETS: booleanFlag,
-  MIRROR_TO_GOOGLE_CALENDAR: booleanFlag,
 
   // 顧客CSV(RESERVA「Kokyaku_YYYYMMDDHHmm_N.csv」)の取込元。
   // CUSTOMER_CSV_DRIVE_FOLDERS: {"テナントslug": "DriveフォルダID"} の JSON。
