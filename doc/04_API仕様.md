@@ -79,6 +79,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `ai_generate_staff` | テナント + スタッフ | 1日200回 | 429 | `RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY` |
 | `receipt_ocr_staff` | テナント + スタッフ | 1日300回 | 429 | `RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY` |
 | `schedule_force_refresh_staff` | テナント + スタッフ | 1時間30回 | 429 | `RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR` |
+| `push_test_staff` | テナント + スタッフ | 1時間10回 | 429 | — |
 
 ログインの2つの規則は照合(argon2)の**前に**1回分の枠を取る(同時の大量の試行でも照合まで進むのは上限の回数まで)。
 一致した回は数えない(アカウントは数え直し、IP は先に取った1回分を返す)。
@@ -191,11 +192,25 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 
 拒否は WARN `<action>.access_denied`(`staff.admin.list` 等)・`staff.admin.create_rejected` / `update_rejected`・`customer_csv.import.access_denied`。
 
+### 2.10 通知 `/api/push`(`routes/push.ts`、全てログイン)
+
+Web Push(翌日の予定のお知らせ・テスト通知。02 9.1、05 10章)。購読はログイン中の**本人の端末だけ**を扱う(要求にスタッフの
+指定は無い)。`endpoint` は既知のプッシュサービス(`fcm.googleapis.com`・`android.googleapis.com`・`push.services.mozilla.com`・
+`push.apple.com`・`notify.windows.com` とそのサブドメイン)の `https` の URL だけ(`isAllowedPushEndpoint`。ワーカーが任意の
+URL へ送らないように)。操作ログに `endpoint`・鍵は残さない。
+
+| メソッド・パス | 契約(要求 / 応答) | 応答・エラー・ログ |
+| --- | --- | --- |
+| `GET /config` | — / `pushConfigResponseSchema` | `{ enabled, publicKey }`。VAPID の設定(`VAPID_PUBLIC_KEY`)が無ければ `{ enabled: false, publicKey: null }` |
+| `POST /subscriptions` | `pushSubscribeRequestSchema`(`PushSubscription.toJSON()` の形: `endpoint`・`expirationTime?`・`keys: { p256dh, auth }`)/ `okResponseSchema` | 同じ `endpoint` があれば鍵を書き直し、別のスタッフのものなら本人に付け替える。User-Agent(300字まで)を残す。通知を使えない環境は 400。INFO `push.subscription.saved`(`subscriptionId`・`created`・付け替えなら `previousStaffId`) |
+| `DELETE /subscriptions` | `pushUnsubscribeRequestSchema`(`endpoint`)/ `okResponseSchema` | 本人の購読だけを消す(無ければ何もしない)。INFO `push.subscription.deleted`(`subscriptionId`・`deleted`) |
+| `POST /test` | — / `pushTestResponseSchema` | `{ ok, subscriptionCount }`。本人の全ての購読に送るテスト通知を outbox に積む。購読が無ければ 400。回数制限 `push_test_staff`。INFO `push.test.queued` |
+
 ## 3. 本番での Web 画面の配信
 
 `WEB_DIST_DIR` を設定すると、`/api/*` の後に静的ファイルを配信する(`http/webStatic.ts`)。拡張子の無いパスは `index.html`
-(SPA)。キャッシュ: `assets/*`・`workbox-<hash>.js` は1年 immutable、`index.html`・`sw.js`・`registerSW.js`・`manifest.webmanifest`
-は `no-cache`、その他は1時間。
+(SPA)。キャッシュ: `assets/*`・`workbox-<hash>.js` は1年 immutable、`index.html`・`sw.js`・`push-sw.js`(通知の処理)・
+`registerSW.js`・`manifest.webmanifest` は `no-cache`、その他は1時間。
 
 ## 4. 新しいエンドポイントを足すとき
 

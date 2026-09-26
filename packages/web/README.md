@@ -70,10 +70,11 @@ src/
   api/                     APIの呼び出し(1ファイル=1つのAPIのまとまり)
     client.ts              共通の fetch(zodで応答を検証、エラーの種類分け)
     queryKeys.ts           機能をまたいで無効化するクエリキー
-    auth.ts, settings.ts, staff.ts, system.ts
+    auth.ts, settings.ts, staff.ts, system.ts, push.ts
   features/                機能ごとのフォルダ
     auth/                  ログイン・パスワード再設定・パスワード変更・セッション
     settings/              設定ダイアログ
+    notifications/         設定の「通知」(Web Push の購読・テスト通知・受け取れない端末の判定)
     schedule/              「📅 今日の予定」タブ
     customers/             「👪 お客様」タブ・お客様の情報/これまでの記録
     report/                日報・事故報告・領収書ダイアログ
@@ -95,6 +96,12 @@ src/
   タブを切り替えても作り直さない(隠すだけ)ので、入力途中の値は残る。
 - 共有部分(`app/`・`api/client.ts`・`api/queryKeys.ts`・`lib/`・`ui/`)は全機能が使う。既存の関数の形を変えるときは使っている所を全て直す。
 - 見比べのモック(`tools/gas-preview/src/webMock.ts`・`fixtures.ts`)は機能ごとのまとまりで足す。
+- **通知→予定タブ**: 翌日の予定のお知らせは `/?schedule=YYYY-MM-DD` を開く。予定タブ(`useScheduleView`)は最初の描画で URL の日付を
+  選び(明日なら「🌙 明日」)、`AppShell` の `useScheduleLinkNavigation` が URL から取り除く。開いている画面で通知を押したときは
+  Service Worker(`public/push-sw.js`)のメッセージを受けて予定タブに切り替え、`openScheduleLink` で日付を知らせる
+  (`features/schedule/scheduleLink.ts`)。
+- **Service Worker**: vite-plugin-pwa の generateSW が作る `sw.js`(事前キャッシュ・新しい版のお知らせ)が、`workbox.importScripts` で
+  `public/push-sw.js`(通知の表示と通知を押したときの処理)を読む。テストは `src/test/pushServiceWorker.test.ts`(`node:vm` で動かす)。
 
 ## 書き方の決まり
 
@@ -165,13 +172,14 @@ src/
 | `GAS_RECEIPT_KEYS_V1_<スタッフ名>` | この端末から送った領収書の重複チェック用 | ○ |
 | `cal_week_view_mode` | 週の表示(一覧/表)。端末の好みなので人ごとに分けない | ○ |
 | `recent_customers@<法人ID>/<スタッフID>` / `pending_report_draft@…` / `last_start_hour@…` / `last_start_minute@…` / `last_acc_time@…` | 最近開いたお客様・書きかけの日報・日報の開始時刻・事故の発生時刻の前回値(ログインしている人ごと) | △(中身の形はGAS版と同じ。GAS版は1人1端末が前提で人ごとに分けていなかった) |
+| `katahimo_push_endpoint@<法人ID>/<スタッフID>` | この端末で本人が通知をオンにしたときの購読の endpoint(同じ端末で別の人がオンにしていたら本人にはオフに見せる) | (新規) |
 
 GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使わない(ログインは httpOnly Cookie、管理者かどうかは `/api/auth/me`)。
 
 ログアウト・セッション切れのとき(`features/auth`):
 
 - ログアウト: その人の値(上の表の `@<法人ID>/<スタッフID>` のもの)と、表示用の2時間キャッシュ(ルート・週間予定・今月のまとめ)を
-  消し、TanStack Query のキャッシュも捨てる。
+  消し、TanStack Query のキャッシュも捨てる。その前に、この端末で本人がオンにしていた通知をやめる(設定の「ログアウト」)。
 - セッション切れ(401): 表示用の2時間キャッシュと TanStack Query のキャッシュを捨てる。書きかけの日報などその人の値は、
   その人にしか見えないので残す(もう一度ログインすると続きから書ける。GAS版と同じ)。
 - お客様タブの探す欄の文字はログイン後の画面(AppShell)の中だけに持つので、ログイン画面に戻ると空になる。
