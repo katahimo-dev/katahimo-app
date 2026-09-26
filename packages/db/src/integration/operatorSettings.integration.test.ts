@@ -30,6 +30,14 @@ describe('運用担当者の設定・ミラーのテナント', () => {
         driveFolderId: '1AbCdEfGhIjKlMnOp',
       });
     }
+    // 同じフォルダを使っているテナントを引ける(運用担当者の CLI が別のテナントへの設定を断るのに使う)
+    // (前の実行が途中で止まって残した設定と混ざらないよう、毎回違うフォルダID)
+    const folder = `1Folder${newId().replaceAll('-', '')}`;
+    await store.set(b, { provider: 'reserva_csv', driveFolderId: folder });
+    expect(await store.findTenantIdsByDriveFolder(folder)).toEqual([b]);
+    expect(await store.findTenantIdsByDriveFolder(folder.slice(0, -1))).toEqual([]);
+    await store.set(b, null);
+    expect(await store.findTenantIdsByDriveFolder(folder)).toEqual([]);
     await store.set(a, null);
     expect(await store.get(a)).toBeNull();
     // アプリのロールは platform.tenants を書けない(設定を変えられるのは運用担当者だけ)

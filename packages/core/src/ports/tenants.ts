@@ -51,5 +51,7 @@ export interface TenantCalendarSettingsStore {
  */
 export interface TenantCustomerImportSettingsStore {
   get(tenantId: string): Promise<TenantCustomerImportSettings | null>;
+  /** この Drive のフォルダを取込元にしているテナントの ID(完全一致)。 */
+  findTenantIdsByDriveFolder(driveFolderId: string): Promise<string[]>;
   set(tenantId: string, settings: TenantCustomerImportSettings | null): Promise<void>;
 }

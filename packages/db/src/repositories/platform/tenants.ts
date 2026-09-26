@@ -113,6 +113,14 @@ export class DrizzleTenantCustomerImportSettingsStore implements TenantCustomerI
     return findTenantCustomerImportSettings(this.db, tenantId);
   }
 
+  async findTenantIdsByDriveFolder(driveFolderId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: tenants.id })
+      .from(tenants)
+      .where(sql`${tenants.customerImportSettings}->>'driveFolderId' = ${driveFolderId}`);
+    return rows.map((row) => row.id);
+  }
+
   async set(tenantId: string, settings: TenantCustomerImportSettings | null): Promise<void> {
     await this.db
       .update(tenants)

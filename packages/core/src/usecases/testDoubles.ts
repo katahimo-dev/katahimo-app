@@ -1345,6 +1345,11 @@ export class FakeTenantCustomerImportSettingsStore implements TenantCustomerImpo
   async get(tenantId: string) {
     return structuredClone(this.db.customerImportSettings.get(tenantId) ?? null);
   }
+  async findTenantIdsByDriveFolder(driveFolderId: string) {
+    return [...this.db.customerImportSettings]
+      .filter(([, settings]) => settings.driveFolderId === driveFolderId)
+      .map(([tenantId]) => tenantId);
+  }
   async set(tenantId: string, settings: TenantCustomerImportSettings | null) {
     if (settings) this.db.customerImportSettings.set(tenantId, structuredClone(settings));
     else this.db.customerImportSettings.delete(tenantId);

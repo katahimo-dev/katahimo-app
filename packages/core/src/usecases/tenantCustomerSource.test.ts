@@ -51,4 +51,37 @@ describe('テナントの顧客データの取込元(運用担当者)', () => {
     expect(ctx.db.customerImportSettings.size).toBe(0);
     expect(ctx.appLog.byAction('tenant.customer_import_settings.updated')).toEqual([]);
   });
+
+  it('別のテナントが取込元にしているフォルダは設定しない(同じテナントに設定し直すのはよい)', async () => {
+    const { ctx, deps } = setup();
+    const other = ctx.db.addTenant({ slug: 'other-tenant' });
+    const folder = '1AbCdEfGhIjKlMnOpQrStUvWxYz_-012';
+    await updateTenantCustomerImportSettings(deps, 'other-tenant', {
+      kind: 'drive_folder',
+      driveFolderId: folder,
+    });
+    await expect(
+      updateTenantCustomerImportSettings(deps, 'test-tenant', {
+        kind: 'drive_folder',
+        driveFolderId: folder,
+      }),
+    ).rejects.toMatchObject({
+      code: 'validation_failed',
+      reason: 'folder_in_use',
+      message: expect.stringContaining('other-tenant'),
+    });
+    expect(ctx.db.customerImportSettings.has(ctx.tenantId)).toBe(false);
+    // 同じテナントに同じフォルダを設定し直すのはよい。別のテナントの設定を外せば設定できる
+    await updateTenantCustomerImportSettings(deps, 'other-tenant', {
+      kind: 'drive_folder',
+      driveFolderId: folder,
+    });
+    await updateTenantCustomerImportSettings(deps, 'other-tenant', { kind: 'clear' });
+    const set = await updateTenantCustomerImportSettings(deps, 'test-tenant', {
+      kind: 'drive_folder',
+      driveFolderId: folder,
+    });
+    expect(set.settings?.driveFolderId).toBe(folder);
+    expect(ctx.db.customerImportSettings.has(other.id)).toBe(false);
+  });
 });
