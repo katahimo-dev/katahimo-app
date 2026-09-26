@@ -22,11 +22,31 @@
   運用担当者のコマンド `pnpm tenant:calendars` で変える。管理者は許可に無いカレンダーをスタッフに設定できず、予定を読むときにも
   確かめ直す(`doc/05_バッチ・外部連携.md` 4.2)。
 - ワーカーの環境変数 `APP_PUBLIC_URL`: パスワード設定の案内のメールに法人IDつきのログイン画面の URL を書く(terraform の `app_public_url`)。
+- 外部システムからの顧客の受け取り `POST /api/integrations/customers`(RESERVA 等との連携の受け口): テナントごとの API キー
+  (`Authorization: Bearer kth_…`。Cookie のセッションは使わない)で、1回500件までの顧客を作成・更新する(削除・アーカイブはしない)。
+  1回を1トランザクションで適用し `import_runs`(`external_api`)に残す。キーごとに書ける取込元(`reserva` / `external_api`)を固定し、
+  1時間120回・本体 2MB まで(`doc/04_API仕様.md` 2.11・`doc/05_バッチ・外部連携.md` 11章)。
+- 運用のコマンド `pnpm tenant:api-keys -- <slug> [--create <名前> [--source …]] [--revoke <ID>]`(API キーの発行・一覧・失効。
+  トークンは1回だけ表示し、DB にはハッシュだけを残す)と `pnpm tenant:customer-source -- <slug> [--drive-folder <ID> | --clear]`
+  (顧客CSVの取込元の Drive のフォルダ)。
+- 報告・領収書のテナント全体の一覧のための索引 `care_records (tenant_id, occurred_at DESC, id DESC)`・
+  `receipts (tenant_id, receipted_at DESC, id DESC)`。
 
 ### 変更
 
 - 共有カレンダーの環境変数 `GOOGLE_CALENDAR_IDS` をやめ、テナントごとのカレンダーの設定(`pnpm tenant:calendars`)に置き換える。
   切替の前に、`GOOGLE_CALENDAR_IDS` に入れていたカレンダーを `pnpm tenant:calendars -- <slug> --add-shared …` で登録する。
+- 顧客CSVの取込元の環境変数 `CUSTOMER_CSV_DRIVE_FOLDERS` をやめ、テナントごとの設定(`platform.tenants.customer_import_settings`、
+  `pnpm tenant:customer-source`)に置き換える。設定の無いテナントは夜間の取込の対象外(ローカル開発の `CUSTOMER_CSV_LOCAL_DIR` は残す)。
+- スプレッドシートへのミラーと `SCHEDULE_PROVIDER=gas_bridge` を1つのテナントに限る: GAS Bridge の持ち主のテナントの slug
+  `GAS_BRIDGE_TENANT`(terraform の `gas_bridge_tenant`)を `GAS_BRIDGE_URL`・`GAS_BRIDGE_SECRET` と揃えて設定する(揃っていない・
+  ミラーを有効にしてテナントが無いと起動しない)。API は他のテナントの `mirror.*` を積まず、ワーカーは残っていても送らずに完了にする
+  (WARN `outbox.mirror_other_tenant_skipped`)。他のテナントの予定は Bridge に求めない(502)。`gas_bridge` では Bridge の地図
+  (スタッフの自宅住所のジオコーディング)を使わない(住所だけを保存する)。
+- terraform: `MIRROR_TO_GOOGLE_SHEETS` を API だけでなくワーカーにも渡す(今まではワーカーに渡っておらず、ミラーを有効にしても
+  ワーカーが送らずに完了にしていた)。
+- 報告の索引 `care_records (tenant_id, customer_id, occurred_at, id)` 等の降順の列を `DESC NULLS FIRST` にする(`ORDER BY … DESC`
+  の並びに索引をそのまま使えるように)。
 - GAS版と並べて撮る画面の見比べ(`tools/gas-preview`、`pnpm preview:*`)をやめ、実際の API・DB での通し確認を `tools/e2e`(`pnpm e2e`)に
   切り出す。通し確認に管理タブ(スタッフ・AIプロンプト・操作ログ)と、VAPID が無いときに「通知」欄が出ないことの確認を足す。
   画面の文言・振る舞いはこのアプリのコードが正で、GAS版は業務ロジック・計算結果の基準(gasParity のテスト)。

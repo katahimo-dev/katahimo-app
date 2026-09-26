@@ -73,8 +73,8 @@
 | 顧客データが変わったら読み直す | 1分ごとに `checkDataVersion`(画面が隠れていても) | 1分ごとに版数を確かめる(画面が隠れている間は止める)。ログイン前は確かめない | 同等 |
 | 端末に置く顧客データ | 全顧客の全項目を sessionStorage に(XOR で難読化して)置く | 一覧(名前・電話・地域)だけを画面のメモリに持ち、詳しい情報は開いたときに読む | 改善 |
 | お客様の情報の閲覧の記録 | 残さない | 開くたびに INFO `customer.detail.viewed` | 改善 |
-| 画面を開いたときの顧客CSVの取込 | 開くたびに `checkAndImportLatestCsv` を呼び、取り込めたら「新しい情報を取り込みました」 | しない。取込は夜間 03:00 のジョブと管理者の API(7章) | GAS版のみ(多数の端末から重い処理が走らないように、取込をサーバーの定期実行に寄せると決めた。将来はレセルバからの自動反映を予定) |
-| 顧客の情報を直す | 顧客シートを直接編集(次の取込で上書きされる) | 画面・API は無い。顧客CSV(RESERVA)の取込でだけ変わる | GAS版のみ(スプレッドシートを自由に編集できるデータ源とはしないと決めた。顧客の管理をアプリの中で行う機能は将来の予定) |
+| 画面を開いたときの顧客CSVの取込 | 開くたびに `checkAndImportLatestCsv` を呼び、取り込めたら「新しい情報を取り込みました」 | しない。取込は夜間 03:00 のジョブと管理者の API(7章) | GAS版のみ(多数の端末から重い処理が走らないように、取込をサーバーの定期実行に寄せると決めた。将来はレセルバからの自動反映を予定。受け口の API は用意済み: 10章) |
+| 顧客の情報を直す | 顧客シートを直接編集(次の取込で上書きされる) | 画面は無い。顧客CSV(RESERVA)の取込と、外部システムからの受け取りの API(10章)でだけ変わる | GAS版のみ(スプレッドシートを自由に編集できるデータ源とはしないと決めた。顧客の管理をアプリの中で行う機能は将来の予定) |
 
 ## 4. 日報・事故報告・領収書
 
@@ -187,13 +187,15 @@
 | 勤怠集計 | 夜間の反映・`refreshAttendanceForStaffOnDate` が書く | ミラーを続ける間、GAS 側が計算し直して書く(`mirror.attendance_aggregate`) | 同等(ミラーを続ける場合) |
 | スタッフ台帳のシート | 正(全ての GAS プロジェクトが読む) | 取込で読むだけで、アプリでの変更はシートに書かない | 変更(台帳の正はアプリ。GAS の他のプロジェクトを止めるまでは、そちらが使う台帳は手で揃える) |
 | 顧客CSV(Drive の RESERVA の CSV) | 顧客・家族シートを丸ごと置き換える | RESERVA の顧客IDで差分を適用し、消えるお客様が2割を超えたら止める(`review_required`) | 改善 |
+| 顧客CSVを置くフォルダ | `Config.js` の `CUSTOMER_CSV_FOLDER_ID`(1つ) | テナントごとに運用担当者が設定する(`pnpm tenant:customer-source`、DB の `platform.tenants`。05 5章) | 変更(全テナントのフォルダを1つのサービスアカウントで読むため、テナントの管理者には変えさせない) |
+| 外部システムからの顧客の受け取り | — | `POST /api/integrations/customers`(テナントごとの API キー。作成・更新だけで削除はしない。05 11章) | 改善(RESERVA 等からの自動反映の受け口。連携先は未定) |
 | 「ルート集計」シート | gas-root-serach の夜間 `main()` が翌日分を書く | 書かない | GAS版のみ(LINE WORKS の DM の材料だった。翌日のルートは予定タブで見る) |
 | Google カレンダー | 実行アカウントの `CalendarApp` | Calendar API(サービスアカウントへの共有)。予定を書くことはどちらもしない | 変更(2章) |
 | 地図(ジオコーディング・経路) | Maps サービス | Geocoding API・Routes API(予算アラートつき) | 変更(2章) |
 | 秘密値(APIキー・Webhook・salt) | Script Properties | Secret Manager と、テナントの秘密値は Cloud KMS で封をして DB に | 改善 |
 | 保存データの暗号化 | Google の既定の暗号化 | Cloud SQL・バックアップ・領収書のバケットを、このアプリ専用の鍵(CMEK)で暗号化 | 改善 |
 | バックアップ・戻し | シート・Drive の版の履歴 | 自動バックアップ14世代・過去7日の好きな時点に戻せる(07) | 改善 |
-| GAS版への書き写しの受け口 | — | GAS版の `Bridge.js`(Ver. 1.1.38 以降)。ミラーを続ける間は GAS版の Web App を公開したままにする | 変更(09 2.2) |
+| GAS版への書き写しの受け口 | — | GAS版の `Bridge.js`(Ver. 1.1.38 以降)。ミラーを続ける間は GAS版の Web App を公開したままにする。書き写すのは Bridge の持ち主のテナント(`GAS_BRIDGE_TENANT`)の記録だけ | 変更(09 2.2) |
 
 ## 11. 夜間処理
 
@@ -232,10 +234,10 @@
 | 判定 | 数 |
 | --- | --- |
 | 同等 | 49 |
-| 改善 | 64 |
-| 変更 | 19 |
+| 改善 | 65 |
+| 変更 | 20 |
 | GAS版のみ | 8 |
-| 合計 | 140 |
+| 合計 | 142 |
 
 ### 13.2 上位互換の状況
 
@@ -260,12 +262,12 @@
 | --- | --- | --- | --- |
 | 準備 | 本番の構築(Terraform)・テナントと最初の管理者(`pnpm tenant:create`) | 運用者 | 2.1 |
 | 準備 | `legacy-auth-salt` の登録とスタッフ台帳の取込(`pnpm import:staff-master`)、今のパスワードでログインできるかの確認 | 運用者 | 2.1 |
-| 準備 | 顧客CSVの取込(`pnpm import:reserva` か `csv-import` ジョブ) | 運用者 | 2.1 |
+| 準備 | 顧客CSVの取込元のフォルダの設定(`pnpm tenant:customer-source`)と取込(`pnpm import:reserva` か `csv-import` ジョブ) | 運用者 | 2.1 |
 | 準備 | スタッフごとの予定を読むカレンダー・自宅住所・移動手段の設定(🛠 管理 →「スタッフ」) | 管理者 | 2.1 |
 | 準備 | カレンダーと顧客CSVのフォルダをサービスアカウントに共有 | カレンダー・Drive の持ち主 | 2.1 |
 | 準備 | Google Chat の Webhook・Gemini のキーの保存(設定の詳細設定) | 管理者 | 2.1 |
 | 準備 | Web Push の鍵(`pnpm push:vapid-keys` → VAPID の設定)とテスト通知の確認 | 運用者 | 2.1 |
-| 準備(ミラーを続けるなら) | GAS版に `Bridge.js` Ver. 1.1.38 以降をデプロイし、`gas_bridge_url`・`gas-bridge-secret`・`mirror_to_google_sheets` を設定。GAS版の Web App を公開したままにする | GAS のアカウントを持つ人・運用者 | 2.2 |
+| 準備(ミラーを続けるなら) | GAS版に `Bridge.js` Ver. 1.1.38 以降をデプロイし、`gas_bridge_url`・`gas-bridge-secret`・`gas_bridge_tenant`・`mirror_to_google_sheets` を設定。GAS版の Web App を公開したままにする | GAS のアカウントを持つ人・運用者 | 2.2 |
 | 切替の直前 | 当月の個別出勤簿を CSV にして取り込む(`pnpm import:attendance`) | 運用者 | 2.3・4 |
 | 切替日 | GAS版の `autoSyncTodayScheduleForAllStaff`・`checkAndImportLatestCsv` を止め、同じ日に新アプリの Scheduler を動かす | GAS のアカウントを持つ人・運用者 | 4 |
 | 切替日 | スタッフに新しい URL(ホーム画面に追加)を案内し、GAS版の画面を使わないよう伝える | 管理者 | 4 |
