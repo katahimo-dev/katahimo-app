@@ -6596,11 +6596,43 @@
           "primaryKey": false,
           "notNull": false
         },
+        "company_paid": {
+          "name": "company_paid",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "dedupe_hash": {
           "name": "dedupe_hash",
           "type": "bytea",
           "primaryKey": false,
           "notNull": false
+        },
+        "cancelled_at": {
+          "name": "cancelled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancelled_by": {
+          "name": "cancelled_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancel_reason": {
+          "name": "cancel_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
         },
         "created_at": {
           "name": "created_at",
@@ -6628,10 +6660,10 @@
             }
           ],
           "isUnique": true,
-          "with": {},
+          "where": "dedupe_hash is not null and cancelled_at is null",
+          "concurrently": false,
           "method": "btree",
-          "where": "dedupe_hash is not null",
-          "concurrently": false
+          "with": {}
         },
         "receipts_tenant_id_staff_id_receipted_at_idx": {
           "name": "receipts_tenant_id_staff_id_receipted_at_idx",
@@ -6656,9 +6688,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "receipts_tenant_id_receipted_at_id_idx": {
           "name": "receipts_tenant_id_receipted_at_id_idx",
@@ -6704,9 +6736,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "receipts_tenant_id_file_id_idx": {
           "name": "receipts_tenant_id_file_id_idx",
@@ -6725,85 +6757,100 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "receipts_tenant_id_fkey": {
           "name": "receipts_tenant_id_fkey",
           "tableFrom": "receipts",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
           "columnsFrom": [
             "tenant_id"
           ],
-          "tableTo": "tenants",
-          "schemaTo": "platform",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "receipts_tenant_id_upload_id_fkey": {
           "name": "receipts_tenant_id_upload_id_fkey",
           "tableFrom": "receipts",
+          "tableTo": "receipt_uploads",
           "columnsFrom": [
             "tenant_id",
             "upload_id"
           ],
-          "tableTo": "receipt_uploads",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "receipts_tenant_id_file_id_fkey": {
           "name": "receipts_tenant_id_file_id_fkey",
           "tableFrom": "receipts",
+          "tableTo": "stored_files",
           "columnsFrom": [
             "tenant_id",
             "file_id"
           ],
-          "tableTo": "stored_files",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "receipts_tenant_id_staff_id_fkey": {
           "name": "receipts_tenant_id_staff_id_fkey",
           "tableFrom": "receipts",
+          "tableTo": "staff",
           "columnsFrom": [
             "tenant_id",
             "staff_id"
           ],
-          "tableTo": "staff",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "receipts_tenant_id_customer_id_fkey": {
           "name": "receipts_tenant_id_customer_id_fkey",
           "tableFrom": "receipts",
+          "tableTo": "customers",
           "columnsFrom": [
             "tenant_id",
             "customer_id"
           ],
-          "tableTo": "customers",
           "columnsTo": [
             "tenant_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "receipts_tenant_id_cancelled_by_fkey": {
+          "name": "receipts_tenant_id_cancelled_by_fkey",
+          "tableFrom": "receipts",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "tenant_id",
+            "cancelled_by"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -6832,6 +6879,14 @@
         "receipts_amount_yen_check": {
           "name": "receipts_amount_yen_check",
           "value": "\"receipts\".\"amount_yen\" >= 0"
+        },
+        "receipts_cancel_check": {
+          "name": "receipts_cancel_check",
+          "value": "(\"receipts\".\"cancelled_at\" is null and \"receipts\".\"cancelled_by\" is null and \"receipts\".\"cancel_reason\" is null) or (\"receipts\".\"cancelled_at\" is not null and \"receipts\".\"cancelled_by\" is not null)"
+        },
+        "receipts_cancel_reason_check": {
+          "name": "receipts_cancel_reason_check",
+          "value": "char_length(\"receipts\".\"cancel_reason\") <= 100 and \"receipts\".\"cancel_reason\" !~ '[[:cntrl:]]'"
         }
       },
       "isRLSEnabled": true

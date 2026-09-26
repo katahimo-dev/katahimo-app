@@ -60,9 +60,13 @@ export function buildMonthlyDayCards(
   });
 }
 
-/** 領収書の日ごとの一覧(日付順) */
-export function receiptRows(month: AttendanceMonth): { date: string; amount: number }[] {
+/** 領収書の日ごとの一覧(日付順)。amount は会社負担を含む合計、companyPaid はうち会社負担 */
+export function receiptRows(month: AttendanceMonth): { date: string; amount: number; companyPaid: number }[] {
   return Object.keys(month.receipts.byDay)
     .sort()
-    .map((date) => ({ date, amount: Number(month.receipts.byDay[date]) }));
+    .map((date) => ({
+      date,
+      amount: Number(month.receipts.byDay[date]),
+      companyPaid: Number(month.receipts.companyPaidByDay[date] ?? 0),
+    }));
 }

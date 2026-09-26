@@ -19,7 +19,7 @@ import { type AttendanceMonthView, assertYearMonth, loadAttendanceMonth } from '
 /** 一度に書き出せるスタッフの数(全員分の書き出しの上限。100人で .xlsx は約2MB・作るのに約3秒・メモリは約200MB 増える)。 */
 export const MAX_ATTENDANCE_EXPORT_STAFF = 100;
 
-/** 書き出す領収書の明細1件。 */
+/** 書き出す領収書の明細1件(取消済みの領収書は書き出さない)。 */
 export interface AttendanceExportReceipt {
   /** 領収書日時のテナントの暦日。 */
   businessDate: string;
@@ -29,6 +29,8 @@ export interface AttendanceExportReceipt {
   storeName: string;
   /** 金額(円)。読み取れず入力も無い領収書は null(合計に入れない。今月のまとめと同じ)。 */
   amountYen: number | null;
+  /** 会社負担(お客様に請求しない)。 */
+  companyPaid: boolean;
   /** 申し送り(まとめて登録した領収書の、その月の最初の1件にだけ付ける)。 */
   handoffText: string;
 }
@@ -94,6 +96,7 @@ async function toExportReceipts(
       customerName,
       storeName: row.storeName ?? '',
       amountYen: row.amountYen,
+      companyPaid: row.companyPaid,
       handoffText,
     });
   }

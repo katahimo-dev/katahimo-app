@@ -2,10 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { receiptCancelRefusal, zonedBusinessDate } from '@katahimo/core/domain';
 import { provisionTenant, registerStaff } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import { DrizzleTenantDirectory, DrizzleTenantProvisioning } from '@katahimo/db/repositories';
-import type { ReceiptListResponse, StaffRole } from '@katahimo/shared';
+import type { CancelReceiptResponse, ReceiptListResponse, StaffRole } from '@katahimo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
@@ -119,7 +120,14 @@ describe('API: 領収書の一覧', () => {
     const own = await list(t.staff, 'month=2026-09');
     expect(own.status).toBe(200);
     expect(own.body.receipts.map((r) => r.amountYen)).toEqual([300, 1200]);
-    expect(own.body.summary).toEqual({ count: 2, totalYen: 1500, noAmountCount: 0 });
+    expect(own.body.summary).toEqual({
+      count: 2,
+      totalYen: 1500,
+      companyPaidYen: 0,
+      customerBillableYen: 1500,
+      noAmountCount: 0,
+      cancelledCount: 0,
+    });
     expect(own.body.receipts[0]).toMatchObject({
       staffName: '山田 太郎',
       customerId: null,
@@ -184,10 +192,12 @@ describe('API: 領収書の一覧', () => {
     expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     // TextDecoder は先頭の BOM を取り除く
     const text = new TextDecoder().decode(bytes);
-    expect(text.startsWith('領収書日時,スタッフ,お客様,金額(円)')).toBe(true);
+    expect(text.startsWith('領収書日時,スタッフ,お客様,金額(円),区分,店名')).toBe(true);
     const lines = text.trim().split('\r\n');
     expect(lines).toHaveLength(4);
-    expect(lines[1]).toContain('2026-09-20 08:00:00,山田 太郎,未登録 さん,300,コンビニ,駐車場代です');
+    expect(lines[1]).toContain(
+      '2026-09-20 08:00:00,山田 太郎,未登録 さん,300,お客様請求,コンビニ,駐車場代です',
+    );
   });
 });
 
@@ -222,5 +232,136 @@ describe('API: 領収書の画像', () => {
     ).toBe(404);
     expect((await get('/api/receipts/not-a-uuid/image', t.admin.cookie)).status).toBe(404);
     expect((await app.request(`/api/receipts/${ownId}/image`)).status).toBe(401);
+  });
+});
+
+describe('API: 領収書の会社負担・取消', () => {
+  // 取消せる期間は今日(日本時間)で決まるため、今日の日付の領収書を別のテナントに登録する
+  let c: TestTenant;
+  const today = zonedBusinessDate(new Date(), 'Asia/Tokyo');
+  const todayStamp = `${today.replaceAll('-', '/')} 00:00`;
+  const month = today.slice(0, 7);
+  const post = (who: Member, path: string, body: unknown) =>
+    app.request(path, {
+      method: 'POST',
+      headers: { Cookie: who.cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const uploadToday = async (who: Member, storeName: string, amount: string, companyPaid = false) => {
+    const res = await post(who, '/api/receipts', {
+      images: [{ data: JPEG, amount, storeName, receiptDate: todayStamp, companyPaid }],
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as { uploadedCount: number; duplicateCount: number };
+  };
+  /** その店名の取消していない行(一般スタッフは本人の分、管理者は全員の分から探す)。 */
+  const rowOf = async (who: Member, storeName: string) => {
+    const query = who === c.admin ? `month=${month}&allStaff=true` : `month=${month}`;
+    const found = (await list(who, query)).body.receipts.find(
+      (r) => r.storeName === storeName && r.cancellation === null,
+    );
+    if (!found) throw new Error(`${storeName} がありません`);
+    return found;
+  };
+
+  beforeAll(async () => {
+    c = await createTenant();
+    await uploadToday(c.staff, 'コンビニ', '1000');
+    await uploadToday(c.staff, '駐車場', '600', true);
+    await uploadToday(c.other, '他人の店', '700');
+  });
+
+  it('会社負担は一覧の行・合計の内訳・CSV の区分に出る', async () => {
+    const own = await list(c.staff, `month=${month}`);
+    expect(own.body.receipts.find((r) => r.storeName === '駐車場')?.companyPaid).toBe(true);
+    expect(own.body.receipts.find((r) => r.storeName === 'コンビニ')?.companyPaid).toBe(false);
+    expect(own.body.summary).toMatchObject({
+      totalYen: 1600,
+      companyPaidYen: 600,
+      customerBillableYen: 1000,
+    });
+    const csv = new TextDecoder().decode(
+      await (
+        await get(`/api/receipts/csv?month=${month}&staffId=${c.staff.id}`, c.admin.cookie)
+      ).arrayBuffer(),
+    );
+    expect(csv).toContain(',600,会社負担,駐車場,');
+    expect(csv).toContain(',1000,お客様請求,コンビニ,');
+  });
+
+  it('一般スタッフは他人の領収書を取消せず(403)、取消の理由は1行100文字まで(400)', async () => {
+    const others = await rowOf(c.admin, '他人の店');
+    expect((await post(c.staff, `/api/receipts/${others.id}/cancel`, { rowVersion: 1 })).status).toBe(403);
+    const own = await rowOf(c.staff, 'コンビニ');
+    const tooLong = await post(c.staff, `/api/receipts/${own.id}/cancel`, {
+      reason: 'あ'.repeat(101),
+      rowVersion: own.rowVersion,
+    });
+    expect(tooLong.status).toBe(400);
+    expect((await post(c.staff, `/api/receipts/${own.id}/cancel`, {})).status).toBe(400);
+    expect((await post(c.staff, '/api/receipts/not-a-uuid/cancel', { rowVersion: 1 })).status).toBe(404);
+    expect(
+      (await post(otherTenant.admin, `/api/receipts/${own.id}/cancel`, { rowVersion: own.rowVersion }))
+        .status,
+    ).toBe(404);
+  });
+
+  it('取消すと一覧に灰色で残り(取消の情報つき)、合計・CSV から外れ、同じ内容を登録し直せる', async () => {
+    const own = await rowOf(c.staff, 'コンビニ');
+    // 一般スタッフは月の最終日には取消せない(その日だけ 400)。管理者は取消せる
+    const staffRefusal = receiptCancelRefusal({ receiptDate: today, today, role: 'staff' });
+    expect(own.cancellable).toBe(staffRefusal === null);
+    const actor = staffRefusal === null ? c.staff : c.admin;
+    if (staffRefusal !== null) {
+      const refused = await post(c.staff, `/api/receipts/${own.id}/cancel`, { rowVersion: own.rowVersion });
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toMatchObject({ code: 'locked' });
+    }
+    const stale = await post(actor, `/api/receipts/${own.id}/cancel`, { rowVersion: own.rowVersion + 5 });
+    expect(stale.status).toBe(409);
+    const res = await post(actor, `/api/receipts/${own.id}/cancel`, {
+      reason: ' 二重に\n撮った ',
+      rowVersion: own.rowVersion,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CancelReceiptResponse;
+    expect(body.receipt).toMatchObject({
+      id: own.id,
+      cancellable: false,
+      rowVersion: own.rowVersion + 1,
+      cancellation: { reason: '二重に 撮った' },
+    });
+    expect(
+      (await post(actor, `/api/receipts/${own.id}/cancel`, { rowVersion: own.rowVersion + 1 })).status,
+    ).toBe(409);
+
+    const after = await list(c.staff, `month=${month}`);
+    const cancelled = after.body.receipts.find((r) => r.id === own.id);
+    expect(cancelled?.cancellation).not.toBeNull();
+    expect(after.body.summary).toMatchObject({ count: 1, totalYen: 600, cancelledCount: 1 });
+    const csv = new TextDecoder().decode(
+      await (
+        await get(`/api/receipts/csv?month=${month}&staffId=${c.staff.id}`, c.admin.cookie)
+      ).arrayBuffer(),
+    );
+    expect(csv).not.toContain('コンビニ');
+    // 取消した領収書と同じ内容は重複にならない
+    expect(await uploadToday(c.staff, 'コンビニ', '1000')).toMatchObject({
+      uploadedCount: 1,
+      duplicateCount: 0,
+    });
+    expect(await uploadToday(c.staff, 'コンビニ', '1000')).toMatchObject({
+      uploadedCount: 0,
+      duplicateCount: 1,
+    });
+  });
+
+  it('今月のまとめ・出勤簿の Excel の合計にも取消は入らず、会社負担の内訳が出る', async () => {
+    const res = await get(`/api/attendance/month?month=${month}`, c.staff.cookie);
+    expect(res.status).toBe(200);
+    const { month: summary } = (await res.json()) as {
+      month: { receipts: { total: number; companyPaid: number; customerBillable: number } };
+    };
+    expect(summary.receipts).toMatchObject({ total: 1600, companyPaid: 600, customerBillable: 1000 });
   });
 });

@@ -32,3 +32,31 @@ export function receiptSummaryLabel(summary: {
   const base = `${summary.count}件 合計 ${formatYen(summary.totalYen)}`;
   return summary.noAmountCount > 0 ? `${base}(うち金額なし${summary.noAmountCount}件)` : base;
 }
+
+/**
+ * 月の合計の内訳。会社負担があれば「うち会社負担 600円 ／ お客様請求 900円」、取消済みがあれば
+ * 「取消 1件(合計に入れていません)」。どちらも無ければ空の配列。
+ */
+export function receiptBreakdownLabels(summary: {
+  companyPaidYen: number;
+  customerBillableYen: number;
+  cancelledCount: number;
+}): string[] {
+  const labels: string[] = [];
+  if (summary.companyPaidYen > 0) {
+    labels.push(
+      `うち会社負担 ${formatYen(summary.companyPaidYen)} ／ お客様請求 ${formatYen(summary.customerBillableYen)}`,
+    );
+  }
+  if (summary.cancelledCount > 0) labels.push(`取消 ${summary.cancelledCount}件(合計に入れていません)`);
+  return labels;
+}
+
+/** 取消の表示「取消 9/25(木) 12:00 山田 太郎」(取消した人が削除されていれば名前を出さない)。 */
+export function receiptCancellationLabel(
+  cancellation: NonNullable<ReceiptListItem['cancellation']>,
+  timeZone: string,
+): string {
+  const who = cancellation.cancelledByName ? ` ${cancellation.cancelledByName}` : '';
+  return `取消 ${formatReceiptDateTime(cancellation.cancelledAt, timeZone)}${who}`;
+}

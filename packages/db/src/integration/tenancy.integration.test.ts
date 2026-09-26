@@ -501,6 +501,7 @@ describe('並行性', () => {
           receiptedAt: new Date(),
           amountYen: 100,
           storeName: null,
+          companyPaid: false,
           dedupeHash,
         });
       });

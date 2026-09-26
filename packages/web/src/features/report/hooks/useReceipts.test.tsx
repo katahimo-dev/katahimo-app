@@ -113,4 +113,30 @@ describe('useReceipts', () => {
     // 送れたら領収書の一覧を読み直させる
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.receipts.all });
   });
+
+  it('写真ごとの「会社負担」は既定で外れていて、付けた写真だけ companyPaid: true で送る', async () => {
+    const { result } = renderHook(() => useReceipts(SCOPE), { wrapper: createWrapper({ queryClient }) });
+    await act(async () => {
+      await result.current.addFiles([file('a'), file('b')]);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const [a, b] = result.current.images;
+    if (!a || !b) throw new Error('unreachable');
+    expect([a.companyPaid, b.companyPaid]).toEqual([false, false]);
+    act(() => result.current.setCompanyPaid(b.id, true));
+    upload.mockResolvedValueOnce({
+      success: true,
+      message: '領収書を2件アップロードしました',
+      uploadedCount: 2,
+      duplicateCount: 0,
+      duplicates: [],
+      uploadBatchId: null,
+    });
+    await act(async () => {
+      await result.current.send(ctx);
+    });
+    expect(upload.mock.calls[0]?.[0].images.map((img) => img.companyPaid)).toEqual([false, true]);
+  });
 });

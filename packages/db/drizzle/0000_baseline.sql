@@ -755,10 +755,17 @@ CREATE TABLE "receipts" (
 	"receipted_at" timestamp with time zone NOT NULL,
 	"amount_yen" integer,
 	"store_name" text,
+	"company_paid" boolean DEFAULT false NOT NULL,
 	"dedupe_hash" "bytea",
+	"cancelled_at" timestamp with time zone,
+	"cancelled_by" uuid,
+	"cancel_reason" text,
+	"row_version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "receipts_pkey" PRIMARY KEY("tenant_id","id"),
-	CONSTRAINT "receipts_amount_yen_check" CHECK ("receipts"."amount_yen" >= 0)
+	CONSTRAINT "receipts_amount_yen_check" CHECK ("receipts"."amount_yen" >= 0),
+	CONSTRAINT "receipts_cancel_check" CHECK (("receipts"."cancelled_at" is null and "receipts"."cancelled_by" is null and "receipts"."cancel_reason" is null) or ("receipts"."cancelled_at" is not null and "receipts"."cancelled_by" is not null)),
+	CONSTRAINT "receipts_cancel_reason_check" CHECK (char_length("receipts"."cancel_reason") <= 100 and "receipts"."cancel_reason" !~ '[[:cntrl:]]')
 );
 --> statement-breakpoint
 ALTER TABLE "receipts" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -1150,6 +1157,7 @@ ALTER TABLE "receipts" ADD CONSTRAINT "receipts_tenant_id_upload_id_fkey" FOREIG
 ALTER TABLE "receipts" ADD CONSTRAINT "receipts_tenant_id_file_id_fkey" FOREIGN KEY ("tenant_id","file_id") REFERENCES "public"."stored_files"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "receipts" ADD CONSTRAINT "receipts_tenant_id_staff_id_fkey" FOREIGN KEY ("tenant_id","staff_id") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "receipts" ADD CONSTRAINT "receipts_tenant_id_customer_id_fkey" FOREIGN KEY ("tenant_id","customer_id") REFERENCES "public"."customers"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "receipts" ADD CONSTRAINT "receipts_tenant_id_cancelled_by_fkey" FOREIGN KEY ("tenant_id","cancelled_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "stored_files" ADD CONSTRAINT "stored_files_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "stored_files" ADD CONSTRAINT "stored_files_tenant_id_created_by_fkey" FOREIGN KEY ("tenant_id","created_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "reservation_assignments" ADD CONSTRAINT "reservation_assignments_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -1214,7 +1222,7 @@ CREATE INDEX "care_records_tenant_id_customer_id_occurred_at_id_idx" ON "care_re
 CREATE INDEX "care_records_tenant_id_occurred_at_id_idx" ON "care_records" USING btree ("tenant_id","occurred_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_author_staff_id_occurred_at_idx" ON "care_records" USING btree ("tenant_id","author_staff_id","occurred_at" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_visit_id_idx" ON "care_records" USING btree ("tenant_id","visit_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "receipts_tenant_id_dedupe_hash_key" ON "receipts" USING btree ("tenant_id","dedupe_hash") WHERE dedupe_hash is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "receipts_tenant_id_dedupe_hash_key" ON "receipts" USING btree ("tenant_id","dedupe_hash") WHERE dedupe_hash is not null and cancelled_at is null;--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_staff_id_receipted_at_idx" ON "receipts" USING btree ("tenant_id","staff_id","receipted_at");--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_receipted_at_id_idx" ON "receipts" USING btree ("tenant_id","receipted_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_upload_id_idx" ON "receipts" USING btree ("tenant_id","upload_id");--> statement-breakpoint

@@ -69,6 +69,8 @@ describe.skipIf(!SOFFICE_AVAILABLE)('出勤簿の Excel の書き出し(LibreOff
         expect(computed(`AL${t}`)).toBe(month.totals.overThresholdCount);
         expect(computed(`AM${t}`)).toBe(month.totals.visitCountTotal);
         expect(computed(`F${layout.receiptTotal}`)).toBe(month.receipts.total);
+        expect(computed(`F${layout.receiptCompanyPaid}`)).toBe(month.receipts.companyPaid);
+        expect(computed(`F${layout.receiptCustomerBillable}`)).toBe(month.receipts.customerBillable);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

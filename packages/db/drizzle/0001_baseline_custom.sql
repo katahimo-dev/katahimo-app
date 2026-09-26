@@ -536,12 +536,15 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   "custom_field_definitions", "customer_addresses", "customer_contacts", "customer_preferences",
   "customer_recurring_slots", "customer_required_attributes", "customer_source_records", "customer_staff_affinities",
   "customers", "data_export_requests", "data_subject_requests", "matching_run_candidates", "matching_runs",
-  "password_reset_codes", "receipt_uploads", "receipts", "reservation_assignments", "reservation_recipients",
+  "password_reset_codes", "reservation_assignments", "reservation_recipients",
   "reservations", "retention_policies", "service_areas", "service_items", "sessions", "staff", "staff_attributes",
   "staff_availability_exceptions", "staff_busy_blocks", "staff_calendars", "staff_employment_terms",
   "staff_login_emails", "staff_service_areas", "staff_weekly_availability", "stored_files", "tenant_features",
   "tenant_secrets", "travel_legs", "travel_time_cache", "visits", "work_segments"
   TO katahimo_app;--> statement-breakpoint
+-- 領収書は会計の記録なので登録するだけ(消さない)。登録の後に変えられるのは取消の列と版だけ(論理削除の取消)
+GRANT SELECT, INSERT ON "receipt_uploads", "receipts" TO katahimo_app;--> statement-breakpoint
+GRANT UPDATE ("cancelled_at", "cancelled_by", "cancel_reason", "row_version") ON "receipts" TO katahimo_app;--> statement-breakpoint
 -- Web Push の購読(本人の端末の登録・付け替え・削除)
 GRANT SELECT, INSERT, UPDATE, DELETE ON "push_subscriptions" TO katahimo_app;--> statement-breakpoint
 

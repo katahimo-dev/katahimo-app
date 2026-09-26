@@ -35,6 +35,11 @@ export function ReceiptSection({
     onEdited();
   };
 
+  const setCompanyPaid = (id: number, companyPaid: boolean) => {
+    receipts.setCompanyPaid(id, companyPaid);
+    onEdited();
+  };
+
   return (
     <div id="imageUploadSection" className={cx('mt-4 border-t pt-3', hidden && 'hidden')}>
       <div className="flex items-center justify-between gap-3 mb-2">
@@ -68,6 +73,7 @@ export function ReceiptSection({
               removable={!receipts.sending}
               onRemove={() => receipts.removeImage(img.id)}
               onChange={(field, value) => updateImage(img.id, field, value)}
+              onCompanyPaidChange={(companyPaid) => setCompanyPaid(img.id, companyPaid)}
             />
           ))}
         </div>
@@ -173,12 +179,14 @@ function ReceiptImageCard({
   removable,
   onRemove,
   onChange,
+  onCompanyPaidChange,
 }: {
   image: ReceiptImage;
   /** 送っている間は消せない */
   removable: boolean;
   onRemove: () => void;
   onChange: (field: ReceiptEditableField, value: string) => void;
+  onCompanyPaidChange: (companyPaid: boolean) => void;
 }) {
   return (
     <div className="relative w-40 flex flex-col gap-1 items-center">
@@ -232,6 +240,16 @@ function ReceiptImageCard({
           className="w-full min-h-11 p-2 text-sm border border-gray-300 rounded-xl text-center focus:ring-1 focus:ring-blue-500"
         />
       </div>
+      {/* 研修等の同行・会社の都合で出た費用(駐車場代など)。送った後は変えられない(直すときは取消して送り直す) */}
+      <label className="w-full px-1 min-h-11 flex items-center gap-2 text-sm font-bold text-gray-800">
+        <input
+          type="checkbox"
+          checked={image.companyPaid}
+          onChange={(e) => onCompanyPaidChange(e.target.checked)}
+          className="w-5 h-5 flex-shrink-0"
+        />
+        <span className="leading-tight">会社負担(お客様に請求しない)</span>
+      </label>
     </div>
   );
 }

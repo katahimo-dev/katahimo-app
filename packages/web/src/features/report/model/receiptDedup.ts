@@ -162,6 +162,29 @@ export function recordSentReceipts(
 }
 
 /**
+ * 取消した領収書の印を消す(新しいmapを返す)。取消して送り直すときに「前に送ってあります」で止めないように。
+ * 印の日時は送ったときの書き方(写真ごとの日時は分まで・まとめての日時は秒まで)のどちらもあり得るため両方を消す。
+ * receiptedAt は 'yyyy/MM/dd HH:mm:ss'(領収書日時。テナントのタイムゾーン)。
+ */
+export function forgetSentReceipt(
+  map: ReceiptKeyMap,
+  receipt: {
+    receiptedAt: string;
+    customerId: string | null;
+    amountYen: number | null;
+    storeName: string | null;
+  },
+): ReceiptKeyMap {
+  const next = { ...map };
+  for (const timestamp of [receipt.receiptedAt, receipt.receiptedAt.slice(0, 16)]) {
+    delete next[
+      buildReceiptDupKey(timestamp, receipt.customerId ?? '', receipt.amountYen ?? '', receipt.storeName)
+    ];
+  }
+  return next;
+}
+
+/**
  * 「⚠️ この領収書はすでに登録ずみのため、登録していません」の文(GAS版 showReceiptDuplicateWarning)。
  * 1行目の見出しのあとに「1. 日時 / お客様の名前:… / 金額:… / お店の名前:…」を並べる。
  */

@@ -59,7 +59,14 @@ describe('領収書の一覧・画像', () => {
   it('本人の月の領収書を新しい順に、月全体の件数・合計つきで返す(JSTの月の境界)', async () => {
     const page = await listReceipts(ctx.deps, staff, criteria(staff));
     expect(page.receipts.map((r) => r.amountYen)).toEqual([300, 1200, null]);
-    expect(page.summary).toEqual({ count: 3, totalYen: 1500, noAmountCount: 1 });
+    expect(page.summary).toEqual({
+      count: 3,
+      totalYen: 1500,
+      companyPaidYen: 0,
+      customerBillableYen: 1500,
+      noAmountCount: 1,
+      cancelledCount: 0,
+    });
     expect(page.staff).toEqual({ id: staff.staffId, name: '山田 太郎' });
     expect(page.receipts[0]).toMatchObject({
       staffName: '山田 太郎',
@@ -109,7 +116,7 @@ describe('領収書の一覧・画像', () => {
     expect(page.receipts.map((r) => r.amountYen)).toEqual([5000]);
     const all = await listReceipts(ctx.deps, admin, { ...criteria(admin, { allStaff: true }), limit: 3 });
     expect(all.staff).toBeNull();
-    expect(all.summary).toEqual({ count: 4, totalYen: 6500, noAmountCount: 1 });
+    expect(all.summary).toMatchObject({ count: 4, totalYen: 6500, noAmountCount: 1 });
     await listReceipts(ctx.deps, admin, {
       ...criteria(admin, { allStaff: true }),
       limit: 3,

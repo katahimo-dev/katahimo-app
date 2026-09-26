@@ -40,8 +40,8 @@ export interface AttendanceMonthView {
 }
 
 /**
- * 月の出勤簿(全日)・合計・領収書の日別/月合計。領収書の金額は整数(円)の列をそのまま合計する。日の境界は
- * テナントのタイムゾーン。
+ * 月の出勤簿(全日)・合計・領収書の日別/月合計(うち会社負担)。領収書の金額は整数(円)の列をそのまま合計し、
+ * 取消済みの領収書は入れない。日の境界はテナントのタイムゾーン。
  */
 export async function getAttendanceMonth(
   deps: AttendanceDeps,
@@ -66,7 +66,7 @@ export function assertYearMonth(yearMonth: string): void {
 
 /**
  * 1人・1か月分の出勤簿(全日)・合計・領収書を読む(UoW の中で呼ぶ)。今月のまとめと出勤簿の書き出しが共有する
- * (どちらも同じ値になるように)。receipts は月の領収書の行(書き出しの明細用)。
+ * (どちらも同じ値になるように)。receipts は月の取消していない領収書の行(書き出しの明細用)。
  */
 export async function loadAttendanceMonth(
   r: TenantRepositories,
@@ -86,18 +86,24 @@ export async function loadAttendanceMonth(
     const rowData = rowDataByDate.get(businessDate) ?? {};
     return { businessDate, rowData, derived: computeDayDerived(rowData) };
   });
-  const receipts = await r.receipts.listByStaffAndPeriod(
+  // 取消済みの領収書は入れない(合計・明細とも)
+  const receipts = await r.receipts.listActiveByStaffAndPeriod(
     target.staffId,
     zonedDayRange(from, timeZone).from,
     zonedDayRange(to, timeZone).to,
   );
   const receiptTotals = summarizeReceiptAmounts(
-    receipts
-      .filter((rc) => rc.amountYen !== null)
-      .map((rc) => ({
-        businessDate: zonedBusinessDate(rc.receiptedAt, timeZone),
-        amount: String(rc.amountYen),
-      })),
+    receipts.flatMap((rc) =>
+      rc.amountYen === null
+        ? []
+        : [
+            {
+              businessDate: zonedBusinessDate(rc.receiptedAt, timeZone),
+              amountYen: rc.amountYen,
+              companyPaid: rc.companyPaid,
+            },
+          ],
+    ),
   );
   return {
     view: {

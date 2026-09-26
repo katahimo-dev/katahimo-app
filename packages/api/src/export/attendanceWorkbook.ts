@@ -14,13 +14,14 @@ import {
   uniqueSheetNames,
 } from '@katahimo/core/domain';
 import type { AttendanceExportMonth, AttendanceExportStaff } from '@katahimo/core/usecases';
+import { RECEIPT_BILLING_LABELS, receiptBillingLabel } from '@katahimo/shared';
 import ExcelJS from 'exceljs';
 
 /**
  * 出勤簿の Excel(.xlsx)を作る(GET /api/attendance/export ・ /export/all)。列の並び・見出し・計算式は
  * core の sheetTemplate.ts(お客様の出勤簿テンプレートと同じ)。ここはシートの組み立て(見出し・日の行・合計・
- * 月の集計・領収書の明細)と見た目だけを受け持つ。計算の列は Excel の式で書き、開いたときに計算させる
- * (fullCalcOnLoad)。式のセルには結果の値(アプリの計算の値。sheetTemplate の cachedResult / cachedTotal)も書き、
+ * 月の集計・領収書の明細。取消済みの領収書は入らない)と見た目だけを受け持つ。計算の列は Excel の式で書き、
+ * 開いたときに計算させる(fullCalcOnLoad)。式のセルには結果の値(アプリの計算の値。sheetTemplate の cachedResult / cachedTotal)も書き、
  * 保護ビュー・プレビュー(式を計算しない表示)でも空にならないようにする。入力の値は今月のまとめと同じ読み方
  * (loadAttendanceMonth)の rowData。
  */
@@ -91,6 +92,8 @@ export interface SheetLayout {
   summaryFirst: number;
   receiptCount: number;
   receiptTotal: number;
+  receiptCompanyPaid: number;
+  receiptCustomerBillable: number;
   receiptTitle: number;
   receiptHeader: number;
   receiptFirst: number;
@@ -105,7 +108,9 @@ export function sheetLayoutOf(dayCount: number, receiptCount: number): SheetLayo
   const summaryFirst = summaryTitle + 1;
   const receiptCountRow = summaryFirst + ATTENDANCE_SHEET_SUMMARY_ITEMS.length;
   const receiptTotal = receiptCountRow + 1;
-  const receiptTitle = receiptTotal + 2;
+  const receiptCompanyPaid = receiptTotal + 1;
+  const receiptCustomerBillable = receiptCompanyPaid + 1;
+  const receiptTitle = receiptCustomerBillable + 2;
   const receiptHeader = receiptTitle + 1;
   const receiptFirst = receiptHeader + 1;
   return {
@@ -117,6 +122,8 @@ export function sheetLayoutOf(dayCount: number, receiptCount: number): SheetLayo
     summaryFirst,
     receiptCount: receiptCountRow,
     receiptTotal,
+    receiptCompanyPaid,
+    receiptCustomerBillable,
     receiptTitle,
     receiptHeader,
     receiptFirst,
@@ -125,19 +132,30 @@ export function sheetLayoutOf(dayCount: number, receiptCount: number): SheetLayo
   };
 }
 
-/** 領収書の明細の列(日付の列は日の列と同じ A。SUMIFS で日の行と突き合わせる)。 */
+/**
+ * 領収書の明細の列(日付の列は日の列と同じ A。SUMIFS で日の行と突き合わせる)。区分(お客様請求・会社負担)は
+ * 月の集計の「うち会社負担」「お客様請求分」の SUMIFS が参照する。
+ */
 const RECEIPT_COLUMNS = {
   date: 'A',
   time: 'B',
   customer: 'C',
   store: ['D', 'G'],
   amount: 'H',
-  handoff: ['I', 'W'],
+  billing: 'I',
+  handoff: ['J', 'W'],
 } as const;
 
+/** 領収書の明細の列の範囲(絶対参照)。 */
+function receiptRange(layout: SheetLayout, column: string): string {
+  return `$${column}$${layout.receiptFirst}:$${column}$${layout.receiptLast}`;
+}
+
 function formulaContext(layout: SheetLayout): SheetFormulaContext {
-  const range = (col: string) => `$${col}$${layout.receiptFirst}:$${col}$${layout.receiptLast}`;
-  return { receiptDateRange: range(RECEIPT_COLUMNS.date), receiptAmountRange: range(RECEIPT_COLUMNS.amount) };
+  return {
+    receiptDateRange: receiptRange(layout, RECEIPT_COLUMNS.date),
+    receiptAmountRange: receiptRange(layout, RECEIPT_COLUMNS.amount),
+  };
 }
 
 function writeHeader(
@@ -368,6 +386,24 @@ function writeSummary(ws: ExcelJS.Worksheet, month: AttendanceExportMonth, layou
     'yen',
     RECEIPT_TOTAL_FILL,
   );
+  // 会社負担もスタッフへの支払い(上の月集計)に入る。お客様に請求するのは「お客様請求分」だけ
+  const billingRange = receiptRange(layout, RECEIPT_COLUMNS.billing);
+  writeItem(
+    layout.receiptCompanyPaid,
+    'うち会社負担(円)',
+    `SUMIFS(${receiptAmountRange}, ${billingRange}, "${RECEIPT_BILLING_LABELS.company}")`,
+    month.month.receipts.companyPaid,
+    'yen',
+    ROLE_FILL.date,
+  );
+  writeItem(
+    layout.receiptCustomerBillable,
+    'お客様請求分(円)',
+    `SUMIFS(${receiptAmountRange}, ${billingRange}, "${RECEIPT_BILLING_LABELS.customer}")`,
+    month.month.receipts.customerBillable,
+    'yen',
+    ROLE_FILL.date,
+  );
 }
 
 function writeReceipts(ws: ExcelJS.Worksheet, month: AttendanceExportMonth, layout: SheetLayout): void {
@@ -381,6 +417,7 @@ function writeReceipts(ws: ExcelJS.Worksheet, month: AttendanceExportMonth, layo
     ['お客様', cols.customer],
     ['店名', cols.store[0], cols.store[1]],
     ['金額(円)', cols.amount],
+    ['区分', cols.billing],
     ['申し送り', cols.handoff[0], cols.handoff[1]],
   ];
   const writeRow = (
@@ -408,8 +445,8 @@ function writeReceipts(ws: ExcelJS.Worksheet, month: AttendanceExportMonth, layo
       border: BOX,
     }),
   );
-  const formats = ['m/d', 'h:mm', 'General', 'General', '#,##0', 'General'];
-  const aligns = ['center', 'center', 'left', 'left', 'right', 'left'] as const;
+  const formats = ['m/d', 'h:mm', 'General', 'General', '#,##0', 'General', 'General'];
+  const aligns = ['center', 'center', 'left', 'left', 'right', 'center', 'left'] as const;
   const style = (i: number): Partial<ExcelJS.Style> => ({
     font: font(),
     alignment: { horizontal: aligns[i] ?? 'left', vertical: 'middle', shrinkToFit: i === 2 || i === 3 },
@@ -429,6 +466,7 @@ function writeReceipts(ws: ExcelJS.Worksheet, month: AttendanceExportMonth, layo
         receipt.customerName,
         receipt.storeName,
         receipt.amountYen,
+        receiptBillingLabel(receipt.companyPaid),
         receipt.handoffText,
       ],
       style,

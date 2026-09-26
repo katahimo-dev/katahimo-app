@@ -187,7 +187,11 @@ export const receiptUploads = pgTable(
 /**
  * 領収書1枚。金額は整数(円)。重複の判定は dedupe_hash(スタッフ・顧客・日時・金額・店名を正規化した
  * キーの SHA-256。core/domain/reports/receiptDedupe.ts)の部分UNIQUE で、INSERT … ON CONFLICT DO NOTHING が
- * 同時の登録でも原子的に重複を弾く。
+ * 同時の登録でも原子的に重複を弾く。取消済みの行は UNIQUE の対象外(同じ領収書を登録し直せる)。
+ *
+ * 会計の記録なので行は消さない(アプリのロールに DELETE の権限は無い)。間違えた登録は取消(cancelled_at・
+ * cancelled_by・cancel_reason を入れる論理削除)にして一覧に残し、合計・CSV・Excel からは除く。登録後に
+ * 変えられるのは取消の列と row_version だけ(列ごとの UPDATE 権限。0001_baseline_custom.sql)。
  */
 export const receipts = pgTable(
   'receipts',
@@ -202,7 +206,19 @@ export const receipts = pgTable(
     receiptedAt: timestamp({ withTimezone: true }).notNull(),
     amountYen: integer(),
     storeName: text(),
+    /**
+     * 会社負担(研修等の同行・会社の都合で出た駐車場代など)。スタッフへの支払いは同じ(月の合計に入る)だが、
+     * お客様には請求しない。登録のときに決め、後から変えない(直すときは取消して登録し直す)。
+     */
+    companyPaid: boolean().notNull().default(false),
     dedupeHash: bytea(),
+    /** 取消の日時(取消済みの行は合計・CSV・Excel・重複の判定から除く)。null は有効な領収書。 */
+    cancelledAt: timestamp({ withTimezone: true }),
+    /** 取消したスタッフ(本人、または管理者・コーディネーター)。 */
+    cancelledBy: uuid(),
+    /** 取消の理由(任意・1行・100文字まで)。 */
+    cancelReason: text(),
+    rowVersion: rowVersion(),
     createdAt: createdAt(),
   },
   (t) => [
@@ -211,9 +227,10 @@ export const receipts = pgTable(
     tenantRef('receipts', 'file_id', t, t.fileId, storedFiles),
     tenantRef('receipts', 'staff_id', t, t.staffId, staff),
     tenantRef('receipts', 'customer_id', t, t.customerId, customers),
+    tenantRef('receipts', 'cancelled_by', t, t.cancelledBy, staff),
     uniqueIndex('receipts_tenant_id_dedupe_hash_key')
       .on(t.tenantId, t.dedupeHash)
-      .where(sql`dedupe_hash is not null`),
+      .where(sql`dedupe_hash is not null and cancelled_at is null`),
     index('receipts_tenant_id_staff_id_receipted_at_idx').on(t.tenantId, t.staffId, t.receiptedAt),
     // テナント全体の領収書の一覧(月の範囲・新しい順・keyset(receipted_at, id))
     index('receipts_tenant_id_receipted_at_id_idx').on(
@@ -224,6 +241,16 @@ export const receipts = pgTable(
     index('receipts_tenant_id_upload_id_idx').on(t.tenantId, t.uploadId),
     index('receipts_tenant_id_file_id_idx').on(t.tenantId, t.fileId),
     check('receipts_amount_yen_check', sql`${t.amountYen} >= 0`),
+    // 取消の列は揃って入る(理由は任意)。有効な行に取消の理由・取消した人だけが残ることはない
+    check(
+      'receipts_cancel_check',
+      sql`(${t.cancelledAt} is null and ${t.cancelledBy} is null and ${t.cancelReason} is null) or (${t.cancelledAt} is not null and ${t.cancelledBy} is not null)`,
+    ),
+    // 取消の理由は1行(改行などの制御文字なし)・100文字まで(@katahimo/shared RECEIPT_CANCEL_REASON_MAX_LENGTH)
+    check(
+      'receipts_cancel_reason_check',
+      sql`char_length(${t.cancelReason}) <= 100 and ${t.cancelReason} !~ '[[:cntrl:]]'`,
+    ),
   ],
 ).enableRLS();
 

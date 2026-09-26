@@ -244,4 +244,18 @@ export class DrizzleAttendanceRepository extends TenantBound implements Attendan
         setWhere: eq(attendancePeriods.status, 'open'),
       });
   }
+
+  async listLockedStaffIds(yearMonth: string): Promise<string[]> {
+    const rows = await this.tx
+      .select({ staffId: attendancePeriods.staffId })
+      .from(attendancePeriods)
+      .where(
+        and(
+          eq(attendancePeriods.tenantId, this.tenantId),
+          eq(attendancePeriods.yearMonth, yearMonth),
+          eq(attendancePeriods.status, 'locked'),
+        ),
+      );
+    return rows.map((r) => r.staffId);
+  }
 }

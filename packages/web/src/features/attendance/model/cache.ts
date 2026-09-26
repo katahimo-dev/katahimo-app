@@ -57,6 +57,11 @@ export function writeCache<T>(
   writeStorage(key, JSON.stringify({ [field]: value, ts }), storage);
 }
 
+/** 今月のまとめのキャッシュをすべて消す(領収書を取消したとき。合計が変わるため) */
+export function clearMonthlyCaches() {
+  removeStorageByPrefix(STORAGE_KEYS.attendanceMonthlyCachePrefix);
+}
+
 /** 週間予定・今月のまとめのキャッシュをすべて消す */
 export function clearAttendanceCaches() {
   removeStorageByPrefix(STORAGE_KEYS.pastScheduleWeekCachePrefix);
