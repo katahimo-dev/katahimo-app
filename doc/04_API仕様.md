@@ -163,6 +163,14 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 画像の種類は data URL の申告ではなく中身の先頭バイトで判定する(JPEG・PNG・WebP)。保存の Content-Type・拡張子は判定した種類。
 日時のフォールバック: 画像ごとの `receiptDate`(表記を問わない)→ `receiptTimestamp` → `reportDate` + `startTime` → 登録時刻。
 
+一覧・画像・CSV(GAS版では管理者が「領収書一覧」シートと Drive で見ていたもの):
+
+| メソッド・パス | 契約(要求 / 応答) | 応答・エラー |
+| --- | --- | --- |
+| `GET /?month=YYYY-MM&staffId?&allStaff?&customerId?&cursor?&limit?` | `receiptListQuerySchema` / `receiptListResponseSchema` | `{ receipts, nextCursor, yearMonth, staff, summary: { count, totalYen, noAmountCount }, timeZone }`。領収書日時(テナントのタイムゾーンの月)の新しい順に `limit`(既定50・最大200)件ずつ、`(receipted_at DESC, id DESC)` のキーセット。`summary` はページではなく月全体(金額の無いものは0円)。各行は日時・スタッフ・お客様(登録済みは表示名、未登録は入力された氏名、指定なしは `null`)・金額・店名・束の申し送り(`handoffText`)・束のID(`uploadBatchId`)・画像の種類と大きさ。一般スタッフは本人の分だけ(`staffId` は無視して本人、`allStaff=true` は 403 + WARN `receipt.list.view_denied`)。管理者・コーディネーターは `staffId` で他のスタッフ、`allStaff=true` で全スタッフ分(`staff: null`)。存在しない・他テナントのスタッフ・お客様は 404、読めない `cursor` は 400。他のスタッフ・全スタッフ分を最初のページで開いたら INFO `receipt.list.viewed`(月・件数) |
+| `GET /csv?month=&staffId?&allStaff?&customerId?` | `receiptListQuerySchema`(`cursor`・`limit` は使わない)/ CSV | 管理者・コーディネーターだけ(一般スタッフは 403 + WARN `receipt.list.export_denied`)。条件に合う全件(新しい順、500件ずつ読む)。BOM つき UTF-8・見出し「領収書日時,スタッフ,お客様,金額(円),店名,申し送り,登録の束ID,領収書ID」、ファイル名 `receipts_<YYYY-MM>_<staff|all>.csv`。式として動く値は先頭に `'`。途中で失敗したら最後の行に失敗の印。INFO `receipt.list.exported` |
+| `GET /:id/image` | — / 画像 | 本人の領収書、管理者・コーディネーターは全員の領収書。API が中身をそのまま返す(`Content-Type` は中身の先頭バイトで判定し直した JPEG / PNG / WebP、`Cache-Control: private, no-store`、`X-Content-Type-Options: nosniff`、`Content-Disposition: inline`)。一般スタッフの他人の領収書は 403 + WARN `receipt.image.view_denied`。無い・他テナント・ID でない値は 404。ファイル置き場に無い・画像でない中身は 404 + WARN `receipt.image.unavailable`(`reason: missing｜unsupported_type`)。1枚ごとの閲覧は記録しない(一覧の閲覧を記録する。06 5章) |
+
 ### 2.8 設定
 
 | メソッド・パス | 権限 | 契約(要求 / 応答) | 応答・ログ |

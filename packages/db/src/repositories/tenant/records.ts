@@ -5,6 +5,11 @@ import type {
   CareRecordRepository,
   CareRecordRow,
   NewCareRecordInput,
+  ReceiptImageRef,
+  ReceiptListFilter,
+  ReceiptListPosition,
+  ReceiptListRow,
+  ReceiptListSummary,
   ReceiptRepository,
   ReceiptRow,
   ReceiptUploadRow,
@@ -14,9 +19,11 @@ import type {
 import { and, asc, desc, eq, gte, lt, notExists, sql } from 'drizzle-orm';
 import {
   careRecords,
+  customers,
   dataExportRequests,
   receipts,
   receiptUploads,
+  staff,
   staffAttributes,
   storedFiles,
 } from '../../schema';
@@ -246,5 +253,96 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
         ),
       )
       .orderBy(asc(receipts.receiptedAt));
+  }
+
+  /** 一覧・合計の共通の条件(テナント・期間・スタッフ・お客様)。 */
+  private listConditions(filter: ReceiptListFilter) {
+    return and(
+      eq(receipts.tenantId, this.tenantId),
+      gte(receipts.receiptedAt, filter.from),
+      lt(receipts.receiptedAt, filter.to),
+      filter.staffId === undefined ? undefined : eq(receipts.staffId, filter.staffId),
+      filter.customerId === undefined ? undefined : eq(receipts.customerId, filter.customerId),
+    );
+  }
+
+  list(
+    filter: ReceiptListFilter,
+    after: ReceiptListPosition | null,
+    limit: number,
+  ): Promise<ReceiptListRow[]> {
+    return this.tx
+      .select({
+        id: receipts.id,
+        uploadId: receipts.uploadId,
+        staffId: receipts.staffId,
+        staffName: staff.displayName,
+        customerId: receipts.customerId,
+        customerDisplayName: customers.displayName,
+        customerNameText: receipts.customerNameText,
+        receiptedAt: receipts.receiptedAt,
+        amountYen: receipts.amountYen,
+        storeName: receipts.storeName,
+        handoffText: receiptUploads.handoffText,
+        contentType: storedFiles.contentType,
+        byteSize: storedFiles.byteSize,
+      })
+      .from(receipts)
+      .innerJoin(
+        receiptUploads,
+        and(eq(receiptUploads.tenantId, receipts.tenantId), eq(receiptUploads.id, receipts.uploadId)),
+      )
+      .innerJoin(
+        storedFiles,
+        and(eq(storedFiles.tenantId, receipts.tenantId), eq(storedFiles.id, receipts.fileId)),
+      )
+      .leftJoin(staff, and(eq(staff.tenantId, receipts.tenantId), eq(staff.id, receipts.staffId)))
+      .leftJoin(
+        customers,
+        and(eq(customers.tenantId, receipts.tenantId), eq(customers.id, receipts.customerId)),
+      )
+      .where(
+        and(
+          this.listConditions(filter),
+          after
+            ? sql`(${receipts.receiptedAt}, ${receipts.id}) < (${after.receiptedAt.toISOString()}::timestamptz, ${after.id}::uuid)`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(receipts.receiptedAt), desc(receipts.id))
+      .limit(limit);
+  }
+
+  async summarize(filter: ReceiptListFilter): Promise<ReceiptListSummary> {
+    const [row] = await this.tx
+      .select({
+        count: sql<number>`count(*)::int`,
+        totalYen: sql<number>`coalesce(sum(${receipts.amountYen}), 0)::bigint`,
+        noAmountCount: sql<number>`count(*) filter (where ${receipts.amountYen} is null)::int`,
+      })
+      .from(receipts)
+      .where(this.listConditions(filter));
+    return {
+      count: Number(row?.count ?? 0),
+      totalYen: Number(row?.totalYen ?? 0),
+      noAmountCount: Number(row?.noAmountCount ?? 0),
+    };
+  }
+
+  async findImage(receiptId: string): Promise<ReceiptImageRef | null> {
+    const rows = await this.tx
+      .select({
+        receiptId: receipts.id,
+        staffId: receipts.staffId,
+        storageKey: storedFiles.storageKey,
+        contentType: storedFiles.contentType,
+      })
+      .from(receipts)
+      .innerJoin(
+        storedFiles,
+        and(eq(storedFiles.tenantId, receipts.tenantId), eq(storedFiles.id, receipts.fileId)),
+      )
+      .where(and(eq(receipts.tenantId, this.tenantId), eq(receipts.id, receiptId)));
+    return rows[0] ?? null;
   }
 }

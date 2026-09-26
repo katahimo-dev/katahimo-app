@@ -20,10 +20,13 @@ export function MonthlyModal({
   open,
   onClose,
   onOpenSlot,
+  onOpenReceipts,
 }: {
   open: boolean;
   onClose: () => void;
   onOpenSlot: (date: string, slotKey: SlotKey, prefill: SlotValues) => void;
+  /** 「🧾 領収書の一覧・画像を見る」(その月の領収書の一覧を開く) */
+  onOpenReceipts: (yearMonth: string) => void;
 }) {
   // 月の欄・読んだ月は閉じても残す(GAS版は開き直しても前の値のまま)
   const [monthInput, setMonthInput] = useState('');
@@ -118,6 +121,7 @@ export function MonthlyModal({
             error={monthQuery.error}
             month={monthQuery.data?.value}
             onSelectDay={onSelectDay}
+            onOpenReceipts={onOpenReceipts}
           />
         </div>
         <ModalFooter>
@@ -140,12 +144,14 @@ function MonthlyContent({
   error,
   month,
   onSelectDay,
+  onOpenReceipts,
 }: {
   rendered: boolean;
   isLoading: boolean;
   error: unknown;
   month: AttendanceMonth | undefined;
   onSelectDay: (card: MonthlyDayCard) => void;
+  onOpenReceipts: (yearMonth: string) => void;
 }) {
   const className = rendered
     ? 'text-base text-gray-800 text-left'
@@ -155,7 +161,7 @@ function MonthlyContent({
   ) : error ? (
     <div className="text-center text-red-600 text-base py-6">{userMessageOf(error)}</div>
   ) : month ? (
-    <MonthlySummary month={month} onSelectDay={onSelectDay} />
+    <MonthlySummary month={month} onSelectDay={onSelectDay} onOpenReceipts={onOpenReceipts} />
   ) : (
     '月を選んで「見る」を押してください。'
   );
@@ -165,9 +171,11 @@ function MonthlyContent({
 function MonthlySummary({
   month,
   onSelectDay,
+  onOpenReceipts,
 }: {
   month: AttendanceMonth;
   onSelectDay: (card: MonthlyDayCard) => void;
+  onOpenReceipts: (yearMonth: string) => void;
 }) {
   const t = month.totals;
   const cards = buildMonthlyDayCards(month, dayOfWeekLabel);
@@ -220,6 +228,13 @@ function MonthlySummary({
             </div>
           ))
         )}
+        <button
+          type="button"
+          onClick={() => onOpenReceipts(month.yearMonth)}
+          className="mt-3 w-full min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl"
+        >
+          🧾 領収書の一覧・画像を見る
+        </button>
       </div>
     </>
   );

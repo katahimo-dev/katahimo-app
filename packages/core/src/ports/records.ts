@@ -93,6 +93,54 @@ export interface ReceiptRow {
   dedupeHash: Uint8Array | null;
 }
 
+/** 領収書の一覧の条件。領収書日時が [from, to)。staffId が無ければ全スタッフ。 */
+export interface ReceiptListFilter {
+  from: Date;
+  to: Date;
+  staffId?: string | undefined;
+  customerId?: string | undefined;
+}
+
+/** 並び (receipted_at DESC, id DESC) の中の位置(キーセットページング)。 */
+export interface ReceiptListPosition {
+  receiptedAt: Date;
+  id: string;
+}
+
+/** 一覧の1行(スタッフ・お客様の名前、束の申し送り、画像のメタデータを付けたもの)。 */
+export interface ReceiptListRow {
+  id: string;
+  uploadId: string;
+  staffId: string;
+  /** 担当スタッフの氏名(スタッフの行が無ければ null)。 */
+  staffName: string | null;
+  customerId: string | null;
+  /** 登録済みのお客様の表示名(customerId が無ければ null)。 */
+  customerDisplayName: string | null;
+  customerNameText: string | null;
+  receiptedAt: Date;
+  amountYen: number | null;
+  storeName: string | null;
+  handoffText: string | null;
+  contentType: string;
+  byteSize: number;
+}
+
+export interface ReceiptListSummary {
+  count: number;
+  /** 金額の合計(円。金額の無い領収書は0円)。 */
+  totalYen: number;
+  noAmountCount: number;
+}
+
+/** 画像を返すのに要るもの(担当スタッフで閲覧の可否を決める)。 */
+export interface ReceiptImageRef {
+  receiptId: string;
+  staffId: string;
+  storageKey: string;
+  contentType: string;
+}
+
 export interface ReceiptRepository {
   createUpload(input: ReceiptUploadRow): Promise<void>;
   findUpload(id: string): Promise<ReceiptUploadRow | null>;
@@ -106,4 +154,14 @@ export interface ReceiptRepository {
   isFirstOfUpload(receipt: Pick<ReceiptRow, 'id' | 'uploadId'>): Promise<boolean>;
   /** スタッフの領収書のうち、領収書日時が [from, to) のもの。 */
   listByStaffAndPeriod(staffId: string, from: Date, to: Date): Promise<ReceiptRow[]>;
+  /** 一覧(領収書日時の新しい順、after より後ろを limit 件)。 */
+  list(
+    filter: ReceiptListFilter,
+    after: ReceiptListPosition | null,
+    limit: number,
+  ): Promise<ReceiptListRow[]>;
+  /** 条件に合う全件の件数・金額の合計。 */
+  summarize(filter: ReceiptListFilter): Promise<ReceiptListSummary>;
+  /** 領収書の画像の保存先(領収書が無ければ null)。 */
+  findImage(receiptId: string): Promise<ReceiptImageRef | null>;
 }

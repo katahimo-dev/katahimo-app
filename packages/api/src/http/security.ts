@@ -45,10 +45,14 @@ export function securityHeaders(isProduction: boolean): MiddlewareHandler {
   });
 }
 
-/** API の応答はブラウザ・中継のキャッシュに残さない(個人情報を含むため)。 */
+/**
+ * API の応答はブラウザ・中継のキャッシュに残さない(個人情報を含むため)。ルートが no-store を含む指定
+ * (領収書の画像の private, no-store)を付けていればそのまま使う。
+ */
 export function noStoreApiResponses(): MiddlewareHandler {
   return async (c, next) => {
     await next();
+    if (c.res.headers.get('Cache-Control')?.includes('no-store')) return;
     c.res.headers.set('Cache-Control', 'no-store');
   };
 }
