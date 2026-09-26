@@ -6,7 +6,10 @@ import { freeText } from './common';
  * 認証は API キー(`Authorization: Bearer kth_…`。運用担当者が `pnpm tenant:api-keys` で発行する)で、
  * Cookie のセッションは使わない。テナントと書ける取込元(customer_source_records.source)はキーで決まる。
  *
- * 1件は「その顧客の今の全ての値」(取込元の形式を知らない形。顧客CSVの1行と同じ扱い): 省いた・null の項目は空にする。
+ * 1件は顧客の値(取込元の形式を知らない形)。**省いた項目は今の値のまま**、**null は空にする**(新しい顧客では
+ * 省いた項目は空)。住所(home)・住所2(secondary)・緊急連絡先(emergencyContact)はまとまりごと(渡せばまとまりの
+ * 全ての値を置き換え、中で省いた項目は空にする)、子ども(recipients)は配列ごと(渡せば全員を置き換える。[] で全員を外す)、
+ * 属性(attributes)はオブジェクトごと。表示名(displayName)は null・空で「姓 名」。姓(familyName)は毎回必要。
  * 受け取るのは作成・更新(upsert)だけで、削除・アーカイブはしない(送られなかった顧客はそのまま)。
  */
 
@@ -22,10 +25,10 @@ const calendarDateSchema = z
     return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
   }, '存在しない日付です');
 
-/** 省略可能な短い文字列(空文字は null)。 */
+/** 省略可能な短い文字列(空文字は null。省いた場合は undefined のまま = 今の値を保つ)。 */
 const optionalText = (max: number) =>
-  freeText(z.string().trim().max(max, `${max}文字以内で指定してください`).nullish()).transform(
-    (value) => value || null,
+  freeText(z.string().trim().max(max, `${max}文字以内で指定してください`).nullish()).transform((value) =>
+    value === undefined ? undefined : value || null,
   );
 
 const addressSchema = z
@@ -73,8 +76,9 @@ export const integrationCustomerSchema = z.object({
     .max(100)
     .regex(/^[^\s]+$/, '顧客IDに空白は使えません'),
   familyName: freeText(z.string().trim().min(1, '姓を指定してください').max(100)),
-  givenName: freeText(z.string().trim().max(100)).default(''),
-  /** 表示名(省略時は「姓 名」)。 */
+  /** 名(省けば今の値のまま。新しい顧客では空)。 */
+  givenName: freeText(z.string().trim().max(100)).optional(),
+  /** 表示名(null・空は「姓 名」。省けば今の値のまま、新しい顧客では「姓 名」)。 */
   displayName: optionalText(200),
   familyNameKana: optionalText(100),
   givenNameKana: optionalText(100),
@@ -86,7 +90,8 @@ export const integrationCustomerSchema = z.object({
   home: addressSchema.nullish(),
   secondary: secondaryAddressSchema.nullish(),
   emergencyContact: z.object({ relation: optionalText(100), phone: optionalText(50) }).nullish(),
-  recipients: z.array(recipientSchema).max(20, 'お子さまは20人までです').default([]),
+  /** 子どもの全員(渡せば全員を置き換える。省けば今のまま)。 */
+  recipients: z.array(recipientSchema).max(20, 'お子さまは20人までです').optional(),
   /** 取込元の分類値(会員種別等。個人を特定しない値だけ)。キーは英小文字・数字・「_」。 */
   attributes: z
     .record(
@@ -94,7 +99,7 @@ export const integrationCustomerSchema = z.object({
       freeText(z.string().max(200)),
     )
     .refine((a) => Object.keys(a).length <= 30, '属性は30項目までです')
-    .default({}),
+    .optional(),
   /** 連携先での登録日時・最終更新日時(ISO 8601、時差つき)。 */
   externalRegisteredAt: z.string().datetime({ offset: true }).nullish(),
   externalUpdatedAt: z.string().datetime({ offset: true }).nullish(),

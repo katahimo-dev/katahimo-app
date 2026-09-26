@@ -3,8 +3,10 @@ import { invalid, newId, notFound } from '../domain';
 import { CUSTOMER_SOURCES, type CustomerSource } from '../domain/model';
 import type { AppLogPort } from '../ports/appLog';
 import type { IntegrationApiKeyRecord } from '../ports/integrations';
+import type { RateLimiterPort } from '../ports/rateLimiter';
 import type { TenantDirectoryPort, TenantRecord } from '../ports/tenants';
 import type { UnitOfWorkPort } from '../ports/unitOfWork';
+import type { RateLimitPolicy } from './rateLimits';
 import type { Clock, RequestMeta } from './requestMeta';
 import { currentTime } from './requestMeta';
 
@@ -164,17 +166,24 @@ export type IntegrationAuthFailureReason =
 
 export type IntegrationAuthResult =
   | { ok: true; key: AuthenticatedIntegrationKey }
-  | { ok: false; reason: IntegrationAuthFailureReason; tenantId: string | null };
+  | { ok: false; reason: IntegrationAuthFailureReason; tenantId: string | null }
+  /** 送信元IPの認証の失敗が続いたため一時的に断っている(認証はしていない)。 */
+  | { ok: false; reason: 'locked'; tenantId: null; retryAfterMs: number };
 
 export interface IntegrationAuthDeps extends Clock {
   uow: UnitOfWorkPort;
   appLog: AppLogPort;
+  rateLimiter: RateLimiterPort;
+  rateLimits: Pick<RateLimitPolicy, 'integrationAuthFailureIp'>;
 }
 
 /**
  * API キーを確かめる(1回の短いトランザクション)。トークンのテナントの部分で RLS のテナントを決め、トークン全体の
  * SHA-256 で行を探す(平文を比べないため、比べる時間からトークンを推し量れない)。見つかれば last_used_at を更新する。
  * 失敗は WARN `integration.auth_failed`(トークンは残さない。テナントはキーが見つかった時だけ記録する)。
+ * 送信元IPごとに失敗を数え(integration_auth_failure_ip。ログインの login_failure_ip と同じく確かめる前に1回分を取り、
+ * 成功なら返す)、上限に達したら一時ロックする。ロック中の要求は DB での確認も操作ログも行わずに locked を返す
+ * (API は 429)。ロックの始まりに1回だけ WARN `integration.auth_locked` を残す。
  */
 export async function authenticateIntegrationApiKey(
   deps: IntegrationAuthDeps,
@@ -182,6 +191,13 @@ export async function authenticateIntegrationApiKey(
   meta: RequestMeta = {},
 ): Promise<IntegrationAuthResult> {
   const now = currentTime(deps);
+  const ip = meta.ip ?? null;
+  const rule = deps.rateLimits.integrationAuthFailureIp;
+  // 先に1回分の枠を取る(同時に送られた多数の誤ったキーでも、確かめるのは上限の回数まで)
+  const byIp = ip ? await deps.rateLimiter.consume(rule, ip, now) : null;
+  if (byIp && !byIp.allowed) {
+    return { ok: false, reason: 'locked', tenantId: null, retryAfterMs: byIp.retryAfterMs };
+  }
   const tenantId = token ? tenantIdOfIntegrationApiToken(token) : null;
   const result: IntegrationAuthResult =
     !token || !tenantId
@@ -200,13 +216,26 @@ export async function authenticateIntegrationApiKey(
             key: { tenantId, apiKeyId: key.id, name: key.name, customerSource: key.customerSource },
           };
         });
-  if (!result.ok) {
+  if (result.ok) {
+    // 成功した回は数えない(先に取った1回分を返す)
+    if (ip) await deps.rateLimiter.refund(rule, ip);
+    return result;
+  }
+  await deps.appLog.write({
+    tenantId: result.tenantId,
+    level: 'WARN',
+    action: 'integration.auth_failed',
+    actorType: 'anonymous',
+    details: { reason: result.reason },
+    ...meta,
+  });
+  if (byIp?.lockStarted) {
     await deps.appLog.write({
       tenantId: result.tenantId,
       level: 'WARN',
-      action: 'integration.auth_failed',
+      action: 'integration.auth_locked',
       actorType: 'anonymous',
-      details: { reason: result.reason },
+      details: { rule: rule.name, limit: rule.limit, lockMs: rule.lockMs ?? null },
       ...meta,
     });
   }

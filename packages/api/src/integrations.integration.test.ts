@@ -143,6 +143,30 @@ describe('API: 外部システムからの顧客の受け取り', () => {
     expect(key[0]?.last_used_at).not.toBeNull();
   });
 
+  it('同じ新しい顧客IDを同時に送っても顧客は1人だけ(テナントの取込のロックで1つずつ適用する)', async () => {
+    const countCustomers = async () =>
+      (
+        await withTenant(appDb, tenantId, (tx) => tx.execute(sql`select count(*)::int as n from customers`))
+      )[0]?.n as number;
+    const before = await countCustomers();
+    const responses = await Promise.all(
+      Array.from({ length: 3 }, () => post({ customers: [customer('RACE-1'), customer('RACE-2')] })),
+    );
+    expect(responses.map((r) => r.status)).toEqual([200, 200, 200]);
+    const bodies = (await Promise.all(responses.map((r) => r.json()))) as {
+      counts: Record<string, number>;
+    }[];
+    expect(bodies.map((b) => b.counts.created).sort()).toEqual([0, 0, 2]);
+    expect(await countCustomers()).toBe(before + 2);
+    const linked = await withTenant(appDb, tenantId, (tx) =>
+      tx.execute(
+        sql`select count(*)::int as n from customer_source_records
+            where source = 'external_api' and external_id in ('RACE-1', 'RACE-2')`,
+      ),
+    );
+    expect(linked[0]?.n).toBe(2);
+  });
+
   it('キーが無い・Cookie のセッションだけ・形が違う・別のテナントのIDに差し替えたキーは 401', async () => {
     const other = await createTenant('int-other');
     const forged = token.replace(tenantId.replaceAll('-', ''), other.id.replaceAll('-', ''));
@@ -203,6 +227,43 @@ describe('API: 外部システムからの顧客の受け取り', () => {
     const limited = await send();
     expect(limited.status).toBe(429);
     expect(limited.headers.get('retry-after')).not.toBeNull();
+  });
+
+  it('同じ送信元IPの認証の失敗が続くと 429(ロック中は正しいキーも確かめない。別の送信元IPは通る)', async () => {
+    const lockedApp = createApp({
+      env: { ...env, TRUSTED_PROXY_HOPS: 1 },
+      container: {
+        ...container,
+        rateLimits: {
+          ...container.rateLimits,
+          integrationAuthFailureIp: {
+            name: `integration_auth_failure_ip_it_${slug}`,
+            limit: 2,
+            windowMs: 60_000,
+            lockMs: 60_000,
+          },
+        },
+      },
+    });
+    const send = (bearer: string, ip: string) =>
+      lockedApp.request('/api/integrations/customers', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${bearer}`,
+          'X-Forwarded-For': ip,
+        },
+        body: JSON.stringify({ customers: [customer('EXT-1')] }),
+      });
+    const ip = `198.51.100.${randomBytes(1)[0]}`;
+    expect((await send(`${token}x`, ip)).status).toBe(401);
+    expect((await send(`${token}x`, ip)).status).toBe(401);
+    const locked = await send(`${token}x`, ip);
+    expect(locked.status).toBe(429);
+    expect(locked.headers.get('retry-after')).not.toBeNull();
+    expect(await locked.json()).toMatchObject({ code: 'rate_limited' });
+    expect((await send(token, ip)).status).toBe(429);
+    expect((await send(token, '192.0.2.1')).status).toBe(200);
   });
 
   it('失効させたキーは 401。アプリのロールはキーを作れない・失効させられない', async () => {

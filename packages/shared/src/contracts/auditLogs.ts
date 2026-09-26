@@ -239,7 +239,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'tenant.api_key.created': '外部連携のAPIキーの発行(運用担当者)',
   'tenant.api_key.revoked': '外部連携のAPIキーの失効(運用担当者)',
   'integration.customers.ingested': '外部システムからの顧客の受け取り',
+  'integration.customers.ingest_failed': '外部システムからの顧客の受け取りの失敗',
   'integration.auth_failed': '外部連携のAPIキーの認証の失敗',
+  'integration.auth_locked': '外部連携のAPIキーの認証の失敗が続いたため一時的に断り始めた',
   'rate_limit.exceeded': '回数の上限を超えた',
 };
 

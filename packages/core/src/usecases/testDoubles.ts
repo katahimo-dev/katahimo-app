@@ -241,6 +241,8 @@ export class MemoryDatabase {
   readonly customerImportSettings = new Map<string, TenantCustomerImportSettings>();
   /** UoW の outboxPolicy と同じ(null なら全てのトピックを積む)。 */
   outboxPolicy: OutboxTopicPolicy | null = null;
+  /** 顧客の取込のロック(importRuns.lockTenantCustomerImports)を取ったテナント(呼んだ順)。 */
+  readonly customerImportLocks: string[] = [];
   private seq = 0;
 
   addTenant(input: Partial<TenantRecord> & { slug: string }): TenantRecord {
@@ -1034,6 +1036,10 @@ export function fakeRepositories(
       },
     },
     importRuns: {
+      async lockTenantCustomerImports() {
+        // メモリの UoW は並んで走らないため、取ったことだけを残す
+        db.customerImportLocks.push(tenantId);
+      },
       async start(input) {
         d().importRuns.push({
           id: input.id,

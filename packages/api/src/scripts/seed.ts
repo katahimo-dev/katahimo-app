@@ -86,6 +86,8 @@ async function main() {
 
     const outcomes = await container.uow.run(tenant.id, async (r) => {
       const results: string[] = [];
+      // 顧客の取込(顧客CSV・外部連携の API)と重ならないようにする
+      await r.importRuns.lockTenantCustomerImports();
       for (const customer of DEMO_CUSTOMERS) {
         results.push(await applyCustomerSnapshot({ runId: null }, r, customer, new Date()));
       }

@@ -24,6 +24,7 @@ function bearerTokenOf(header: string | undefined): string | null {
 /**
  * 外部システム連携の API キーの確認。Cookie のセッションは見ない(ログイン中の画面からは呼べない)。
  * キーが無い・誤り・失効は 401、テナントが利用停止中は 403(どちらも WARN `integration.auth_failed`)。
+ * 同じ送信元IPからの失敗が続けば一時的に 429(確かめない。integration_auth_failure_ip)。
  */
 function requireIntegrationKey(container: Container): MiddlewareHandler<IntegrationEnv> {
   return async (c, next) => {
@@ -33,6 +34,13 @@ function requireIntegrationKey(container: Container): MiddlewareHandler<Integrat
       requestMeta(c),
     );
     if (!result.ok) {
+      if (result.reason === 'locked') {
+        return rateLimited(
+          c,
+          result.retryAfterMs,
+          '認証の失敗が続いたため、しばらく受け付けません。API キーを確かめてから再度お試しください。',
+        );
+      }
       if (result.reason === 'tenant_suspended') {
         return apiError(c, 403, 'forbidden', 'この法人は利用を停止しています。');
       }

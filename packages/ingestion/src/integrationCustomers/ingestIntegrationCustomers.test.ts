@@ -96,6 +96,116 @@ describe('ingestIntegrationCustomers(外部システムからの顧客の受け�
     expect(ctx.data().customers.every((c) => c.archivedAt === null)).toBe(true);
   });
 
+  it('省いた項目は今の値のまま・null は空にする(部分的な送信で住所・緊急連絡先・子どもを消さない)', async () => {
+    const { ctx, key } = setup();
+    await ingestIntegrationCustomers(ctx.deps, key, parse({ customers: [customer] }));
+    const before = ctx.data();
+    // 電話番号だけを送る
+    const partial = await ingestIntegrationCustomers(
+      ctx.deps,
+      key,
+      parse({ customers: [{ externalId: 'EXT-1', familyName: '佐藤', phone: '03-9999-0000' }] }),
+    );
+    expect(partial).toMatchObject({ counts: { updated: 1 }, results: [{ outcome: 'updated' }] });
+    const after = ctx.data();
+    expect(after.customers[0]).toMatchObject({
+      phone: '03-9999-0000',
+      givenName: '花子',
+      displayName: '佐藤 花子',
+      familyNameKana: 'サトウ',
+      email: 'hanako@example.com',
+    });
+    expect(after.addresses).toEqual(before.addresses);
+    expect(after.contacts).toEqual(before.contacts);
+    expect(after.recipients).toEqual(before.recipients);
+    expect(after.recipients.every((r) => r.archivedAt === null)).toBe(true);
+    expect(after.sourceRecords[0]).toMatchObject({
+      attributes: { member_type: '一般' },
+      externalUpdatedAt: new Date('2026-09-25T10:00:00+09:00'),
+    });
+
+    // 同じ値だけを送り直しても変わらない
+    const again = await ingestIntegrationCustomers(
+      ctx.deps,
+      key,
+      parse({ customers: [{ externalId: 'EXT-1', familyName: '佐藤', phone: '03-9999-0000' }] }),
+    );
+    expect(again.counts).toMatchObject({ unchanged: 1, updated: 0 });
+
+    // null はまとまりごと空にする。子どもは配列で全員を置き換える
+    await ingestIntegrationCustomers(
+      ctx.deps,
+      key,
+      parse({
+        customers: [
+          {
+            externalId: 'EXT-1',
+            familyName: '佐藤',
+            email: null,
+            secondary: null,
+            emergencyContact: null,
+            externalUpdatedAt: null,
+            recipients: [{ name: '佐藤 二郎' }],
+          },
+        ],
+      }),
+    );
+    const cleared = ctx.data();
+    expect(cleared.customers[0]).toMatchObject({ email: null, phone: '03-9999-0000' });
+    expect(cleared.addresses.map((a) => a.kind)).toEqual(['home']);
+    expect(cleared.contacts).toEqual([]);
+    expect(cleared.sourceRecords[0]?.externalUpdatedAt).toBeNull();
+    expect(
+      cleared.recipients
+        .map((r) => [r.name, r.archivedAt === null])
+        .sort(([a], [b]) => String(a).localeCompare(String(b))),
+    ).toEqual([
+      ['佐藤 一郎', false],
+      ['佐藤 二郎', true],
+    ]);
+  });
+
+  it('新しい顧客では省いた項目は空(表示名は「姓 名」)。取込のたびにテナントの取込のロックを取る', async () => {
+    const { ctx, key } = setup();
+    await ingestIntegrationCustomers(
+      ctx.deps,
+      key,
+      parse({ customers: [{ externalId: 'NEW-1', familyName: '田中' }] }),
+    );
+    const data = ctx.data();
+    expect(data.customers[0]).toMatchObject({ displayName: '田中', givenName: '', phone: null, email: null });
+    expect(data.addresses).toEqual([]);
+    expect(data.recipients).toEqual([]);
+    expect(data.sourceRecords[0]).toMatchObject({ attributes: {}, externalUpdatedAt: null });
+    expect(ctx.db.customerImportLocks).toEqual([ctx.tenantId]);
+  });
+
+  it('適用に失敗したら全体を戻し、ERROR integration.customers.ingest_failed を残して投げる(顧客の値は残さない)', async () => {
+    const { ctx, key } = setup();
+    const failing = {
+      ...ctx.deps,
+      uow: {
+        run: <T>(tenantId: string, work: (r: never) => Promise<T>) =>
+          ctx.deps.uow.run(tenantId, async (r) => {
+            await work(r as never);
+            throw Object.assign(new Error('duplicate key value 佐藤'), { code: '23505' });
+          }),
+      },
+    };
+    await expect(
+      ingestIntegrationCustomers(failing, key, parse({ customers: [customer] }), { requestId: 'req-1' }),
+    ).rejects.toThrow('duplicate key');
+    expect(ctx.data().customers).toEqual([]);
+    const [failed] = ctx.appLog.byAction('integration.customers.ingest_failed');
+    expect(failed).toMatchObject({
+      level: 'ERROR',
+      requestId: 'req-1',
+      details: expect.objectContaining({ apiKeyId: 'key-1', received: 1, error: 'db:23505' }),
+    });
+    expect(JSON.stringify(failed)).not.toContain('佐藤');
+    expect(ctx.appLog.byAction('integration.customers.ingested')).toEqual([]);
+  });
+
   it('取込元が違えば同じ顧客IDでも別の顧客(external_api は RESERVA の顧客を書き換えない)', async () => {
     const { ctx, key } = setup('external_api');
     await ctx.addCustomer('鈴木 一郎', 'R-100');
@@ -134,10 +244,13 @@ describe('integrationCustomersRequestSchema', () => {
     expect(fails({ customers: [{ ...base, externalId: 'A B' }] })).toBe(true);
   });
 
-  it('省いた項目は既定値(空)にし、空文字は null にする', () => {
+  it('省いた項目は省いたまま(今の値を保つ)、空文字は null にする', () => {
     const [parsed] = integrationCustomersRequestSchema.parse({
-      customers: [{ ...base, memo: '', givenName: undefined }],
+      customers: [{ ...base, memo: '', phone: null, givenName: undefined }],
     }).customers;
-    expect(parsed).toMatchObject({ givenName: '', memo: null, recipients: [], attributes: {} });
+    expect(parsed).toMatchObject({ memo: null, phone: null });
+    for (const key of ['givenName', 'recipients', 'attributes', 'home', 'email', 'displayName'] as const) {
+      expect(parsed?.[key], key).toBeUndefined();
+    }
   });
 });

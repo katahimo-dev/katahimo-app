@@ -34,7 +34,11 @@
 - 外部システムからの顧客の受け取り `POST /api/integrations/customers`(RESERVA 等との連携の受け口): テナントごとの API キー
   (`Authorization: Bearer kth_…`。Cookie のセッションは使わない)で、1回500件までの顧客を作成・更新する(削除・アーカイブはしない)。
   1回を1トランザクションで適用し `import_runs`(`external_api`)に残す。キーごとに書ける取込元(`reserva` / `external_api`)を固定し、
-  1時間120回・本体 2MB まで(`doc/04_API仕様.md` 2.11・`doc/05_バッチ・外部連携.md` 11章)。
+  1時間120回・本体 2MB まで(`doc/04_API仕様.md` 2.11・`doc/05_バッチ・外部連携.md` 11章)。省いた項目は今の値のまま・null は空にする
+  (部分的な送信で住所・緊急連絡先・子どもを消さない。子どもは配列を渡せば全員を置き換える)。同じテナントの取込(この API の再送が
+  重なった場合・顧客CSVの取込)はテナントごとのロックで1つずつ適用し、同じ顧客を2人作らない。適用の失敗は ERROR
+  `integration.customers.ingest_failed`。同じ送信元IPからの認証の失敗が15分に30回続くと15分間 429(`integration_auth_failure_ip`。
+  その間は確かめず操作ログも残さない。ロックの始まりに WARN `integration.auth_locked`)。
 - 運用のコマンド `pnpm tenant:api-keys -- <slug> [--create <名前> [--source …]] [--revoke <ID>]`(API キーの発行・一覧・失効。
   トークンは1回だけ表示し、DB にはハッシュだけを残す)と `pnpm tenant:customer-source -- <slug> [--drive-folder <ID> | --clear]`
   (顧客CSVの取込元の Drive のフォルダ)。

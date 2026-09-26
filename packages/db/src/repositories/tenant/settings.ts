@@ -187,6 +187,12 @@ export class DrizzleAiPromptRepository extends TenantBound implements AiPromptRe
 }
 
 export class DrizzleImportRunRepository extends TenantBound implements ImportRunRepository {
+  async lockTenantCustomerImports(): Promise<void> {
+    await this.tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`customer_import:${this.tenantId}`}, 0))`,
+    );
+  }
+
   async start(input: {
     id: string;
     source: ImportSource;

@@ -192,29 +192,37 @@ export interface CustomerSnapshotRecipient {
   allergy?: string | null;
 }
 
-/** 取込元の1顧客分(取込元の形式を知らない形)。 */
+/**
+ * 取込元の1顧客分(取込元の形式を知らない形)。顧客CSVは全ての項目を持つ(1行が顧客の今の全ての値)。
+ * 外部連携の API は項目を省けるため、省ける項目は undefined を許す(扱いは ApplyContext.omitted)。
+ */
 export interface CustomerSnapshot {
   source: CustomerSource;
   externalId: string;
-  displayName: string;
+  /** 表示名。null・空は「姓 名」。 */
+  displayName?: string | null | undefined;
   familyName: string;
-  givenName: string;
-  familyNameKana?: string | null;
-  givenNameKana?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  memo?: string | null;
-  benefitMemberId?: string | null;
-  evacuationSite?: string | null;
+  givenName?: string | undefined;
+  familyNameKana?: string | null | undefined;
+  givenNameKana?: string | null | undefined;
+  email?: string | null | undefined;
+  phone?: string | null | undefined;
+  memo?: string | null | undefined;
+  benefitMemberId?: string | null | undefined;
+  evacuationSite?: string | null | undefined;
   /** 取込元固有の分類値(会員種別・会費の支払方法等。個人を特定しない値だけ)。 */
-  attributes: Record<string, string>;
-  externalRegisteredAt?: Date | null;
-  externalUpdatedAt?: Date | null;
-  home: CustomerSnapshotAddress | null;
+  attributes?: Record<string, string> | undefined;
+  externalRegisteredAt?: Date | null | undefined;
+  externalUpdatedAt?: Date | null | undefined;
+  home?: CustomerSnapshotAddress | null | undefined;
   /** 期間限定の住所(GAS版の住所2)。validFrom / validTo は両端を含む 'YYYY-MM-DD'。 */
-  secondary: (CustomerSnapshotAddress & { validFrom: string | null; validTo: string | null }) | null;
-  emergencyContact: { relation?: string | null; phone?: string | null } | null;
-  recipients: CustomerSnapshotRecipient[];
+  secondary?:
+    | (CustomerSnapshotAddress & { validFrom: string | null; validTo: string | null })
+    | null
+    | undefined;
+  emergencyContact?: { relation?: string | null; phone?: string | null } | null | undefined;
+  /** 子どもの全員(配列で渡すと、その並びに揃える)。 */
+  recipients?: CustomerSnapshotRecipient[] | undefined;
 }
 
 export type SnapshotOutcome = 'created' | 'updated' | 'unchanged' | 'skipped';
@@ -231,10 +239,20 @@ export type CustomerSnapshotIssue =
   | 'missing_external_id'
   | 'missing_name';
 
-interface ApplyContext {
+/**
+ * 省いた(undefined の)項目の扱い。
+ * - clear(既定): 空にする(顧客CSV。1行が顧客の今の全ての値で、どの列も必ずある)。
+ * - keep: 今の値のまま(外部連携の API の部分的な送信)。null は空にする。新しい顧客では省いた項目は空。
+ *   住所・住所2・緊急連絡先はまとまりごと(渡せばまとまりの全ての値を置き換える)、子どもは配列ごと(渡せば全員を置き換える)。
+ */
+export type OmittedFieldPolicy = 'clear' | 'keep';
+
+export interface ApplyContext {
   runId: string | null;
   /** 取込元の値の誤りを見つけたとき(取込の集計に使う)。 */
   onIssue?: (issue: CustomerSnapshotIssue) => void;
+  /** 省いた項目の扱い(既定は clear)。 */
+  omitted?: OmittedFieldPolicy;
 }
 
 const validDate = (value: Date | null | undefined): Date | null =>
@@ -250,15 +268,18 @@ export function normalizeCustomerSnapshot(snapshot: CustomerSnapshot): {
 } {
   const issues: CustomerSnapshotIssue[] = [];
   if (!snapshot.externalId.trim()) return { snapshot: null, issues: ['missing_external_id'] };
-  if (!snapshot.displayName.trim() && !snapshot.familyName.trim())
+  if (!snapshot.displayName?.trim() && !snapshot.familyName.trim())
     return { snapshot: null, issues: ['missing_name'] };
   let secondary = snapshot.secondary;
   if (secondary?.validFrom && secondary.validTo && secondary.validTo < secondary.validFrom) {
     issues.push('secondary_period_inverted');
     secondary = { ...secondary, validFrom: null, validTo: null };
   }
-  const externalRegisteredAt = validDate(snapshot.externalRegisteredAt);
-  const externalUpdatedAt = validDate(snapshot.externalUpdatedAt);
+  // 省いた(undefined)日時は省いたまま(ApplyContext.omitted が keep なら今の値を使う)
+  const externalRegisteredAt =
+    snapshot.externalRegisteredAt === undefined ? undefined : validDate(snapshot.externalRegisteredAt);
+  const externalUpdatedAt =
+    snapshot.externalUpdatedAt === undefined ? undefined : validDate(snapshot.externalUpdatedAt);
   if (
     (snapshot.externalRegisteredAt && !externalRegisteredAt) ||
     (snapshot.externalUpdatedAt && !externalUpdatedAt)
@@ -441,7 +462,8 @@ async function syncRecipients(
  * 取込元の1顧客分を DB に揃える(UoW のトランザクションの中で呼ぶ)。取込元の ID(source, external_id)で
  * 突き合わせ、無ければ作り、あれば変わった項目だけを書く。アーカイブ済みの顧客が取込元に戻ったら戻す。
  * 取込元の値の誤りは書く前に直し(normalizeCustomerSnapshot)、直せない行は書かずに skipped を返す
- * (1行の誤りで取込全体を失敗させない)。
+ * (1行の誤りで取込全体を失敗させない)。省いた項目の扱いは ctx.omitted(顧客CSVは clear、外部連携の API は keep)。
+ * 同じテナントの取込が同時に走ると同じ顧客を2人作りうるため、呼ぶ側は先に r.importRuns.lockTenantCustomerImports() を取る。
  */
 export async function applyCustomerSnapshot(
   ctx: ApplyContext,
@@ -453,20 +475,30 @@ export async function applyCustomerSnapshot(
   for (const issue of normalized.issues) ctx.onIssue?.(issue);
   const snapshot = normalized.snapshot;
   if (!snapshot) return 'skipped';
+  const keep = ctx.omitted === 'keep';
   const linked = await r.customerSourceRecords.findByExternalId(snapshot.source, snapshot.externalId);
   const current = linked ? await r.customers.findById(linked.customerId) : null;
   const customerId = current?.id ?? newId();
+  /** 省いた項目: keep なら今の値、それ以外(clear・新しい顧客)は空。 */
+  const orCurrent = <T>(value: T | undefined, existing: T | undefined, empty: T): T =>
+    value !== undefined ? value : keep && existing !== undefined ? existing : empty;
+  const familyName = normalizeStaffName(snapshot.familyName);
+  const givenName = normalizeStaffName(orCurrent(snapshot.givenName, current?.givenName, ''));
+  const displayName =
+    snapshot.displayName === undefined && keep && current
+      ? current.displayName
+      : snapshot.displayName || `${snapshot.familyName} ${snapshot.givenName ?? givenName}`.trim();
   const fields = {
-    displayName: snapshot.displayName,
-    familyName: normalizeStaffName(snapshot.familyName),
-    givenName: normalizeStaffName(snapshot.givenName),
-    familyNameKana: snapshot.familyNameKana ?? null,
-    givenNameKana: snapshot.givenNameKana ?? null,
-    email: snapshot.email ?? null,
-    phone: snapshot.phone ?? null,
-    memo: textOrNull(snapshot.memo),
-    benefitMemberId: textOrNull(snapshot.benefitMemberId),
-    evacuationSite: textOrNull(snapshot.evacuationSite),
+    displayName,
+    familyName,
+    givenName,
+    familyNameKana: orCurrent(snapshot.familyNameKana, current?.familyNameKana, null),
+    givenNameKana: orCurrent(snapshot.givenNameKana, current?.givenNameKana, null),
+    email: orCurrent(snapshot.email, current?.email, null),
+    phone: orCurrent(snapshot.phone, current?.phone, null),
+    memo: textOrNull(orCurrent(snapshot.memo, current?.memo, null)),
+    benefitMemberId: textOrNull(orCurrent(snapshot.benefitMemberId, current?.benefitMemberId, null)),
+    evacuationSite: textOrNull(orCurrent(snapshot.evacuationSite, current?.evacuationSite, null)),
   };
 
   let changed = false;
@@ -493,39 +525,51 @@ export async function applyCustomerSnapshot(
     changed = customerChanged || current.archivedAt !== null;
   }
 
+  const attributes = orCurrent(snapshot.attributes, linked?.attributes, {});
+  const externalRegisteredAt = orCurrent(snapshot.externalRegisteredAt, linked?.externalRegisteredAt, null);
+  const externalUpdatedAt = orCurrent(snapshot.externalUpdatedAt, linked?.externalUpdatedAt, null);
   await r.customerSourceRecords.upsert({
     id: linked?.id ?? newId(),
     customerId,
     source: snapshot.source,
     externalId: snapshot.externalId,
-    attributes: snapshot.attributes,
-    externalRegisteredAt: snapshot.externalRegisteredAt ?? null,
-    externalUpdatedAt: snapshot.externalUpdatedAt ?? null,
+    attributes,
+    externalRegisteredAt,
+    externalUpdatedAt,
     lastImportRunId: ctx.runId,
   });
   const sourceChanged =
     !linked ||
-    !sameAttributes(linked.attributes, snapshot.attributes) ||
-    linked.externalUpdatedAt?.getTime() !== (snapshot.externalUpdatedAt ?? null)?.getTime();
+    !sameAttributes(linked.attributes, attributes) ||
+    linked.externalUpdatedAt?.getTime() !== externalUpdatedAt?.getTime();
 
+  // keep で省いたまとまり(住所・住所2・緊急連絡先・子ども)は触らない
+  const skip = (value: unknown) => keep && value === undefined;
   const addresses = current ? await r.customerAddresses.listByCustomer(customerId) : [];
-  const contacts = current ? await r.customerContacts.listByCustomer(customerId) : [];
+  const contacts =
+    current && !skip(snapshot.emergencyContact) ? await r.customerContacts.listByCustomer(customerId) : [];
   const results = [
-    await syncAddress(r, customerId, 'home', homeOf(addresses), snapshot.home),
-    await syncAddress(
-      r,
-      customerId,
-      'secondary',
-      addresses.find((a) => a.kind === 'secondary'),
-      snapshot.secondary,
-    ),
-    await syncEmergencyContact(
-      r,
-      customerId,
-      contacts.find((c) => c.isEmergency),
-      snapshot.emergencyContact,
-    ),
-    await syncRecipients(r, customerId, snapshot.recipients, now),
+    skip(snapshot.home)
+      ? false
+      : await syncAddress(r, customerId, 'home', homeOf(addresses), snapshot.home ?? null),
+    skip(snapshot.secondary)
+      ? false
+      : await syncAddress(
+          r,
+          customerId,
+          'secondary',
+          addresses.find((a) => a.kind === 'secondary'),
+          snapshot.secondary ?? null,
+        ),
+    skip(snapshot.emergencyContact)
+      ? false
+      : await syncEmergencyContact(
+          r,
+          customerId,
+          contacts.find((c) => c.isEmergency),
+          snapshot.emergencyContact ?? null,
+        ),
+    skip(snapshot.recipients) ? false : await syncRecipients(r, customerId, snapshot.recipients ?? [], now),
   ];
   if (!current) return 'created';
   return changed || sourceChanged || results.some(Boolean) ? 'updated' : 'unchanged';

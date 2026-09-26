@@ -83,10 +83,13 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `push_test_staff` | テナント + スタッフ | 1時間10回 | 429 | — |
 | `push_subscribe_staff` | テナント + スタッフ | 1時間30回 | 429 | — |
 | `integration_customers_key` | テナント + 外部連携の API キー | 1時間120回 | 429 | — |
+| `integration_auth_failure_ip` | 送信元IP(`/api/integrations/*` の認証の失敗) | 15分に30回 → 15分ロック(ロック中は認証もしない) | 429 | — |
 | `attendance_export_staff` | テナント + スタッフ | 1時間30回(出勤簿の Excel の書き出し。1人分・全員分の合計) | 429 | — |
 
 ログインの2つの規則は照合(argon2)の**前に**1回分の枠を取る(同時の大量の試行でも照合まで進むのは上限の回数まで)。
 一致した回は数えない(アカウントは数え直し、IP は先に取った1回分を返す)。
+`integration_auth_failure_ip` も同じく API キーを確かめる前に1回分を取り、成功した回は返す。ロック中の要求は `rate_limit.exceeded` も
+`integration.auth_failed` も残さず(失敗の続く連携先で操作ログが溢れないように)、ロックの始まりに1回だけ WARN `integration.auth_locked` を残す。
 
 ## 2. エンドポイント一覧
 
@@ -235,11 +238,12 @@ RESERVA 等の外部システムからの受け口(05 11章)。認証は `Author
 呼べない。Cookie を自動で送られないため CSRF の前提に当たらない。1.4 の CSRF・JSON の検査はそのまま掛かる)。テナントと書ける取込元は
 キーで決まり、本体では指定しない。トークンの `<テナントID>` の部分で RLS のテナントを決め、トークン全体の SHA-256 で
 `integration_api_keys` を引く(平文を比べない)。キーが無い・形が違う・無い(別のテナントのIDに差し替えた場合を含む)・失効は 401、
-テナントが利用停止中は 403(どちらも WARN `integration.auth_failed`、理由コードだけ)。
+テナントが利用停止中は 403(どちらも WARN `integration.auth_failed`、理由コードだけ)。同じ送信元IPからの失敗が続けば一時的に 429
+(`integration_auth_failure_ip`。ロック中は正しいキーでも確かめず、操作ログも残さない。ロックの始まりに1回 WARN `integration.auth_locked`)。
 
 | メソッド・パス | 契約(要求 / 応答) | 応答・エラー・ログ |
 | --- | --- | --- |
-| `POST /customers` | `integrationCustomersRequestSchema`(`mode`(`upsert` だけ。既定)・`customers`(1〜500件): `externalId`・`familyName`・`givenName?`・`displayName?`(既定「姓 名」)・`familyNameKana?`・`givenNameKana?`・`email?`・`phone?`・`memo?`・`benefitMemberId?`・`evacuationSite?`・`home?`(`addressLine`・`prefecture?`・`city?`(省けば住所から取り出す)・`parkingArea?`・`parkingDetail?`・`lat?`・`lng?`(両方か無し))・`secondary?`(`home` と同じ + `validFrom?`・`validTo?`(両端を含む `YYYY-MM-DD`))・`emergencyContact?`(`relation?`・`phone?`)・`recipients`(20人まで: `name`・`birthDate?`・`needs?`・`allergy?`)・`attributes`(英小文字のキー → 値、30項目まで)・`externalRegisteredAt?`・`externalUpdatedAt?`(ISO 8601、時差つき))/ `integrationCustomersResponseSchema` | 200 `{ importRunId, counts: { created, updated, unchanged, skipped }, results: [{ externalId, outcome, issues }], dataVersion }`(`results` は送った順)。1件はその顧客の今の全ての値(省いた・null の項目は空にする)。キーの取込元 × `externalId` で突き合わせ、作成・更新だけを行う(**削除・アーカイブはしない**)。全件を1トランザクションで適用し `import_runs`(`source = external_api`)を残す。同じ `externalId` が2回・存在しない日付・住所2の期間の逆転・緯度だけ等は 400(何も書かない)。回数制限 `integration_customers_key`。INFO `integration.customers.ingested`(`skipped`・`issues` があれば WARN) |
+| `POST /customers` | `integrationCustomersRequestSchema`(`mode`(`upsert` だけ。既定)・`customers`(1〜500件): `externalId`・`familyName`・`givenName?`・`displayName?`(null・空は「姓 名」)・`familyNameKana?`・`givenNameKana?`・`email?`・`phone?`・`memo?`・`benefitMemberId?`・`evacuationSite?`・`home?`(`addressLine`・`prefecture?`・`city?`(省けば住所から取り出す)・`parkingArea?`・`parkingDetail?`・`lat?`・`lng?`(両方か無し))・`secondary?`(`home` と同じ + `validFrom?`・`validTo?`(両端を含む `YYYY-MM-DD`))・`emergencyContact?`(`relation?`・`phone?`)・`recipients?`(20人まで: `name`・`birthDate?`・`needs?`・`allergy?`)・`attributes?`(英小文字のキー → 値、30項目まで)・`externalRegisteredAt?`・`externalUpdatedAt?`(ISO 8601、時差つき))/ `integrationCustomersResponseSchema` | 200 `{ importRunId, counts: { created, updated, unchanged, skipped }, results: [{ externalId, outcome, issues }], dataVersion }`(`results` は送った順)。**省いた項目は今の値のまま、null は空にする**(部分的な送信でよい。新しい顧客では省いた項目は空、表示名は「姓 名」)。`home`・`secondary`・`emergencyContact` はまとまりごと、`attributes` はオブジェクトごと、`recipients` は配列ごと(渡せば全員を置き換え、配列に無い子どもはアーカイブ。`[]` で全員を外す)に置き換える(顧客CSVの1行は今の全ての値で、空の列は空にする。05 11章)。キーの取込元 × `externalId` で突き合わせ、作成・更新だけを行う(**削除・アーカイブはしない**)。全件を1トランザクションで適用し `import_runs`(`source = external_api`)を残す。同じテナントの取込(この API の同時の送信・顧客CSVの取込)とはテナントごとのロックで1つずつ適用する(待ってから適用する。同じ新しい顧客IDを同時に送っても顧客は1人)。同じ `externalId` が2回・存在しない日付・住所2の期間の逆転・緯度だけ等は 400(何も書かない)。回数制限 `integration_customers_key`。INFO `integration.customers.ingested`(`skipped`・`issues` があれば WARN)。適用に失敗したら何も残さず 500 と ERROR `integration.customers.ingest_failed` |
 
 ## 3. 本番での Web 画面の配信
 

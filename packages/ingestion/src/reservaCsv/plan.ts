@@ -94,6 +94,8 @@ export type ReservaImportOutcome =
  * 消えた顧客のアーカイブ(reason = import_missing)→ 変わっていれば顧客データの版数を上げる(予定計算のキャッシュを作り直す)。
  * 行の値の誤り(住所2の期間の逆転等)は書く前に直すか、その行だけ飛ばして数を import_runs.counts に残す
  * (1行の誤りで取込全体を止めない)。実行は import_runs に残す(安全装置で止めた場合も review_required として残す)。
+ * CSV の1行は顧客の今の全ての値のため、空の列は空にする(applyCustomerSnapshot の omitted = clear)。
+ * 同じテナントの他の取込とはテナントごとのロックで1つずつにする(差分の計算もロックを取ってから行う)。
  */
 export async function applyReservaImport(
   deps: ReservaImportDeps,
@@ -106,6 +108,8 @@ export async function applyReservaImport(
   return deps.uow.run(
     tenantId,
     async (r) => {
+      // 同じテナントの取込(夜間・手動の顧客CSV、外部連携の API)を1つずつにする(同じ顧客を2人作らない)
+      await r.importRuns.lockTenantCustomerImports();
       await r.importRuns.start({
         id: runId,
         source: 'reserva_csv',

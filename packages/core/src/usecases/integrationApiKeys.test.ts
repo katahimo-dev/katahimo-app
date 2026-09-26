@@ -105,4 +105,55 @@ describe('外部システム連携の API キー', () => {
       }),
     ).rejects.toMatchObject({ reason: 'invalid_name' });
   });
+
+  it('同じ送信元IPの認証の失敗が上限に達したら一時ロックし、ロック中は確かめず・ログも残さない(WARN はロックの始まりに1回)', async () => {
+    const ctx = createTestContext();
+    const deps = {
+      ...ctx.deps,
+      rateLimits: {
+        ...ctx.deps.rateLimits,
+        integrationAuthFailureIp: { name: 'iaf', limit: 3, windowMs: 60_000, lockMs: 60_000 },
+      },
+    };
+    const { token } = await createIntegrationApiKey(ctx.deps, 'test-tenant', {
+      name: 'k',
+      customerSource: 'external_api',
+      createdBy: 'op',
+    });
+    const meta = { ip: '203.0.113.9' };
+    // 成功は数えない(枠を返す)
+    for (let i = 0; i < 5; i++) {
+      expect(await authenticateIntegrationApiKey(deps, token, meta)).toMatchObject({ ok: true });
+    }
+    const wrong = `${token.slice(0, -1)}${token.endsWith('A') ? 'B' : 'A'}`;
+    for (let i = 0; i < 3; i++) {
+      expect(await authenticateIntegrationApiKey(deps, wrong, meta)).toMatchObject({ reason: 'unknown_key' });
+    }
+    const runsBefore = ctx.uow.runs;
+    for (let i = 0; i < 10; i++) {
+      expect(await authenticateIntegrationApiKey(deps, wrong, meta)).toMatchObject({
+        ok: false,
+        reason: 'locked',
+        retryAfterMs: expect.any(Number),
+      });
+    }
+    // 正しいキーでもロック中は断る(DB での確認はしない)
+    expect(await authenticateIntegrationApiKey(deps, token, meta)).toMatchObject({ reason: 'locked' });
+    expect(ctx.uow.runs).toBe(runsBefore);
+    expect(ctx.appLog.byAction('integration.auth_failed')).toHaveLength(3);
+    expect(ctx.appLog.byAction('integration.auth_locked')).toEqual([
+      expect.objectContaining({
+        level: 'WARN',
+        ip: '203.0.113.9',
+        details: { rule: 'iaf', limit: 3, lockMs: 60_000 },
+      }),
+    ]);
+    // 別の送信元IPは断らない
+    expect(await authenticateIntegrationApiKey(deps, token, { ip: '203.0.113.10' })).toMatchObject({
+      ok: true,
+    });
+    // ロックが明けたら確かめる
+    ctx.clock.now = new Date(ctx.clock.now.getTime() + 60_000);
+    expect(await authenticateIntegrationApiKey(deps, token, meta)).toMatchObject({ ok: true });
+  });
 });
