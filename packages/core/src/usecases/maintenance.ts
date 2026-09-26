@@ -49,7 +49,8 @@ export interface MaintenanceSummary {
 /**
  * 保守ジョブ(毎日1回): 操作ログの月のパーティションを先に作り(既定のパーティションに入った行は月のパーティションへ
  * 移す)・古いものを消し、消去されていない全てのテナント(停止中・解約済みを含む)について保存期間を過ぎた
- * セッション・outbox・再設定コード・マッチングの候補を消し、どこからも参照されないファイルを消す。
+ * セッション・outbox・再設定コード・マッチングの候補を消し、期限切れ・使用済みの再設定コードのメール用の値を消し、
+ * どこからも参照されないファイルを消す。
  * 1つの処理・1テナントの失敗で他を止めない。失敗は ERROR ログに残し、summary の errors / tenants[].error に入れる
  * (ジョブは失敗として終わる)。
  */
@@ -102,6 +103,7 @@ export async function runMaintenance(deps: MaintenanceDeps): Promise<Maintenance
           outboxDoneBefore: ago(RETENTION_DAYS.outboxDone),
           outboxFailedBefore: ago(RETENTION_DAYS.outboxFailed),
           passwordResetCodesBefore: ago(RETENTION_DAYS.passwordResetCodes),
+          mailCodesExpiredAt: now,
           matchingCandidatesBefore: ago(RETENTION_DAYS.matchingCandidates),
         }),
         files: await r.storedFiles.listUnreferenced(ago(RETENTION_DAYS.unreferencedFiles), 500),

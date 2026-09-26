@@ -180,8 +180,8 @@ export const sessions = pgTable(
 /**
  * パスワード再設定の確認コード。照合は HMAC(code_hash)だけ。試行回数の加算・使用済みへの遷移は
  * 1文の条件付き UPDATE で原子的に行う。スタッフごとに未使用のコードは1つまで(部分UNIQUE)。
- * mail_code はワーカーがメールを送るまでの間だけ持つコード(送信・使用・期限切れで NULL にする。outbox の
- * payload には入れない)。
+ * mail_code はワーカーがメールを送るまでの間だけ持つコード(送信・使用で NULL にし、期限が切れたものは保守ジョブが
+ * NULL にする。outbox の payload には入れない)。
  */
 export const passwordResetCodes = pgTable(
   'password_reset_codes',

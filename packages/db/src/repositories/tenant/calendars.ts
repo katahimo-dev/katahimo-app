@@ -7,7 +7,7 @@ import type {
   StaffCalendarRepository,
   TenantRetentionRepository,
 } from '@katahimo/core/ports';
-import { and, asc, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, lt, lte, or, sql } from 'drizzle-orm';
 import {
   matchingRunCandidates,
   outboxMessages,
@@ -133,6 +133,20 @@ export class DrizzleTenantRetentionRepository extends TenantBound implements Ten
         ),
       )
       .returning({ id: passwordResetCodes.id });
+    const clearedMailCodes = await this.tx
+      .update(passwordResetCodes)
+      .set({ mailCode: null })
+      .where(
+        and(
+          eq(passwordResetCodes.tenantId, t),
+          isNotNull(passwordResetCodes.mailCode),
+          or(
+            lte(passwordResetCodes.expiresAt, cutoffs.mailCodesExpiredAt),
+            isNotNull(passwordResetCodes.usedAt),
+          ),
+        ),
+      )
+      .returning({ id: passwordResetCodes.id });
     const deletedCandidates = await this.tx
       .delete(matchingRunCandidates)
       .where(
@@ -146,6 +160,7 @@ export class DrizzleTenantRetentionRepository extends TenantBound implements Ten
       sessions: deletedSessions.length,
       outbox_messages: deletedOutbox.length,
       password_reset_codes: deletedCodes.length,
+      password_reset_mail_codes_cleared: clearedMailCodes.length,
       matching_run_candidates: deletedCandidates.length,
     };
   }

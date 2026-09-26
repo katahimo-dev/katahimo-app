@@ -219,6 +219,30 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
     );
     expect(busy).toMatchObject({ syncedStaffCount: 1, failures: [] });
 
+    // 送られないまま期限が切れた再設定コード(メール用の値は保守で消す)
+    const expiredCodeId = newId();
+    await appUow.run(tenantId, (r) =>
+      r.passwordResetCodes.replaceActive(
+        {
+          id: expiredCodeId,
+          staffId,
+          codeHash: new Uint8Array(32),
+          sentToEmail: 'taro@example.com',
+          expiresAt: new Date(Date.now() - 60_000),
+          maxAttempts: 5,
+          mailCode: '654321',
+        },
+        new Date(),
+      ),
+    );
+    const mailCodeOf = async (id: string) =>
+      (
+        (await withTenant(owner, tenantId, (tx) =>
+          tx.execute(sql`select mail_code from password_reset_codes where id = ${id}`),
+        )) as unknown as { mail_code: string | null }[]
+      )[0]?.mail_code;
+    expect(await mailCodeOf(expiredCodeId)).toBe('654321');
+
     // ── 保守(パーティション・保存期間の削除・参照されないファイル) ──
     const maintenance = await runMaintenance({
       uow: workerUow,
@@ -230,6 +254,8 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
     });
     expect(maintenance).toMatchObject({ errors: [], interrupted: false });
     expect(maintenance.tenants[0]?.error).toBeUndefined();
+    expect(maintenance.tenants[0]?.deleted).toMatchObject({ password_reset_mail_codes_cleared: 1 });
+    expect(await mailCodeOf(expiredCodeId)).toBeNull();
     expect(appLog.entries.filter((e) => e.level === 'ERROR')).toEqual([]);
   });
 });
