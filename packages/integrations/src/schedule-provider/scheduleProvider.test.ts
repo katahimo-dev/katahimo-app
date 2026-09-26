@@ -57,16 +57,20 @@ describe('createScheduleServices', () => {
     const g = createScheduleServices({ SCHEDULE_PROVIDER: 'google', GOOGLE_MAPS_API_KEY: 'key' }, deps);
     expect(g.schedule).toBeInstanceOf(GoogleSchedulePort);
     expect(g.maps).toBeInstanceOf(GoogleMapsPlatformPort);
+    expect(g.scheduleTenantSlug).toBeNull();
 
     const b = createScheduleServices(bridge, deps);
     expect(b.provider).toBe('gas_bridge');
     expect(b.schedule).toBeInstanceOf(GasBridgeSchedulePort);
     // ルートは GAS版が計算するため、本アプリからは Bridge の地図を使わない(住所を Bridge に送らない)
     expect(b.maps).toBeNull();
+    // 夜間のジョブは Bridge の持ち主のテナントだけを処理する
+    expect(b.scheduleTenantSlug).toBe(bridge.GAS_BRIDGE_TENANT);
 
     const n = createScheduleServices({}, deps);
     expect(n.schedule).toBeInstanceOf(NoopSchedulePort);
     expect(n.maps).toBeNull();
+    expect(n.scheduleTenantSlug).toBeNull();
   });
 
   it('gas_bridge は GAS_BRIDGE_TENANT のテナントの予定だけを Bridge に求める', async () => {

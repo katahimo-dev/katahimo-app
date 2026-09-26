@@ -30,6 +30,8 @@ export async function runRouteNoticeJob(
       alreadyQueued: summary.alreadyQueued,
       failed: summary.failed,
       interrupted: summary.interrupted,
+      // 予定を読めないため飛ばしたテナント(gas_bridge は GAS_BRIDGE_TENANT だけを処理する)
+      skippedTenants: summary.skippedTenants.map((t) => t.tenantSlug),
       tenants: summary.tenants.map((t) => ({
         tenant: t.tenantSlug,
         date: t.date,

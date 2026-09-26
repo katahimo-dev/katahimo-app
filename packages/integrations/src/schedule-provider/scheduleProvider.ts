@@ -71,6 +71,11 @@ export interface ScheduleServices {
    * 本アプリの緯度経度を使わず、テナントを持たない地図の呼び出しで別のテナントの住所を Bridge に送らないよう、無し。
    */
   maps: MapsPort | null;
+  /**
+   * 予定を読めるテナントの slug(gas_bridge の GAS_BRIDGE_TENANT)。null なら全テナント。夜間の反映・翌日のお知らせの
+   * ジョブは、これがあれば他のテナントを飛ばす(Bridge に求めても断られるだけのため)。
+   */
+  scheduleTenantSlug: string | null;
 }
 
 /** 選ばれた実装で SchedulePort / MapsPort を組み立てる。必須の設定が欠けていれば起動時に例外。 */
@@ -94,7 +99,7 @@ export function createScheduleServices(
         routeCache: deps.routeCache,
         appLog: deps.appLog,
       });
-      return { provider, schedule, maps };
+      return { provider, schedule, maps, scheduleTenantSlug: null };
     }
     case 'gas_bridge':
       if (!bridge) {
@@ -109,9 +114,10 @@ export function createScheduleServices(
           new GasBridgeTenantGuard(bridge.tenantSlug, deps.tenants),
         ),
         maps: null,
+        scheduleTenantSlug: bridge.tenantSlug,
       };
     case 'noop':
-      return { provider, schedule: new NoopSchedulePort(), maps: null };
+      return { provider, schedule: new NoopSchedulePort(), maps: null, scheduleTenantSlug: null };
   }
 }
 

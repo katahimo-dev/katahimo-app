@@ -54,6 +54,9 @@
 
 ### 変更
 
+- `SCHEDULE_PROVIDER=gas_bridge` のとき、夜間のカレンダー反映・翌日の予定のお知らせのジョブは `GAS_BRIDGE_TENANT` のテナントだけを
+  処理し、他のテナントは飛ばす(INFO `attendance.nightly_sync.tenant_skipped` / `push.route_notice.tenant_skipped`)。テナントが
+  2つ以上あると毎晩失敗(終了コード1)で終わっていた。
 - `pnpm tenant:customer-source` は、別のテナントが顧客CSVの取込元にしている Drive のフォルダを設定しない(同じ顧客CSVを2つのテナントに
   取り込ませない。使っているテナントの slug を出して止まる)。
 - 領収書の一覧・報告一覧で、他のスタッフ・全員分の閲覧を「もっと見る」の続きのページも含めて1ページごとに操作ログに残す

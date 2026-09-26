@@ -236,6 +236,26 @@ describe('カレンダーからの反映', () => {
     });
   });
 
+  it('予定を読めるテナントが決まっていれば(gas_bridge)、夜間バッチは他のテナントを飛ばして INFO を1件残す', async () => {
+    ctx.clock.now = new Date('2026-09-24T13:00:00Z');
+    const skipped = await runNightlyCalendarSync({ ...ctx.deps, scheduleTenantSlug: 'bridge-tenant' });
+    expect(skipped).toMatchObject({
+      tenants: [],
+      skippedTenants: [{ tenantId: ctx.tenantId, tenantSlug: 'test-tenant' }],
+      failed: 0,
+      interrupted: false,
+    });
+    expect(ctx.appLog.byAction('attendance.nightly_sync.tenant_skipped')).toEqual([
+      expect.objectContaining({
+        level: 'INFO',
+        details: { date: DATE, reason: 'schedule_provider_other_tenant' },
+      }),
+    ]);
+    const own = await runNightlyCalendarSync({ ...ctx.deps, scheduleTenantSlug: 'test-tenant' });
+    expect(own).toMatchObject({ skippedTenants: [], failed: 0 });
+    expect(own.tenants[0]).toMatchObject({ succeeded: expect.any(Number) });
+  });
+
   it('時間の重なる予定(A 09:00–12:00・B 11:30–13:00)も反映でき、夜間バッチも失敗しない(GAS版と同じ)', async () => {
     ctx.schedule.setAppointments('山田 太郎', DATE, [
       appointment('佐藤様', '09:00', '12:00'),

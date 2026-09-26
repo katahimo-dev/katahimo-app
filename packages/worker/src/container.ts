@@ -55,6 +55,8 @@ export interface WorkerContainer {
   appPublicUrl?: string;
   appLog: AppLogPort;
   schedule: SchedulePort;
+  /** 予定を読めるテナントの slug(SCHEDULE_PROVIDER=gas_bridge の GAS_BRIDGE_TENANT)。null なら全テナント。 */
+  scheduleTenantSlug: string | null;
   csvSource: CustomerCsvSourcePort;
   /**
    * ミラーするテナントの slug(MIRROR_TO_GOOGLE_SHEETS が有効な時の GAS_BRIDGE_TENANT。API と同じ設定)。
@@ -109,6 +111,7 @@ export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerConta
     ...(env.APP_PUBLIC_URL ? { appPublicUrl: env.APP_PUBLIC_URL } : {}),
     appLog,
     schedule: scheduleServices.schedule,
+    scheduleTenantSlug: scheduleServices.scheduleTenantSlug,
     csvSource: createCustomerCsvSource({
       ...(env.CUSTOMER_CSV_LOCAL_DIR ? { localDir: env.CUSTOMER_CSV_LOCAL_DIR } : {}),
     }),

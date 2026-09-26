@@ -28,6 +28,8 @@ export interface NightlySyncTenantSummary {
 
 export interface NightlySyncSummary {
   tenants: NightlySyncTenantSummary[];
+  /** 予定を読めないため飛ばしたテナント(NightlyCalendarSyncDeps.scheduleTenantSlug)。 */
+  skippedTenants: { tenantId: string; tenantSlug: string }[];
   succeeded: number;
   failed: number;
   /** 停止の合図で、全てのテナント・スタッフを処理する前に止めた(ジョブは失敗として終わる)。 */
@@ -107,13 +109,15 @@ export async function syncDayForAllStaff(
  * 夜間バッチ(GAS版 autoSyncTodayScheduleForAllStaff、毎日22時台): 利用中の全テナントについて、テナントの
  * タイムゾーンでの「今日」(または options.date)の予定を、その日に在籍している全スタッフの出勤簿へ反映する。
  * 各スタッフの反映は冪等なので、途中で失敗して再実行しても二重には書かない。停止の合図で途中で止めた場合は
- * interrupted(残りは再実行で反映する)。
+ * interrupted(残りは再実行で反映する)。予定を読めるテナントが決まっていれば(gas_bridge)、他のテナントは飛ばして
+ * INFO `attendance.nightly_sync.tenant_skipped`(失敗にしない)。
  */
 export async function runNightlyCalendarSync(
   deps: NightlyCalendarSyncDeps,
   options: { date?: string; shouldStop?: () => boolean } = {},
 ): Promise<NightlySyncSummary> {
   const summaries: NightlySyncTenantSummary[] = [];
+  const skippedTenants: NightlySyncSummary['skippedTenants'] = [];
   let interrupted = false;
   for (const tenant of await deps.tenants.listActive()) {
     if (options.shouldStop?.()) {
@@ -121,6 +125,16 @@ export async function runNightlyCalendarSync(
       break;
     }
     const date = options.date ?? zonedBusinessDate(currentTime(deps), tenant.timezone);
+    if (deps.scheduleTenantSlug && tenant.slug !== deps.scheduleTenantSlug) {
+      skippedTenants.push({ tenantId: tenant.id, tenantSlug: tenant.slug });
+      await deps.appLog.write({
+        tenantId: tenant.id,
+        level: 'INFO',
+        action: 'attendance.nightly_sync.tenant_skipped',
+        details: { date, reason: 'schedule_provider_other_tenant' },
+      });
+      continue;
+    }
     try {
       summaries.push(await syncDayForAllStaff(deps, tenant, date, options.shouldStop));
     } catch (error) {
@@ -148,6 +162,7 @@ export async function runNightlyCalendarSync(
   }
   return {
     tenants: summaries,
+    skippedTenants,
     succeeded: summaries.reduce((n, s) => n + s.succeeded, 0),
     failed: summaries.reduce((n, s) => n + s.failed, 0),
     interrupted: interrupted || summaries.some((s) => s.interrupted),

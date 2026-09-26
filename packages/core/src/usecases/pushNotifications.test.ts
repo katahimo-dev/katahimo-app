@@ -309,6 +309,29 @@ describe('翌日の予定のお知らせ(夜間ジョブ)', () => {
     ]);
   });
 
+  it('予定を読めるテナントが決まっていれば(gas_bridge)、他のテナントは飛ばして INFO を1件残す(失敗にしない)', async () => {
+    const skipped = await runRouteNoticeJob({ ...ctx.deps, scheduleTenantSlug: 'bridge-tenant' });
+    expect(skipped).toMatchObject({
+      tenants: [],
+      skippedTenants: [{ tenantId: ctx.tenantId, tenantSlug: 'test-tenant' }],
+      queued: 0,
+      failed: 0,
+    });
+    expect(ctx.schedule.calls).toEqual([]);
+    expect(ctx.appLog.byAction('push.route_notice.tenant_skipped')).toEqual([
+      expect.objectContaining({
+        level: 'INFO',
+        tenantId: ctx.tenantId,
+        details: { date: '2026-09-27', reason: 'schedule_provider_other_tenant' },
+      }),
+    ]);
+    // 持ち主のテナントは今までどおり
+    expect(await runRouteNoticeJob({ ...ctx.deps, scheduleTenantSlug: 'test-tenant' })).toMatchObject({
+      skippedTenants: [],
+      queued: 1,
+    });
+  });
+
   it('流し直しても二重に積まず「積み済み」と数える。後からオンにした端末にだけ積む', async () => {
     await runRouteNoticeJob(ctx.deps);
     expect(await runRouteNoticeJob(ctx.deps)).toMatchObject({ queued: 0, alreadyQueued: 1 });
