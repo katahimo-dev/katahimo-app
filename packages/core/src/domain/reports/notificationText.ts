@@ -67,11 +67,20 @@ export interface ReceiptNotificationImage {
   /** 重複としてブロックされた画像はここに含めない(GAS版のduplicateIndices除外と同じ)。 */
   amount: string;
   storeName: string;
+  /** 会社負担(お客様に請求しない)。経理が請求から外せるよう行の末尾に書く。 */
+  companyPaid: boolean;
+}
+
+/** 領収書1枚の行(「名称: … / 金額: …円」、会社負担なら末尾に「 / 会社負担」)。 */
+function receiptLine(img: ReceiptNotificationImage): string {
+  const amountStr = img.amount ? `${img.amount}円` : '未入力';
+  const storeStr = img.storeName ? img.storeName : '未入力';
+  return `名称: ${storeStr} / 金額: ${amountStr}${img.companyPaid ? ' / 会社負担(お客様に請求しない)' : ''}`;
 }
 
 /**
  * 領収書登録時のGoogle Chat通知本文。GAS版Main.js uploadReceiptsOnlyの lwMsg 組み立てと
- * 完全に同一(重複除外後の画像だけを対象にする点も含む)。
+ * 同じ(重複除外後の画像だけを対象にする点も含む)。会社負担の画像は行の末尾にそう書く(GAS版には無い区分)。
  */
 export function buildReceiptNotificationText(params: {
   staffName: string;
@@ -87,13 +96,33 @@ export function buildReceiptNotificationText(params: {
 
   let receiptDetails = '';
   for (const img of params.registeredImages) {
-    const amountStr = img.amount ? `${img.amount}円` : '未入力';
-    const storeStr = img.storeName ? img.storeName : '未入力';
-    receiptDetails += `\n名称: ${storeStr} / 金額: ${amountStr}`;
+    receiptDetails += `\n${receiptLine(img)}`;
   }
 
   const trimmedHandoff = params.handoffText.trim();
   const handoffStr = trimmedHandoff ? `\n\n申し送り:\n${trimmedHandoff}` : '';
 
   return `【領収書登録】\n担当: ${params.staffName || '不明'}\n${customerStr}日付: ${dateStr}${receiptDetails}${handoffStr}`;
+}
+
+/**
+ * 領収書の取消の Google Chat 通知本文(領収書の通知先へ。経理が登録の通知と突き合わせられるよう、登録の通知と
+ * 同じ「名称: … / 金額: …」の行を書く)。
+ */
+export function buildReceiptCancelNotificationText(params: {
+  staffName: string;
+  /** 取消したスタッフ(本人以外が取消したときだけ書く)。 */
+  cancelledByName: string | null;
+  customerName: string | null;
+  /** 領収書日時 'yyyy/MM/dd HH:mm'。 */
+  receiptTimestamp: string;
+  image: ReceiptNotificationImage;
+  reason: string | null;
+}): string {
+  const lines = ['【領収書取消】', `担当: ${params.staffName || '不明'}`];
+  if (params.cancelledByName) lines.push(`取消した人: ${params.cancelledByName}`);
+  if (params.customerName) lines.push(`顧客名: ${params.customerName}`);
+  lines.push(`日時: ${params.receiptTimestamp}`, receiptLine(params.image));
+  if (params.reason) lines.push(`取消の理由: ${params.reason}`);
+  return lines.join('\n');
 }

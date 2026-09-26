@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { cancelReceipt } from '../receiptCancel';
 import { uploadReceipts } from '../receipts';
 import type { Actor } from '../requestMeta';
 import type { TestContext } from '../testContext';
@@ -34,11 +35,22 @@ describe('出勤簿の書き出し', () => {
       customerId,
       images: [
         { data: JPEG, amount: '1,200', storeName: 'コンビニ' },
-        { data: JPEG, amount: '', storeName: '駐車場' },
+        { data: JPEG, amount: '', storeName: '駐車場', companyPaid: true },
+        { data: JPEG, amount: '400', storeName: 'コインパーキング', companyPaid: true },
       ],
       fallbackTimestamp: '2026/09/25 10:05:00',
       handoffText: '申し送り',
     });
+    // 取消した領収書は明細にも合計にも入らない
+    await uploadReceipts(ctx.deps, staff, {
+      customerId,
+      images: [{ data: JPEG, amount: '9,999', storeName: '間違い' }],
+      fallbackTimestamp: '2026/09/25 11:00:00',
+      handoffText: '',
+    });
+    const mistaken = ctx.data().receipts.find((r) => r.storeName === '間違い');
+    if (!mistaken) throw new Error('fixture');
+    await cancelReceipt(ctx.deps, staff, { receiptId: mistaken.id, rowVersion: mistaken.rowVersion });
   });
 
   it('1か月分は今月のまとめと同じ値に、領収書の明細(お客様・時刻・申し送りは束の最初の1件)を添える', async () => {
@@ -61,6 +73,7 @@ describe('出勤簿の書き出し', () => {
         customerName: '佐藤 花子',
         storeName: 'コンビニ',
         amountYen: 1200,
+        companyPaid: false,
         handoffText: '申し送り',
       },
       {
@@ -69,10 +82,27 @@ describe('出勤簿の書き出し', () => {
         customerName: '佐藤 花子',
         storeName: '駐車場',
         amountYen: null,
+        companyPaid: true,
+        handoffText: '',
+      },
+      {
+        businessDate: '2026-09-25',
+        time: '10:05',
+        customerName: '佐藤 花子',
+        storeName: 'コインパーキング',
+        amountYen: 400,
+        companyPaid: true,
         handoffText: '',
       },
     ]);
-    expect(month.receipts.total).toBe(1200);
+    // 会社負担もスタッフへの支払い(合計)に入り、お客様に請求するのは会社負担を除いた分
+    expect(month.receipts).toEqual({
+      byDay: { '2026-09-25': 1600 },
+      total: 1600,
+      companyPaidByDay: { '2026-09-25': 400 },
+      companyPaid: 400,
+      customerBillable: 1200,
+    });
     expect(ctx.appLog.entries.filter((e) => e.action === 'attendance.export.downloaded')).toEqual([
       expect.objectContaining({
         level: 'INFO',
@@ -120,7 +150,7 @@ describe('出勤簿の書き出し', () => {
         kind: 'month',
         yearMonth: '2026-09',
       });
-      expect(exported.months[0]?.receipts).toHaveLength(2);
+      expect(exported.months[0]?.receipts).toHaveLength(3);
     }
   });
 
@@ -145,7 +175,7 @@ describe('出勤簿の書き出し', () => {
     expect(exported.map((s) => s.staffName).sort()).toEqual(['山田 太郎', '管理 者', '鈴木 次郎'].sort());
     const taro = exported.find((s) => s.staffId === staff.staffId);
     expect(taro?.months[0]?.month.totals.laborMinutes).toBe(120);
-    expect(taro?.months[0]?.receipts.map((r) => r.amountYen)).toEqual([1200, null]);
+    expect(taro?.months[0]?.receipts.map((r) => r.amountYen)).toEqual([1200, null, 400]);
     expect(ctx.appLog.entries.at(-1)).toMatchObject({
       level: 'SECURITY',
       action: 'attendance.export_all.downloaded',

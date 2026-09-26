@@ -43,6 +43,11 @@ export const receiptImageUploadSchema = z.object({
    * まま使い、日時として読めなければ下記のフォールバック日時で記録する。空なら下記のフォールバック日時を使う。
    */
   receiptDate: freeText(z.string().trim().max(50).nullable().optional()),
+  /**
+   * 会社負担(研修等の同行・会社の都合で出た駐車場代など。お客様に請求しない)。スタッフへの支払いは同じ。
+   * 登録の後は変えられない(直すときは取消して登録し直す)。
+   */
+  companyPaid: z.boolean().default(false),
 });
 
 /**
@@ -134,6 +139,26 @@ export const receiptListQuerySchema = z.object({
 });
 export type ReceiptListQuery = z.input<typeof receiptListQuerySchema>;
 
+/** 領収書の区分の表示(CSV・Excel の「区分」の列の値。画面の「会社負担」の印も同じ言葉)。 */
+export const RECEIPT_BILLING_LABELS = { customer: 'お客様請求', company: '会社負担' } as const;
+
+export function receiptBillingLabel(companyPaid: boolean): string {
+  return companyPaid ? RECEIPT_BILLING_LABELS.company : RECEIPT_BILLING_LABELS.customer;
+}
+
+/** 取消の理由の長さの上限(1行。DB の receipts_cancel_reason_check と同じ)。 */
+export const RECEIPT_CANCEL_REASON_MAX_LENGTH = 100;
+
+/** 取消の情報(取消していない領収書は null)。 */
+export const receiptCancellationSchema = z.object({
+  /** 取消の日時(ISO8601・UTC)。 */
+  cancelledAt: z.string(),
+  /** 取消したスタッフの氏名(削除されたスタッフは null)。 */
+  cancelledByName: z.string().nullable(),
+  /** 取消の理由(入力が無ければ null)。 */
+  reason: z.string().nullable(),
+});
+
 /** 領収書1件(一覧の行)。 */
 export const receiptListItemSchema = z.object({
   id: idSchema,
@@ -148,6 +173,8 @@ export const receiptListItemSchema = z.object({
   /** 金額(円)。読めなかった・未入力は null。 */
   amountYen: z.number().int().nullable(),
   storeName: z.string().nullable(),
+  /** 会社負担(お客様に請求しない)。 */
+  companyPaid: z.boolean(),
   /** 登録の束(1回の送信)の申し送り。束の全ての領収書に同じ値が入る。 */
   handoffText: z.string().nullable(),
   /** 登録の束のID(同じ回に送った領収書は同じ値)。 */
@@ -155,6 +182,12 @@ export const receiptListItemSchema = z.object({
   /** 画像の種類(image/jpeg・image/png・image/webp)。画像は GET /api/receipts/:id/image。 */
   imageContentType: z.string(),
   imageByteSize: z.number().int(),
+  /** 取消(POST /api/receipts/:id/cancel)に送る版。 */
+  rowVersion: z.number().int().positive(),
+  /** 取消済みなら取消の情報(一覧には灰色で残る。合計・CSV・Excel には入らない)。 */
+  cancellation: receiptCancellationSchema.nullable(),
+  /** 今、見ている人が取消せるか(サーバーが本人・役割・期間・締めで決める。false なら「取消」を出さない)。 */
+  cancellable: z.boolean(),
 });
 export type ReceiptListItem = z.infer<typeof receiptListItemSchema>;
 
@@ -166,13 +199,46 @@ export const receiptListResponseSchema = z.object({
   yearMonth: yearMonthSchema,
   /** 対象スタッフ(全スタッフ分のときは null)。 */
   staff: z.object({ id: idSchema, name: z.string() }).nullable(),
-  /** 条件に合う全件(ページではなく月全体)の件数・金額の合計(金額が無いものは0円)・金額の無い件数。 */
+  /**
+   * 条件に合う取消していない全件(ページではなく月全体)の件数・金額の合計(金額が無いものは0円。会社負担を含む
+   * スタッフへの支払いの額)・うち会社負担・お客様に請求する額・金額の無い件数と、取消済みの件数。
+   */
   summary: z.object({
     count: z.number().int(),
     totalYen: z.number().int(),
+    companyPaidYen: z.number().int(),
+    customerBillableYen: z.number().int(),
     noAmountCount: z.number().int(),
+    cancelledCount: z.number().int(),
   }),
   /** テナントのタイムゾーン(表示用)。 */
   timeZone: z.string(),
 });
 export type ReceiptListResponse = z.infer<typeof receiptListResponseSchema>;
+
+// ── 領収書の取消(POST /api/receipts/:id/cancel) ──
+
+/**
+ * 取消(論理削除)。理由は任意の1行(改行・制御文字は空白にして前後の空白を除く。空なら理由なし)。rowVersion は
+ * 一覧の行の版(違えば 409)。
+ */
+export const cancelReceiptRequestSchema = z.object({
+  reason: z
+    .string()
+    .transform((value) => value.replace(/[\p{Cc}\u2028\u2029]+/gu, ' ').trim())
+    .pipe(
+      z
+        .string()
+        .max(
+          RECEIPT_CANCEL_REASON_MAX_LENGTH,
+          `取消の理由は${RECEIPT_CANCEL_REASON_MAX_LENGTH}文字までで入力してください`,
+        ),
+    )
+    .optional(),
+  rowVersion: z.number().int().positive(),
+});
+export type CancelReceiptRequest = z.input<typeof cancelReceiptRequestSchema>;
+
+/** 取消した後の一覧の行。 */
+export const cancelReceiptResponseSchema = z.object({ receipt: receiptListItemSchema });
+export type CancelReceiptResponse = z.infer<typeof cancelReceiptResponseSchema>;

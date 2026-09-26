@@ -418,6 +418,8 @@ async function runJourney() {
       return message;
     });
 
+    /** お客様の指定なしで送った「会社負担」の領収書の束(領収書の一覧で取消す) */
+    let companyPaidBatchId: string | null = null;
     await step(page, 'standalone-receipt', async () => {
       await page.locator('#reportModal').getByRole('button', { name: '閉じる' }).first().click();
       await wait(page, 600);
@@ -429,6 +431,11 @@ async function runJourney() {
         .locator('#galleryInput')
         .setInputFiles({ name: 'receipt2.jpg', mimeType: 'image/jpeg', buffer: jpeg });
       await wait(page, 1500);
+      // 研修の同行などで出た駐車場代: 会社負担(お客様に請求しない)にして送る(金額は取消で合計から外れることを確かめるため)
+      await page.getByLabel('金額（円）').fill('500');
+      const companyPaid = page.getByRole('checkbox', { name: '会社負担(お客様に請求しない)' });
+      assert(!(await companyPaid.isChecked()), '会社負担が最初から付いている');
+      await companyPaid.check();
       const {
         message,
         uploadedCount,
@@ -439,6 +446,7 @@ async function runJourney() {
         uploadBatchId: string | null;
       }>(page, 'POST', '/api/receipts', () => button(page, 'この領収書を送る').click());
       if (standaloneBatchId) runUploadBatchIds.add(standaloneBatchId);
+      companyPaidBatchId = standaloneBatchId;
       assert(uploadedCount === 1, `領収書が登録されない: ${message}`);
       await expectToast(page, message);
       return message;
@@ -606,6 +614,66 @@ async function runJourney() {
       await dialog.getByRole('button', { name: '閉じる' }).last().click();
       await wait(page, 300);
       return `${summary.count}件`;
+    });
+
+    // 会社負担の印を確かめ、その領収書を「取消」→ 一覧に灰色で残り、合計から外れることを確かめる(管理者は今月の分を取消せる)
+    await step(page, 'attendance-receipts-cancel', async () => {
+      const month = today.slice(0, 7);
+      const summaryOf = async () => {
+        const res = await page.request.get(`${WEB_URL}/api/receipts?month=${month}&limit=200`);
+        return (await res.json()) as {
+          receipts: { id: string; uploadBatchId: string; companyPaid: boolean; cancellable: boolean }[];
+          summary: { count: number; totalYen: number; companyPaidYen: number; cancelledCount: number };
+        };
+      };
+      const before = await summaryOf();
+      const target = before.receipts.find((r) => r.uploadBatchId === companyPaidBatchId);
+      assert(target, '会社負担で送った領収書が一覧に無い');
+      assert(target.companyPaid, '会社負担で送った領収書に会社負担の印が無い');
+      assert(target.cancellable, '今月の領収書なのに管理者が取消せない');
+
+      await button(page, '🧾 領収書の一覧・画像を見る').click();
+      const dialog = page.getByRole('dialog').filter({ has: page.locator('#receiptListMonth') });
+      const list = dialog.getByRole('list', { name: '領収書の一覧' });
+      await list.waitFor({ timeout: 10_000 });
+      const row = list
+        .getByRole('listitem')
+        .filter({ has: page.locator(`img[src="/api/receipts/${target.id}/image"]`) });
+      for (let i = 0; i < 5 && (await row.count()) === 0; i += 1) {
+        await dialog.getByRole('button', { name: 'もっと見る' }).click();
+        await wait(page, 800);
+      }
+      await row.scrollIntoViewIfNeeded();
+      await row.getByText('会社負担', { exact: true }).waitFor({ timeout: 5_000 });
+      await row.getByRole('button', { name: /^取消\(/ }).click();
+      const confirm = page.getByRole('alertdialog', { name: 'この領収書を取消しますか？' });
+      await confirm.waitFor({ timeout: 5_000 });
+      await confirm.getByLabel('取消の理由（あれば）').fill('e2e 取消の確認');
+      const cancelled = await clickForResponse<{
+        receipt: { cancellation: { reason: string | null } | null };
+      }>(page, 'POST', `/api/receipts/${target.id}/cancel`, () =>
+        confirm.getByRole('button', { name: '取消す' }).click(),
+      );
+      assert(cancelled.receipt.cancellation?.reason === 'e2e 取消の確認', '取消の理由が残らない');
+      await expectToast(page, '領収書を取消しました');
+      // 一覧を読み直すと、行は灰色の「取消」で残り、理由が出て、「取消」のボタンは消える
+      await row.getByText('理由: e2e 取消の確認').waitFor({ timeout: 10_000 });
+      await row.getByText('取消', { exact: true }).waitFor({ timeout: 5_000 });
+      assert(
+        (await row.getByRole('button', { name: /^取消\(/ }).count()) === 0,
+        '取消した領収書に「取消」が残る',
+      );
+      const after = await summaryOf();
+      assert(after.summary.count === before.summary.count - 1, '取消した領収書が件数から外れない');
+      assert(after.summary.totalYen === before.summary.totalYen - 500, '取消した領収書が合計から外れない');
+      assert(
+        after.summary.companyPaidYen === before.summary.companyPaidYen - 500,
+        '取消した会社負担の領収書が会社負担の合計から外れない',
+      );
+      assert(after.summary.cancelledCount === before.summary.cancelledCount + 1, '取消の件数が増えない');
+      await dialog.getByRole('button', { name: '閉じる' }).last().click();
+      await wait(page, 300);
+      return `合計 ${before.summary.totalYen}円 → ${after.summary.totalYen}円(取消 ${after.summary.cancelledCount}件)`;
     });
 
     await step(page, 'settings-text-size', async () => {

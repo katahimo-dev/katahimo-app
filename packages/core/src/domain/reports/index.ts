@@ -4,6 +4,7 @@ export * from './jstTime';
 export * from './listing';
 export * from './notificationText';
 export * from './promptAssembly';
+export * from './receiptCancel';
 export * from './receiptDedupe';
 export * from './receiptImage';
 export * from './receiptTimestamp';

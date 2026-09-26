@@ -6581,11 +6581,50 @@
           "primaryKey": false,
           "notNull": false
         },
+        "company_paid": {
+          "name": "company_paid",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "dedupe_hash": {
           "name": "dedupe_hash",
           "type": "bytea",
           "primaryKey": false,
           "notNull": false
+        },
+        "dedupe_primary": {
+          "name": "dedupe_primary",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "cancelled_at": {
+          "name": "cancelled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancelled_by": {
+          "name": "cancelled_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancel_reason": {
+          "name": "cancel_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
         },
         "created_at": {
           "name": "created_at",
@@ -6613,7 +6652,29 @@
             }
           ],
           "isUnique": true,
-          "where": "dedupe_hash is not null",
+          "where": "dedupe_primary and cancelled_at is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "receipts_tenant_id_dedupe_hash_idx": {
+          "name": "receipts_tenant_id_dedupe_hash_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "dedupe_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "dedupe_hash is not null and cancelled_at is null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -6789,6 +6850,21 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "receipts_tenant_id_cancelled_by_fkey": {
+          "name": "receipts_tenant_id_cancelled_by_fkey",
+          "tableFrom": "receipts",
+          "tableTo": "staff",
+          "columnsFrom": [
+            "tenant_id",
+            "cancelled_by"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -6817,6 +6893,18 @@
         "receipts_amount_yen_check": {
           "name": "receipts_amount_yen_check",
           "value": "\"receipts\".\"amount_yen\" >= 0"
+        },
+        "receipts_dedupe_primary_check": {
+          "name": "receipts_dedupe_primary_check",
+          "value": "not \"receipts\".\"dedupe_primary\" or \"receipts\".\"dedupe_hash\" is not null"
+        },
+        "receipts_cancel_check": {
+          "name": "receipts_cancel_check",
+          "value": "(\"receipts\".\"cancelled_at\" is null and \"receipts\".\"cancelled_by\" is null and \"receipts\".\"cancel_reason\" is null) or (\"receipts\".\"cancelled_at\" is not null and \"receipts\".\"cancelled_by\" is not null)"
+        },
+        "receipts_cancel_reason_check": {
+          "name": "receipts_cancel_reason_check",
+          "value": "char_length(\"receipts\".\"cancel_reason\") <= 100 and \"receipts\".\"cancel_reason\" !~ '[[:cntrl:]]'"
         }
       },
       "isRLSEnabled": true

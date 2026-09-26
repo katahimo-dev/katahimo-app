@@ -96,4 +96,6 @@ export interface AttendanceRepository {
    * (運用の platform.unlock_attendance_period)。
    */
   lockPeriod(staffId: string, yearMonth: string, lockedBy: string, at: Date): Promise<void>;
+  /** その月の出勤簿が締め済みのスタッフ(領収書の取消の可否に使う)。 */
+  listLockedStaffIds(yearMonth: string): Promise<string[]>;
 }

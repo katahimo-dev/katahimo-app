@@ -111,7 +111,8 @@ const mirrorCareRecord: Handler = async (deps, message) => {
 const mirrorReceipt: Handler = async (deps, message) => {
   const loaded = await deps.uow.run(message.tenantId, async (r) => {
     const receipt = await r.receipts.findById(message.aggregateId);
-    if (!receipt) return null;
+    // 写す前に取消された領収書は送らずに完了にする(シートには取消を写せないため、取消した行を増やさない)
+    if (!receipt || receipt.cancelledAt !== null) return null;
     const [upload, file, isFirst, staffName, customer] = await Promise.all([
       r.receipts.findUpload(receipt.uploadId),
       r.storedFiles.findById(receipt.fileId),

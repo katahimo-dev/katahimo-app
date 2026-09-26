@@ -36,7 +36,13 @@ const month = {
     { businessDate: '2026-09-03', rowData: { AJ: '0', AN: '2' }, derived: derived(0) },
   ],
   totals: {} as AttendanceMonth['totals'],
-  receipts: { byDay: { '2026-09-09': 540, '2026-09-03': 1280 }, total: 1820 },
+  receipts: {
+    byDay: { '2026-09-09': 540, '2026-09-03': 1280 },
+    total: 1820,
+    companyPaidByDay: { '2026-09-03': 300 },
+    companyPaid: 300,
+    customerBillable: 1520,
+  },
 } satisfies AttendanceMonth;
 
 describe('今月のまとめ', () => {
@@ -50,10 +56,10 @@ describe('今月のまとめ', () => {
     expect(cards[0]?.firstSlot?.def.key).toBe('office1');
     expect(cards[1]?.firstSlot).toBeNull();
   });
-  it('領収書は日付順', () => {
+  it('領収書は日付順(日の合計は会社負担を含み、うち会社負担を添える)', () => {
     expect(receiptRows(month)).toEqual([
-      { date: '2026-09-03', amount: 1280 },
-      { date: '2026-09-09', amount: 540 },
+      { date: '2026-09-03', amount: 1280, companyPaid: 300 },
+      { date: '2026-09-09', amount: 540, companyPaid: 0 },
     ]);
   });
 });

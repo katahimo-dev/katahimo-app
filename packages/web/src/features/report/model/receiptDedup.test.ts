@@ -3,6 +3,7 @@ import { createMemoryStorage } from '../../../lib/memoryStorage.test-helper';
 import {
   buildReceiptDupKey,
   findLocalReceiptDuplicates,
+  forgetSentReceipt,
   formatReceiptDuplicateWarning,
   loadReceiptKeyMap,
   normalizeReceiptAmount,
@@ -106,6 +107,33 @@ describe('前に送った領収書を探す(GAS版 uploadReceiptsOnly の送る�
         storeName: '薬局',
       },
     ]);
+  });
+
+  it('取消した領収書の印を消す(分まで・秒までのどちらの日時で送った印も)', () => {
+    const sent = recordSentReceipts({}, receipts, { customerId: 'c1', fallbackTimestamp, now: NOW });
+    const afterFirst = forgetSentReceipt(sent, {
+      receiptedAt: '2026/09/25 11:02:00',
+      customerId: 'c1',
+      amountYen: 1280,
+      storeName: 'スーパーみどり',
+    });
+    expect(Object.keys(afterFirst)).toEqual(['2026/09/25 09:00:00||c1||540||薬局']);
+    const afterBoth = forgetSentReceipt(afterFirst, {
+      receiptedAt: '2026/09/25 09:00:00',
+      customerId: 'c1',
+      amountYen: 540,
+      storeName: '薬局',
+    });
+    expect(afterBoth).toEqual({});
+    // 別のお客様の同じ内容は消さない
+    expect(
+      forgetSentReceipt(sent, {
+        receiptedAt: '2026/09/25 11:02:00',
+        customerId: null,
+        amountYen: 1280,
+        storeName: 'スーパーみどり',
+      }),
+    ).toEqual(sent);
   });
 
   it('お客様が違えば別の領収書', () => {

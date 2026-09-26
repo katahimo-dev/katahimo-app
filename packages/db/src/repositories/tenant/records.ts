@@ -7,6 +7,7 @@ import type {
   CareRecordRepository,
   CareRecordRow,
   NewCareRecordInput,
+  NewReceiptInput,
   ReceiptImageRef,
   ReceiptListFilter,
   ReceiptListPosition,
@@ -18,7 +19,8 @@ import type {
   StoredFileRepository,
   StoredFileRow,
 } from '@katahimo/core/ports';
-import { and, asc, count, desc, eq, gte, inArray, lt, notExists, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, notExists, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import {
   careRecordRevisions,
   careRecords,
@@ -235,7 +237,38 @@ const receiptColumns = {
   receiptedAt: receipts.receiptedAt,
   amountYen: receipts.amountYen,
   storeName: receipts.storeName,
+  companyPaid: receipts.companyPaid,
   dedupeHash: receipts.dedupeHash,
+  dedupePrimary: receipts.dedupePrimary,
+  cancelledAt: receipts.cancelledAt,
+  cancelledBy: receipts.cancelledBy,
+  cancelReason: receipts.cancelReason,
+  rowVersion: receipts.rowVersion,
+};
+
+/** 取消したスタッフ(担当スタッフとは別に staff を結合するための別名)。 */
+const canceller = alias(staff, 'canceller');
+
+const receiptListColumns = {
+  id: receipts.id,
+  uploadId: receipts.uploadId,
+  staffId: receipts.staffId,
+  staffName: staff.displayName,
+  customerId: receipts.customerId,
+  customerDisplayName: customers.displayName,
+  customerNameText: receipts.customerNameText,
+  receiptedAt: receipts.receiptedAt,
+  amountYen: receipts.amountYen,
+  storeName: receipts.storeName,
+  companyPaid: receipts.companyPaid,
+  handoffText: receiptUploads.handoffText,
+  contentType: storedFiles.contentType,
+  byteSize: storedFiles.byteSize,
+  cancelledAt: receipts.cancelledAt,
+  cancelledBy: receipts.cancelledBy,
+  cancelledByName: canceller.displayName,
+  cancelReason: receipts.cancelReason,
+  rowVersion: receipts.rowVersion,
 };
 
 export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepository {
@@ -258,13 +291,14 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
     return rows[0] ?? null;
   }
 
-  async insertIfNew(input: ReceiptRow): Promise<boolean> {
+  async insertIfNew(input: NewReceiptInput): Promise<boolean> {
     const rows = await this.tx
       .insert(receipts)
       .values({ tenantId: this.tenantId, ...input })
       .onConflictDoNothing({
+        // 部分UNIQUE receipts_tenant_id_dedupe_hash_key と同じ条件(取消していない代表とだけ重なる)
         target: [receipts.tenantId, receipts.dedupeHash],
-        where: sql`dedupe_hash is not null`,
+        where: sql`dedupe_primary and cancelled_at is null`,
       })
       .returning({ id: receipts.id });
     return rows.length > 0;
@@ -288,7 +322,7 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
     return first?.id === receipt.id;
   }
 
-  listByStaffAndPeriod(staffId: string, from: Date, to: Date): Promise<ReceiptRow[]> {
+  listActiveByStaffAndPeriod(staffId: string, from: Date, to: Date): Promise<ReceiptRow[]> {
     return this.tx
       .select(receiptColumns)
       .from(receipts)
@@ -298,6 +332,7 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
           eq(receipts.staffId, staffId),
           gte(receipts.receiptedAt, from),
           lt(receipts.receiptedAt, to),
+          isNull(receipts.cancelledAt),
         ),
       )
       .orderBy(asc(receipts.receiptedAt));
@@ -314,27 +349,10 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
     );
   }
 
-  list(
-    filter: ReceiptListFilter,
-    after: ReceiptListPosition | null,
-    limit: number,
-  ): Promise<ReceiptListRow[]> {
+  /** 一覧の行の SELECT(束・画像・担当スタッフ・お客様・取消したスタッフを結合する)。 */
+  private selectListRows() {
     return this.tx
-      .select({
-        id: receipts.id,
-        uploadId: receipts.uploadId,
-        staffId: receipts.staffId,
-        staffName: staff.displayName,
-        customerId: receipts.customerId,
-        customerDisplayName: customers.displayName,
-        customerNameText: receipts.customerNameText,
-        receiptedAt: receipts.receiptedAt,
-        amountYen: receipts.amountYen,
-        storeName: receipts.storeName,
-        handoffText: receiptUploads.handoffText,
-        contentType: storedFiles.contentType,
-        byteSize: storedFiles.byteSize,
-      })
+      .select(receiptListColumns)
       .from(receipts)
       .innerJoin(
         receiptUploads,
@@ -349,9 +367,22 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
         customers,
         and(eq(customers.tenantId, receipts.tenantId), eq(customers.id, receipts.customerId)),
       )
+      .leftJoin(
+        canceller,
+        and(eq(canceller.tenantId, receipts.tenantId), eq(canceller.id, receipts.cancelledBy)),
+      );
+  }
+
+  list(
+    filter: ReceiptListFilter & { includeCancelled: boolean },
+    after: ReceiptListPosition | null,
+    limit: number,
+  ): Promise<ReceiptListRow[]> {
+    return this.selectListRows()
       .where(
         and(
           this.listConditions(filter),
+          filter.includeCancelled ? undefined : isNull(receipts.cancelledAt),
           after
             ? sql`(${receipts.receiptedAt}, ${receipts.id}) < (${after.receiptedAt.toISOString()}::timestamptz, ${after.id}::uuid)`
             : undefined,
@@ -361,19 +392,31 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
       .limit(limit);
   }
 
+  async findListRow(id: string): Promise<ReceiptListRow | null> {
+    const rows = await this.selectListRows().where(
+      and(eq(receipts.tenantId, this.tenantId), eq(receipts.id, id)),
+    );
+    return rows[0] ?? null;
+  }
+
   async summarize(filter: ReceiptListFilter): Promise<ReceiptListSummary> {
+    const active = sql`${receipts.cancelledAt} is null`;
     const [row] = await this.tx
       .select({
-        count: sql<number>`count(*)::int`,
-        totalYen: sql<number>`coalesce(sum(${receipts.amountYen}), 0)::bigint`,
-        noAmountCount: sql<number>`count(*) filter (where ${receipts.amountYen} is null)::int`,
+        count: sql<number>`count(*) filter (where ${active})::int`,
+        totalYen: sql<number>`coalesce(sum(${receipts.amountYen}) filter (where ${active}), 0)::bigint`,
+        companyPaidYen: sql<number>`coalesce(sum(${receipts.amountYen}) filter (where ${active} and ${receipts.companyPaid}), 0)::bigint`,
+        noAmountCount: sql<number>`count(*) filter (where ${active} and ${receipts.amountYen} is null)::int`,
+        cancelledCount: sql<number>`count(*) filter (where ${receipts.cancelledAt} is not null)::int`,
       })
       .from(receipts)
       .where(this.listConditions(filter));
     return {
       count: Number(row?.count ?? 0),
       totalYen: Number(row?.totalYen ?? 0),
+      companyPaidYen: Number(row?.companyPaidYen ?? 0),
       noAmountCount: Number(row?.noAmountCount ?? 0),
+      cancelledCount: Number(row?.cancelledCount ?? 0),
     };
   }
 
@@ -392,5 +435,62 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
       )
       .where(and(eq(receipts.tenantId, this.tenantId), eq(receipts.id, receiptId)));
     return rows[0] ?? null;
+  }
+
+  async cancel(
+    id: string,
+    cancellation: { cancelledAt: Date; cancelledBy: string; cancelReason: string | null },
+    expectedVersion: number,
+  ): Promise<void> {
+    const [target] = await this.tx
+      .select({ dedupeHash: receipts.dedupeHash })
+      .from(receipts)
+      .where(and(eq(receipts.tenantId, this.tenantId), eq(receipts.id, id)));
+    const dedupeHash = target?.dedupeHash ?? null;
+    if (dedupeHash) {
+      // 同じ内容の行の取消を順に進める(代表を移す先が同時に取消されないように)。ロックの順は ID の順
+      await this.tx
+        .select({ id: receipts.id })
+        .from(receipts)
+        .where(this.activeTwinsOf(dedupeHash))
+        .orderBy(asc(receipts.id))
+        .for('update');
+    }
+    const rows = await this.tx
+      .update(receipts)
+      .set({ ...cancellation, rowVersion: sql`${receipts.rowVersion} + 1` })
+      .where(
+        and(
+          eq(receipts.tenantId, this.tenantId),
+          eq(receipts.id, id),
+          eq(receipts.rowVersion, expectedVersion),
+          isNull(receipts.cancelledAt),
+        ),
+      )
+      .returning({ dedupePrimary: receipts.dedupePrimary });
+    if (!rows[0]) throw conflict(STALE_WRITE_MESSAGE, undefined, 'stale_row_version');
+    if (!rows[0].dedupePrimary || !dedupeHash) return;
+    // 代表を取消したら、同じ内容の残りの行(最も古いもの)を代表にする。取消した行は部分UNIQUE の対象から外れて
+    // いるため重ならない。版(row_version)は上げない
+    const [next] = await this.tx
+      .select({ id: receipts.id })
+      .from(receipts)
+      .where(this.activeTwinsOf(dedupeHash))
+      .orderBy(asc(receipts.receiptedAt), asc(receipts.id))
+      .limit(1);
+    if (!next) return;
+    await this.tx
+      .update(receipts)
+      .set({ dedupePrimary: true })
+      .where(and(eq(receipts.tenantId, this.tenantId), eq(receipts.id, next.id)));
+  }
+
+  /** 同じ重複の判定のキーの取消していない行(索引 receipts_tenant_id_dedupe_hash_idx)。 */
+  private activeTwinsOf(dedupeHash: Uint8Array) {
+    return and(
+      eq(receipts.tenantId, this.tenantId),
+      eq(receipts.dedupeHash, dedupeHash),
+      isNull(receipts.cancelledAt),
+    );
   }
 }

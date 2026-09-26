@@ -104,7 +104,8 @@ export interface ReceiptUploadRow {
   createdBy: string;
 }
 
-export interface ReceiptRow {
+/** 登録する領収書1枚。 */
+export interface NewReceiptInput {
   id: string;
   uploadId: string;
   fileId: string;
@@ -114,8 +115,29 @@ export interface ReceiptRow {
   receiptedAt: Date;
   amountYen: number | null;
   storeName: string | null;
-  /** 重複判定のキーの SHA-256(domain/reports/receiptDedupe.ts)。判定しない領収書は null。 */
+  /** 会社負担(お客様に請求しない)。登録の後は変えない。 */
+  companyPaid: boolean;
+  /**
+   * 重複判定のキーの SHA-256(domain/reports/receiptDedupe.ts)。判定しない領収書は null。同じ登録の中の同じ内容の
+   * 画像は全て同じ値を持つ。
+   */
   dedupeHash: Uint8Array | null;
+  /**
+   * 同じ dedupeHash の取消していない行の代表(部分UNIQUE の対象。束の最初の1枚)。代表でない行は重複の判定をせずに
+   * 登録する(同じ登録の中の同じ内容)。
+   */
+  dedupePrimary: boolean;
+}
+
+/** 領収書の取消(論理削除)の状態。取消していなければ全て null。 */
+export interface ReceiptCancellation {
+  cancelledAt: Date | null;
+  cancelledBy: string | null;
+  cancelReason: string | null;
+}
+
+export interface ReceiptRow extends NewReceiptInput, ReceiptCancellation {
+  rowVersion: number;
 }
 
 /** 領収書の一覧の条件。領収書日時が [from, to)。staffId が無ければ全スタッフ。 */
@@ -132,8 +154,8 @@ export interface ReceiptListPosition {
   id: string;
 }
 
-/** 一覧の1行(スタッフ・お客様の名前、束の申し送り、画像のメタデータを付けたもの)。 */
-export interface ReceiptListRow {
+/** 一覧の1行(スタッフ・お客様の名前、束の申し送り、画像のメタデータ、取消の状態を付けたもの)。 */
+export interface ReceiptListRow extends ReceiptCancellation {
   id: string;
   uploadId: string;
   staffId: string;
@@ -146,16 +168,25 @@ export interface ReceiptListRow {
   receiptedAt: Date;
   amountYen: number | null;
   storeName: string | null;
+  companyPaid: boolean;
   handoffText: string | null;
   contentType: string;
   byteSize: number;
+  /** 取消したスタッフの氏名(取消していない・スタッフの行が無ければ null)。 */
+  cancelledByName: string | null;
+  rowVersion: number;
 }
 
+/** 条件に合う取消していない領収書の件数・合計と、取消済みの件数。 */
 export interface ReceiptListSummary {
   count: number;
-  /** 金額の合計(円。金額の無い領収書は0円)。 */
+  /** 金額の合計(円。金額の無い領収書は0円。会社負担を含む)。 */
   totalYen: number;
+  /** うち会社負担の合計(円)。 */
+  companyPaidYen: number;
   noAmountCount: number;
+  /** 取消済みの件数(合計には入れない)。 */
+  cancelledCount: number;
 }
 
 /** 画像を返すのに要るもの(担当スタッフで閲覧の可否を決める)。 */
@@ -170,23 +201,40 @@ export interface ReceiptRepository {
   createUpload(input: ReceiptUploadRow): Promise<void>;
   findUpload(id: string): Promise<ReceiptUploadRow | null>;
   /**
-   * 重複でなければ登録して true。同じ dedupe_hash の行が既にあれば(同時の登録を含め)何もせず false
-   * (INSERT … ON CONFLICT DO NOTHING)。
+   * 重複でなければ登録して true。代表(dedupePrimary)の行は、取消していない代表に同じ dedupe_hash があれば
+   * (同時の登録を含め)何もせず false(INSERT … ON CONFLICT DO NOTHING)。代表でない行はそのまま登録する。
    */
-  insertIfNew(input: ReceiptRow): Promise<boolean>;
+  insertIfNew(input: NewReceiptInput): Promise<boolean>;
   findById(id: string): Promise<ReceiptRow | null>;
   /** その束で最初に登録した領収書か(申し送りを送る行を決める)。 */
   isFirstOfUpload(receipt: Pick<ReceiptRow, 'id' | 'uploadId'>): Promise<boolean>;
-  /** スタッフの領収書のうち、領収書日時が [from, to) のもの。 */
-  listByStaffAndPeriod(staffId: string, from: Date, to: Date): Promise<ReceiptRow[]>;
-  /** 一覧(領収書日時の新しい順、after より後ろを limit 件)。 */
+  /** スタッフの取消していない領収書のうち、領収書日時が [from, to) のもの(領収書日時の順)。 */
+  listActiveByStaffAndPeriod(staffId: string, from: Date, to: Date): Promise<ReceiptRow[]>;
+  /**
+   * 一覧(領収書日時の新しい順、after より後ろを limit 件)。includeCancelled が false なら取消済みを除く
+   * (画面の一覧は取消済みも灰色で出し、CSV は除く)。
+   */
   list(
-    filter: ReceiptListFilter,
+    filter: ReceiptListFilter & { includeCancelled: boolean },
     after: ReceiptListPosition | null,
     limit: number,
   ): Promise<ReceiptListRow[]>;
-  /** 条件に合う全件の件数・金額の合計。 */
+  /** 一覧の1行(取消の応答用。無ければ null)。 */
+  findListRow(id: string): Promise<ReceiptListRow | null>;
+  /** 条件に合う取消していない領収書の件数・金額の合計と、取消済みの件数。 */
   summarize(filter: ReceiptListFilter): Promise<ReceiptListSummary>;
   /** 領収書の画像の保存先(領収書が無ければ null)。 */
   findImage(receiptId: string): Promise<ReceiptImageRef | null>;
+  /**
+   * 取消す(取消の列を入れ、row_version を上げる)。取消していない行で row_version が expectedVersion の
+   * ときだけ書き、それ以外(先に取消された・更新された)は conflict。取消した行が重複の判定の代表なら、同じ
+   * dedupe_hash の取消していない行のうち最も古いもの(領収書日時・ID の順)を代表にする(同じトランザクション。
+   * 同じ内容の行の取消は同時に進まないように、先に同じ内容の行をまとめてロックする)。代表を移した行の
+   * row_version は上げない(画面の版は変わらない)。
+   */
+  cancel(
+    id: string,
+    cancellation: { cancelledAt: Date; cancelledBy: string; cancelReason: string | null },
+    expectedVersion: number,
+  ): Promise<void>;
 }

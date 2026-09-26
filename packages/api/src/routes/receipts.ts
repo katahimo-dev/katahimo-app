@@ -1,6 +1,7 @@
 import { decodeReceiptImage, resolveReceiptFallbackTimestamp } from '@katahimo/core/domain';
 import type { ReceiptListItemView } from '@katahimo/core/usecases';
 import {
+  cancelReceipt,
   exportReceipts,
   extractReceiptAmount,
   getReceiptImage,
@@ -8,9 +9,12 @@ import {
   uploadReceipts,
 } from '@katahimo/core/usecases';
 import {
+  cancelReceiptRequestSchema,
+  cancelReceiptResponseSchema,
   formatZonedDateTime,
   idSchema,
   RECEIPT_IMAGE_MAX_BYTES,
+  receiptBillingLabel,
   receiptListQuerySchema,
   receiptListResponseSchema,
   receiptOcrRequestSchema,
@@ -36,19 +40,24 @@ const CSV_HEADER = [
   'スタッフ',
   'お客様',
   '金額(円)',
+  '区分',
   '店名',
   '申し送り',
   '登録の束ID',
   '領収書ID',
 ];
 
-/** CSV の1行。お客様の指定なしは「(指定なし)」、金額が無ければ空。 */
+/**
+ * CSV の1行。お客様の指定なしは「(指定なし)」、金額が無ければ空。区分は「お客様請求」か「会社負担」
+ * (取消済みの領収書は CSV に入らない)。
+ */
 export function receiptCsvLine(item: ReceiptListItemView, timeZone: string): string {
   return csvLine([
     formatZonedDateTime(item.receiptedAt, timeZone),
     item.staffName ?? '(削除されたスタッフ)',
     item.customerName ?? '(指定なし)',
     item.amountYen === null ? '' : String(item.amountYen),
+    receiptBillingLabel(item.companyPaid),
     item.storeName ?? '',
     item.handoffText ?? '',
     item.uploadBatchId,
@@ -123,6 +132,23 @@ export function createReceiptRoutes(container: Container) {
       'Cache-Control': 'private, no-store',
       'X-Content-Type-Options': 'nosniff',
     });
+  });
+
+  /**
+   * 領収書の取消(論理削除)。本人の分、管理者・コーディネーターは他のスタッフの分も。取消せる期間・締めは
+   * usecase が判定する(期間の外は 400 locked、取消済み・版の違いは 409)。応答は取消した後の一覧の行。
+   */
+  app.post('/:id/cancel', requireSession(container, 'receipt.cancel'), async (c) => {
+    const id = idSchema.safeParse(c.req.param('id'));
+    if (!id.success) return apiError(c, 404, 'not_found', '領収書が見つかりません。');
+    const body = await parseJsonBody(c, cancelReceiptRequestSchema);
+    if (!body.ok) return body.response;
+    const receipt = await cancelReceipt(container, actorOf(c), {
+      receiptId: id.data,
+      reason: body.data.reason,
+      rowVersion: body.data.rowVersion,
+    });
+    return jsonOk(c, cancelReceiptResponseSchema, { receipt });
   });
 
   /** 領収書画像1枚から金額・店舗名・日時を OCR で読む(GAS版 extractAmountFromImage)。 */

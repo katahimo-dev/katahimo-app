@@ -24,7 +24,11 @@ export function exportStaffFixture(
   const receiptTotals = summarizeReceiptAmounts(
     receipts
       .filter((r) => r.amountYen !== null)
-      .map((r) => ({ businessDate: r.businessDate, amount: String(r.amountYen) })),
+      .map((r) => ({
+        businessDate: r.businessDate,
+        amountYen: r.amountYen ?? 0,
+        companyPaid: r.companyPaid,
+      })),
   );
   return {
     staffId: `id-${name}`,
@@ -92,14 +96,16 @@ export const SAMPLE_RECEIPTS: AttendanceExportReceipt[] = [
     customerName: '佐藤様',
     storeName: 'スーパー',
     amountYen: 1200,
+    companyPaid: false,
     handoffText: '牛乳を買いました',
   },
   {
     businessDate: '2026-09-01',
     time: '11:00',
     customerName: '佐藤様',
-    storeName: '薬局',
+    storeName: '駐車場',
     amountYen: 800,
+    companyPaid: true,
     handoffText: '',
   },
   {
@@ -108,6 +114,7 @@ export const SAMPLE_RECEIPTS: AttendanceExportReceipt[] = [
     customerName: '',
     storeName: '=HYPERLINK("https://example.com")',
     amountYen: null,
+    companyPaid: true,
     handoffText: '',
   },
   {
@@ -116,6 +123,7 @@ export const SAMPLE_RECEIPTS: AttendanceExportReceipt[] = [
     customerName: '高橋様',
     storeName: 'コンビニ',
     amountYen: 450,
+    companyPaid: false,
     handoffText: '',
   },
 ];

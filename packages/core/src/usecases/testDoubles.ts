@@ -74,6 +74,7 @@ import type { RateLimiterPort } from '../ports/rateLimiter';
 import type {
   CareRecordRow,
   ReceiptListFilter,
+  ReceiptListRow,
   ReceiptRow,
   ReceiptUploadRow,
   StoredFileRow,
@@ -235,6 +236,36 @@ function matchingReceipts(data: TenantData, filter: ReceiptListFilter): ReceiptR
     .sort(
       (a, b) => b.receiptedAt.getTime() - a.receiptedAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
     );
+}
+
+/** 一覧の1行(DB の結合の代わり)。 */
+function receiptListRowOf(data: TenantData, r: ReceiptRow): ReceiptListRow {
+  const file = data.files.find((f) => f.id === r.fileId);
+  const staffName = (id: string | null) =>
+    id ? (data.staff.find((x) => x.record.id === id)?.record.displayName ?? null) : null;
+  return {
+    id: r.id,
+    uploadId: r.uploadId,
+    staffId: r.staffId,
+    staffName: staffName(r.staffId),
+    customerId: r.customerId,
+    customerDisplayName: r.customerId
+      ? (data.customers.find((c) => c.id === r.customerId)?.displayName ?? null)
+      : null,
+    customerNameText: r.customerNameText,
+    receiptedAt: new Date(r.receiptedAt),
+    amountYen: r.amountYen,
+    storeName: r.storeName,
+    companyPaid: r.companyPaid,
+    handoffText: data.uploads.find((u) => u.id === r.uploadId)?.handoffText ?? null,
+    contentType: file?.contentType ?? 'application/octet-stream',
+    byteSize: file?.byteSize ?? 0,
+    cancelledAt: r.cancelledAt ? new Date(r.cancelledAt) : null,
+    cancelledBy: r.cancelledBy,
+    cancelledByName: staffName(r.cancelledBy),
+    cancelReason: r.cancelReason,
+    rowVersion: r.rowVersion,
+  };
 }
 
 /** 全テナントのインメモリの DB。 */
@@ -423,6 +454,11 @@ export function fakeRepositories(
     },
     async lockPeriod(staffId, yearMonth) {
       d().lockedPeriods.push({ staffId, yearMonth });
+    },
+    async listLockedStaffIds(yearMonth) {
+      return d()
+        .lockedPeriods.filter((p) => p.yearMonth === yearMonth)
+        .map((p) => p.staffId);
     },
   };
 
@@ -883,9 +919,21 @@ export function fakeRepositories(
         return u ? structuredClone(u) : null;
       },
       async insertIfNew(input) {
-        if (input.dedupeHash && d().receipts.some((r) => sameBytes(r.dedupeHash, input.dedupeHash)))
+        // 部分UNIQUE と同じく、代表どうしで取消していない行とだけ重なりを確かめる
+        if (
+          input.dedupePrimary &&
+          d().receipts.some(
+            (r) => r.dedupePrimary && r.cancelledAt === null && sameBytes(r.dedupeHash, input.dedupeHash),
+          )
+        )
           return false;
-        d().receipts.push(structuredClone(input));
+        d().receipts.push({
+          ...structuredClone(input),
+          cancelledAt: null,
+          cancelledBy: null,
+          cancelReason: null,
+          rowVersion: 1,
+        });
         return true;
       },
       async findById(id) {
@@ -899,13 +947,22 @@ export function fakeRepositories(
             .sort((a, b) => (a.id < b.id ? -1 : 1))[0]?.id === receipt.id
         );
       },
-      async listByStaffAndPeriod(staffId, from, to) {
+      async listActiveByStaffAndPeriod(staffId, from, to) {
         return structuredClone(
-          d().receipts.filter((r) => r.staffId === staffId && r.receiptedAt >= from && r.receiptedAt < to),
+          d()
+            .receipts.filter(
+              (r) =>
+                r.staffId === staffId &&
+                r.receiptedAt >= from &&
+                r.receiptedAt < to &&
+                r.cancelledAt === null,
+            )
+            .sort((a, b) => a.receiptedAt.getTime() - b.receiptedAt.getTime()),
         );
       },
       async list(filter, after, limit) {
         return matchingReceipts(d(), filter)
+          .filter((r) => filter.includeCancelled || r.cancelledAt === null)
           .filter(
             (r) =>
               !after ||
@@ -913,33 +970,21 @@ export function fakeRepositories(
               (r.receiptedAt.getTime() === after.receiptedAt.getTime() && r.id < after.id),
           )
           .slice(0, limit)
-          .map((r) => {
-            const file = d().files.find((f) => f.id === r.fileId);
-            return {
-              id: r.id,
-              uploadId: r.uploadId,
-              staffId: r.staffId,
-              staffName: d().staff.find((x) => x.record.id === r.staffId)?.record.displayName ?? null,
-              customerId: r.customerId,
-              customerDisplayName: r.customerId
-                ? (d().customers.find((c) => c.id === r.customerId)?.displayName ?? null)
-                : null,
-              customerNameText: r.customerNameText,
-              receiptedAt: new Date(r.receiptedAt),
-              amountYen: r.amountYen,
-              storeName: r.storeName,
-              handoffText: d().uploads.find((u) => u.id === r.uploadId)?.handoffText ?? null,
-              contentType: file?.contentType ?? 'application/octet-stream',
-              byteSize: file?.byteSize ?? 0,
-            };
-          });
+          .map((r) => receiptListRowOf(d(), r));
+      },
+      async findListRow(id) {
+        const r = d().receipts.find((x) => x.id === id);
+        return r ? receiptListRowOf(d(), r) : null;
       },
       async summarize(filter) {
-        const rows = matchingReceipts(d(), filter);
+        const all = matchingReceipts(d(), filter);
+        const rows = all.filter((r) => r.cancelledAt === null);
         return {
           count: rows.length,
           totalYen: rows.reduce((sum, r) => sum + (r.amountYen ?? 0), 0),
+          companyPaidYen: rows.reduce((sum, r) => sum + (r.companyPaid ? (r.amountYen ?? 0) : 0), 0),
           noAmountCount: rows.filter((r) => r.amountYen === null).length,
+          cancelledCount: all.length - rows.length,
         };
       },
       async findImage(receiptId) {
@@ -952,6 +997,19 @@ export function fakeRepositories(
           storageKey: file.storageKey,
           contentType: file.contentType,
         };
+      },
+      async cancel(id, cancellation, expectedVersion) {
+        const r = d().receipts.find((x) => x.id === id);
+        if (!r || r.cancelledAt !== null || r.rowVersion !== expectedVersion) {
+          throw conflict(STALE_WRITE_MESSAGE, undefined, 'stale_row_version');
+        }
+        Object.assign(r, structuredClone(cancellation), { rowVersion: r.rowVersion + 1 });
+        if (!r.dedupePrimary || !r.dedupeHash) return;
+        // 代表を取消したら、同じ内容の取消していない行のうち最も古いものを代表にする(版は上げない)
+        const next = d()
+          .receipts.filter((x) => x.cancelledAt === null && sameBytes(x.dedupeHash, r.dedupeHash))
+          .sort((a, b) => a.receiptedAt.getTime() - b.receiptedAt.getTime() || (a.id < b.id ? -1 : 1))[0];
+        if (next) next.dedupePrimary = true;
       },
     },
     storedFiles: {
