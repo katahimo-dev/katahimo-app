@@ -162,6 +162,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'attendance.day.view': '出勤簿の閲覧',
   'attendance.week.view': '週間予定の閲覧',
   'attendance.month.view': '今月のまとめの閲覧',
+  'attendance.export.downloaded': '出勤簿のExcelの書き出し',
+  'attendance.export_all.downloaded': '全員分の出勤簿のExcelの書き出し',
   'attendance.calendar_sync.preview': 'カレンダーとの見比べ',
   'attendance.calendar_sync.apply': 'カレンダーから出勤簿へ反映',
   'attendance.calendar_sync.apply_failed': 'カレンダーから出勤簿への反映の失敗',

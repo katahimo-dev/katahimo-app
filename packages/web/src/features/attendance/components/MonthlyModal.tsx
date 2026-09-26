@@ -9,6 +9,7 @@ import type { SlotKey, SlotValues } from '../model/dayRecord';
 import { formatKmJa, formatMinutesJa, formatYen } from '../model/format';
 import { buildMonthlyDayCards, type MonthlyDayCard, receiptRows } from '../model/monthly';
 import { dayOfWeekLabel, todayJst, updatedAtLabel } from '../model/week';
+import { ExcelExportButtons } from './ExcelExportButtons';
 import { LoadingBlock } from './LoadingBlock';
 
 /**
@@ -112,6 +113,7 @@ export function MonthlyModal({
             </button>
           </div>
           <div className="text-sm text-gray-600">{updatedAtLabel(lastTs)}</div>
+          <ExcelExportButtons yearMonth={monthInput} />
           <MonthlyContent
             rendered={rendered}
             isLoading={monthQuery.isLoading}
