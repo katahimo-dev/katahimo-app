@@ -36,6 +36,7 @@ export const receiptsApi = {
     ),
   /** 画像の URL(同じオリジンの Cookie で <img> がそのまま読める。CSP の img-src 'self') */
   imageUrl: (receiptId: string) => `/api/receipts/${encodeURIComponent(receiptId)}/image`,
-  /** CSV のダウンロード先(管理者・コーディネーターだけ) */
-  csvUrl: (filters: ReceiptListFilters) => `/api/receipts/csv?${new URLSearchParams(listQuery(filters))}`,
+  /** GET /api/receipts/csv: 月の全件の CSV(管理者・コーディネーターだけ。断られたら理由つきのエラー) */
+  downloadCsv: (filters: ReceiptListFilters) =>
+    api.download('/api/receipts/csv', listQuery(filters), 'text/csv', `領収書_${filters.month}.csv`),
 };

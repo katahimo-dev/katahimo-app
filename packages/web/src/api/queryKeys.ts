@@ -4,6 +4,8 @@
  * - `customers`: 顧客データ。データ版数の監視(app/dataVersion)が、新しい顧客CSVが取り込まれたときに
  *   `queryKeys.customers.all` 以下をまとめて読み直す。お客様タブ・予定タブ(お客様の特定)で
  *   顧客を読むクエリは必ず `queryKeys.customers.all` で始まるキーにすること。
+ * - `receipts`: 領収書の一覧(出勤簿タブの「🧾 領収書」)。日報の画面で領収書を送ったら `queryKeys.receipts.all` 以下を
+ *   読み直す(一覧を開いたままでも送ったばかりの領収書が出るように)。
  * - 各機能の中だけで使うキーは、その機能のフォルダで `[機能名, ...]` の形で定義してよい。
  */
 export const queryKeys = {
@@ -14,5 +16,8 @@ export const queryKeys = {
   activeStaff: ['staff', 'active'] as const,
   customers: {
     all: ['customers'] as const,
+  },
+  receipts: {
+    all: ['receipts'] as const,
   },
 };

@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { APIRequestContext, BrowserContext, Page, Response } from 'playwright-core';
+import type { APIRequestContext, BrowserContext, Locator, Page, Response } from 'playwright-core';
 import { ensureApiServer } from './apiServer';
 import { launchChromium } from './browser';
 import { installFontCache } from './fontCache';
@@ -61,6 +61,21 @@ function assert(condition: unknown, message: string): asserts condition {
 /** お知らせ(トースト)に文言が出るのを待つ */
 async function expectToast(page: Page, text: string | RegExp, timeout = 10_000) {
   await toast(page).filter({ hasText: text }).waitFor({ state: 'visible', timeout });
+}
+
+/**
+ * 保存のボタン(CSV・Excel)を押し、ブラウザが保存したファイルの中身と名前を返す。画面は `api.download()` で受けてから
+ * 保存するため(断られたら理由のお知らせでファイルにしない)、保存できたことのお知らせも待つ。
+ */
+async function clickForDownload(
+  page: Page,
+  target: Locator,
+  toastText: string,
+): Promise<{ buf: Buffer; name: string }> {
+  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 30_000 }), target.click()]);
+  const buf = readFileSync(await download.path());
+  await expectToast(page, toastText);
+  return { buf, name: download.suggestedFilename() };
 }
 
 /**
@@ -545,10 +560,14 @@ async function runJourney() {
       await page.waitForFunction(loaded, await large.elementHandle(), { timeout: 10_000 });
       await viewer.getByRole('button', { name: '閉じる' }).last().click();
       await wait(page, 300);
-      const csv = await page.request.get(`${WEB_URL}/api/receipts/csv?month=${month}&allStaff=true`);
-      assert(csv.ok(), `GET /api/receipts/csv が ${csv.status()}`);
-      const buf = await csv.body();
-      assert(buf.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), '領収書のCSVの先頭にBOMが無い');
+      // 「⬇ CSVで保存」(表示しているスタッフの月の全件)
+      const csv = await clickForDownload(
+        page,
+        dialog.getByRole('button', { name: '⬇ CSVで保存' }),
+        'CSVファイルを保存しました',
+      );
+      assert(csv.name.endsWith('.csv'), `領収書のCSVのファイル名: ${csv.name}`);
+      assert(csv.buf.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), '領収書のCSVの先頭にBOMが無い');
       await dialog.getByRole('button', { name: '閉じる' }).last().click();
       await wait(page, 300);
       return `${summary.count}件`;
@@ -794,9 +813,12 @@ async function runJourney() {
     });
 
     await step(page, 'admin-logs-csv', async () => {
-      const res = await page.request.get(`${WEB_URL}/api/admin/audit-logs.csv`);
-      assert(res.ok(), `GET /api/admin/audit-logs.csv が ${res.status()}`);
-      const buf = await res.body();
+      const { buf, name } = await clickForDownload(
+        page,
+        page.getByRole('button', { name: '⬇ CSVで保存' }),
+        'CSVファイルを保存しました',
+      );
+      assert(name.endsWith('.csv'), `操作ログのCSVのファイル名: ${name}`);
       assert(buf.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), 'CSVの先頭にBOMが無い');
       const firstLine = buf.toString('utf8').split('\r\n')[0] ?? '';
       assert(
@@ -831,9 +853,12 @@ async function runJourney() {
     });
 
     await step(page, 'admin-reports-csv', async () => {
-      const res = await page.request.get(`${WEB_URL}/api/reports/export.csv?sheet=daily`);
-      assert(res.ok(), `GET /api/reports/export.csv が ${res.status()}`);
-      const buf = await res.body();
+      const { buf, name } = await clickForDownload(
+        page,
+        page.getByRole('button', { name: '⬇ 日報のCSV' }),
+        'CSVファイルを保存しました',
+      );
+      assert(name.endsWith('.csv'), `日報のCSVのファイル名: ${name}`);
       assert(buf.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), 'CSVの先頭にBOMが無い');
       const [header = '', ...rows] = buf.toString('utf8').trimEnd().split('\r\n');
       assert(

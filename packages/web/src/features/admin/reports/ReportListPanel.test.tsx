@@ -5,7 +5,9 @@ import { ApiRequestError } from '../../../api/client';
 import { customersApi } from '../../../api/customers';
 import { reportsApi } from '../../../api/reports';
 import { staffApi } from '../../../api/staff';
+import { saveBlobAsFile } from '../../../lib/saveFile';
 import { createWrapper, TEST_USER } from '../../../test/providers';
+import { showErrorToast, showToast } from '../../../ui/toast';
 import { AdminTab } from '../AdminTab';
 import { ReportListPanel } from './ReportListPanel';
 import { csvSheetsFor } from './reportFormat';
@@ -14,8 +16,14 @@ vi.mock('../../../api/reports', () => ({
   reportsApi: {
     list: vi.fn(),
     detail: vi.fn(),
-    csvUrl: vi.fn((sheet: string) => `/api/reports/export.csv?sheet=${sheet}`),
+    downloadCsv: vi.fn(),
   },
+}));
+vi.mock('../../../lib/saveFile', () => ({ saveBlobAsFile: vi.fn() }));
+vi.mock('../../../ui/toast', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../ui/toast')>()),
+  showToast: vi.fn(),
+  showErrorToast: vi.fn(),
 }));
 vi.mock('../../../api/staff', () => ({ staffApi: { listActive: vi.fn() } }));
 vi.mock('../../../api/customers', async (importOriginal) => ({
@@ -105,8 +113,8 @@ describe('報告一覧', () => {
     listApi.mockResolvedValue(page([item()]));
     renderPanel();
     await screen.findByRole('list', { name: '報告一覧' });
-    expect(screen.getByRole('link', { name: '⬇ 日報のCSV' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: '⬇ 事故報告・ヒヤリハットのCSV' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '⬇ 日報のCSV' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '⬇ 事故報告・ヒヤリハットのCSV' })).toBeTruthy();
 
     await screen.findByRole('option', { name: '一般 花子' });
     await screen.findByRole('option', { name: '佐藤 はな' });
@@ -121,14 +129,24 @@ describe('報告一覧', () => {
         expect.anything(),
       ),
     );
-    expect(screen.queryByRole('link', { name: '⬇ 日報のCSV' })).toBeNull();
-    expect(screen.getByRole('link', { name: '⬇ 事故報告・ヒヤリハットのCSV' }).getAttribute('href')).toBe(
-      '/api/reports/export.csv?sheet=accident',
-    );
-    expect(vi.mocked(reportsApi.csvUrl)).toHaveBeenLastCalledWith(
+    expect(screen.queryByRole('button', { name: '⬇ 日報のCSV' })).toBeNull();
+    // CSV は api.download で受けてから保存する(断られたら理由のお知らせ。ファイルにしない)
+    const file = { blob: new Blob(['x']), filename: 'reports-accident.csv' };
+    vi.mocked(reportsApi.downloadCsv).mockResolvedValueOnce(file);
+    fireEvent.click(screen.getByRole('button', { name: '⬇ 事故報告・ヒヤリハットのCSV' }));
+    await waitFor(() => expect(saveBlobAsFile).toHaveBeenCalledWith(file.blob, file.filename));
+    expect(vi.mocked(reportsApi.downloadCsv)).toHaveBeenLastCalledWith(
       'accident',
       expect.objectContaining({ kind: 'accident' }),
     );
+    expect(showToast).toHaveBeenCalledWith('CSVファイルを保存しました');
+
+    vi.mocked(saveBlobAsFile).mockClear();
+    const refused = new ApiRequestError(403, { code: 'forbidden', message: '権限がありません' });
+    vi.mocked(reportsApi.downloadCsv).mockRejectedValueOnce(refused);
+    fireEvent.click(screen.getByRole('button', { name: '⬇ 事故報告・ヒヤリハットのCSV' }));
+    await waitFor(() => expect(showErrorToast).toHaveBeenCalledWith(refused));
+    expect(saveBlobAsFile).not.toHaveBeenCalled();
   });
 
   it('条件の誤りはサーバーの理由を出し、CSV は押せない', async () => {
@@ -137,7 +155,6 @@ describe('報告一覧', () => {
     );
     renderPanel();
     expect(await screen.findByText('期間は366日以内で指定してください')).toBeTruthy();
-    expect(screen.queryByRole('link', { name: '⬇ 日報のCSV' })).toBeNull();
     expect((screen.getByRole('button', { name: '⬇ 日報のCSV' }) as HTMLButtonElement).disabled).toBe(true);
   });
 

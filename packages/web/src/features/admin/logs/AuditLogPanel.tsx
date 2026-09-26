@@ -15,6 +15,7 @@ import { useState } from 'react';
 import { type AuditLogFilters, auditLogsApi } from '../../../api/admin';
 import { userMessageOf } from '../../../api/client';
 import { addDaysYmd, BUSINESS_TIME_ZONE, todayJst } from '../../../lib/date';
+import { useFileDownload } from '../../../lib/useFileDownload';
 import { EmptyState, ErrorState, Loading } from '../../../ui/StatusViews';
 import { adminQueryKeys } from '../adminQueryKeys';
 import { INPUT_CLASS } from '../components/FormField';
@@ -74,6 +75,7 @@ export function AuditLogPanel() {
   const staff = useAdminStaffList();
   const [form, setForm] = useState<AuditLogFilters>(defaultFilters);
   const [applied, setApplied] = useState<AuditLogFilters>(form);
+  const csv = useFileDownload<'csv'>();
 
   const logs = useInfiniteQuery({
     queryKey: adminQueryKeys.auditLogs(applied),
@@ -189,24 +191,17 @@ export function AuditLogPanel() {
           >
             絞り込む
           </button>
-          {logs.isError ? (
-            // 条件が誤っている(期間が長すぎる等)間は保存できない(CSV の代わりに誤りの JSON が届くため)
-            <button
-              type="button"
-              disabled
-              className="flex-1 min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl opacity-50"
-            >
-              ⬇ CSVで保存
-            </button>
-          ) : (
-            <a
-              href={auditLogsApi.csvUrl(applied)}
-              download
-              className="flex-1 min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl text-center"
-            >
-              ⬇ CSVで保存
-            </a>
-          )}
+          {/* 条件が誤っている(期間が長すぎる等)間は保存できない。断られたら理由を赤いお知らせで出す(ファイルにしない) */}
+          <button
+            type="button"
+            disabled={logs.isError || csv.busy !== null}
+            onClick={() =>
+              void csv.run('csv', () => auditLogsApi.downloadCsv(applied), 'CSVファイルを保存しました')
+            }
+            className="flex-1 min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl disabled:opacity-50"
+          >
+            {csv.busy ? '保存しています…' : '⬇ CSVで保存'}
+          </button>
         </div>
         <p className="text-sm text-gray-600">期間は93日まで指定できます。CSVは絞り込んだ条件の全件です。</p>
       </form>

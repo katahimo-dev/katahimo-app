@@ -13,7 +13,7 @@ import {
   type VisitCompleteRequest,
   visitCompleteResponseSchema,
 } from '@katahimo/shared';
-import { api, buildUrl } from './client';
+import { api } from './client';
 
 /** 全員分の一覧・CSV の条件(続きの位置と件数を除く)。 */
 export type ReportListFilters = Omit<ReportListQuery, 'cursor' | 'limit'>;
@@ -46,7 +46,12 @@ export const reportsApi = {
     api.get(`/api/reports/${encodeURIComponent(reportId)}`, reportDetailResponseSchema, undefined, {
       signal,
     }),
-  /** CSV のダウンロード先(同じオリジンの Cookie でそのまま開ける。コーディネーター・管理者だけ) */
-  csvUrl: (sheet: ReportCsvSheet, filters: ReportListFilters) =>
-    buildUrl('/api/reports/export.csv', { ...filters, sheet }),
+  /** GET /api/reports/export.csv: 絞り込んだ条件の全件の CSV(コーディネーター・管理者だけ。断られたら理由つきのエラー) */
+  downloadCsv: (sheet: ReportCsvSheet, filters: ReportListFilters) =>
+    api.download(
+      '/api/reports/export.csv',
+      { ...filters, sheet },
+      'text/csv',
+      sheet === 'daily' ? '日報.csv' : '事故報告.csv',
+    ),
 };

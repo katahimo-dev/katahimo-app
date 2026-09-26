@@ -14,6 +14,7 @@ import { queryKeys } from '../../../api/queryKeys';
 import { type ReportListFilters, reportsApi } from '../../../api/reports';
 import { staffApi } from '../../../api/staff';
 import { addDaysYmd, todayJst } from '../../../lib/date';
+import { useFileDownload } from '../../../lib/useFileDownload';
 import { EmptyState, ErrorState, Loading } from '../../../ui/StatusViews';
 import { useCustomerList } from '../../customers';
 import { adminQueryKeys } from '../adminQueryKeys';
@@ -69,6 +70,7 @@ export function ReportListPanel() {
   const [form, setForm] = useState<ReportListFilters>(defaultFilters);
   const [applied, setApplied] = useState<ReportListFilters>(form);
   const [openId, setOpenId] = useState<string | null>(null);
+  const csv = useFileDownload<ReportCsvSheet>();
   const staff = useQuery({
     queryKey: queryKeys.activeStaff,
     queryFn: ({ signal }) => staffApi.listActive(signal),
@@ -194,28 +196,20 @@ export function ReportListPanel() {
           絞り込む
         </button>
         <div className="flex flex-col gap-2">
-          {csvSheetsFor(applied.kind).map((sheet) =>
-            reports.isError ? (
-              // 条件が誤っている(期間が長すぎる等)間は保存できない(CSV の代わりに誤りの JSON が届くため)
-              <button
-                key={sheet}
-                type="button"
-                disabled
-                className="w-full min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl opacity-50"
-              >
-                {CSV_LABELS[sheet]}
-              </button>
-            ) : (
-              <a
-                key={sheet}
-                href={reportsApi.csvUrl(sheet, applied)}
-                download
-                className="block w-full min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl text-center"
-              >
-                {CSV_LABELS[sheet]}
-              </a>
-            ),
-          )}
+          {/* 条件が誤っている(期間が長すぎる等)間は保存できない。断られたら理由を赤いお知らせで出す(ファイルにしない) */}
+          {csvSheetsFor(applied.kind).map((sheet) => (
+            <button
+              key={sheet}
+              type="button"
+              disabled={reports.isError || csv.busy !== null}
+              onClick={() =>
+                void csv.run(sheet, () => reportsApi.downloadCsv(sheet, applied), 'CSVファイルを保存しました')
+              }
+              className="w-full min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl disabled:opacity-50"
+            >
+              {csv.busy === sheet ? '保存しています…' : CSV_LABELS[sheet]}
+            </button>
+          ))}
         </div>
         <p className="text-sm text-gray-600">
           {`期間は${REPORT_LIST_MAX_RANGE_DAYS}日まで指定できます。CSVは絞り込んだ条件の全件で、スプレッドシートの「日報」「事故報告」と同じ列の順です。`}

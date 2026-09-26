@@ -1,18 +1,27 @@
 import type { ReceiptListItem, ReceiptListResponse, SessionUser } from '@katahimo/shared';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiRequestError } from '../../../api/client';
 import { receiptsApi } from '../../../api/receipts';
 import { staffApi } from '../../../api/staff';
 import { AdminTargetStaffProvider } from '../../../app/adminTargetStaff';
+import { saveBlobAsFile } from '../../../lib/saveFile';
 import { createWrapper, TEST_USER } from '../../../test/providers';
+import { showErrorToast, showToast } from '../../../ui/toast';
 import { ReceiptListModal } from './ReceiptListModal';
 
 vi.mock('../../../api/receipts', () => ({
   receiptsApi: {
     list: vi.fn(),
     imageUrl: vi.fn((id: string) => `/api/receipts/${id}/image`),
-    csvUrl: vi.fn(() => '/api/receipts/csv?month=2026-09&allStaff=true'),
+    downloadCsv: vi.fn(),
   },
+}));
+vi.mock('../../../lib/saveFile', () => ({ saveBlobAsFile: vi.fn() }));
+vi.mock('../../../ui/toast', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../ui/toast')>()),
+  showToast: vi.fn(),
+  showErrorToast: vi.fn(),
 }));
 vi.mock('../../../api/staff', () => ({ staffApi: { listActive: vi.fn() } }));
 
@@ -126,9 +135,19 @@ describe('領収書の一覧', () => {
     expect(screen.getByText('金額なし')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'もっと見る' }));
     expect(await screen.findByText('50円')).toBeTruthy();
-    expect(screen.getByText('⬇ CSVで保存').getAttribute('href')).toBe(
-      '/api/receipts/csv?month=2026-09&allStaff=true',
-    );
+    // CSV は api.download で受けてから保存する(断られたら理由のお知らせ。ファイルにしない)
+    const file = { blob: new Blob(['x']), filename: 'receipts_2026-09_all.csv' };
+    vi.mocked(receiptsApi.downloadCsv).mockResolvedValueOnce(file);
+    fireEvent.click(screen.getByRole('button', { name: '⬇ CSVで保存' }));
+    await waitFor(() => expect(saveBlobAsFile).toHaveBeenCalledWith(file.blob, file.filename));
+    expect(receiptsApi.downloadCsv).toHaveBeenLastCalledWith({ month: '2026-09', allStaff: true });
+    expect(showToast).toHaveBeenCalledWith('CSVファイルを保存しました');
+    vi.mocked(saveBlobAsFile).mockClear();
+    const refused = new ApiRequestError(429, { code: 'rate_limited', message: '回数の上限です' });
+    vi.mocked(receiptsApi.downloadCsv).mockRejectedValueOnce(refused);
+    fireEvent.click(screen.getByRole('button', { name: '⬇ CSVで保存' }));
+    await waitFor(() => expect(showErrorToast).toHaveBeenCalledWith(refused));
+    expect(saveBlobAsFile).not.toHaveBeenCalled();
 
     fireEvent.change(select, { target: { value: OTHER_ID } });
     await waitFor(() =>

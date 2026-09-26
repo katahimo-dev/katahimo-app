@@ -82,7 +82,7 @@ src/
     report/                日報・事故報告・領収書ダイアログ
     attendance/            「🕒 出勤簿」タブとその中のダイアログ(今月のまとめ・まとめて取り込む・カレンダーと違うところ・領収書の一覧/画像)
     admin/                 「🛠 管理」タブ(管理者・コーディネーター): staff/(一覧・登録/編集ダイアログ)・reports/(報告一覧・報告の中身。コーディネーターはこれだけ)・prompts/(AIプロンプト)・logs/(操作ログ)
-  lib/                     画面に依存しない小さな処理(storage / date / recentCustomers / textSize / tenant / messages / idle)
+  lib/                     画面に依存しない小さな処理(storage / date / recentCustomers / textSize / tenant / messages / idle / saveFile・useFileDownload(ファイルの保存))
   ui/                      共通の部品(トースト・確認ダイアログ・ダイアログの外側 Modal・読み込み中・0件表示・ErrorBoundary)
   test/                    テストの共通部品(providers.tsx・setup.ts)
 ```
@@ -145,8 +145,10 @@ src/
   - APIの失敗を赤いお知らせで出すときは `showErrorToast(error)`(`ui/toast`)。401(セッション切れ)は自動でログイン画面に
     戻り「しばらく使っていなかったので、もう一度ログインしてください」を出すため、お知らせは出さない。
   - 回数の上限(429 `rate_limited`)は、サーバーの理由に Retry-After から「（あと約15分）」を添える(`userMessageOf`)。
-  - ファイルの保存(出勤簿の Excel)は `api.download(path, query, 種類, 代わりの名前)` で受け、`lib/saveFile.ts` の `saveBlobAsFile` で
-    保存する。断られたときは JSON の理由を読んで他の API と同じエラーにする(`<a download>` だと理由の JSON がファイルになってしまう)。
+  - ファイルの保存(出勤簿の Excel・操作ログ/報告一覧/領収書の一覧の CSV)は `api.download(path, query, 種類, 代わりの名前)` で受け、
+    `lib/saveFile.ts` の `saveBlobAsFile` で保存する。ボタンは `lib/useFileDownload.ts` の `useFileDownload()`(保存している間は2回目を
+    送らない・成功と失敗をお知らせで出す)を使う。断られたときは JSON の理由を読んで他の API と同じエラーにする(`<a href download>` だと
+    理由の JSON がファイルになってしまうため、保存のリンクは作らない)。
   - 読み込みの失敗は1回だけ読み直す。ただしサーバーが理由を付けて断った失敗(4xx)は読み直さない(`app/queryClient.ts`)。
   - 起動時に `/api/auth/me` が通信の失敗だったときは、ログイン画面ではなく「うまくいきませんでした…」+「もう一度読み込む」を
     出す(ログインしていないと決めるのは 401 のときだけ)。
@@ -157,7 +159,8 @@ src/
   `useAdminTargetStaff().requestStaffId` を `staffId` として渡し、クエリキーにも入れる(選び直すと自動で読み直される)。
   管理者・コーディネーター以外は `undefined`(= 本人。サーバーも一般スタッフの staffId は無視する)。
 - **顧客データのクエリ**は `queryKeys.customers.all` で始まるキーにする(新しい顧客CSVが取り込まれたとき、版数の監視が
-  まとめて読み直すため)。
+  まとめて読み直すため)。領収書の一覧のクエリは `queryKeys.receipts.all` で始まるキーにする(日報の画面の `useReceipts` が
+  領収書を送れたら読み直す)。
 - **localStorage**: キーは `src/lib/storage.ts` の `STORAGE_KEYS` に足してから使う。GAS版と同じ意味の値はGAS版と同じキー名。
   使う人の値(書きかけ・前回値など)は `USER_SCOPED_KEYS` に足し、`userStorageKey(key, storageScope)` のキーで読み書きする。
 - **日付**: 業務日は端末の時刻帯に関係なく JST の `'YYYY-MM-DD'`(契約の `businessDateSchema`)。「今日」「いまの時刻」は

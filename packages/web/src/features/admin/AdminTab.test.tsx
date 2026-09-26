@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { adminStaffApi, aiPromptsApi, auditLogsApi } from '../../api/admin';
 import { ApiRequestError } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
+import { saveBlobAsFile } from '../../lib/saveFile';
 import { createTestQueryClient, createWrapper, deferred, TEST_USER } from '../../test/providers';
 import { showErrorToast, showToast } from '../../ui/toast';
 import { AdminTab } from './AdminTab';
@@ -18,8 +19,9 @@ vi.mock('../../api/admin', () => ({
     sendPasswordGuide: vi.fn(),
   },
   aiPromptsApi: { list: vi.fn(), save: vi.fn() },
-  auditLogsApi: { list: vi.fn(), csvUrl: vi.fn(() => '/api/admin/audit-logs.csv') },
+  auditLogsApi: { list: vi.fn(), downloadCsv: vi.fn() },
 }));
+vi.mock('../../lib/saveFile', () => ({ saveBlobAsFile: vi.fn() }));
 vi.mock('../../ui/toast', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../ui/toast')>()),
   showToast: vi.fn(),
@@ -80,7 +82,7 @@ async function acceptConfirm(label: string) {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  logsApi.csvUrl.mockReturnValue('/api/admin/audit-logs.csv');
+  logsApi.downloadCsv.mockResolvedValue({ blob: new Blob(['x']), filename: 'audit-logs.csv' });
   staffApi.list.mockResolvedValue({ staff: [self, hanako, newcomer, retired] });
 });
 
@@ -301,12 +303,20 @@ describe('管理タブ: 操作ログ', () => {
         expect.anything(),
       ),
     );
-    expect(logsApi.csvUrl).toHaveBeenLastCalledWith(
+    // CSV は api.download で受けてから保存する(断られたら理由のお知らせを出し、ファイルにしない)
+    fireEvent.click(screen.getByRole('button', { name: '⬇ CSVで保存' }));
+    await waitFor(() => expect(saveBlobAsFile).toHaveBeenCalledWith(expect.any(Blob), 'audit-logs.csv'));
+    expect(logsApi.downloadCsv).toHaveBeenLastCalledWith(
       expect.objectContaining({ level: 'WARN', action: 'auth.' }),
     );
-    expect(screen.getByRole('link', { name: '⬇ CSVで保存' }).getAttribute('href')).toBe(
-      '/api/admin/audit-logs.csv',
-    );
+    expect(showToast).toHaveBeenCalledWith('CSVファイルを保存しました');
+
+    vi.mocked(saveBlobAsFile).mockClear();
+    const refused = new ApiRequestError(429, { code: 'rate_limited', message: '回数の上限です' });
+    logsApi.downloadCsv.mockRejectedValue(refused);
+    fireEvent.click(screen.getByRole('button', { name: '⬇ CSVで保存' }));
+    await waitFor(() => expect(showErrorToast).toHaveBeenCalledWith(refused));
+    expect(saveBlobAsFile).not.toHaveBeenCalled();
   });
 });
 
@@ -432,7 +442,6 @@ describe('管理タブ: 指摘への対応', () => {
     fireEvent.change(screen.getByLabelText('いつから'), { target: { value: '2026-01-01' } });
     fireEvent.click(screen.getByRole('button', { name: '絞り込む' }));
     expect(await screen.findByText('期間は93日以内で指定してください')).toBeTruthy();
-    expect(screen.queryByRole('link', { name: '⬇ CSVで保存' })).toBeNull();
     expect((screen.getByRole('button', { name: '⬇ CSVで保存' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/CSVは絞り込んだ条件の全件です/)).toBeTruthy();
   });

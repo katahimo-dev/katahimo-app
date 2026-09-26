@@ -2,9 +2,11 @@ import type { ReceiptListItem } from '@katahimo/shared';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { userMessageOf } from '../../../api/client';
+import { queryKeys } from '../../../api/queryKeys';
 import { type ReceiptListFilters, receiptsApi } from '../../../api/receipts';
 import { useAdminTargetStaff } from '../../../app/adminTargetStaff';
 import { BUSINESS_TIME_ZONE, todayJst } from '../../../lib/date';
+import { useFileDownload } from '../../../lib/useFileDownload';
 import { Modal, ModalFooter, ModalHeader } from '../../../ui/modal';
 import { EmptyState, ErrorState, Loading } from '../../../ui/StatusViews';
 import {
@@ -15,10 +17,9 @@ import {
   receiptSummaryLabel,
 } from '../model/receiptList';
 
-/** 領収書の一覧のクエリキー(領収書を送ったら ['receipts'] ごと読み直す)。 */
-export const receiptListKeys = {
-  all: ['receipts'] as const,
-  list: (filters: ReceiptListFilters) => ['receipts', 'list', filters] as const,
+/** 領収書の一覧のクエリキー(領収書を送ったら queryKeys.receipts.all ごと読み直す。report の useReceipts)。 */
+const receiptListKeys = {
+  list: (filters: ReceiptListFilters) => [...queryKeys.receipts.all, 'list', filters] as const,
 };
 
 /**
@@ -40,6 +41,7 @@ export function ReceiptListModal({
   const [month, setMonth] = useState(initialMonth ?? todayJst().slice(0, 7));
   const [staffChoice, setStaffChoice] = useState(targetStaffId);
   const [viewing, setViewing] = useState<ReceiptListItem | null>(null);
+  const csv = useFileDownload<'csv'>();
 
   // 開くたびに、呼び出し側の月・「表示するスタッフ」に合わせる
   const [wasOpen, setWasOpen] = useState(false);
@@ -112,13 +114,17 @@ export function ReceiptListModal({
         </div>
         <ModalFooter className="flex justify-end gap-3">
           {isAdmin ? (
-            <a
-              href={receiptsApi.csvUrl(filters)}
-              download
-              className="min-h-12 px-4 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl"
+            // 断られたら理由を赤いお知らせで出す(理由の JSON をファイルにしない)
+            <button
+              type="button"
+              disabled={csv.busy !== null}
+              onClick={() =>
+                void csv.run('csv', () => receiptsApi.downloadCsv(filters), 'CSVファイルを保存しました')
+              }
+              className="min-h-12 px-4 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl disabled:opacity-50"
             >
-              ⬇ CSVで保存
-            </a>
+              {csv.busy ? '保存しています…' : '⬇ CSVで保存'}
+            </button>
           ) : null}
           <button
             type="button"

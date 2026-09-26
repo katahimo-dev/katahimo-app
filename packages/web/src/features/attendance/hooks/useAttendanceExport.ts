@@ -1,8 +1,8 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback } from 'react';
 import { attendanceApi } from '../../../api/attendance';
 import type { DownloadedFile } from '../../../api/client';
-import { saveBlobAsFile } from '../../../lib/saveFile';
-import { showErrorToast, showToast } from '../../../ui/toast';
+import { useFileDownload } from '../../../lib/useFileDownload';
+import { showToast } from '../../../ui/toast';
 import { useAttendanceTarget } from './attendanceQueries';
 
 /** 保存するもの: 選んだ月・その月の年度(4月〜3月)・その月の全員分(管理者だけ)。 */
@@ -20,34 +20,26 @@ export function fiscalYearOf(yearMonth: string): number {
  */
 export function useAttendanceExport() {
   const { staffId } = useAttendanceTarget();
-  const [busy, setBusy] = useState<AttendanceExportKind | null>(null);
-  const busyRef = useRef(false);
+  const { busy, run: download } = useFileDownload<AttendanceExportKind>();
 
   const run = useCallback(
     async (kind: AttendanceExportKind, yearMonth: string) => {
-      if (busyRef.current) return;
       if (!yearMonth) {
         showToast('月を選んでください', true);
         return;
       }
-      busyRef.current = true;
-      setBusy(kind);
-      try {
-        let file: DownloadedFile;
-        if (kind === 'all') file = await attendanceApi.exportAll(yearMonth);
-        else if (kind === 'fiscalYear')
-          file = await attendanceApi.exportStaff({ fiscalYear: fiscalYearOf(yearMonth) }, staffId);
-        else file = await attendanceApi.exportStaff({ month: yearMonth }, staffId);
-        saveBlobAsFile(file.blob, file.filename);
-        showToast('Excelファイルを保存しました');
-      } catch (error) {
-        showErrorToast(error);
-      } finally {
-        busyRef.current = false;
-        setBusy(null);
-      }
+      await download(
+        kind,
+        (): Promise<DownloadedFile> => {
+          if (kind === 'all') return attendanceApi.exportAll(yearMonth);
+          if (kind === 'fiscalYear')
+            return attendanceApi.exportStaff({ fiscalYear: fiscalYearOf(yearMonth) }, staffId);
+          return attendanceApi.exportStaff({ month: yearMonth }, staffId);
+        },
+        'Excelファイルを保存しました',
+      );
     },
-    [staffId],
+    [staffId, download],
   );
 
   return { busy, run };
