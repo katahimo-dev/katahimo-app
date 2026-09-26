@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { APIRequestContext, BrowserContext, Page } from 'playwright-core';
+import type { APIRequestContext, BrowserContext, Page, Response } from 'playwright-core';
 import { ensureApiServer } from './apiServer';
 import { launchChromium } from './browser';
 import { installFontCache } from './fontCache';
@@ -45,6 +45,8 @@ const RECORDS_STAFF = { name: 'e2e 記録ありスタッフ', email: 'e2e-staff-
 const E2E_DIR = resolve(OUT_DIR, 'e2e');
 const VIEWPORT = { width: 390, height: 844 };
 const only = values.only ? new RegExp(values.only) : null;
+/** この回に送った領収書の束(uploadBatchId)。古い領収書の画像の 404 と、この回の領収書の画像の 404 を見分ける */
+const runUploadBatchIds = new Set<string>();
 
 const visible = { visible: true } as const;
 const button = (page: Page, name: string | RegExp) =>
@@ -126,16 +128,33 @@ function createRunner(results: StepResult[]) {
     n += 1;
     const file = resolve(E2E_DIR, `${String(n).padStart(2, '0')}-${name}.png`);
     const errors: string[] = [];
+    /** 404 になった領収書の画像の ID(手順の終わりに、この回の領収書かどうかで判定する) */
+    const missingReceiptImages: string[] = [];
+    /** 画面が読んだ領収書の一覧(ID → uploadBatchId) */
+    const receiptLists: Promise<[string, string][]>[] = [];
     const onConsole = (m: { type(): string; text(): string; location(): { url: string } }) => {
       // 未ログインでの /api/auth/me 等の 401 は想定どおり(ログイン画面を出すための確認)
       if (m.type() !== 'error' || /status of 401/.test(m.text())) return;
-      // 使い回している開発用DBでは、別の環境(ファイル置き場)で送った古い領収書の画像が 404 になる(画面は「画像なし」)
-      if (/status of 404/.test(m.text()) && /\/api\/receipts\/[^/]+\/image$/.test(m.location().url)) return;
+      const image = /\/api\/receipts\/([^/]+)\/image$/.exec(m.location().url);
+      if (image?.[1] && /status of 404/.test(m.text())) {
+        missingReceiptImages.push(image[1]);
+        return;
+      }
       errors.push(m.text());
     };
     const onPageError = (e: Error) => errors.push(e.message);
-    const onResponse = (r: { status(): number; url(): string; request(): { method(): string } }) => {
+    const onResponse = (r: Response) => {
       if (r.status() >= 500) errors.push(`${r.request().method()} ${r.url()} → ${r.status()}`);
+      if (r.ok() && r.request().method() === 'GET' && new URL(r.url()).pathname === '/api/receipts') {
+        receiptLists.push(
+          r
+            .json()
+            .then((body: { receipts: { id: string; uploadBatchId: string }[] }) =>
+              body.receipts.map((x): [string, string] => [x.id, x.uploadBatchId]),
+            )
+            .catch(() => []),
+        );
+      }
     };
     page.on('console', onConsole);
     page.on('pageerror', onPageError);
@@ -143,6 +162,15 @@ function createRunner(results: StepResult[]) {
     try {
       const detail = (await fn()) ?? '';
       await wait(page, 300);
+      if (missingReceiptImages.length > 0) {
+        const batchOf = new Map((await Promise.all(receiptLists)).flat());
+        for (const id of missingReceiptImages) {
+          // 使い回している開発用DBでは、別の環境(ファイル置き場)で送った古い領収書の画像が 404 になる(画面は「画像なし」)。
+          // 許すのはそれだけで、この回に送った領収書・一覧に無い領収書の画像の 404 は不具合として扱う
+          const batch = batchOf.get(id);
+          if (batch === undefined || runUploadBatchIds.has(batch)) errors.push(`領収書の画像が 404: ${id}`);
+        }
+      }
       if (errors.length > 0) throw new Error(`ブラウザのエラー: ${errors.join(' / ')}`);
       results.push({ name, ok: true, detail });
     } catch (e) {
@@ -334,6 +362,7 @@ async function runJourney() {
       }>(page, 'POST', '/api/receipts', () => button(page, 'この領収書を送る').click());
       const { message, uploadedCount } = uploaded;
       uploadBatchId = uploaded.uploadBatchId;
+      if (uploadBatchId) runUploadBatchIds.add(uploadBatchId);
       assert(uploadedCount === 1, `領収書が登録されない: ${message}`);
       await expectToast(page, message);
       return message;
@@ -350,12 +379,16 @@ async function runJourney() {
         .locator('#galleryInput')
         .setInputFiles({ name: 'receipt2.jpg', mimeType: 'image/jpeg', buffer: jpeg });
       await wait(page, 1500);
-      const { message, uploadedCount } = await clickForResponse<{ message: string; uploadedCount: number }>(
-        page,
-        'POST',
-        '/api/receipts',
-        () => button(page, 'この領収書を送る').click(),
-      );
+      const {
+        message,
+        uploadedCount,
+        uploadBatchId: standaloneBatchId,
+      } = await clickForResponse<{
+        message: string;
+        uploadedCount: number;
+        uploadBatchId: string | null;
+      }>(page, 'POST', '/api/receipts', () => button(page, 'この領収書を送る').click());
+      if (standaloneBatchId) runUploadBatchIds.add(standaloneBatchId);
       assert(uploadedCount === 1, `領収書が登録されない: ${message}`);
       await expectToast(page, message);
       return message;
