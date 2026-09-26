@@ -38,3 +38,22 @@ export const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH
 
 /** `{ ok: true }` だけを返すAPI(POST /api/auth/logout 等)の応答。 */
 export const okResponseSchema = z.object({ ok: z.literal(true) });
+
+/**
+ * タブ・改行・復帰以外の C0 制御文字(U+0000〜U+001F)。PostgreSQL の text / jsonb は U+0000 を保存できず、
+ * 他の制御文字も画面・シートに出す値として意味を持たないため、自由記述の入力と取込の値から取り除く。
+ */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: 制御文字を取り除くための正規表現
+const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
+
+/** 制御文字(タブ・改行・復帰以外)を取り除く。 */
+export function stripControlChars(value: string): string {
+  return value.replace(CONTROL_CHARS, '');
+}
+
+/** 自由記述の欄のスキーマ。検証したあとで制御文字(タブ・改行・復帰以外)を取り除く。 */
+export function freeText<T extends z.ZodType<string | null | undefined, z.ZodTypeDef, unknown>>(schema: T) {
+  return schema.transform((value: z.output<T>) =>
+    typeof value === 'string' ? (stripControlChars(value) as z.output<T>) : value,
+  );
+}

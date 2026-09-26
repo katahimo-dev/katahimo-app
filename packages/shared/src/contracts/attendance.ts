@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { businessDateSchema, idSchema, yearMonthSchema } from './common';
+import { businessDateSchema, idSchema, stripControlChars, yearMonthSchema } from './common';
 
 /**
  * 出勤簿1日分の入力列のキー(出勤簿スプレッドシートの列記号)。
@@ -41,7 +41,7 @@ export type AttendanceColumnKey = (typeof ATTENDANCE_COLUMN_KEYS)[number];
 /** セル1つ分の入力値。数値で送られてきても文字列として保存する(GAS版の String() 比較と揃える)。 */
 const cellValueSchema = z
   .union([z.string().max(2000), z.number().finite()])
-  .transform((value) => String(value));
+  .transform((value) => stripControlChars(String(value)));
 
 const rowDataShape = Object.fromEntries(
   ATTENDANCE_COLUMN_KEYS.map((key) => [key, cellValueSchema.optional()]),

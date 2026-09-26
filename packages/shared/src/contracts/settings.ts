@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { freeText } from './common';
 
 /** 秘密値を伏せ字にするときの文字。保存APIはこの文字を含む値を「変更なし」として扱う。 */
 export const SECRET_MASK_CHAR = '•';
@@ -81,7 +82,7 @@ export const aiPromptListResponseSchema = z.object({ prompts: z.array(aiPromptVi
  */
 export const updateAiPromptsRequestSchema = z.object({
   prompts: z
-    .array(z.object({ key: z.string(), body: z.string().nullable() }))
+    .array(z.object({ key: z.string(), body: freeText(z.string().nullable()) }))
     .min(1, '更新するプロンプトがありません'),
 });
 export type UpdateAiPromptsRequest = z.infer<typeof updateAiPromptsRequestSchema>;

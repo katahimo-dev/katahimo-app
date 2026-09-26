@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { idSchema } from './common';
+import { freeText, idSchema } from './common';
 
 /** 世帯構成員(顧客詳細の一部)。allergyが空/nullの場合、UIは「アレルギー: なし」と表示する(GAS版と同じ)。 */
 export const familyMemberViewSchema = z.object({
@@ -61,7 +61,9 @@ export const customerListItemSchema = z.object({
 export type CustomerListItem = z.infer<typeof customerListItemSchema>;
 
 /** GET /api/customers のクエリ。familyName を渡すと苗字の完全一致(省略時は全件)。 */
-export const customerListQuerySchema = z.object({ familyName: z.string().trim().max(100).optional() });
+export const customerListQuerySchema = z.object({
+  familyName: freeText(z.string().trim().max(100).optional()),
+});
 
 /** GET /api/customers。cities は地区の重複無し・昇順の一覧。 */
 export const customerListResponseSchema = z.object({

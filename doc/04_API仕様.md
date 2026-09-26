@@ -15,6 +15,9 @@
 - 日付は業務日 `YYYY-MM-DD`(`businessDateSchema`)、年月 `YYYY-MM`、時刻 `HH:MM`、ID は UUID(`idSchema`)。日時は ISO 8601。
 - 入力は `parseJsonBody` / `parseQuery` で契約に通す(失敗は 400)。成功の応答は `jsonOk(c, schema, body)` で**応答の契約にも
   通してから**返す(食い違いは 500 になりログに残る。契約に無い項目は落ちる)。画面(`web/src/api/client.ts`)も同じ契約で応答を検証する。
+- 自由記述の欄(日報・事故報告の本文、領収書の店名・引き継ぎ、出勤簿のセル、AI のプロンプト、スタッフの氏名・電話 等)は、
+  契約(`freeText`)でタブ・改行・復帰以外の制御文字(U+0000 等)を取り除いてから使う(PostgreSQL は U+0000 を保存できない)。
+  顧客CSV・スタッフ台帳・出勤簿の CSV の取込も同じ規則で取り除く(`stripControlChars`)。
 - `tenantId` は**セッション Cookie からだけ**決まる。要求の本体・クエリに入れても使わない。
 
 ### 1.2 認証とセッション Cookie

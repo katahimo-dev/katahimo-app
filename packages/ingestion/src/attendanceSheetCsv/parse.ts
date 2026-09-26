@@ -5,6 +5,7 @@ import {
   sheetColumnIndex,
 } from '@katahimo/core/domain';
 import type { AttendanceSheetImportRow } from '@katahimo/core/usecases';
+import { stripControlChars } from '@katahimo/shared';
 import { parse } from 'csv-parse/sync';
 
 export interface ParsedAttendanceSheet {
@@ -52,7 +53,7 @@ export function parseAttendanceSheetCsv(
     }
     const rowData: AttendanceRowPatch = {};
     for (const column of ATTENDANCE_COLUMN_KEYS)
-      rowData[column] = (record[sheetColumnIndex(column)] ?? '').trim();
+      rowData[column] = stripControlChars(record[sheetColumnIndex(column)] ?? '').trim();
     result.rows.push({ rowNumber: index + 1, businessDate, rowData });
   });
   return result;

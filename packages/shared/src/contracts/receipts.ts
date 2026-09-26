@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { businessDateSchema, idSchema, timeOfDaySchema } from './common';
+import { businessDateSchema, freeText, idSchema, timeOfDaySchema } from './common';
 
 /** 'yyyy/MM/dd HH:mm' または 'yyyy/MM/dd HH:mm:ss'(JST)。GAS版の領収書日時の書式。 */
 export const receiptTimestampSchema = z
@@ -24,12 +24,12 @@ export const receiptImageUploadSchema = z.object({
   /** data URL('data:image/jpeg;base64,...')。JPEG・PNG・WebP のみ。 */
   data: imageDataSchema,
   amount: z.union([z.string(), z.number()]).nullable().optional(),
-  storeName: z.string().nullable().optional(),
+  storeName: freeText(z.string().nullable().optional()),
   /**
    * OCR等で得た領収書日時。GAS版と同じく表記は問わない('2026/9/5 9:05'・日付だけ等も可)。重複判定には文字列の
    * まま使い、日時として読めなければ下記のフォールバック日時で記録する。空なら下記のフォールバック日時を使う。
    */
-  receiptDate: z.string().trim().max(50).nullable().optional(),
+  receiptDate: freeText(z.string().trim().max(50).nullable().optional()),
 });
 
 /**
@@ -43,7 +43,7 @@ export const receiptImageUploadSchema = z.object({
 export const uploadReceiptsRequestSchema = z.object({
   staffId: idSchema.optional(),
   customerId: idSchema.nullable().optional(),
-  customerNameText: z.string().trim().max(200).optional(),
+  customerNameText: freeText(z.string().trim().max(200).optional()),
   images: z
     .array(receiptImageUploadSchema)
     .min(1, '領収書画像がありません。')
@@ -51,7 +51,7 @@ export const uploadReceiptsRequestSchema = z.object({
   receiptTimestamp: receiptTimestampSchema.optional(),
   reportDate: businessDateSchema.optional(),
   startTime: timeOfDaySchema.optional(),
-  handoffText: z.string().default(''),
+  handoffText: freeText(z.string().default('')),
 });
 export type UploadReceiptsRequest = z.infer<typeof uploadReceiptsRequestSchema>;
 
