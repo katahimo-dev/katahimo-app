@@ -37,13 +37,15 @@ export const CUSTOM_FIELD_ENTITIES = ['staff', 'customer'] as const;
 export const CUSTOM_FIELD_VALUE_TYPES = ['text', 'number', 'boolean', 'date', 'select'] as const;
 
 /** スタッフの権限。admin: 全操作 / coordinator: 他スタッフの予定・出勤簿・報告の代行(管理設定は不可) / staff: 本人のみ。 */
-export { STAFF_ROLES, type StaffRole } from '@katahimo/shared';
-
-export const GENDERS = ['female', 'male', 'other', 'unknown'] as const;
-export type Gender = (typeof GENDERS)[number];
-
-export const TRAVEL_MODES = ['car', 'bicycle', 'transit', 'walk'] as const;
-export type TravelModeCode = (typeof TRAVEL_MODES)[number];
+/** 性別・移動手段(値は管理画面の API 契約と共有するため @katahimo/shared に置く)。 */
+export {
+  GENDERS,
+  type Gender,
+  STAFF_ROLES,
+  type StaffRole,
+  TRAVEL_MODES,
+  type TravelModeCode,
+} from '@katahimo/shared';
 
 export const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contractor'] as const;
 
@@ -124,10 +126,8 @@ export type EntityType = (typeof ENTITY_TYPES)[number];
 export const CHANGE_SOURCES = ['user', 'calendar_sync', 'import', 'system'] as const;
 export type ChangeSource = (typeof CHANGE_SOURCES)[number];
 
-export const APP_LOG_LEVELS = ['INFO', 'WARN', 'ERROR', 'SECURITY'] as const;
-export type AppLogLevel = (typeof APP_LOG_LEVELS)[number];
-export const ACTOR_TYPES = ['staff', 'system', 'operator', 'anonymous'] as const;
-export type ActorType = (typeof ACTOR_TYPES)[number];
+/** 操作ログのレベル・操作者の種類(値は操作ログの閲覧の API 契約と共有するため @katahimo/shared に置く)。 */
+export { ACTOR_TYPES, type ActorType, APP_LOG_LEVELS, type AppLogLevel } from '@katahimo/shared';
 
 export const DATA_EXPORT_SCOPES = ['tenant', 'customer', 'staff'] as const;
 export const DATA_EXPORT_STATUSES = ['requested', 'processing', 'ready', 'expired', 'failed'] as const;

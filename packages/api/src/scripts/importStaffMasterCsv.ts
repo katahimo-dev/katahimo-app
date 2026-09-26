@@ -13,7 +13,8 @@ import { cliArgs, resolveInputPath } from './cliArgs';
 
 /**
  * GAS版スタッフ台帳(Staffシート)をCSVに書き出したものを一括取込する。メールアドレス(E列)で照合し、
- * 既存スタッフは更新、いなければ作成する。GAS版のパスワードハッシュ(J列)はそのまま移行し、
+ * 既存スタッフは更新、いなければ作成する。カナ・電話・住所も取り込み(空欄は既存の値を消さない)、
+ * 変わった住所は SCHEDULE_PROVIDER の地図APIでジオコーディングする。GAS版のパスワードハッシュ(J列)はそのまま移行し、
  * 初回ログイン時にargon2idへ自動で移し替わる(LEGACY_AUTH_SALTの設定が必要)。
  *
  * 使い方: pnpm --filter @katahimo/api import:staff-master -- <tenantSlug> <CSVファイルパス> [--dry-run]
@@ -61,6 +62,11 @@ async function run(
     `[import] 作成 ${result.created}件 / 更新 ${result.updated}件 / スキップ ${result.skipped.length}件`,
   );
   for (const s of result.skipped) console.warn(`[import] ${s.rowNumber}行目をスキップ: ${s.reason}`);
+  if (result.homeWithoutGeo > 0) {
+    console.warn(
+      `[import] 自宅住所 ${result.homeWithoutGeo}件は緯度経度を得られなかったため住所だけを保存しました(ルート計算のときに住所から探します)`,
+    );
+  }
   if (!env.LEGACY_AUTH_SALT) {
     console.warn('[import] LEGACY_AUTH_SALT が未設定です。GAS版のパスワードのままではログインできません。');
   }

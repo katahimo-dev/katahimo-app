@@ -1,6 +1,7 @@
 import type {
   AppLogPort,
   CustomerCsvSourcePort,
+  MapsPort,
   NotifierPort,
   RateLimiterPort,
   ReportAiPort,
@@ -68,6 +69,8 @@ export interface Container {
   /** 「今日/明日の予定」(SCHEDULE_PROVIDER で Google / GAS Bridge / Noop を切り替える)。 */
   schedule: SchedulePort;
   scheduleProvider: ScheduleProvider;
+  /** スタッフの自宅住所のジオコーディング(SCHEDULE_PROVIDER=noop では無し。住所だけを保存する)。 */
+  maps?: MapsPort;
   /** 顧客CSVの取込元(Google Drive / ローカルディレクトリ)。管理者の手動取込で使う。 */
   csvSource: CustomerCsvSourcePort;
   /** GAS版 Script Properties AUTH_SALT と同じ値。移行したスタッフの初回ログインにだけ使う。 */
@@ -143,6 +146,7 @@ export function createContainer(env: Env, db: Database): Container {
     listGeminiModels: listAvailableGeminiModels,
     schedule: scheduleServices.schedule,
     scheduleProvider: scheduleServices.provider,
+    ...(scheduleServices.provider === 'noop' ? {} : { maps: scheduleServices.maps }),
     csvSource: createCustomerCsvSource({
       driveFolderIdsByTenantSlug: env.CUSTOMER_CSV_DRIVE_FOLDERS,
       ...(env.CUSTOMER_CSV_LOCAL_DIR ? { localDir: env.CUSTOMER_CSV_LOCAL_DIR } : {}),

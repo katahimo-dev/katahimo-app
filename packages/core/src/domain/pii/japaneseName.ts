@@ -31,3 +31,17 @@ export function splitJapaneseFullName(rawFullName: string): SplitName {
     isAmbiguous: false,
   };
 }
+
+export interface SplitKana {
+  familyNameKana: string | null;
+  givenNameKana: string | null;
+}
+
+/**
+ * カナ(「サトウ ハナコ」)を氏名と同じく最初の空白で姓と名に分ける。半角カナは全角にそろえる(NFKC)。
+ * 区切りが無ければ姓だけ(GAS版スタッフ台帳のカナ列は姓だけの行もある)。空なら両方 null。
+ */
+export function splitJapaneseKana(rawKana: string): SplitKana {
+  const split = splitJapaneseFullName(rawKana);
+  return { familyNameKana: split.familyName || null, givenNameKana: split.givenName || null };
+}

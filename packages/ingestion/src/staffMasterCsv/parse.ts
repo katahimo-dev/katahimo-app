@@ -4,13 +4,16 @@ import { stripControlChars } from '@katahimo/shared';
 import { parse } from 'csv-parse/sync';
 
 /**
- * GAS版スタッフ台帳(Staffシート)の列位置。GAS版Auth.jsが参照している列と同じ
- * (0始まりの列番号。B=氏名、E=ログインID、H=退職日、J=パスワード、K=管理者フラグ、M=サブメール)。
- * 列位置の知識はこのファイルだけに閉じ込める。
+ * GAS版スタッフ台帳(Staffシート)の列位置。GAS版Auth.js・RouteSearch.jsが参照している列と同じ
+ * (0始まりの列番号。B=氏名、C=カナ、D=電話、E=ログインID、F=住所、H=退職日、J=パスワード、K=管理者フラグ、
+ * M=サブメール)。列位置の知識はこのファイルだけに閉じ込める。
  */
 const STAFF_MASTER_COLUMNS = {
   name: 1, // B列(verifyLoginの userRow[1])
+  kana: 2, // C列
+  phone: 3, // D列
   email: 4, // E列(STAFF_LOGIN_EMAIL_COL_IDX_)
+  homeAddress: 5, // F列(RouteSearch.js getStaffDataFromSpreadsheet の自宅住所。出勤・退勤経路の起点)
   retiredOn: 7, // H列
   password: 9, // J列(SHA-256ハッシュ、または移行前の平文)
   isAdmin: 10, // K列(1なら管理者)
@@ -19,6 +22,11 @@ const STAFF_MASTER_COLUMNS = {
 
 function cell(row: string[], index: number): string {
   return stripControlChars(row[index] ?? '').trim();
+}
+
+/** 空欄は null(取込で既存の値を消さない印)。 */
+function optionalCell(row: string[], index: number): string | null {
+  return cell(row, index) || null;
 }
 
 export interface ParsedStaffMaster {
@@ -55,7 +63,10 @@ export function parseStaffMasterCsv(text: string): ParsedStaffMaster {
     result.rows.push({
       rowNumber,
       name: cell(record, STAFF_MASTER_COLUMNS.name),
+      kana: optionalCell(record, STAFF_MASTER_COLUMNS.kana),
+      phone: optionalCell(record, STAFF_MASTER_COLUMNS.phone),
       email: cell(record, STAFF_MASTER_COLUMNS.email),
+      homeAddress: optionalCell(record, STAFF_MASTER_COLUMNS.homeAddress),
       altEmail: altEmail.includes('@') ? altEmail : null,
       password: record[STAFF_MASTER_COLUMNS.password] ?? '',
       isAdmin: cell(record, STAFF_MASTER_COLUMNS.isAdmin) === '1',

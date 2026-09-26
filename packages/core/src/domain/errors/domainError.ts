@@ -40,6 +40,10 @@ export const conflict = (message: string, fields?: Record<string, string>, reaso
 export const STALE_WRITE_MESSAGE =
   '他の人(または別の画面)が先に更新しました。画面を読み込み直してから、もう一度操作してください。';
 
+/** AIプロンプトの版の競合(画面で読んだ後に、他の管理者が先に保存した)。 */
+export const STALE_PROMPT_MESSAGE =
+  '他の管理者が先にこのプロンプトを保存しました。画面を開きなおしてから保存してください。';
+
 export function isDomainError(error: unknown): error is DomainError {
   return error instanceof DomainError;
 }

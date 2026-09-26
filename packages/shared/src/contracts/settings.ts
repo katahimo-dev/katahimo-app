@@ -72,17 +72,26 @@ export const aiPromptViewSchema = z.object({
   /** テナントが既定値を上書きしているか。 */
   customized: z.boolean(),
   updatedAt: z.string().nullable(),
+  /** 最新の版(保存したことが無ければ 0)。PUT で渡すと、他の管理者の保存との競合を 409 にする。 */
+  revision: z.number().int().nonnegative(),
 });
 export type AiPromptView = z.infer<typeof aiPromptViewSchema>;
 export const aiPromptListResponseSchema = z.object({ prompts: z.array(aiPromptViewSchema) });
 
 /**
  * PUT /api/settings/admin/prompts
- * bodyにnull(または空文字)を渡すとテナントの上書きを削除し既定値に戻す。
+ * bodyにnull(または空文字)を渡すとテナントの上書きを削除し既定値に戻す。revision(GET で読んだ版)を渡すと、
+ * その後に他の管理者が保存していれば何も変えずに 409 conflict にする。
  */
 export const updateAiPromptsRequestSchema = z.object({
   prompts: z
-    .array(z.object({ key: z.string(), body: freeText(z.string().nullable()) }))
+    .array(
+      z.object({
+        key: z.string(),
+        body: freeText(z.string().max(20000, 'プロンプトが長すぎます').nullable()),
+        revision: z.number().int().nonnegative().optional(),
+      }),
+    )
     .min(1, '更新するプロンプトがありません'),
 });
 export type UpdateAiPromptsRequest = z.infer<typeof updateAiPromptsRequestSchema>;

@@ -3,6 +3,7 @@
 // Node固有・DB固有のものは @katahimo/core / @katahimo/db 側に置くこと。
 
 export * from './contracts/attendance';
+export * from './contracts/auditLogs';
 export * from './contracts/auth';
 export * from './contracts/calendarSync';
 export * from './contracts/common';

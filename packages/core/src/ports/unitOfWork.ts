@@ -1,3 +1,4 @@
+import type { AppLogReadRepository } from './appLog';
 import type { AttendanceRepository } from './attendance';
 import type { StaffBusyBlockRepository, StaffCalendarRepository } from './calendars';
 import type {
@@ -44,6 +45,8 @@ export interface TenantRepositories {
   outbox: OutboxWriter;
   entityChanges: EntityChangeWriter;
   retention: TenantRetentionRepository;
+  /** 操作ログの閲覧(書き込みは AppLogPort。UoW のトランザクションとは独立に書く)。 */
+  appLogs: AppLogReadRepository;
 }
 
 export interface UnitOfWorkOptions {
