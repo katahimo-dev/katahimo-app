@@ -1,5 +1,5 @@
 import type { AppLogPort } from '../ports/appLog';
-import type { NotificationChannel, NotifierPort } from '../ports/notifier';
+import type { NotificationChannel, NotifierPort, NotifyResult } from '../ports/notifier';
 
 export interface NotifyDeps {
   notifier: NotifierPort;
@@ -17,7 +17,13 @@ export async function notifyWithLog(
   text: string,
   actorStaffId: string | null,
 ): Promise<void> {
-  const result = await deps.notifier.notify(tenantId, channel, text);
+  let result: NotifyResult;
+  try {
+    result = await deps.notifier.notify(tenantId, channel, text);
+  } catch {
+    // NotifierPort は例外を投げない約束だが、通知で保存を失敗させないためここでも受け止める
+    result = { status: 'failed', error: 'notifier_error' };
+  }
   if (result.status === 'not_configured') {
     await deps.appLog.write({
       tenantId,

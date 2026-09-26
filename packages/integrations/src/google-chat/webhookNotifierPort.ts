@@ -29,7 +29,12 @@ export class WebhookNotifierPort implements NotifierPort {
   ) {}
 
   async notify(tenantId: string, channel: NotificationChannel, text: string): Promise<NotifyResult> {
-    const url = await this.resolver.resolve(tenantId, channel);
+    let url: string | undefined;
+    try {
+      url = await this.resolver.resolve(tenantId, channel);
+    } catch {
+      return { status: 'failed', error: 'resolve_failed' };
+    }
     if (!url) return { status: 'not_configured' };
     if (!isGoogleChatWebhookUrl(url)) return { status: 'failed', error: 'invalid_webhook_url' };
     if (this.testMode) return { status: 'skipped', reason: 'test_mode' };

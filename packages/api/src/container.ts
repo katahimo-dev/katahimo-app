@@ -118,11 +118,15 @@ export function createContainer(env: Env, db: Database): Container {
     passwordHasher: argon2PasswordHasher,
     storage: createStoragePort(env),
     notifier: new WebhookNotifierPort({
-      // テナントが管理者設定で保存した URL(tenant_secrets)を優先し、無ければ .env の既定
+      // テナントが管理者設定で保存した URL(tenant_secrets)を優先し、無い・開けない・読めないときは .env の既定
       async resolve(tenantId, channel) {
         const name = channel === 'report' ? 'gchat_report_webhook' : 'gchat_receipt_webhook';
-        const saved = await readTenantSecret({ uow, secretBox }, tenantId, name);
-        return saved || webhookFallback[channel];
+        try {
+          const saved = await readTenantSecret({ uow, secretBox, appLog }, tenantId, name);
+          return saved || webhookFallback[channel];
+        } catch {
+          return webhookFallback[channel];
+        }
       },
     }),
     resetCodeSecret: deriveSecret(env.SESSION_SECRET, 'katahimo/password-reset-code/v1'),

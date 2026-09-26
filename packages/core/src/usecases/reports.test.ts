@@ -51,6 +51,15 @@ describe('保育日報・事故報告', () => {
     expect(saved.rowVersion).toBe(1);
   });
 
+  it('通知が例外を投げても保存は成功する(通知は保存の成否に関わらない)', async () => {
+    ctx.notifier.notify = async () => {
+      throw new Error('送信先を解決できません');
+    };
+    const saved = await saveDailyReport(ctx.deps, staff, daily());
+    expect(ctx.data().careRecords.map((r) => r.id)).toEqual([saved.id]);
+    expect(ctx.appLog.actions()).toContain('notification.gchat.failed');
+  });
+
   it('一般スタッフが他人の名義を指定しても本人の名義で保存する', async () => {
     const saved = await saveDailyReport(ctx.deps, staff, daily({ requestedStaffId: other.staffId }));
     expect(saved.staffId).toBe(staff.staffId);

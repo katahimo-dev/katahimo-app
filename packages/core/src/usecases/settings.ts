@@ -15,10 +15,11 @@ export interface GeminiModelInfo {
 export interface TenantSecretDeps {
   uow: UnitOfWorkPort;
   secretBox: SecretBoxPort;
+  /** 開けない秘密値を ERROR で記録する(値は記録しない)。 */
+  appLog: AppLogPort;
 }
 
 export interface SettingsDeps extends TenantSecretDeps {
-  appLog: AppLogPort;
   /** Gemini ListModels(@katahimo/integrationsのlistAvailableGeminiModels)。失敗時は例外を投げる。 */
   listGeminiModels: (apiKey: string) => Promise<GeminiModelInfo[]>;
 }
@@ -27,30 +28,55 @@ export interface SettingsDeps extends TenantSecretDeps {
 export type SettingsActor = Actor;
 
 /**
- * テナントの秘密値を読む(無ければ空文字)。暗号文は1トランザクションで読み、開封(本番は Cloud KMS の呼び出し)は
- * トランザクションの外で行う。
+ * 保存済みの秘密値。`unreadable` は行はあるが開けないもの(SecretBox の鍵・プロバイダを変えた、暗号文が壊れた等)。
+ * 開けない値は使えないため、読む側は未設定と同じく既定の設定に戻し、管理者が保存し直すと上書きされる。
+ */
+export type StoredSecret = { state: 'unset' } | { state: 'set'; value: string } | { state: 'unreadable' };
+
+/** 使える値(未設定・開けないときは空文字)。 */
+export function usableSecretValue(secret: StoredSecret): string {
+  return secret.state === 'set' ? secret.value : '';
+}
+
+/**
+ * テナントの秘密値を読む。暗号文は1トランザクションで読み、開封(本番は Cloud KMS の呼び出し)は
+ * トランザクションの外で行う。開けない値は例外にせず `unreadable` として返し、ERROR `settings.secret.unreadable`
+ * を記録する(1つが開けなくても、他の秘密値や画面・保存の処理は続ける)。
  */
 export async function readTenantSecrets<N extends TenantSecretName>(
   deps: TenantSecretDeps,
   tenantId: string,
   names: readonly N[],
-): Promise<Record<N, string>> {
+): Promise<Record<N, StoredSecret>> {
   const sealed = await deps.uow.run(tenantId, (r) => Promise.all(names.map((name) => r.secrets.get(name))));
   const values = await Promise.all(
-    names.map((name, i) => {
+    names.map(async (name, i): Promise<StoredSecret> => {
       const secret = sealed[i];
-      return secret ? deps.secretBox.open(tenantId, name, secret.sealedValue) : '';
+      if (!secret) return { state: 'unset' };
+      try {
+        return { state: 'set', value: await deps.secretBox.open(tenantId, name, secret.sealedValue) };
+      } catch (e) {
+        await deps.appLog.write({
+          tenantId,
+          level: 'ERROR',
+          action: 'settings.secret.unreadable',
+          actorStaffId: null,
+          details: { name, error: e instanceof Error ? e.name : 'unknown' },
+        });
+        return { state: 'unreadable' };
+      }
     }),
   );
-  return Object.fromEntries(names.map((name, i) => [name, values[i]])) as Record<N, string>;
+  return Object.fromEntries(names.map((name, i) => [name, values[i]])) as Record<N, StoredSecret>;
 }
 
+/** テナントの秘密値の使える値を読む(未設定・開けないときは空文字)。 */
 export async function readTenantSecret(
   deps: TenantSecretDeps,
   tenantId: string,
   name: TenantSecretName,
 ): Promise<string> {
-  return (await readTenantSecrets(deps, tenantId, [name]))[name];
+  return usableSecretValue((await readTenantSecrets(deps, tenantId, [name]))[name]);
 }
 
 /** 秘密値を封をして保存する(封はトランザクションの外、書き込みは1トランザクション)。 */
@@ -136,10 +162,12 @@ type SecretInput = { kind: 'unchanged' } | { kind: 'new'; value: string } | { ki
 /**
  * 秘密値の入力欄から送られた値を解釈する。省略・今の伏せ字そのままなら変更なし。伏せ字の一部だけを
  * 書き換えた値(伏せ字の文字を含むが今の伏せ字と違う)は、意図した値にならないため拒否する。
+ * 今の値が開けないときは伏せ字が空文字なので、伏せ字を含まない値だけが新しい値になる。
  */
-function resolveSecretInput(input: string | undefined, currentMasked: string): SecretInput {
+function resolveSecretInput(input: string | undefined, current: StoredSecret, mask: (value: string) => string): SecretInput {
   if (input === undefined) return { kind: 'unchanged' };
   const trimmed = input.trim();
+  const currentMasked = mask(usableSecretValue(current));
   if (trimmed === currentMasked && currentMasked !== '') return { kind: 'unchanged' };
   if (trimmed.includes(SECRET_MASK_CHAR)) return { kind: 'partially_masked' };
   return { kind: 'new', value: trimmed };
@@ -152,6 +180,7 @@ const PARTIALLY_MASKED_MESSAGE =
  * 管理者設定画面用の現在値を返す。GAS版のgetGeminiApiKeyForAdmin/getGeminiModelSettingsForAdmin/
  * getGoogleChatWebhookSettingsForAdminをまとめたもの。GAS版と違い、APIキー・Webhook URLは平文では
  * 返さず伏せ字にする(画面から漏れても使えないようにするため。「表示」を押しても伏せ字が見えるだけ)。
+ * 開けない秘密値は設定済み・伏せ字は空文字で返す(管理者が値を入力し直して保存すると上書きされる)。
  */
 export async function getAdminSettings(deps: SettingsDeps, actor: SettingsActor): Promise<AdminSettingsView> {
   const [row, secrets] = await Promise.all([
@@ -162,24 +191,21 @@ export async function getAdminSettings(deps: SettingsDeps, actor: SettingsActor)
       'gchat_receipt_webhook',
     ]),
   ]);
-  const geminiApiKey = secrets.gemini_api_key;
-  const gchatReportWebhookUrl = secrets.gchat_report_webhook;
-  const gchatReceiptWebhookUrl = secrets.gchat_receipt_webhook;
   return {
-    geminiApiKey: maskApiKey(geminiApiKey),
-    geminiApiKeySet: geminiApiKey !== '',
+    geminiApiKey: maskApiKey(usableSecretValue(secrets.gemini_api_key)),
+    geminiApiKeySet: secrets.gemini_api_key.state !== 'unset',
     geminiReportModel: row.geminiReportModel || DEFAULT_GEMINI_REPORT_MODEL,
     geminiOcrModel: row.geminiOcrModel || DEFAULT_GEMINI_OCR_MODEL,
-    gchatReportWebhookUrl: maskWebhookUrl(gchatReportWebhookUrl),
-    gchatReportWebhookUrlSet: gchatReportWebhookUrl !== '',
-    gchatReceiptWebhookUrl: maskWebhookUrl(gchatReceiptWebhookUrl),
-    gchatReceiptWebhookUrlSet: gchatReceiptWebhookUrl !== '',
+    gchatReportWebhookUrl: maskWebhookUrl(usableSecretValue(secrets.gchat_report_webhook)),
+    gchatReportWebhookUrlSet: secrets.gchat_report_webhook.state !== 'unset',
+    gchatReceiptWebhookUrl: maskWebhookUrl(usableSecretValue(secrets.gchat_receipt_webhook)),
+    gchatReceiptWebhookUrlSet: secrets.gchat_receipt_webhook.state !== 'unset',
   };
 }
 
 /**
  * Gemini APIキーを保存する。GAS版saveGeminiApiKeyForAdminと同じく、空文字での保存は既存キーの
- * 意図しない消失を防ぐため拒否し、同じ値・伏せ字のままの値なら何もしない。
+ * 意図しない消失を防ぐため拒否し、同じ値・伏せ字のままの値なら何もしない。今の値が開けないときは入力された値で上書きする。
  */
 export async function saveGeminiApiKey(
   deps: SettingsDeps,
@@ -195,15 +221,16 @@ export async function saveGeminiApiKey(
       message: 'APIキーが空です。空のまま保存すると既存のキーが失われるため、保存を中止しました。',
     };
   }
-  const current = await readTenantSecret(deps, actor.tenantId, 'gemini_api_key');
-  const input = resolveSecretInput(trimmed, maskApiKey(current));
+  const stored = (await readTenantSecrets(deps, actor.tenantId, ['gemini_api_key'])).gemini_api_key;
+  const input = resolveSecretInput(trimmed, stored, maskApiKey);
   if (input.kind === 'partially_masked') {
     await writeLog(deps, actor, 'WARN', 'settings.gemini_api_key.save_rejected', {
       reason: 'partially_masked',
     });
     return { ok: false, reason: 'partially_masked', message: PARTIALLY_MASKED_MESSAGE };
   }
-  if (input.kind === 'unchanged' || input.value === current) {
+  // 今の値が開けないときは比べられないため、入力された値で上書きする
+  if (input.kind === 'unchanged' || (stored.state === 'set' && input.value === stored.value)) {
     return { ok: true, changed: false, message: 'Gemini APIキーは変更ありません。' };
   }
   await writeTenantSecrets(deps, actor, { gemini_api_key: trimmed });
@@ -247,7 +274,8 @@ export async function saveGeminiModelSettings(
 /**
  * GAS版saveGoogleChatWebhookSettingsForAdminと同じガード(どちらか一方でも空なら拒否、同じ値なら何もしない)。
  * 省略・伏せ字のままの項目は保存済みの値を使う。新しい値は Google Chat の Incoming Webhook URL だけを
- * 受け付ける(GAS版には無い検証。サーバーが任意のURLへ送信しないようにするため)。
+ * 受け付ける(GAS版には無い検証。サーバーが任意のURLへ送信しないようにするため)。開けない保存済みの値は
+ * 空として扱い、入力し直した値で上書きする。
  */
 export async function saveGoogleChatWebhookSettings(
   deps: SettingsDeps,
@@ -261,10 +289,11 @@ export async function saveGoogleChatWebhookSettings(
     'gchat_receipt_webhook',
   ]);
   const result = ((): SaveSettingsResult | Partial<Record<TenantSecretName, string>> => {
-    const currentReport = current.gchat_report_webhook;
-    const currentReceipt = current.gchat_receipt_webhook;
-    const reportInput = resolveSecretInput(reportWebhookUrl, maskWebhookUrl(currentReport));
-    const receiptInput = resolveSecretInput(receiptWebhookUrl, maskWebhookUrl(currentReceipt));
+    // 開けない値は空文字として扱う(入力し直さない限り「空」で拒否し、入力し直せば必ず上書きする)
+    const currentReport = usableSecretValue(current.gchat_report_webhook);
+    const currentReceipt = usableSecretValue(current.gchat_receipt_webhook);
+    const reportInput = resolveSecretInput(reportWebhookUrl, current.gchat_report_webhook, maskWebhookUrl);
+    const receiptInput = resolveSecretInput(receiptWebhookUrl, current.gchat_receipt_webhook, maskWebhookUrl);
     if (reportInput.kind === 'partially_masked' || receiptInput.kind === 'partially_masked') {
       return { ok: false, reason: 'partially_masked', message: PARTIALLY_MASKED_MESSAGE };
     }

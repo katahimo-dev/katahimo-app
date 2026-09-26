@@ -1006,10 +1006,14 @@ export class FakeTenantProvisioning implements TenantProvisioningPort {
  * (テストは保存された値が平文でないことも確かめられる)。
  */
 export class FakeSecretBox implements SecretBoxPort {
+  /** true にすると open が例外を投げる(鍵・プロバイダを変えて開けなくなった状態を再現する)。 */
+  failOpen = false;
+
   async seal(tenantId: string, name: TenantSecretName, plaintext: string): Promise<Uint8Array> {
     return Buffer.from(`SEALED|${tenantId}|${name}|${plaintext}`, 'utf8');
   }
   async open(tenantId: string, name: TenantSecretName, sealed: Uint8Array): Promise<string> {
+    if (this.failOpen) throw new Error('秘密値を開けません(鍵が違います)');
     const prefix = `SEALED|${tenantId}|${name}|`;
     const text = Buffer.from(sealed).toString('utf8');
     if (!text.startsWith(prefix)) throw new Error(`秘密値を開けません(テナント・名前が違います): ${name}`);
