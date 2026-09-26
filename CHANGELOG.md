@@ -21,6 +21,10 @@
 - テナントごとのカレンダーの設定(共有カレンダー・スタッフに設定できるカレンダーの許可)を `platform.tenants.calendar_settings` に置き、
   運用担当者のコマンド `pnpm tenant:calendars` で変える。管理者は許可に無いカレンダーをスタッフに設定できず、予定を読むときにも
   確かめ直す(`doc/05_バッチ・外部連携.md` 4.2)。
+- 全員分の日報・事故報告・ヒヤリハットの「📋 報告一覧」(🛠 管理タブ。管理者とコーディネーター): 期間・種類・書いたスタッフ・お客様で
+  絞り込んだ一覧、1件の中身(読むだけ。直した回数つき)、GAS版の「日報」「事故報告」シートと同じ列の CSV(BOM つき UTF-8)。
+  スプレッドシートのミラーを止めても全員分を見られる。一覧・中身・CSV の書き出しは操作ログに残る(`doc/02_機能仕様.md` 10.2)。
+  API `GET /api/reports`・`GET /api/reports/:id`・`GET /api/reports/export.csv`(`doc/04_API仕様.md` 2.6)。
 - ワーカーの環境変数 `APP_PUBLIC_URL`: パスワード設定の案内のメールに法人IDつきのログイン画面の URL を書く(terraform の `app_public_url`)。
 - 外部システムからの顧客の受け取り `POST /api/integrations/customers`(RESERVA 等との連携の受け口): テナントごとの API キー
   (`Authorization: Bearer kth_…`。Cookie のセッションは使わない)で、1回500件までの顧客を作成・更新する(削除・アーカイブはしない)。
@@ -34,6 +38,7 @@
 
 ### 変更
 
+- 「🛠 管理」タブをコーディネーターにも出す(中は「📋 報告一覧」だけ。スタッフ・AIプロンプト・操作ログは今までどおり管理者だけ)。
 - 共有カレンダーの環境変数 `GOOGLE_CALENDAR_IDS` をやめ、テナントごとのカレンダーの設定(`pnpm tenant:calendars`)に置き換える。
   切替の前に、`GOOGLE_CALENDAR_IDS` に入れていたカレンダーを `pnpm tenant:calendars -- <slug> --add-shared …` で登録する。
 - 顧客CSVの取込元の環境変数 `CUSTOMER_CSV_DRIVE_FOLDERS` をやめ、テナントごとの設定(`platform.tenants.customer_import_settings`、

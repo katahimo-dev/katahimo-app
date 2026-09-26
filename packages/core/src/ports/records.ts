@@ -43,6 +43,22 @@ export interface CareRecordCursor {
   id: string;
 }
 
+/** 期間・スタッフ・お客様・種類での記録の絞り込み(全員分の一覧・CSV)。 */
+export interface CareRecordListFilter {
+  /** occurred_at が [from, to) のもの。 */
+  from: Date;
+  to: Date;
+  authorStaffId?: string | undefined;
+  customerId?: string | undefined;
+  /** 省略はすべての種類。 */
+  recordTypes?: readonly CareRecordType[] | undefined;
+}
+
+/** 一覧・詳細で読む記録(最後に保存された日時つき)。 */
+export interface CareRecordListRow extends CareRecordRow {
+  updatedAt: Date;
+}
+
 export interface CareRecordRepository {
   findById(id: string): Promise<CareRecordRow | null>;
   insert(input: NewCareRecordInput): Promise<CareRecordRow>;
@@ -50,6 +66,16 @@ export interface CareRecordRepository {
   update(id: string, patch: CareRecordPatch, expectedVersion?: number): Promise<CareRecordRow>;
   /** 顧客の記録を新しい順に limit 件(after より後ろ)。 */
   listByCustomer(customerId: string, after: CareRecordCursor | null, limit: number): Promise<CareRecordRow[]>;
+  /** 条件に合う記録を (occurred_at DESC, id DESC) の順に limit 件(after より後ろ)。 */
+  listByPeriod(
+    filter: CareRecordListFilter,
+    after: CareRecordCursor | null,
+    limit: number,
+  ): Promise<CareRecordListRow[]>;
+  /** 1件を最後に保存された日時つきで読む。 */
+  findListRowById(id: string): Promise<CareRecordListRow | null>;
+  /** 保存し直された回数(care_record_revisions の件数)。 */
+  countRevisions(id: string): Promise<number>;
 }
 
 export interface StoredFileRow {

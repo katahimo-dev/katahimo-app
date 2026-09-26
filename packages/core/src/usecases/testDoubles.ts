@@ -139,7 +139,8 @@ export interface TenantData {
   segments: (WorkSegmentRow & { staffId: string; businessDate: string })[];
   legs: (TravelLegRow & { staffId: string; businessDate: string })[];
   lockedPeriods: { staffId: string; yearMonth: string }[];
-  careRecords: CareRecordRow[];
+  /** updatedAt は DB の set_updated_at() トリガーの代わり(直接 push した行は occurredAt を使う)。 */
+  careRecords: (CareRecordRow & { updatedAt?: Date })[];
   careRecordRevisions: { careRecordId: string; body: CareRecordContent; changedBy: string | null }[];
   uploads: ReceiptUploadRow[];
   receipts: ReceiptRow[];
@@ -767,12 +768,19 @@ export function fakeRepositories(
     careRecords: {
       async findById(id) {
         const c = d().careRecords.find((x) => x.id === id);
-        return c ? structuredClone(c) : null;
+        if (!c) return null;
+        const { updatedAt: _updatedAt, ...row } = c;
+        return structuredClone(row);
       },
       async insert(input) {
-        const row: CareRecordRow = { ...structuredClone(input), rowVersion: 1 };
+        const row: CareRecordRow & { updatedAt?: Date } = {
+          ...structuredClone(input),
+          rowVersion: 1,
+          updatedAt: new Date(),
+        };
         d().careRecords.push(row);
-        return structuredClone(row);
+        const { updatedAt: _updatedAt, ...saved } = row;
+        return structuredClone(saved);
       },
       async update(id, patch, expectedVersion) {
         const c = d().careRecords.find((x) => x.id === id);
@@ -789,8 +797,9 @@ export function fakeRepositories(
         if (bodyChanged && c.status !== 'draft') {
           d().careRecordRevisions.push({ careRecordId: id, body: structuredClone(c.body), changedBy: null });
         }
-        Object.assign(c, structuredClone(patch), { rowVersion: c.rowVersion + 1 });
-        return structuredClone(c);
+        Object.assign(c, structuredClone(patch), { rowVersion: c.rowVersion + 1, updatedAt: new Date() });
+        const { updatedAt: _updatedAt, ...saved } = c;
+        return structuredClone(saved);
       },
       async listByCustomer(customerId, after, limit) {
         return structuredClone(
@@ -805,6 +814,35 @@ export function fakeRepositories(
             )
             .slice(0, limit),
         );
+      },
+      async listByPeriod(filter, after, limit) {
+        return structuredClone(
+          d()
+            .careRecords.filter(
+              (c) =>
+                c.occurredAt.getTime() >= filter.from.getTime() &&
+                c.occurredAt.getTime() < filter.to.getTime() &&
+                (!filter.authorStaffId || c.authorStaffId === filter.authorStaffId) &&
+                (!filter.customerId || c.customerId === filter.customerId) &&
+                (!filter.recordTypes || filter.recordTypes.includes(c.recordType)),
+            )
+            .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime() || (a.id < b.id ? 1 : -1))
+            .filter(
+              (c) =>
+                !after ||
+                c.occurredAt.getTime() < after.occurredAt.getTime() ||
+                (c.occurredAt.getTime() === after.occurredAt.getTime() && c.id < after.id),
+            )
+            .slice(0, limit)
+            .map((c) => ({ ...c, updatedAt: c.updatedAt ?? c.occurredAt })),
+        );
+      },
+      async findListRowById(id) {
+        const c = d().careRecords.find((x) => x.id === id);
+        return c ? structuredClone({ ...c, updatedAt: c.updatedAt ?? c.occurredAt }) : null;
+      },
+      async countRevisions(id) {
+        return d().careRecordRevisions.filter((x) => x.careRecordId === id).length;
       },
     },
     receipts: {

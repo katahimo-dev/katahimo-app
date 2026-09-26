@@ -30,7 +30,7 @@
 | 値 | `<テナントID>.<生トークン>`。DB は生トークンの SHA-256 だけを持つ(`sessions.token_hash`) |
 | 期限 | 無操作7日(`SESSION_IDLE_TTL_MS`)。残りが6日を切った要求で7日に延ばし Cookie も更新。ログインから30日(`SESSION_ABSOLUTE_TTL_MS`)を超えない |
 | 毎回の確認 | セッション(失効・期限)→ テナントが `active` → スタッフの存在 → 退職日(テナントの時刻帯の業務日)。退職済みならそのスタッフの全セッションを失効 |
-| ミドルウェア | `requireSession(container, deniedAction?)`(未ログイン 401。`deniedAction` があれば WARN `<action>.access_denied`)、`requireAdmin(container, action)`(未ログイン 401・管理者以外 403、どちらも WARN) |
+| ミドルウェア | `requireSession(container, deniedAction?)`(未ログイン 401。`deniedAction` があれば WARN `<action>.access_denied`)、`requireAdmin(container, action)`(未ログイン 401・管理者以外 403、どちらも WARN)、`requireCoordinator(container, action)`(同じくコーディネーター・管理者以外 403) |
 | 対象スタッフ | `targetStaffIdOf(c, staffId)`: 一般スタッフは常に本人、コーディネーター・管理者は指定があればそのスタッフ(usecase でも確かめる) |
 
 ### 1.3 エラー
@@ -140,7 +140,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 `rowData` のキーは出勤簿の列記号(`C`・`D`・`E` … `AO`。意味は `sheetLayout.ts` の `ATTENDANCE_COLUMNS`)、値は文字列。
 書き込みは全て INFO、失敗・拒否は WARN/ERROR、閲覧は管理者・コーディネーターが他のスタッフを見たときだけ INFO(`targetStaffId`)。
 
-### 2.6 日報・事故報告 `/api/reports`(`routes/reports.ts`、全てログイン)
+### 2.6 日報・事故報告 `/api/reports`(`routes/reports.ts`・`routes/reportCsv.ts`、全てログイン)
 
 | メソッド・パス | 契約(要求 / 応答) | 応答・エラー |
 | --- | --- | --- |
@@ -150,6 +150,9 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `POST /accident` | `saveAccidentReportRequestSchema`(`reportType: '事故報告'｜'ヒヤリハット'`・`targetName`・`targetDob`・`occurrenceTime`・`location`・`accidentContent`・`situation`・`immediateResponse`・`parentCorrespondence`・`diagnosisTreatment`・`prevention`・`inputText` と上の共通項目)/ `saveAccidentReportResponseSchema` | `{ success, report }`。事故報告とヒヤリハットは上書きで切り替えられる。日報との切り替えは 404。エラーは日報と同じ |
 | `POST /visit-complete` | `visitCompleteRequestSchema`(`staffId?`・`customerId`・`visitDate`・`startTime`・`endTime`)/ `visitCompleteResponseSchema` | `{ success: true }`。DB に書かず Google Chat に知らせるだけ |
 | `GET /history?customerId=&before?` | `customerHistoryQuerySchema` / `customerHistoryResponseSchema` | `{ items, nextCursor }`(5件ずつ、`(occurred_at DESC, id DESC)` のキーセット。続きが無ければ `null`)。読めない `before` は 400 |
+| `GET /?from&to&staffId&customerId&kind&cursor&limit` | `reportListQuerySchema`(`from?`・`to?`(記録の日時の業務日、両端を含む。既定は今日までの31日間、366日まで)・`staffId?`(書いたスタッフ。一般スタッフは無視して本人)・`customerId?`・`kind?`(`daily_report` / `accident` / `near_miss`)・`cursor?`・`limit`(1〜100、既定30))/ `reportListResponseSchema` | `{ reports: [{ id, kind, occurredAt, date, time, staffId, staffName, customerId, customerName, excerpt, riskRating, esRating, updatedAt }], nextCursor, range: { from, to }, timeZone }`。新しい順(`(occurred_at DESC, id DESC)` のキーセット)。`time` は日報なら「開始〜終了」、事故報告は記録の時刻 `HH:mm`。`excerpt` は60文字まで。期間の誤りは 400(`fields.from`)、読めない `cursor` は 400 `invalid_cursor`。他のスタッフの記録を含む最初のページだけ INFO `report.list.viewed`(条件・件数。スタッフを絞れば `targetStaffId`) |
+| `GET /export.csv?sheet&from&to&staffId&customerId&kind` | `reportCsvQuerySchema`(`sheet`: `daily` / `accident` 必須、`kind` は `sheet` に合うものだけ)。コーディネーター・管理者だけ(`requireCoordinator`、それ以外は 403・WARN `report.list.export.access_denied`) | `text/csv; charset=utf-8`(BOM つき、CRLF、`attachment; filename="reports-<sheet>_<from>_<to>.csv"`)。`daily` は GAS版の「日報」シートと同じ12列(日時・開始時刻・終了時刻・スタッフ・顧客ID・お客様・書いたメモ・事務局に送る文・保護者に送る文・PSI・ES・記録ID)、`accident` は「事故報告」シートと同じ17列(日時・報告者・顧客ID・お客様・対象児童名・生年月日・発生日時・発生場所・事故内容・発生状況・発生時の対応・保護者への対応・診断名・処置・今後の対応・元のメモ・種別(事故報告/ヒヤリハット)・記録ID)に、どちらも「最終更新」を足す。日時はテナントのタイムゾーンの `yyyy/MM/dd HH:mm:ss`、顧客IDは取込元(RESERVA)のID(無ければ本アプリのID。ミラーと同じ)。500件ずつ別のトランザクションで読んで流す。式として動く値・切断・途中の失敗の扱いは操作ログの CSV と同じ(`http/csv.ts` `writeCsvStream`)。読み始める前に SECURITY `report.list.exported`(条件と `sheet`) |
+| `GET /:id` | — / `reportDetailResponseSchema` | `{ report: { id, kind, occurredAt, date, time, updatedAt, staffId, staffName, customerId, customerName, rowVersion, revisionCount, content, (日報は riskRating・esRating) }, timeZone }`。`content` は日報なら `startTime`〜`customerText`、事故報告・ヒヤリハットなら `targetName`〜`inputText`。`revisionCount` は `care_record_revisions` の件数。一般スタッフは本人の記録だけ(他人は 403・SECURITY `report.detail.view_denied`)。無い・別テナント・UUID でない ID は 404。他のスタッフの記録を読んだら INFO `report.detail.viewed`(`targetStaffId`) |
 
 担当スタッフ: 一般スタッフは常に本人。管理者・コーディネーターは `staffId` → 上書きなら元の担当 → 本人の順。保存成功で
 INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Google Chat の未設定は WARN

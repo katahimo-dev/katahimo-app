@@ -61,7 +61,7 @@ src/
   styles/index.css         Tailwind + GAS版の<style>の移植
   app/                     画面の骨格(全機能で共有)
     App.tsx                Provider の組み立て(エラーの受け止め / Query / 文字の大きさ / 確認ダイアログ / ログイン / トースト / 新しい版のお知らせ)
-    AppShell.tsx           ヘッダー・3つのタブ(管理者は「🛠 管理」を加えた4つ)・下タブ・設定ダイアログ
+    AppShell.tsx           ヘッダー・3つのタブ(管理者・コーディネーターは「🛠 管理」を加えた4つ)・下タブ・設定ダイアログ
     Header.tsx, BottomNav.tsx, homeTabs.tsx(useHomeTabs)
     TextSizeProvider.tsx   useTextSize()
     adminTargetStaff/      管理者用「表示するスタッフ」(予定・出勤簿で共有)
@@ -81,7 +81,7 @@ src/
     customers/             「👪 お客様」タブ・お客様の情報/これまでの記録
     report/                日報・事故報告・領収書ダイアログ
     attendance/            「🕒 出勤簿」タブとその中のダイアログ
-    admin/                 「🛠 管理」タブ(管理者だけ): staff/(一覧・登録/編集ダイアログ)・prompts/(AIプロンプト)・logs/(操作ログ)
+    admin/                 「🛠 管理」タブ(管理者・コーディネーター): staff/(一覧・登録/編集ダイアログ)・reports/(報告一覧・報告の中身。コーディネーターはこれだけ)・prompts/(AIプロンプト)・logs/(操作ログ)
   lib/                     画面に依存しない小さな処理(storage / date / recentCustomers / textSize / tenant / messages / idle)
   ui/                      共通の部品(トースト・確認ダイアログ・ダイアログの外側 Modal・読み込み中・0件表示・ErrorBoundary)
   test/                    テストの共通部品(providers.tsx・setup.ts)
@@ -95,8 +95,8 @@ src/
   お客様に関係ない領収書は `openStandaloneReceipt()`。
 - **予定→お客様タブへの移動**(GAS版 `jumpToCustomerFromSchedule`)は `useHomeTabs().switchTab('visitors')` を使い、
   検索欄への受け渡しは `features/customers` の中で用意する。
-- 「🛠 管理」タブは `homeTabsFor(user.role)` が管理者にだけ出し、`AppShell` も管理者のときだけ置く(`React.lazy` で別のJS)。
-  中の「スタッフ」「AIプロンプト」「操作ログ」は切り替えると作り直す(AIプロンプトに保存していない変更があれば確かめる)。
+- 「🛠 管理」タブは `homeTabsFor(user.role)` が管理者・コーディネーター(`canActForOthers`)にだけ出し、`AppShell` もそのときだけ置く(`React.lazy` で別のJS)。
+  中の「スタッフ」「報告一覧」「AIプロンプト」「操作ログ」は切り替えると作り直す(コーディネーターには「報告一覧」だけを出し、タブの列は出さない)(AIプロンプトに保存していない変更があれば確かめる)。
   クエリキーは `features/admin/adminQueryKeys.ts`。スタッフを書き換えたら「表示するスタッフ」(`queryKeys.activeStaff`)と操作ログ、
   AIプロンプトを保存したら `queryKeys.uiConfig` も読み直す。
 - 出勤簿タブはGAS版と同じく**初めて開いたときに作られる**(`AttendanceTab` の初回描画 = GAS版 `initPastScheduleTab`)。
@@ -200,7 +200,7 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
 | --- | --- |
 | `z-10` / `z-20` | ヘッダー / 下タブ |
 | `z-50` | ログイン、日報・事故報告 |
-| `z-[60]` | パスワード再設定、ヒント、お客様の情報、これまでの記録、スタッフの登録・編集(管理。上に確認ダイアログを重ねる) |
+| `z-[60]` | パスワード再設定、ヒント、お客様の情報、これまでの記録、スタッフの登録・編集(管理。上に確認ダイアログを重ねる)、報告の中身(管理の報告一覧) |
 | `z-[70]` | 確認ダイアログ(useConfirmModal) |
 | `z-[100]` | 設定 |
 | `z-[110]` | パスワード変更、今月のまとめ、まとめて取り込む |
@@ -225,8 +225,8 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
 - 失敗のお知らせは読み上げで すぐに伝える(`role="alert"`)。同じ文言を続けて出しても、そのたびに読み上げる。
 - GAS版は未ログインでも顧客データの版数を確かめ、失敗のお知らせが出ることがあった。新アプリはログイン後だけ確かめる。
   また顧客CSVの取り込みはサーバーが定期実行するため、画面を開いたときの取り込み(checkAndImportLatestCsv)はしない。
-- 管理者には下タブに「🛠 管理」を出す(スタッフ台帳・AIプロンプトのシートの編集と Drive の CSV ログの確認の置き換え。
-  `doc/02_機能仕様.md` 10章)。
+- 管理者・コーディネーターには下タブに「🛠 管理」を出す(スタッフ台帳・AIプロンプトのシートの編集、「日報」「事故報告」シートの閲覧と
+  Drive の CSV ログの確認の置き換え。コーディネーターは報告一覧だけ。`doc/02_機能仕様.md` 10章)。
 - パスワード再設定の画面に「番号が届いている方はこちら」を置く(管理者が送った「パスワード設定の案内」の番号を、送り直さずに
   入力する)。
 - 設定の詳細設定は1回のAPI(GET /api/settings/admin)で読むため、読み込み中に保存したときの案内は
