@@ -53,6 +53,24 @@
   API `GET /api/attendance/export`(`month` か `fiscalYear`)・`GET /api/attendance/export/all`、回数の上限 `attendance_export_staff`
   (1人1時間30回)、操作ログ `attendance.export.downloaded`・`attendance.export_all.downloaded`(`doc/02_機能仕様.md` 8.6)。
   API の依存に `exceljs` を追加。
+- 日報AIの高度化(お子様の年齢帯 × ご家庭の教育思考★ × PSI の3軸): 日報の下書きで AI が使う教育の言葉を、テナントの
+  日報キーワード表現マスターから年齢・★・PSI で絞り込んで(最大10語の候補、1通2語まで)プロンプトに入れる。PSI は★より優先し、
+  PSI 3 は★を1つ下げて用語名を出さず、PSI 2 以下は教育の言葉を使わず温かみ表現で寄り添い、PSI 1 は警告に「管理者へ連絡」を
+  必ず入れる(サーバーが確かめる)。既定の日報のプロンプトはお客様の変更案の文面(社是はテナントの AI プロンプト
+  `daily_report.company_policy`、マスターが空なら言葉の表の段落を出さない)。生成の前に PSI を選べ(未選択は PSI 4 として扱う)、
+  対象のお子様を選ぶ(お一人なら自動)。日報の記録にお子様(`care_records.care_recipient_id`)を残す(`doc/02_機能仕様.md` 6.1)。
+- ご家庭の教育思考★(お客様の詳細、★1〜5、未設定は★2。ログインしていれば誰でも変えられ、操作ログに残る)。
+  API `GET`/`PUT /api/customers/:id/report-profile`(`doc/04_API仕様.md` 2.3)。
+- 管理の「🧩 日報AIの調整」(管理者だけ): 日報キーワード表現マスターの6つの表(キーワード・年齢帯・教育思考★・PSI・温かみ表現・
+  見ていた人スタンス)を1行ずつ直す・外す(他の管理者の保存との競合を 409 で止める)、xlsx の取込(まず確かめて件数・誤り・知らせを
+  出し、誤りが無ければ1つのトランザクションで反映。キーで突き合わせて足す・書き換え、ファイルに無い行は消さない。`import_runs` の
+  `report_ai_xlsx`)と同じ形の書き出し、教育キーワードの利用状況の CSV。API `/api/admin/report-ai/*`(`doc/02_機能仕様.md` 10.4・
+  `doc/04_API仕様.md` 2.9)。
+- 日報の AI の生成の記録 `report_ai_generations`(使ったプロンプト・入力・返答・候補と使った言葉・★・PSI。追記だけで、保存した日報に
+  結び付く。結び付かなかったものは365日、結び付いたものは記録の保存期限で保守のジョブが消す)。
+- PSI 2 以下の日報を保存したら管理者に知らせる: 管理者の端末へ Web Push(outbox の `push.psi_alert`、記録と版ごとに1回)と日報の
+  Google Chat、WARN `report.psi_alert`。報告一覧に PSI の印を出す(`doc/05_バッチ・外部連携.md` 10.3)。
+- 移動の記録(`travel_legs.transport_mode`)に、移動を作ったときのスタッフの移動手段を残す(`doc/02_機能仕様.md` 8.4)。
 
 ### 変更
 

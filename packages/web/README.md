@@ -72,7 +72,7 @@ src/
     client.ts              共通の fetch(zodで応答を検証、エラーの種類分け)
     queryKeys.ts           機能をまたいで無効化するクエリキー
     auth.ts, settings.ts, staff.ts, system.ts, push.ts
-    admin.ts               管理画面(スタッフ管理・AIプロンプト・操作ログ)
+    admin.ts               管理画面(スタッフ管理・AIプロンプト・操作ログ・日報AIの調整)
   features/                機能ごとのフォルダ
     auth/                  ログイン・パスワード再設定・パスワード変更・セッション
     settings/              設定ダイアログ
@@ -81,9 +81,9 @@ src/
     customers/             「👪 お客様」タブ・お客様の情報/これまでの記録
     report/                日報・事故報告・領収書ダイアログ
     attendance/            「🕒 出勤簿」タブとその中のダイアログ(今月のまとめ・まとめて取り込む・カレンダーと違うところ・領収書の一覧/画像)
-    admin/                 「🛠 管理」タブ(管理者・コーディネーター): staff/(一覧・登録/編集ダイアログ)・reports/(報告一覧・報告の中身。コーディネーターはこれだけ)・prompts/(AIプロンプト)・logs/(操作ログ)
+    admin/                 「🛠 管理」タブ(管理者・コーディネーター): staff/(一覧・登録/編集ダイアログ)・reports/(報告一覧・報告の中身。コーディネーターはこれだけ)・prompts/(AIプロンプト)・reportAi/(日報AIの調整。管理者だけ)・logs/(操作ログ)
   lib/                     画面に依存しない小さな処理(storage / date / recentCustomers / textSize / tenant / messages / idle / saveFile・useFileDownload(ファイルの保存))
-  ui/                      共通の部品(トースト・確認ダイアログ・ダイアログの外側 Modal・読み込み中・0件表示・ErrorBoundary)
+  ui/                      共通の部品(トースト・確認ダイアログ・ダイアログの外側 Modal・読み込み中・0件表示・ErrorBoundary・EducationLevelPicker(教育思考★の選択))
   test/                    テストの共通部品(providers.tsx・setup.ts)
 ```
 
@@ -96,9 +96,12 @@ src/
 - **予定→お客様タブへの移動**(GAS版 `jumpToCustomerFromSchedule`)は `useHomeTabs().switchTab('visitors')` を使い、
   検索欄への受け渡しは `features/customers` の中で用意する。
 - 「🛠 管理」タブは `homeTabsFor(user.role)` が管理者・コーディネーター(`canActForOthers`)にだけ出し、`AppShell` もそのときだけ置く(`React.lazy` で別のJS)。
-  中の「スタッフ」「報告一覧」「AIプロンプト」「操作ログ」は切り替えると作り直す(コーディネーターには「報告一覧」だけを出し、タブの列は出さない)(AIプロンプトに保存していない変更があれば確かめる)。
+  中の「スタッフ」「報告一覧」「AIプロンプト」「日報AIの調整」「操作ログ」は切り替えると作り直す(コーディネーターには「報告一覧」だけを出し、タブの列は出さない)(AIプロンプトに保存していない変更があれば確かめる)。
   クエリキーは `features/admin/adminQueryKeys.ts`。スタッフを書き換えたら「表示するスタッフ」(`queryKeys.activeStaff`)と操作ログ、
-  AIプロンプトを保存したら `queryKeys.uiConfig` も読み直す。
+  AIプロンプトを保存したら `queryKeys.uiConfig` も読み直す。日報AIの調整で行を保存・取り込んだら `adminQueryKeys.reportAi` と操作ログ、
+  `queryKeys.uiConfig`(PSI の定義は日報の画面の評価の説明にも出る)を読み直す。
+- **家庭の教育思考★**: お客様の詳細(`CustomerDetailModal`)と日報のダイアログ(`DailyAiSection`)は `features/customers/useCustomerReportProfile.ts`
+  (キー `customerQueryKeys.reportProfile(customerId)`。`queryKeys.customers.all` で始まる)を共有し、どちらで変えてももう一方に出る。
 - 出勤簿タブはGAS版と同じく**初めて開いたときに作られる**(`AttendanceTab` の初回描画 = GAS版 `initPastScheduleTab`)。
   タブを切り替えても作り直さない(隠すだけ)ので、入力途中の値は残る。
 - 共有部分(`app/`・`api/client.ts`・`api/queryKeys.ts`・`lib/`・`ui/`)は全機能が使う。既存の関数の形を変えるときは使っている所を全て直す。
@@ -247,6 +250,9 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
 - 日報ダイアログ(`features/report`):
   - お客様の住所・世帯構成員は開いたあとに `GET /api/customers/:id` で読む(GAS版は一覧の中身をそのまま渡していた)。
     読み込むまでは見出しの住所が空で、「対象のお子様」は読めた時点で1人目を選ぶ。
+  - 日報モードでは AI に書いてもらう前に、対象のお子様(1人だけなら最初から選ぶ)・家庭の教育思考★・PSI を選べる
+    (`DailyAiSection`。評価の欄はメモより上に置き、PSI 2 以下を選ぶと管理者に知らせることを出す)。AI の結果に使った教育の言葉を出し、
+    PSI 1 のときは管理者へ連絡する知らせを出す。保存のときに生成の記録の ID(`aiGenerationId`)とお子様を送る。
   - 保存・AI生成の失敗は、サーバーが理由を返したらその理由を出す(GAS版は通信失敗の文言だけ)。「訪問終わりました」の
     失敗はGAS版と同じく「お知らせを送れませんでした…」。
   - 事故報告の保存は訪問日を送らない(APIの契約に訪問日が無い。GAS版の画面は送るがサーバーは使っておらず、記録日時はどちらもサーバーの保存時刻)。
