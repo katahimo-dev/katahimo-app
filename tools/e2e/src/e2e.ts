@@ -40,6 +40,8 @@ let WEB_URL = '';
 const TENANT = String(values.tenant);
 const ADMIN = { email: String(values.email), password: String(values.password) };
 const STAFF = { name: 'e2e 一般スタッフ', email: 'e2e-staff@example.com', password: 'e2e-staff-pass1' };
+/** 業務の記録(削除できないこと)を確かめる用の使い回しスタッフ(固定メール。何度流しても同じ人)。 */
+const RECORDS_STAFF = { name: 'e2e 記録ありスタッフ', email: 'e2e-staff-with-records@example.com' };
 const E2E_DIR = resolve(OUT_DIR, 'e2e');
 const VIEWPORT = { width: 390, height: 844 };
 const only = values.only ? new RegExp(values.only) : null;
@@ -465,6 +467,233 @@ async function runJourney() {
       return undefined;
     });
 
+    await step(page, 'settings-notifications-hidden', async () => {
+      // VAPID 未設定(.env)のため「通知」欄はサーバー側の設定で出さない
+      assert(
+        (await page.getByText('翌日の予定を通知する').filter(visible).count()) === 0,
+        'VAPID未設定なのに設定に「通知」欄が出ている',
+      );
+      await button(page, 'キャンセル').click();
+      await wait(page, 300);
+      return undefined;
+    });
+
+    let newStaffId = '';
+    const staffSuffix = Date.now();
+    const NEW_STAFF = {
+      name: 'e2e 追加スタッフ',
+      email: `e2e-admin-add-${staffSuffix}@example.com`,
+      phone: '090-1234-5678',
+      homeAddress: '東京都新宿区西新宿2-8-1',
+    };
+    let editedPromptBody = '';
+
+    await step(page, 'admin-tab-visible', async () => {
+      await switchTab(page, /管理$/);
+      await page.getByRole('tab', { name: '👤 スタッフ' }).waitFor({ timeout: 10_000 });
+      assert(
+        await page.getByRole('tab', { name: '🤖 AIプロンプト' }).isVisible(),
+        '管理者なのに「AIプロンプト」タブが無い',
+      );
+      assert(
+        await page.getByRole('tab', { name: '📄 操作ログ' }).isVisible(),
+        '管理者なのに「操作ログ」タブが無い',
+      );
+      return undefined;
+    });
+
+    await step(page, 'admin-staff-add', async () => {
+      await button(page, '＋ 登録').click();
+      const dialog = page.getByRole('dialog', { name: 'スタッフの登録' });
+      await dialog.waitFor({ timeout: 10_000 });
+      await dialog.getByLabel('氏名').fill(NEW_STAFF.name);
+      await dialog.getByLabel('メールアドレス').fill(NEW_STAFF.email);
+      await dialog.getByLabel('自宅住所').fill(NEW_STAFF.homeAddress);
+      const { staff } = await clickForResponse<{ staff: { id: string } }>(
+        page,
+        'POST',
+        '/api/admin/staff',
+        () => dialog.getByRole('button', { name: '登録する' }).click(),
+      );
+      newStaffId = staff.id;
+      return `${NEW_STAFF.email} (${newStaffId})`;
+    });
+
+    await step(page, 'admin-staff-list', async () => {
+      await page.getByPlaceholder('氏名・カナ・メールで探す').fill(NEW_STAFF.name);
+      await wait(page, 500);
+      assert(
+        (await page.getByText(NEW_STAFF.name, { exact: true }).filter(visible).count()) >= 1,
+        '登録したスタッフが一覧に出ない',
+      );
+      assert(
+        (await page.getByText('自宅住所なし').filter(visible).count()) === 0,
+        '自宅住所を入れたのに「自宅住所なし」の表示が出る',
+      );
+      return undefined;
+    });
+
+    await step(page, 'admin-staff-edit', async () => {
+      await page
+        .getByRole('button', { name: `${NEW_STAFF.name}さんを編集` })
+        .filter(visible)
+        .click();
+      const dialog = page.getByRole('dialog', { name: 'スタッフの編集' });
+      await dialog.waitFor({ timeout: 10_000 });
+      await dialog.getByLabel('電話').fill(NEW_STAFF.phone);
+      const { staff } = await clickForResponse<{ staff: { phone: string | null } }>(
+        page,
+        'PATCH',
+        `/api/admin/staff/${newStaffId}`,
+        () => dialog.getByRole('button', { name: '保存する' }).click(),
+      );
+      assert(staff.phone === NEW_STAFF.phone, `電話番号が保存されない: ${staff.phone}`);
+      await expectToast(page, '保存しました');
+      return staff.phone ?? '';
+    });
+
+    await step(page, 'admin-staff-delete', async () => {
+      await page
+        .getByRole('button', { name: `${NEW_STAFF.name}さんを編集` })
+        .filter(visible)
+        .click();
+      const dialog = page.getByRole('dialog', { name: 'スタッフの編集' });
+      await dialog.waitFor({ timeout: 10_000 });
+      await dialog.getByRole('button', { name: '🗑 このスタッフを削除する' }).click();
+      const confirmDialog = page.getByRole('alertdialog');
+      await confirmDialog.waitFor({ timeout: 5_000 });
+      await clickForResponse(page, 'DELETE', `/api/admin/staff/${newStaffId}`, () =>
+        confirmDialog.getByRole('button', { name: '削除する' }).click(),
+      );
+      await expectToast(page, '削除しました');
+      await wait(page, 500);
+      assert(
+        (await page.getByText(NEW_STAFF.name, { exact: true }).filter(visible).count()) === 0,
+        '削除したのに一覧に残っている',
+      );
+      return undefined;
+    });
+
+    await step(page, 'admin-staff-delete-conflict', async () => {
+      // 記録のあるスタッフ(固定メール。前回までの流したぶんで既にいれば使い回す)を用意する
+      const list = await page.request.get(`${WEB_URL}/api/admin/staff`);
+      assert(list.ok(), `GET /api/admin/staff が ${list.status()}`);
+      const { staff: allStaff } = (await list.json()) as { staff: { id: string; email: string }[] };
+      let recordsStaffId = allStaff.find((s) => s.email === RECORDS_STAFF.email)?.id;
+      if (!recordsStaffId) {
+        const created = await page.request.post(`${WEB_URL}/api/admin/staff`, {
+          data: { name: RECORDS_STAFF.name, email: RECORDS_STAFF.email, role: 'staff' },
+        });
+        assert(
+          created.status() === 201,
+          `POST /api/admin/staff が ${created.status()}: ${await created.text()}`,
+        );
+        recordsStaffId = ((await created.json()) as { staff: { id: string } }).staff.id;
+      }
+      // このスタッフの名義で日報を1件作る(業務の記録があると削除できなくなる)
+      const customers = await page.request.get(`${WEB_URL}/api/customers`);
+      assert(customers.ok(), `GET /api/customers が ${customers.status()}`);
+      const { customers: customerList } = (await customers.json()) as {
+        customers: { id: string; name: string }[];
+      };
+      const target = customerList.find((c) => c.name.startsWith('佐藤'));
+      assert(target, 'お客様「佐藤」が見つからない');
+      const report = await page.request.post(`${WEB_URL}/api/reports/daily`, {
+        data: {
+          staffId: recordsStaffId,
+          customerId: target.id,
+          reportDate: '2020-01-15',
+          startTime: '09:00',
+          endTime: '10:00',
+          inputText: '(e2e 削除できないことの確認用)',
+          internalText: '(e2e)',
+          customerText: '(e2e)',
+        },
+      });
+      assert(report.ok(), `POST /api/reports/daily が ${report.status()}: ${await report.text()}`);
+      const del = await page.request.delete(`${WEB_URL}/api/admin/staff/${recordsStaffId}`);
+      assert(del.status() === 409, `記録のあるスタッフの削除が409でない: ${del.status()}`);
+      const body = (await del.json()) as { message: string };
+      assert(/記録があるため削除できません/.test(body.message), `409の文言が想定と違う: ${body.message}`);
+      return body.message;
+    });
+
+    await step(page, 'admin-prompts-edit', async () => {
+      await page.getByRole('tab', { name: '🤖 AIプロンプト' }).click();
+      await wait(page, 600);
+      const item = page
+        .locator('li')
+        .filter({ has: page.locator('textarea') })
+        .first();
+      await item.waitFor({ timeout: 10_000 });
+      const textarea = item.locator('textarea');
+      const original = await textarea.inputValue();
+      editedPromptBody = `${original}\n(e2e 追記 ${Date.now()})`;
+      await textarea.fill(editedPromptBody);
+      const { prompts } = await clickForResponse<{ prompts: { key: string; body: string }[] }>(
+        page,
+        'PUT',
+        '/api/settings/admin/prompts',
+        () => button(page, /保存する/).click(),
+      );
+      assert(
+        prompts.some((p) => p.body === editedPromptBody),
+        'プロンプトの保存内容が一致しない',
+      );
+      return undefined;
+    });
+
+    await step(page, 'admin-prompts-reload-shows-edit', async () => {
+      await button(page, '🔄 読み込み直す').click();
+      await wait(page, 800);
+      const item = page
+        .locator('li')
+        .filter({ has: page.locator('textarea') })
+        .first();
+      const value = await item.locator('textarea').inputValue();
+      assert(value === editedPromptBody, '読み込み直しても保存した内容が出ない');
+      return undefined;
+    });
+
+    await step(page, 'admin-prompts-reset-default', async () => {
+      const item = page
+        .locator('li')
+        .filter({ has: page.locator('textarea') })
+        .first();
+      await item.getByRole('button', { name: '既定に戻す' }).click();
+      const { prompts } = await clickForResponse<{
+        prompts: { key: string; body: string; defaultBody: string }[];
+      }>(page, 'PUT', '/api/settings/admin/prompts', () => button(page, /保存する/).click());
+      const first = prompts[0];
+      assert(!!first && first.body === first.defaultBody, '既定に戻したのに保存内容が既定と違う');
+      return undefined;
+    });
+
+    await step(page, 'admin-logs-list', async () => {
+      await page.getByRole('tab', { name: '📄 操作ログ' }).click();
+      await wait(page, 600);
+      await page.getByRole('list', { name: '操作ログ' }).waitFor({ timeout: 10_000 });
+      await wait(page, 500);
+      const text = await page.getByRole('list', { name: '操作ログ' }).innerText();
+      assert(text.includes('スタッフの登録'), '操作ログに「スタッフの登録」が出ない');
+      assert(text.includes('スタッフ情報の変更'), '操作ログに「スタッフ情報の変更」が出ない');
+      assert(text.includes('スタッフの削除'), '操作ログに「スタッフの削除」が出ない');
+      return undefined;
+    });
+
+    await step(page, 'admin-logs-csv', async () => {
+      const res = await page.request.get(`${WEB_URL}/api/admin/audit-logs.csv`);
+      assert(res.ok(), `GET /api/admin/audit-logs.csv が ${res.status()}`);
+      const buf = await res.body();
+      assert(buf.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), 'CSVの先頭にBOMが無い');
+      const firstLine = buf.toString('utf8').split('\r\n')[0] ?? '';
+      assert(
+        firstLine.includes('日時') && firstLine.includes('操作') && firstLine.includes('レベル'),
+        `CSVのヘッダーが想定と違う: ${firstLine}`,
+      );
+      return `${buf.length}バイト`;
+    });
+
     // 一般スタッフの用意(管理者のCookieで)
     const staffId = await ensureStaff(page.request).catch((e: unknown) => {
       results.push({ name: 'create-staff', ok: false, detail: e instanceof Error ? e.message : String(e) });
@@ -499,6 +728,7 @@ async function runJourney() {
       });
 
       await step(staffPage, 'staff-attendance-no-admin-ui', async () => {
+        assert(!(await button(staffPage, /管理$/).isVisible()), '一般スタッフに「🛠 管理」タブが出ている');
         await switchTab(staffPage, /出勤簿/);
         await staffPage.locator('#calDayHeaderRow').waitFor({ timeout: 15_000 });
         assert(
@@ -534,6 +764,8 @@ async function runJourney() {
             }),
           ],
           ['GET /api/settings/admin', req.get(`${WEB_URL}/api/settings/admin`)],
+          ['GET /api/admin/audit-logs', req.get(`${WEB_URL}/api/admin/audit-logs`)],
+          ['DELETE /api/admin/staff/:id', req.delete(`${WEB_URL}/api/admin/staff/${staffId}`)],
           [
             'POST /api/admin/customers/import',
             req.post(`${WEB_URL}/api/admin/customers/import`, { data: {} }),
