@@ -154,6 +154,19 @@ describe('API: 領収書の一覧', () => {
     expect(next.body.nextCursor).toBeNull();
   });
 
+  it('書き換えた続きの位置(UUID でない ID・範囲外の日時)は DB に渡さずに 400(500 にしない)', async () => {
+    const forge = (value: unknown) =>
+      encodeURIComponent(Buffer.from(JSON.stringify(value), 'utf8').toString('base64url'));
+    for (const cursor of [
+      forge(['2026-09-01T00:00:00.000Z', '-'.repeat(36)]),
+      forge(['275760-09-13T00:00:00.000Z', '0192f1d2-0000-7000-8000-000000000001']),
+    ]) {
+      const res = await get(`/api/receipts?month=2026-09&allStaff=true&cursor=${cursor}`, t.admin.cookie);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ code: 'validation_failed' });
+    }
+  });
+
   it('別のテナントの領収書・スタッフは見えない(RLS)', async () => {
     const all = await list(otherTenant.admin, 'month=2026-09&allStaff=true');
     expect(all.body.receipts.map((r) => r.amountYen)).toEqual([7000]);

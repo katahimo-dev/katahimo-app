@@ -1,5 +1,6 @@
 import {
   canActForOthers,
+  decodeKeysetCursor,
   detectReceiptImageType,
   firstDayOfMonth,
   forbidden,
@@ -159,21 +160,8 @@ export function encodeReceiptCursor(position: ReceiptListPosition): string {
 }
 
 export function decodeReceiptCursor(cursor: string): ReceiptListPosition {
-  try {
-    const decoded: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-    if (
-      Array.isArray(decoded) &&
-      decoded.length === 2 &&
-      typeof decoded[0] === 'string' &&
-      !Number.isNaN(Date.parse(decoded[0])) &&
-      typeof decoded[1] === 'string' &&
-      /^[0-9a-f-]{36}$/i.test(decoded[1])
-    ) {
-      return { receiptedAt: new Date(decoded[0]), id: decoded[1] };
-    }
-  } catch {
-    // 下の検証エラーにする
-  }
+  const decoded = decodeKeysetCursor(cursor);
+  if (decoded) return { receiptedAt: decoded.at, id: decoded.id };
   throw invalid(
     '続きの位置の指定が正しくありません。最初から読み込み直してください',
     undefined,
@@ -189,6 +177,7 @@ async function logAccess(
   criteria: ReceiptListCriteria,
   resolved: ResolvedCriteria,
   count: number,
+  page: { continued: boolean; pageCount: number } | null = null,
 ) {
   await deps.appLog.write({
     tenantId: actor.tenantId,
@@ -201,6 +190,7 @@ async function logAccess(
       allStaff: criteria.allStaff,
       ...(criteria.customerId ? { customerId: criteria.customerId } : {}),
       count,
+      ...(page ?? {}),
     },
     ...actor.meta,
   });
@@ -208,8 +198,8 @@ async function logAccess(
 
 /**
  * 領収書の一覧(領収書日時の新しい順、keyset ページング)と、月全体の件数・合計(GAS版の「領収書一覧」シートの
- * 置き換え)。他のスタッフ・全スタッフ分を最初のページで開いたことを操作ログに残す(本人の閲覧は記録しない。
- * CLAUDE.md の Logging の方針)。
+ * 置き換え)。他のスタッフ・全スタッフ分を開いたことを、続きのページも含めて1ページごとに操作ログに残す
+ * (本人の閲覧は記録しない。CLAUDE.md の Logging の方針)。
  */
 export async function listReceipts(
   deps: ReceiptListDeps,
@@ -226,8 +216,13 @@ export async function listReceipts(
     ]);
     return { resolved, rows, summary };
   });
-  if (!after && resolved.crossStaff) {
-    await logAccess(deps, actor, 'receipt.list.viewed', criteria, resolved, summary.count);
+  // 他のスタッフ・全スタッフ分は続きのページも毎回残す(続きの位置は書き換えられるため、最初のページだけでは
+  // 読んだ範囲を追えない)
+  if (resolved.crossStaff) {
+    await logAccess(deps, actor, 'receipt.list.viewed', criteria, resolved, summary.count, {
+      continued: after !== null,
+      pageCount: Math.min(rows.length, criteria.limit),
+    });
   }
   const shown = rows.slice(0, criteria.limit);
   const last = shown.at(-1);

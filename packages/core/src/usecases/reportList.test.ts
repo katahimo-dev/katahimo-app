@@ -106,7 +106,7 @@ describe('日報・事故報告の一覧', () => {
     expect(ctx.appLog.byAction('report.list.viewed')).toHaveLength(0);
   });
 
-  it('keyset ページングで同じ時刻の記録も重複・抜けなく読める(続きのページは閲覧を記録しない)', async () => {
+  it('keyset ページングで同じ時刻の記録も重複・抜けなく読める(他のスタッフの記録を含むページは続きも1ページごとに記録する)', async () => {
     for (let i = 0; i < 5; i++) await saveDailyReport(ctx.deps, staff, daily({ inputText: `m${i}` }));
     const seen: string[] = [];
     let cursor: string | undefined;
@@ -118,11 +118,24 @@ describe('日報・事故報告の一覧', () => {
     }
     expect(seen).toHaveLength(5);
     expect(new Set(seen).size).toBe(5);
-    expect(ctx.appLog.byAction('report.list.viewed')).toHaveLength(1);
-    await expect(listReports(ctx.deps, coordinator, { limit: 2, cursor: 'xxx' })).rejects.toMatchObject({
-      code: 'validation_failed',
-      reason: 'invalid_cursor',
-    });
+    expect(
+      ctx.appLog.byAction('report.list.viewed').map((l) => [l.details?.continued, l.details?.count]),
+    ).toEqual([
+      [false, 2],
+      [true, 2],
+      [true, 1],
+    ]);
+    const forge = (value: unknown) => Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+    for (const cursor of [
+      'xxx',
+      forge(['2026-09-01T00:00:00.000Z', '-'.repeat(36)]),
+      forge(['99999-01-01T00:00:00.000Z', '0192f1d2-0000-7000-8000-000000000001']),
+    ]) {
+      await expect(listReports(ctx.deps, coordinator, { limit: 2, cursor })).rejects.toMatchObject({
+        code: 'validation_failed',
+        reason: 'invalid_cursor',
+      });
+    }
   });
 
   it('期間は366日まで、逆転した期間は断る', async () => {

@@ -1,3 +1,4 @@
+import { decodeKeysetCursor } from '../ids/keysetCursor';
 import type { CareRecordType } from '../model';
 import type { AccidentReportContent, DailyReportContent } from './types';
 
@@ -43,14 +44,8 @@ export function encodeHistoryCursor(cursor: { occurredAt: Date; id: string }): s
   );
 }
 
+/** 形の誤り(壊れた文字列・UUID でない ID・範囲外の時刻)は null(呼ぶ側が 400 にする)。 */
 export function decodeHistoryCursor(value: string): { occurredAt: Date; id: string } | null {
-  try {
-    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
-    if (!Array.isArray(parsed) || typeof parsed[0] !== 'string' || typeof parsed[1] !== 'string') return null;
-    const occurredAt = new Date(parsed[0]);
-    if (Number.isNaN(occurredAt.getTime()) || !/^[0-9a-f-]{36}$/.test(parsed[1])) return null;
-    return { occurredAt, id: parsed[1] };
-  } catch {
-    return null;
-  }
+  const decoded = decodeKeysetCursor(value);
+  return decoded ? { occurredAt: decoded.at, id: decoded.id } : null;
 }

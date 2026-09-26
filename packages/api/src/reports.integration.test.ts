@@ -181,6 +181,24 @@ describe('API: 日報・事故報告の一覧', () => {
     expect(new Set(ids).size).toBe(3);
   });
 
+  it('書き換えた続きの位置(UUID でない ID・範囲外の日時)は一覧・これまでの記録・操作ログとも 400(500 にしない)', async () => {
+    const forge = (value: unknown) =>
+      encodeURIComponent(Buffer.from(JSON.stringify(value), 'utf8').toString('base64url'));
+    const badId = forge(['2026-09-01T00:00:00.000Z', '-'.repeat(36)]);
+    const badDate = forge(['275760-09-13T00:00:00.000Z', '0192f1d2-0000-7000-8000-000000000001']);
+    for (const path of [
+      `/api/reports?cursor=${badId}`,
+      `/api/reports?cursor=${badDate}`,
+      `/api/reports/history?customerId=${t.customerId}&before=${badId}`,
+      `/api/reports/history?customerId=${t.customerId}&before=${badDate}`,
+      `/api/admin/audit-logs?cursor=${badId}`,
+      `/api/admin/audit-logs?cursor=${badDate}`,
+    ]) {
+      const res = await get(path, t.adminCookie);
+      expect(res.status, path).toBe(400);
+    }
+  });
+
   it('一般スタッフは staffId を送っても本人の記録だけ', async () => {
     const page = (await (
       await get(`/api/reports?staffId=${t.otherId}`, t.staffCookie)

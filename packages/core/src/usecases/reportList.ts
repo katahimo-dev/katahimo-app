@@ -273,7 +273,7 @@ function criteriaDetails(range: ReportRange, filter: CareRecordListFilter, extra
 /**
  * 日報・事故報告・ヒヤリハットの一覧(新しい順、keyset ページング。GAS版で管理者が「日報」「事故報告」
  * シートを見ていたことの置き換え)。コーディネーター・管理者は全員分(staffId で絞れる)、一般スタッフは
- * 本人の記録だけ。他のスタッフの記録を含む最初のページを開いたことを操作ログに残す。
+ * 本人の記録だけ。他のスタッフの記録を含むページを開いたことを、続きのページも含めて1ページごとに操作ログに残す。
  */
 export async function listReports(
   deps: ReportListDeps,
@@ -304,14 +304,19 @@ export async function listReports(
           : null,
     };
   });
-  if (!after && readsOthers(actor, page.filter.authorStaffId)) {
+  // 他のスタッフの記録を含むページは続きのページも毎回残す(続きの位置は書き換えられるため、最初のページだけでは
+  // 読んだ範囲を追えない)
+  if (readsOthers(actor, page.filter.authorStaffId)) {
     await deps.appLog.write({
       tenantId: actor.tenantId,
       level: 'INFO',
       action: 'report.list.viewed',
       actorStaffId: actor.staffId,
       targetStaffId: page.filter.authorStaffId ?? null,
-      details: criteriaDetails(page.range, page.filter, { count: page.reports.length }),
+      details: criteriaDetails(page.range, page.filter, {
+        count: page.reports.length,
+        continued: after !== null,
+      }),
       ...actor.meta,
     });
   }

@@ -100,7 +100,7 @@ describe('領収書の一覧・画像', () => {
     ]);
   });
 
-  it('コーディネーター・管理者は他のスタッフ・全スタッフ分を見られ、最初のページだけ閲覧を記録する', async () => {
+  it('コーディネーター・管理者は他のスタッフ・全スタッフ分を見られ、続きのページも含めて1ページごとに閲覧を記録する', async () => {
     const page = await listReceipts(
       ctx.deps,
       coordinator,
@@ -117,9 +117,22 @@ describe('領収書の一覧・画像', () => {
     });
     const logs = ctx.appLog.byAction('receipt.list.viewed');
     expect(logs.map((l) => [l.actorStaffId, l.targetStaffId, l.details])).toEqual([
-      [coordinator.staffId, other.staffId, { month: '2026-09', allStaff: false, count: 1 }],
-      [admin.staffId, null, { month: '2026-09', allStaff: true, count: 4 }],
+      [
+        coordinator.staffId,
+        other.staffId,
+        { month: '2026-09', allStaff: false, count: 1, continued: false, pageCount: 1 },
+      ],
+      [admin.staffId, null, { month: '2026-09', allStaff: true, count: 4, continued: false, pageCount: 3 }],
+      [admin.staffId, null, { month: '2026-09', allStaff: true, count: 4, continued: true, pageCount: 1 }],
     ]);
+    // 本人の分は続きのページも記録しない
+    const own = await listReceipts(ctx.deps, staff, { ...criteria(staff), limit: 1 });
+    await listReceipts(ctx.deps, staff, {
+      ...criteria(staff),
+      limit: 1,
+      cursor: own.nextCursor ?? undefined,
+    });
+    expect(ctx.appLog.byAction('receipt.list.viewed')).toHaveLength(3);
   });
 
   it('お客様で絞り込める。お客様の指定なしは入力された氏名を出す', async () => {
@@ -160,6 +173,34 @@ describe('領収書の一覧・画像', () => {
     await expect(listReceipts(ctx.deps, staff, { ...criteria(staff), cursor: 'xxx' })).rejects.toMatchObject({
       code: 'validation_failed',
     });
+  });
+
+  it('書き換えた続きの位置(UUID でない ID・範囲外や存在しない日時・壊れた形)は DB に渡さずに 400', async () => {
+    const forge = (value: unknown) => Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+    const id = '0192f1d2-0000-7000-8000-000000000001';
+    for (const cursor of [
+      forge(['2026-09-01T00:00:00.000Z', '------------------------------------']),
+      forge(['2026-09-01T00:00:00.000Z', 'zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz']),
+      forge(['2026-09-01T00:00:00.000Z', `${id}0`]),
+      forge(['275760-09-13T00:00:00.000Z', id]),
+      forge(['1900-01-01T00:00:00.000Z', id]),
+      forge(['2026-02-30T00:00:00.000Z', id]),
+      forge(['2026-09-01', id]),
+      forge(['1', id]),
+      forge([0, id]),
+      forge(['2026-09-01T00:00:00.000Z', id, 'extra']),
+      'xxx',
+    ]) {
+      expect(() => decodeReceiptCursor(cursor), cursor).toThrow(
+        expect.objectContaining({ code: 'validation_failed', reason: 'invalid_cursor' }),
+      );
+    }
+    await expect(
+      listReceipts(ctx.deps, admin, {
+        ...criteria(admin, { allStaff: true }),
+        cursor: forge(['2026-09-01T00:00:00.000Z', '-'.repeat(36)]),
+      }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
   });
 
   it('続きの位置は往復できる', () => {
