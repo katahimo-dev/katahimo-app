@@ -1,6 +1,6 @@
 {
   "name": "@katahimo/gas-preview",
-  "version": "0.1.0",
+  "version": "1.0.0-baseline",
   "private": true,
   "type": "module",
   "description": "GAS版の画面と新アプリの画面を同じデータで撮影して見比べるためのハーネス",
