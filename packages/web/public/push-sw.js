@@ -16,7 +16,7 @@ function noticeOf(data) {
     return {
       title: notice.title,
       body: typeof notice.body === 'string' ? notice.body : '',
-      url: typeof notice.url === 'string' && notice.url.startsWith('/') ? notice.url : '/',
+      url: typeof notice.url === 'string' && /^\/(?!\/)/.test(notice.url) ? notice.url : '/',
       tag: typeof notice.tag === 'string' ? notice.tag : FALLBACK_NOTICE.tag,
     };
   } catch {

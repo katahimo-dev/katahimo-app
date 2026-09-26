@@ -1,14 +1,20 @@
 import { useEffect } from 'react';
+import { useAdminTargetStaff } from '../../app/adminTargetStaff';
 import { useHomeTabs } from '../../app/homeTabs';
+import { useSession } from '../auth';
 import { openScheduleLink, scheduleLinkDateOfMessage, urlWithoutScheduleLink } from './scheduleLink';
 
 /**
  * 通知(翌日の予定のお知らせ)から予定タブを開く(画面の骨格が1回だけ使う)。
  * 起動時のリンクは予定タブが最初の描画で読むので、ここでは URL から取り除くだけにする(再読み込みで同じ日に戻らないように)。
  * 開いている画面で通知を押したときは Service Worker のメッセージを受け、予定タブに切り替えてその日を開く。
+ * お知らせは本人の予定なので、管理者が「表示するスタッフ」で他の人を選んでいても本人に戻す。
  */
 export function useScheduleLinkNavigation(): void {
   const { switchTab } = useHomeTabs();
+  const { setTargetStaffId } = useAdminTargetStaff();
+  const { user } = useSession();
+  const ownStaffId = user.staffId;
 
   useEffect(() => {
     const cleaned = urlWithoutScheduleLink(window.location.href);
@@ -21,10 +27,11 @@ export function useScheduleLinkNavigation(): void {
     const onMessage = (event: MessageEvent) => {
       const date = scheduleLinkDateOfMessage(event.data, window.location.origin);
       if (!date) return;
+      setTargetStaffId(ownStaffId);
       switchTab('schedule');
       openScheduleLink(date);
     };
     serviceWorker.addEventListener('message', onMessage);
     return () => serviceWorker.removeEventListener('message', onMessage);
-  }, [switchTab]);
+  }, [switchTab, setTargetStaffId, ownStaffId]);
 }

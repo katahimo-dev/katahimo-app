@@ -61,3 +61,14 @@ export function applicationServerKeyOf(base64Url: string): Uint8Array<ArrayBuffe
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
+
+/**
+ * 購読に使われた鍵(PushSubscription.options.applicationServerKey)が、今の VAPID の公開鍵と同じか。
+ * ブラウザが鍵を教えない(null)ときは確かめられないため同じとみなす。
+ */
+export function usesApplicationServerKey(key: ArrayBuffer | null, publicKey: string): boolean {
+  if (key === null) return true;
+  const current = applicationServerKeyOf(publicKey);
+  const used = new Uint8Array(key);
+  return used.length === current.length && used.every((byte, i) => byte === current[i]);
+}

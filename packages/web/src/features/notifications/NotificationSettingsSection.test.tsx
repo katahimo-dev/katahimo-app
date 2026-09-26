@@ -6,14 +6,20 @@ import { STORAGE_KEYS, userStorageKey } from '../../lib/storage';
 import { createWrapper, TEST_USER } from '../../test/providers';
 import { showErrorToast, showToast } from '../../ui/toast';
 import { NotificationSettingsSection } from './NotificationSettingsSection';
-import { currentDeviceSubscription, subscribeDevice } from './pushDevice';
+import { currentDeviceSubscription, subscribeDevice, subscriptionUsesKey } from './pushDevice';
 import { PUSH_AVAILABILITY_MESSAGES, type PushEnvironment, readPushEnvironment } from './pushSupport';
 import { PUSH_DISABLED_MESSAGE, PUSH_ENABLED_MESSAGE, PUSH_TEST_SENT_MESSAGE } from './usePushSettings';
 
 vi.mock('../../api/push', () => ({
   pushApi: { config: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(), sendTest: vi.fn() },
 }));
-vi.mock('./pushDevice', () => ({ currentDeviceSubscription: vi.fn(), subscribeDevice: vi.fn() }));
+vi.mock('./pushDevice', () => ({
+  currentDeviceSubscription: vi.fn(),
+  subscribeDevice: vi.fn(),
+  subscriptionUsesKey: vi.fn(),
+  releaseForeignPushSubscription: vi.fn(async () => undefined),
+  stopPushOnThisDevice: vi.fn(async () => undefined),
+}));
 vi.mock('./pushSupport', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./pushSupport')>()),
   readPushEnvironment: vi.fn(),
@@ -63,6 +69,7 @@ describe('設定の「通知」', () => {
     vi.mocked(pushApi.unsubscribe).mockResolvedValue({ ok: true });
     vi.mocked(readPushEnvironment).mockReturnValue(supported);
     vi.mocked(currentDeviceSubscription).mockResolvedValue(null);
+    vi.mocked(subscriptionUsesKey).mockReturnValue(true);
   });
   afterEach(() => {
     vi.clearAllMocks();
@@ -133,6 +140,46 @@ describe('設定の「通知」', () => {
     expect(subscription.unsubscribe).toHaveBeenCalled();
     expect(localStorage.getItem(storageKey)).toBeNull();
     expect(showToast).toHaveBeenCalledWith(PUSH_DISABLED_MESSAGE);
+  });
+
+  it('サーバーの鍵を作り直していたら、開いたときに今の鍵で購読し直して登録し直す', async () => {
+    const old = deviceSubscription('https://fcm.googleapis.com/fcm/send/old');
+    const renewed = deviceSubscription();
+    vi.mocked(currentDeviceSubscription).mockResolvedValue(old);
+    vi.mocked(subscriptionUsesKey).mockReturnValue(false);
+    vi.mocked(subscribeDevice).mockResolvedValue(renewed);
+    localStorage.setItem(storageKey, old.endpoint);
+    renderSection();
+    const sw = await toggle();
+    await waitFor(() => expect((sw as HTMLInputElement).checked).toBe(true));
+    expect(subscribeDevice).toHaveBeenCalledWith('BPublicKey');
+    expect(pushApi.subscribe).toHaveBeenCalledWith(expect.objectContaining({ endpoint: ENDPOINT }));
+    expect(localStorage.getItem(storageKey)).toBe(ENDPOINT);
+  });
+
+  it('購読し直せなければオフに見せる', async () => {
+    vi.mocked(currentDeviceSubscription).mockResolvedValue(deviceSubscription());
+    vi.mocked(subscriptionUsesKey).mockReturnValue(false);
+    vi.mocked(subscribeDevice).mockRejectedValue(new Error('push service error'));
+    localStorage.setItem(storageKey, ENDPOINT);
+    renderSection();
+    await waitFor(() => expect(subscribeDevice).toHaveBeenCalled());
+    const sw = await toggle();
+    await waitFor(() => expect((sw as HTMLInputElement).disabled).toBe(false));
+    expect((sw as HTMLInputElement).checked).toBe(false);
+    expect(localStorage.getItem(storageKey)).toBeNull();
+  });
+
+  it('続けて押しても1回だけ登録する', async () => {
+    vi.stubGlobal('Notification', { permission: 'default', requestPermission: async () => 'granted' });
+    vi.mocked(readPushEnvironment).mockReturnValue({ ...supported, permission: 'default' });
+    vi.mocked(subscribeDevice).mockResolvedValue(deviceSubscription());
+    renderSection();
+    const sw = await toggle();
+    fireEvent.click(sw);
+    fireEvent.click(sw);
+    await waitFor(() => expect(pushApi.subscribe).toHaveBeenCalled());
+    expect(subscribeDevice).toHaveBeenCalledTimes(1);
   });
 
   it('同じ端末で別の人がオンにした購読は、本人にはオフに見える', async () => {

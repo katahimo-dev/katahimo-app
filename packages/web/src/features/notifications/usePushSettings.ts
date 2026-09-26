@@ -1,12 +1,12 @@
 import { pushSubscribeRequestSchema } from '@katahimo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiRequestError, NetworkError } from '../../api/client';
 import { pushApi } from '../../api/push';
 import { readStorage, removeStorage, STORAGE_KEYS, userStorageKey, writeStorage } from '../../lib/storage';
 import { showErrorToast, showToast } from '../../ui/toast';
 import { useSession } from '../auth';
-import { currentDeviceSubscription, subscribeDevice } from './pushDevice';
+import { currentDeviceSubscription, subscribeDevice, subscriptionUsesKey } from './pushDevice';
 import { type PushAvailability, pushAvailabilityOf, readPushEnvironment } from './pushSupport';
 
 export const PUSH_ENABLED_MESSAGE = '翌日の予定を通知します';
@@ -58,8 +58,26 @@ export function usePushSettings(open: boolean): PushSettings {
   );
   const [enabled, setEnabledState] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 押した直後の2回目を止める(state は次の描画まで古い値のため、ref で見る)
+  const busyRef = useRef(false);
 
-  // 開くたびに、この端末の状態(対応・許可・購読)を読み直す(端末の設定で許可を変えることがあるため)
+  /** この端末を今の鍵で購読し、本人の購読としてサーバーに登録する。 */
+  const register = useCallback(
+    async (key: string) => {
+      const subscription = await subscribeDevice(key);
+      const request = pushSubscribeRequestSchema.safeParse(subscription.toJSON());
+      if (!request.success) {
+        await subscription.unsubscribe();
+        throw new Error('対応していないプッシュサービスです');
+      }
+      await pushApi.subscribe(request.data);
+      writeStorage(storageKey, subscription.endpoint);
+    },
+    [storageKey],
+  );
+
+  // 開くたびに、この端末の状態(対応・許可・購読)を読み直す(端末の設定で許可を変えることがあるため)。
+  // 本人の購読がサーバーの鍵を作り直す前の鍵のものなら、今の鍵で購読し直して登録し直す(許可済みなので聞き直さない)
   useEffect(() => {
     if (!open || !publicKey) return;
     let cancelled = false;
@@ -70,18 +88,31 @@ export function usePushSettings(open: boolean): PushSettings {
       setEnabledState(false);
       return;
     }
-    currentDeviceSubscription()
-      .then((subscription) => {
-        if (!cancelled)
-          setEnabledState(subscription !== null && readStorage(storageKey) === subscription.endpoint);
-      })
+    const refresh = async () => {
+      const subscription = await currentDeviceSubscription();
+      if (!subscription || readStorage(storageKey) !== subscription.endpoint) return false;
+      if (subscriptionUsesKey(subscription, publicKey)) return true;
+      await register(publicKey);
+      return true;
+    };
+    busyRef.current = true;
+    setBusy(true);
+    void refresh()
       .catch(() => {
-        if (!cancelled) setEnabledState(false);
+        removeStorage(storageKey);
+        return false;
+      })
+      .then((on) => {
+        if (!cancelled) setEnabledState(on);
+      })
+      .finally(() => {
+        busyRef.current = false;
+        setBusy(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [open, publicKey, storageKey]);
+  }, [open, publicKey, storageKey, register]);
 
   const turnOn = useCallback(
     async (key: string) => {
@@ -91,18 +122,11 @@ export function usePushSettings(open: boolean): PushSettings {
         setAvailability(pushAvailabilityOf(readPushEnvironment()));
         return;
       }
-      const subscription = await subscribeDevice(key);
-      const request = pushSubscribeRequestSchema.safeParse(subscription.toJSON());
-      if (!request.success) {
-        await subscription.unsubscribe();
-        throw new Error('対応していないプッシュサービスです');
-      }
-      await pushApi.subscribe(request.data);
-      writeStorage(storageKey, subscription.endpoint);
+      await register(key);
       setEnabledState(true);
       showToast(PUSH_ENABLED_MESSAGE);
     },
-    [storageKey],
+    [register],
   );
 
   const turnOff = useCallback(async () => {
@@ -118,11 +142,15 @@ export function usePushSettings(open: boolean): PushSettings {
 
   const setEnabled = useCallback(
     (next: boolean) => {
-      if (busy || !publicKey) return;
+      if (busyRef.current || !publicKey) return;
+      busyRef.current = true;
       setBusy(true);
-      void (next ? turnOn(publicKey) : turnOff()).catch(showSetupError).finally(() => setBusy(false));
+      void (next ? turnOn(publicKey) : turnOff()).catch(showSetupError).finally(() => {
+        busyRef.current = false;
+        setBusy(false);
+      });
     },
-    [busy, publicKey, turnOn, turnOff],
+    [publicKey, turnOn, turnOff],
   );
 
   const test = useMutation({

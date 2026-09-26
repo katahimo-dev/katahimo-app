@@ -104,7 +104,7 @@ src/
 - 共有部分(`app/`・`api/client.ts`・`api/queryKeys.ts`・`lib/`・`ui/`)は全機能が使う。既存の関数の形を変えるときは使っている所を全て直す。
 - **通知→予定タブ**: 翌日の予定のお知らせは `/?schedule=YYYY-MM-DD` を開く。予定タブ(`useScheduleView`)は最初の描画で URL の日付を
   選び(明日なら「🌙 明日」)、`AppShell` の `useScheduleLinkNavigation` が URL から取り除く。開いている画面で通知を押したときは
-  Service Worker(`public/push-sw.js`)のメッセージを受けて予定タブに切り替え、`openScheduleLink` で日付を知らせる
+  Service Worker(`public/push-sw.js`)のメッセージを受けて表示するスタッフを本人に戻し、予定タブに切り替え、`openScheduleLink` で日付を知らせる
   (`features/schedule/scheduleLink.ts`)。
 - **Service Worker**: vite-plugin-pwa の generateSW が作る `sw.js`(事前キャッシュ・新しい版のお知らせ)が、`workbox.importScripts` で
   `public/push-sw.js`(通知の表示と通知を押したときの処理)を読む。テストは `src/test/pushServiceWorker.test.ts`(`node:vm` で動かす)。
@@ -185,7 +185,8 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
 ログアウト・セッション切れのとき(`features/auth`):
 
 - ログアウト: その人の値(上の表の `@<法人ID>/<スタッフID>` のもの)と、表示用の2時間キャッシュ(ルート・週間予定・今月のまとめ)を
-  消し、TanStack Query のキャッシュも捨てる。その前に、この端末で本人がオンにしていた通知をやめる(設定の「ログアウト」)。
+  消し、TanStack Query のキャッシュも捨てる。その前に、この端末で本人がオンにしていた通知をやめる(`useSession().logout` の中。どの画面からのログアウトでも)。
+  ログインしたときは、本人がオンにしたのではない端末の購読(前にこの端末を使った人のもの)を端末でやめる(`releaseForeignPushSubscription`)。
 - セッション切れ(401): 表示用の2時間キャッシュと TanStack Query のキャッシュを捨てる。書きかけの日報などその人の値は、
   その人にしか見えないので残す(もう一度ログインすると続きから書ける。GAS版と同じ)。
 - お客様タブの探す欄の文字はログイン後の画面(AppShell)の中だけに持つので、ログイン画面に戻ると空になる。
