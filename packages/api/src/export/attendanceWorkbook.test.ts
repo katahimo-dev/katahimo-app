@@ -144,6 +144,17 @@ describe('出勤簿の Excel の書き出し', () => {
       );
       expect(ws.getCell(`A${layout.totals}`).value).toBe('合計');
       expect(ws.getCell(`A${layout.receiptTotal}`).value).toBe('領収書月集計(円)');
+      // 会社負担・お客様請求分は明細の区分の列で SUMIFS(会社負担もスタッフへの支払いの月集計に入る)
+      const amounts = `$H$${layout.receiptFirst}:$H$${layout.receiptLast}`;
+      const billing = `$I$${layout.receiptFirst}:$I$${layout.receiptLast}`;
+      expect(formulaOf(ws, `F${layout.receiptCompanyPaid}`)).toBe(
+        `SUMIFS(${amounts}, ${billing}, "会社負担")`,
+      );
+      expect(formulaOf(ws, `F${layout.receiptCustomerBillable}`)).toBe(
+        `SUMIFS(${amounts}, ${billing}, "お客様請求")`,
+      );
+      expect(ws.getCell(`A${layout.receiptCompanyPaid}`).value).toBe('うち会社負担(円)');
+      expect(ws.getCell(`A${layout.receiptCustomerBillable}`).value).toBe('お客様請求分(円)');
       expect(ws.views[0]).toMatchObject({ state: 'frozen', xSplit: 2, ySplit: 3 });
       expect(ws.pageSetup).toMatchObject({ orientation: 'landscape', fitToWidth: 1 });
       expect(ws.getCell('C3').value).toBe('#1訪問先等');
@@ -181,7 +192,11 @@ describe('出勤簿の Excel の書き出し', () => {
     expect(ws.getCell(`C${first}`).value).toBe('佐藤様');
     expect(ws.getCell(`D${first}`).value).toBe('スーパー');
     expect(ws.getCell(`H${first}`).value).toBe(1200);
-    expect(ws.getCell(`I${first}`).value).toBe('牛乳を買いました');
+    expect(ws.getCell(`I${layout.receiptHeader}`).value).toBe('区分');
+    expect(ws.getCell(`I${first}`).value).toBe('お客様請求');
+    expect(ws.getCell(`I${first + 1}`).value).toBe('会社負担');
+    expect(ws.getCell(`J${first}`).value).toBe('牛乳を買いました');
+    expect(ws.getCell(`J${first}`).isMerged).toBe(true);
     // 店名に書かれた「=HYPERLINK(…)」は式にしない
     expect(ws.getCell(`D${first + 2}`).value).toBe('=HYPERLINK("https://example.com")');
     expect(ws.getCell(`H${first + 2}`).value).toBeNull();
@@ -212,6 +227,10 @@ describe('出勤簿の Excel の書き出し', () => {
     expect(value(`F${layout.receiptTotal}`)).toBe(month.receipts.total);
     expect(month.receipts.total).toBe(2450);
     expect(value(`F${layout.receiptCount}`)).toBe(SAMPLE_RECEIPTS.length);
+    // 会社負担(800円。金額の無い会社負担の1枚は0円)とお客様請求分の内訳。足すと月集計
+    expect(value(`F${layout.receiptCompanyPaid}`)).toBe(month.receipts.companyPaid);
+    expect(value(`F${layout.receiptCustomerBillable}`)).toBe(month.receipts.customerBillable);
+    expect([month.receipts.companyPaid, month.receipts.customerBillable]).toEqual([800, 1650]);
     // 月の集計の欄は合計の行を指す
     expect(value(`F${layout.summaryFirst}`)).toBe(month.totals.workedMinutes);
 
@@ -235,6 +254,8 @@ describe('出勤簿の Excel の書き出し', () => {
     expect(resultOf(ws, `AQ${layout.totals}`)).toBe(2450);
     expect(resultOf(ws, `F${layout.receiptTotal}`)).toBe(2450);
     expect(resultOf(ws, `F${layout.receiptCount}`)).toBe(SAMPLE_RECEIPTS.length);
+    expect(resultOf(ws, `F${layout.receiptCompanyPaid}`)).toBe(800);
+    expect(resultOf(ws, `F${layout.receiptCustomerBillable}`)).toBe(1650);
     expect(resultOf(ws, `F${layout.summaryFirst}`)).toBe(month.totals.workedMinutes);
   });
 

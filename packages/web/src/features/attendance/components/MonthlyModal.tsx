@@ -203,6 +203,13 @@ function MonthlySummary({
         <div className="text-base font-bold text-gray-800 mt-2">
           今月の領収書 合計 {formatYen(Number(month.receipts.total || 0))}
         </div>
+        {month.receipts.companyPaid > 0 ? (
+          // 会社負担もスタッフへの支払い(合計)に入る。お客様に請求するのは会社負担を除いた分
+          <div className="text-base text-gray-700 mt-1">
+            うち会社負担 {formatYen(month.receipts.companyPaid)} ／ お客様請求{' '}
+            {formatYen(month.receipts.customerBillable)}
+          </div>
+        ) : null}
       </div>
       <div className="space-y-3 mt-3">
         {cards.length === 0 ? (
@@ -226,7 +233,14 @@ function MonthlySummary({
               className="flex items-center justify-between gap-3 py-1 border-b border-gray-100"
             >
               <span className="text-base text-gray-700">{r.date}</span>
-              <span className="text-base font-bold text-gray-800">{formatYen(r.amount)}</span>
+              <span className="text-base font-bold text-gray-800 text-right">
+                {formatYen(r.amount)}
+                {r.companyPaid > 0 ? (
+                  <span className="block text-sm font-normal text-gray-700">
+                    うち会社負担 {formatYen(r.companyPaid)}
+                  </span>
+                ) : null}
+              </span>
             </div>
           ))
         )}

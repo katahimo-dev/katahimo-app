@@ -73,7 +73,22 @@ export interface TableCatalog {
   indexes: { name: string; definition: string }[];
   triggers: string[];
   policies: string[];
+  /** ロール → 表の権限('INSERT,SELECT' のようにカンマ区切り)。 */
   grants: Record<string, string>;
+  /** ロール → 権限 → 列ごとに与えた列(GRANT UPDATE (列, …) ON …。列の順)。 */
+  columnGrants: Record<string, Record<string, string[]>>;
+}
+
+/** 1ロールの権限の表記(表の権限の後に、列ごとの権限を `UPDATE(列, …)` で足す。無ければ —)。 */
+export function formatGrants(
+  table: string | undefined,
+  columns: Record<string, string[]> | undefined,
+): string {
+  const parts = table ? table.split(',') : [];
+  for (const [privilege, names] of Object.entries(columns ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+    parts.push(`${privilege}(${names.join(', ')})`);
+  }
+  return parts.length ? parts.join(',') : '—';
 }
 
 const CONSTRAINT_KIND: Record<string, string> = { p: 'PK', u: 'UNIQUE', f: 'FK', c: 'CHECK', x: 'EXCLUDE' };
@@ -110,7 +125,8 @@ export function renderTable(table: TableCatalog, docs: SchemaDocs[string] | unde
   if (table.triggers.length) notes.push(`トリガー: ${table.triggers.map((t) => `\`${t}\``).join('、')}`);
   const policies = table.policies.length ? `(${table.policies.map((p) => `\`${p}\``).join('・')})` : '';
   notes.push(`RLS: ${table.rls ? (table.force ? 'FORCE' : '有効') : 'なし'}${policies}`);
-  notes.push(`権限: app=${table.grants.katahimo_app ?? '—'} / worker=${table.grants.katahimo_worker ?? '—'}`);
+  const grantsOf = (role: string) => formatGrants(table.grants[role], table.columnGrants[role]);
+  notes.push(`権限: app=${grantsOf('katahimo_app')} / worker=${grantsOf('katahimo_worker')}`);
   lines.push(`${notes.join('。')}。`, '');
   return lines.join('\n');
 }

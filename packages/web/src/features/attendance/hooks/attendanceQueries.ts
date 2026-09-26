@@ -12,6 +12,7 @@ import { removeStorage } from '../../../lib/storage';
 import {
   type Cached,
   clearAttendanceCaches,
+  clearMonthlyCaches,
   monthCacheKey,
   readCache,
   weekCacheKey,
@@ -146,7 +147,13 @@ export function useAttendanceInvalidation() {
     [queryClient, staffKey],
   );
 
-  return { reloadAfterChange, reloadDayAndWeek, reloadMonth };
+  /** 今月のまとめを全て読み直す(領収書を取消したとき。領収書の合計が変わる) */
+  const reloadMonths = useCallback(() => {
+    clearMonthlyCaches();
+    void queryClient.resetQueries({ queryKey: [...attendanceKeys.all, 'month'] });
+  }, [queryClient]);
+
+  return { reloadAfterChange, reloadDayAndWeek, reloadMonth, reloadMonths };
 }
 
 function clearMonthCache(staffKey: string, yearMonth: string) {

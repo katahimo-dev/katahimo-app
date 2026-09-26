@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildAccidentReportNotificationText,
   buildDailyReportNotificationText,
+  buildReceiptCancelNotificationText,
   buildReceiptNotificationText,
 } from './notificationText';
 
@@ -77,7 +78,7 @@ describe('buildReceiptNotificationText', () => {
       staffName: '鈴木',
       customerName: '佐藤様',
       receiptTimestamp: '2026/08/28 12:00:00',
-      registeredImages: [{ amount: '1000', storeName: 'コンビニ' }],
+      registeredImages: [{ amount: '1000', storeName: 'コンビニ', companyPaid: false }],
       handoffText: '  よろしく  ',
     });
     expect(text).toBe(
@@ -90,9 +91,55 @@ describe('buildReceiptNotificationText', () => {
       staffName: '鈴木',
       customerName: null,
       receiptTimestamp: '2026/08/28 12:00:00',
-      registeredImages: [{ amount: '', storeName: '' }],
+      registeredImages: [{ amount: '', storeName: '', companyPaid: false }],
       handoffText: '',
     });
     expect(text).toBe('【領収書登録】\n担当: 鈴木\n日付: 2026/08/28\n名称: 未入力 / 金額: 未入力');
+  });
+
+  it('会社負担の画像は行の末尾にそう書く', () => {
+    const text = buildReceiptNotificationText({
+      staffName: '鈴木',
+      customerName: '佐藤様',
+      receiptTimestamp: '2026/08/28 12:00:00',
+      registeredImages: [
+        { amount: '1000', storeName: 'コンビニ', companyPaid: false },
+        { amount: '600', storeName: '駐車場', companyPaid: true },
+      ],
+      handoffText: '',
+    });
+    expect(text).toBe(
+      '【領収書登録】\n担当: 鈴木\n顧客名: 佐藤様\n日付: 2026/08/28\n名称: コンビニ / 金額: 1000円\n名称: 駐車場 / 金額: 600円 / 会社負担(お客様に請求しない)',
+    );
+  });
+});
+
+describe('buildReceiptCancelNotificationText', () => {
+  it('担当・取消した人・お客様・日時・領収書の行・理由を書く', () => {
+    expect(
+      buildReceiptCancelNotificationText({
+        staffName: '鈴木',
+        cancelledByName: '管理 太郎',
+        customerName: '佐藤様',
+        receiptTimestamp: '2026/09/10 12:00',
+        image: { amount: '600', storeName: '駐車場', companyPaid: true },
+        reason: '金額の入力を間違えた',
+      }),
+    ).toBe(
+      '【領収書取消】\n担当: 鈴木\n取消した人: 管理 太郎\n顧客名: 佐藤様\n日時: 2026/09/10 12:00\n名称: 駐車場 / 金額: 600円 / 会社負担(お客様に請求しない)\n取消の理由: 金額の入力を間違えた',
+    );
+  });
+
+  it('本人の取消・お客様の指定なし・理由なしはその行を省く', () => {
+    expect(
+      buildReceiptCancelNotificationText({
+        staffName: '鈴木',
+        cancelledByName: null,
+        customerName: null,
+        receiptTimestamp: '2026/09/10 12:00',
+        image: { amount: '', storeName: '', companyPaid: false },
+        reason: null,
+      }),
+    ).toBe('【領収書取消】\n担当: 鈴木\n日時: 2026/09/10 12:00\n名称: 未入力 / 金額: 未入力');
   });
 });

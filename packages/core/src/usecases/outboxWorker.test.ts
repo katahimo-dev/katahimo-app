@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { PermanentOutboxError } from '../domain';
 import { processNextOutboxMessage } from './outboxWorker';
+import { cancelReceipt } from './receiptCancel';
 import { uploadReceipts } from './receipts';
 import { saveDailyReport } from './reports';
 import type { Actor } from './requestMeta';
@@ -144,6 +145,24 @@ describe('outbox ワーカー', () => {
     expect(await ctx.drain()).toMatchObject({ done: 1 });
     expect(ctx.sender.receipts).toHaveLength(0);
     expect(ctx.appLog.byAction('mirror.receipt.image_missing')).toHaveLength(1);
+  });
+
+  it('写す前に取消された領収書は送らずに完了にする(残りの領収書は送る)', async () => {
+    await uploadReceipts(ctx.deps, staff, {
+      customerId,
+      images: [
+        { data: JPEG, amount: '100', storeName: '店A' },
+        { data: JPEG, amount: '200', storeName: '店B' },
+      ],
+      fallbackTimestamp: '2026/09/25 10:00:00',
+      handoffText: '',
+    });
+    const target = ctx.data().receipts.find((r) => r.storeName === '店A');
+    if (!target) throw new Error('登録できませんでした');
+    await cancelReceipt(ctx.deps, staff, { receiptId: target.id, rowVersion: target.rowVersion });
+    expect(await ctx.drain()).toMatchObject({ done: 2 });
+    expect(ctx.sender.receipts.map((r) => r.storeName)).toEqual(['店B']);
+    expect(ctx.data().outbox.every((m) => m.status === 'done')).toBe(true);
   });
 
   it('領収書のミラーは申し送りを束の最初の1枚にだけ付ける', async () => {

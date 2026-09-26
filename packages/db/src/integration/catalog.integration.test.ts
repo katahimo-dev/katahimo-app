@@ -88,6 +88,28 @@ describe('スキーマの約束事(カタログ)', () => {
     expect(await has('katahimo_app', 'platform.tenants', 'UPDATE')).toBe(false);
   });
 
+  it('領収書は会計の記録: アプリは消せず、登録の後に変えられるのは取消の列・版・重複の判定の代表だけ', async () => {
+    const ok = async (query: ReturnType<typeof sql>) =>
+      (await rows<{ ok: boolean }>(sql`select ${query} as ok`))[0]?.ok;
+    for (const table of ['receipts', 'receipt_uploads']) {
+      expect(await ok(sql`has_table_privilege('katahimo_app', ${table}, 'DELETE')`)).toBe(false);
+      expect(await ok(sql`has_table_privilege('katahimo_app', ${table}, 'UPDATE')`)).toBe(false);
+      expect(await ok(sql`has_table_privilege('katahimo_app', ${table}, 'INSERT')`)).toBe(true);
+    }
+    const updatable = await rows<{ column: string }>(sql`
+      select a.attname as column from pg_attribute a
+      where a.attrelid = 'public.receipts'::regclass and a.attnum > 0 and not a.attisdropped
+        and has_column_privilege('katahimo_app', a.attrelid, a.attnum, 'UPDATE')
+      order by a.attname`);
+    expect(updatable.map((c) => c.column)).toEqual([
+      'cancel_reason',
+      'cancelled_at',
+      'cancelled_by',
+      'dedupe_primary',
+      'row_version',
+    ]);
+  });
+
   it('ワーカーはジョブが使う表・操作だけを持つ(認証情報・秘密値・AIプロンプト・マッチングの表には触れない)', async () => {
     // information_schema.role_table_grants は接続したロール(katahimo_app)に関わる権限しか見せないため、
     // has_table_privilege でワーカーの権限を調べる

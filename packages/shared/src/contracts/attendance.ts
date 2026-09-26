@@ -168,10 +168,16 @@ export const attendanceMonthSchema = z.object({
   /** 月の全日分(記録の無い日は空のrowData)。 */
   days: z.array(attendanceMonthDaySchema),
   totals: attendanceMonthlyTotalsSchema,
-  /** 領収書の金額集計(日別・月合計)。GAS版 getReceiptsForMonth_ に相当。 */
+  /**
+   * 取消していない領収書の金額集計(GAS版 getReceiptsForMonth_ に会社負担の内訳を足したもの)。byDay・total は
+   * 会社負担を含む(スタッフへの支払いの額)。companyPaid はうち会社負担、customerBillable はお客様に請求する額。
+   */
   receipts: z.object({
     byDay: z.record(businessDateSchema, z.number()),
     total: z.number(),
+    companyPaidByDay: z.record(businessDateSchema, z.number()),
+    companyPaid: z.number(),
+    customerBillable: z.number(),
   }),
 });
 export type AttendanceMonth = z.infer<typeof attendanceMonthSchema>;

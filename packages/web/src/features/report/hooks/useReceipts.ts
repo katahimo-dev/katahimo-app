@@ -34,6 +34,8 @@ export interface ReceiptImage {
   storeName: string;
   /** datetime-local の値 'yyyy-MM-ddTHH:mm' */
   receiptDate: string;
+  /** 会社負担(研修等の同行・会社の都合。お客様に請求しない)。既定は false */
+  companyPaid: boolean;
   /** 金額を読み取っているあいだ true */
   loading: boolean;
 }
@@ -137,6 +139,7 @@ export function useReceipts(storageScope: UserStorageScope) {
               amount: '',
               storeName: '',
               receiptDate: '',
+              companyPaid: false,
               loading: true,
             };
             imagesRef.current = [...imagesRef.current, image];
@@ -169,6 +172,12 @@ export function useReceipts(storageScope: UserStorageScope) {
     [patchImage],
   );
 
+  /** 「会社負担(お客様に請求しない)」の切り替え */
+  const setCompanyPaid = useCallback(
+    (id: number, companyPaid: boolean) => patchImage(id, () => ({ companyPaid })),
+    [patchImage],
+  );
+
   /** 「この領収書を送る」 */
   const send = useCallback(
     async (ctx: ReceiptSendContext) => {
@@ -188,6 +197,7 @@ export function useReceipts(storageScope: UserStorageScope) {
         amount: img.amount,
         storeName: img.storeName,
         receiptDate: fromDatetimeLocal(img.receiptDate),
+        companyPaid: img.companyPaid,
       }));
 
       const localDuplicates = findLocalReceiptDuplicates(payloadImages, {
@@ -266,6 +276,7 @@ export function useReceipts(storageScope: UserStorageScope) {
     addFiles,
     removeImage,
     updateImage,
+    setCompanyPaid,
     send,
   };
 }

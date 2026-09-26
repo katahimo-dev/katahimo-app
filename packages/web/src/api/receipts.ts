@@ -1,4 +1,6 @@
 import {
+  type CancelReceiptRequest,
+  cancelReceiptResponseSchema,
   receiptListResponseSchema,
   receiptOcrResponseSchema,
   type UploadReceiptsRequest,
@@ -36,6 +38,9 @@ export const receiptsApi = {
     ),
   /** 画像の URL(同じオリジンの Cookie で <img> がそのまま読める。CSP の img-src 'self') */
   imageUrl: (receiptId: string) => `/api/receipts/${encodeURIComponent(receiptId)}/image`,
+  /** POST /api/receipts/:id/cancel: 取消(論理削除。一覧に灰色で残る)。応答は取消した後の行 */
+  cancel: (receiptId: string, body: CancelReceiptRequest) =>
+    api.post(`/api/receipts/${encodeURIComponent(receiptId)}/cancel`, cancelReceiptResponseSchema, body),
   /** GET /api/receipts/csv: 月の全件の CSV(管理者・コーディネーターだけ。断られたら理由つきのエラー) */
   downloadCsv: (filters: ReceiptListFilters) =>
     api.download('/api/receipts/csv', listQuery(filters), 'text/csv', `領収書_${filters.month}.csv`),
