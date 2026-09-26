@@ -29,10 +29,11 @@ import {
   createScheduleServices,
   createStoragePort,
   GasBridgeMirrorSenderPort,
+  gasBridgeConfigOf,
   InMemoryTtlCache,
   NoopMirrorSenderPort,
+  outboxTopicPolicyOf,
   SmtpMailerPort,
-  skippedOutboxTopics,
   vapidDetailsOf,
   WebPushSender,
 } from '@katahimo/integrations';
@@ -55,8 +56,11 @@ export interface WorkerContainer {
   appLog: AppLogPort;
   schedule: SchedulePort;
   csvSource: CustomerCsvSourcePort;
-  /** MIRROR_TO_GOOGLE_SHEETS(API と同じ設定)。無効ならミラーのトピックは送らずに完了にする。 */
-  mirrorEnabled: boolean;
+  /**
+   * ミラーするテナントの slug(MIRROR_TO_GOOGLE_SHEETS が有効な時の GAS_BRIDGE_TENANT。API と同じ設定)。
+   * null ならミラーのトピックは送らずに完了にし、別のテナントのミラーも送らない。
+   */
+  mirrorTenantSlug: string | null;
   /** Web Push の送信(VAPID の設定が無ければ null。push.* は送らずに完了にし、お知らせのジョブは何もしない)。 */
   webPush: WebPushSenderPort | null;
   workerId: string;
@@ -80,23 +84,23 @@ function createMailer(env: WorkerEnv): MailerPort {
 }
 
 export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerContainer {
-  const uow = new DrizzleUnitOfWork(db, { skipOutboxTopics: skippedOutboxTopics(env) });
+  const outboxPolicy = outboxTopicPolicyOf(env);
+  const uow = new DrizzleUnitOfWork(db, { outboxPolicy });
   const appLog = new DrizzleAppLogRepository(db);
+  const tenants = new DrizzleTenantDirectory(db);
   const vapid = vapidDetailsOf(env);
-  const bridge =
-    env.GAS_BRIDGE_URL && env.GAS_BRIDGE_SECRET
-      ? { baseUrl: env.GAS_BRIDGE_URL, secret: env.GAS_BRIDGE_SECRET }
-      : null;
+  const bridge = gasBridgeConfigOf(env);
   // API と同じ予定・ルート計算の実装を使う(夜間の反映は fresh のためルートのキャッシュは使わない)
   const scheduleServices = createScheduleServices(env, {
     directory: createScheduleDirectory({ uow }),
     appLog,
     routeCache: new InMemoryTtlCache({ maxEntries: 100 }),
+    tenants,
   });
 
   return {
     uow,
-    tenants: new DrizzleTenantDirectory(db),
+    tenants,
     queue: new DrizzleOutboxQueue(db),
     platform: new DrizzlePlatformMaintenance(db),
     storage: createStoragePort(env),
@@ -106,10 +110,9 @@ export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerConta
     appLog,
     schedule: scheduleServices.schedule,
     csvSource: createCustomerCsvSource({
-      driveFolderIdsByTenantSlug: env.CUSTOMER_CSV_DRIVE_FOLDERS,
       ...(env.CUSTOMER_CSV_LOCAL_DIR ? { localDir: env.CUSTOMER_CSV_LOCAL_DIR } : {}),
     }),
-    mirrorEnabled: env.MIRROR_TO_GOOGLE_SHEETS,
+    mirrorTenantSlug: outboxPolicy.mirrorTenantSlug,
     webPush: vapid ? new WebPushSender(vapid) : null,
     workerId: `${hostname()}:${process.pid}`,
     leaseMs: env.OUTBOX_LEASE_MS,

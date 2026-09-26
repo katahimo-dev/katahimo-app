@@ -464,6 +464,7 @@ ALTER TABLE "data_export_requests" FORCE ROW LEVEL SECURITY;--> statement-breakp
 ALTER TABLE "data_subject_requests" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "entity_changes" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "import_runs" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "integration_api_keys" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "matching_run_candidates" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "matching_runs" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "outbox_messages" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -526,6 +527,8 @@ GRANT SELECT, INSERT ON "app_logs", "ai_prompt_revisions", "care_record_revision
 GRANT SELECT, INSERT ON "outbox_messages" TO katahimo_app;--> statement-breakpoint
 GRANT SELECT, UPDATE ON "tenant_settings" TO katahimo_app;--> statement-breakpoint
 GRANT SELECT, INSERT, UPDATE ON "import_runs", "staff_credentials" TO katahimo_app;--> statement-breakpoint
+-- 外部システム連携の API キーは確かめて最終利用の時刻を書くだけ(発行・失効は運用担当者の CLI が所有者の接続で行う)
+GRANT SELECT, UPDATE ("last_used_at") ON "integration_api_keys" TO katahimo_app;--> statement-breakpoint
 -- 月の締めは締めるだけ(解除・削除は所有者の platform.unlock_attendance_period / テナントの消去。トリガーでも守る)
 GRANT SELECT, INSERT, UPDATE ON "attendance_periods" TO katahimo_app;--> statement-breakpoint
 GRANT SELECT, INSERT, UPDATE, DELETE ON

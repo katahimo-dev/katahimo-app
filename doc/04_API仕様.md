@@ -18,7 +18,8 @@
 - 自由記述の欄(日報・事故報告の本文、領収書の店名・引き継ぎ、出勤簿のセル、AI のプロンプト、スタッフの氏名・電話 等)は、
   契約(`freeText`)でタブ・改行・復帰以外の制御文字(U+0000 等)を取り除いてから使う(PostgreSQL は U+0000 を保存できない)。
   顧客CSV・スタッフ台帳・出勤簿の CSV の取込も同じ規則で取り除く(`stripControlChars`)。
-- `tenantId` は**セッション Cookie からだけ**決まる。要求の本体・クエリに入れても使わない。
+- `tenantId` は**セッション Cookie からだけ**決まる(外部システム連携の `/api/integrations/*` だけは API キーから。2.11)。
+  要求の本体・クエリに入れても使わない。
 
 ### 1.2 認証とセッション Cookie
 
@@ -38,7 +39,7 @@
 
 | code | HTTP | 主な場面 |
 | --- | --- | --- |
-| `unauthenticated` | 401 | 未ログイン・セッション切れ・ログイン失敗 |
+| `unauthenticated` | 401 | 未ログイン・セッション切れ・ログイン失敗・外部連携の API キーが無い・誤り・失効(`WWW-Authenticate: Bearer`) |
 | `forbidden` | 403 | 役割が足りない・他人の報告の上書き・CSRF |
 | `not_found` | 404 | 無い ID・無いルート(「該当するAPIがありません」) |
 | `validation_failed` | 400 / 413 / 415 | 入力の誤り(`fields` に項目ごとの最初の文言。キーは `rowData.D` のような経路)、本体が大きすぎる(413)、JSON 以外(415) |
@@ -61,7 +62,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | 4 | `/api/*` | `Cache-Control: no-store` |
 | 5 | `/api/*` | CSRF: 状態を変える要求(POST/PUT/PATCH/DELETE)は `Sec-Fetch-Site` が `same-origin` / `none` 以外なら 403。`Sec-Fetch-Site` が無ければ `Origin` のホストが `Host` と違えば 403。どちらも無い要求(ブラウザ以外)は通す |
 | 6 | `/api/*` | 本体のある状態変更の要求は `Content-Type: application/json` だけ(415) |
-| 7 | `/api/*` | 本体の上限: 既定 256KB、`POST /api/receipts` 14MB、`POST /api/receipts/ocr` 3MB(413) |
+| 7 | `/api/*` | 本体の上限: 既定 256KB、`POST /api/receipts` 14MB、`POST /api/receipts/ocr` 3MB、`POST /api/integrations/customers` 2MB(413) |
 
 ### 1.5 回数制限
 
@@ -81,6 +82,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `schedule_force_refresh_staff` | テナント + スタッフ | 1時間30回 | 429 | `RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR` |
 | `push_test_staff` | テナント + スタッフ | 1時間10回 | 429 | — |
 | `push_subscribe_staff` | テナント + スタッフ | 1時間30回 | 429 | — |
+| `integration_customers_key` | テナント + 外部連携の API キー | 1時間120回 | 429 | — |
 
 ログインの2つの規則は照合(argon2)の**前に**1回分の枠を取る(同時の大量の試行でも照合まで進むのは上限の回数まで)。
 一致した回は数えない(アカウントは数え直し、IP は先に取った1回分を返す)。
@@ -211,6 +213,19 @@ URL へ送らないように)。操作ログに `endpoint`・鍵は残さない�
 | `POST /subscriptions` | `pushSubscribeRequestSchema`(`PushSubscription.toJSON()` の形: `endpoint`・`expirationTime?`・`keys: { p256dh, auth }`)/ `okResponseSchema` | 同じ `endpoint` があれば鍵を書き直し、別のスタッフのものなら本人に付け替える。User-Agent(300字まで)を残す。1人10件まで(超えたら `updated_at` の古いものから消す)。通知を使えない環境は 400。回数制限 `push_subscribe_staff`。INFO `push.subscription.saved`(`subscriptionId`・`created`・付け替えなら `previousStaffId`・消した数 `trimmed`) |
 | `DELETE /subscriptions` | `pushUnsubscribeRequestSchema`(`endpoint`)/ `okResponseSchema` | 本人の購読だけを消す(無ければ何もしない)。INFO `push.subscription.deleted`(`subscriptionId`・`deleted`) |
 | `POST /test` | — / `pushTestResponseSchema` | `{ ok, subscriptionCount }`。本人の全ての購読に送るテスト通知を購読ごとに outbox に積む。購読が無ければ 400。回数制限 `push_test_staff`。INFO `push.test.queued` |
+
+### 2.11 外部システム連携 `/api/integrations`(`routes/integrations.ts`、API キー)
+
+RESERVA 等の外部システムからの受け口(05 11章)。認証は `Authorization: Bearer kth_<テナントID>_<乱数>`(運用担当者が
+`pnpm tenant:api-keys` で発行するテナントごとの API キー。07 3.6)だけで、**Cookie のセッションは使わない**(ログイン中の画面からは
+呼べない。Cookie を自動で送られないため CSRF の前提に当たらない。1.4 の CSRF・JSON の検査はそのまま掛かる)。テナントと書ける取込元は
+キーで決まり、本体では指定しない。トークンの `<テナントID>` の部分で RLS のテナントを決め、トークン全体の SHA-256 で
+`integration_api_keys` を引く(平文を比べない)。キーが無い・形が違う・無い(別のテナントのIDに差し替えた場合を含む)・失効は 401、
+テナントが利用停止中は 403(どちらも WARN `integration.auth_failed`、理由コードだけ)。
+
+| メソッド・パス | 契約(要求 / 応答) | 応答・エラー・ログ |
+| --- | --- | --- |
+| `POST /customers` | `integrationCustomersRequestSchema`(`mode`(`upsert` だけ。既定)・`customers`(1〜500件): `externalId`・`familyName`・`givenName?`・`displayName?`(既定「姓 名」)・`familyNameKana?`・`givenNameKana?`・`email?`・`phone?`・`memo?`・`benefitMemberId?`・`evacuationSite?`・`home?`(`addressLine`・`prefecture?`・`city?`(省けば住所から取り出す)・`parkingArea?`・`parkingDetail?`・`lat?`・`lng?`(両方か無し))・`secondary?`(`home` と同じ + `validFrom?`・`validTo?`(両端を含む `YYYY-MM-DD`))・`emergencyContact?`(`relation?`・`phone?`)・`recipients`(20人まで: `name`・`birthDate?`・`needs?`・`allergy?`)・`attributes`(英小文字のキー → 値、30項目まで)・`externalRegisteredAt?`・`externalUpdatedAt?`(ISO 8601、時差つき))/ `integrationCustomersResponseSchema` | 200 `{ importRunId, counts: { created, updated, unchanged, skipped }, results: [{ externalId, outcome, issues }], dataVersion }`(`results` は送った順)。1件はその顧客の今の全ての値(省いた・null の項目は空にする)。キーの取込元 × `externalId` で突き合わせ、作成・更新だけを行う(**削除・アーカイブはしない**)。全件を1トランザクションで適用し `import_runs`(`source = external_api`)を残す。同じ `externalId` が2回・存在しない日付・住所2の期間の逆転・緯度だけ等は 400(何も書かない)。回数制限 `integration_customers_key`。INFO `integration.customers.ingested`(`skipped`・`issues` があれば WARN) |
 
 ## 3. 本番での Web 画面の配信
 

@@ -62,21 +62,21 @@ variable "schedule_provider" {
 }
 
 variable "gas_bridge_url" {
-  description = "GAS_BRIDGE_URL(稼働中の gas-childcare-visit-app の Web App /exec)。空ならミラー送信しない"
+  description = "GAS_BRIDGE_URL(稼働中の gas-childcare-visit-app の Web App /exec)。空なら Bridge を使わない"
+  type        = string
+  default     = ""
+}
+
+variable "gas_bridge_tenant" {
+  description = "GAS_BRIDGE_TENANT(Bridge の持ち主のテナントの slug。予定の取得・ミラーはこのテナントだけ。gas_bridge_url と一緒に設定する)"
   type        = string
   default     = ""
 }
 
 variable "mirror_to_google_sheets" {
-  description = "MIRROR_TO_GOOGLE_SHEETS(移行期にスプレッドシートへミラーするか)"
+  description = "MIRROR_TO_GOOGLE_SHEETS(移行期に gas_bridge_tenant のテナントの記録をスプレッドシートへミラーするか)"
   type        = bool
   default     = false
-}
-
-variable "customer_csv_drive_folders" {
-  description = "CUSTOMER_CSV_DRIVE_FOLDERS({\"テナントslug\":\"DriveフォルダID\"} の JSON)"
-  type        = string
-  default     = ""
 }
 
 variable "app_public_url" {

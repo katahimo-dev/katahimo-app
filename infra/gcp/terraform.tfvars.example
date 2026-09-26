@@ -8,10 +8,14 @@ deploy_workloads = false
 sql_tier              = "db-g1-small"
 sql_high_availability = false
 
-schedule_provider          = "google"
-gas_bridge_url             = ""
-mirror_to_google_sheets    = false
-customer_csv_drive_folders = "{\"cutest\":\"<DriveフォルダID>\"}"
+schedule_provider = "google"
+
+# GAS Bridge(移行期のミラー)。URL・持ち主のテナント・シークレット(gas-bridge-secret)は揃えて設定する
+gas_bridge_url          = ""
+gas_bridge_tenant       = ""
+mirror_to_google_sheets = false
+
+# 顧客CSVの Drive のフォルダはテナントごとに pnpm tenant:customer-source で DB に設定する(doc/07_インフラ・運用.md)
 
 app_public_url = "https://app.example.jp"
 

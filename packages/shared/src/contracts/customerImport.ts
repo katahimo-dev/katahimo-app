@@ -19,6 +19,23 @@ export const customerCsvImportStatusSchema = z.enum([
 ]);
 export type CustomerCsvImportStatus = z.infer<typeof customerCsvImportStatusSchema>;
 
+// ── 取込元の設定(platform.tenants.customer_import_settings。運用担当者の `pnpm tenant:customer-source`) ──
+
+/** Google Drive のフォルダID(フォルダの URL の /folders/ の後ろ)。 */
+export const driveFolderIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9_-]{10,200}$/, 'Google Drive のフォルダID(英数字・「-」「_」)を指定してください');
+
+/**
+ * テナントの顧客データの取込元。provider で取込元の種類を分ける(今は RESERVA の顧客CSVを置く Drive のフォルダだけ)。
+ * 設定の無いテナント(jsonb が `{}`)は自動取込の対象外。
+ */
+export const tenantCustomerImportSettingsSchema = z.discriminatedUnion('provider', [
+  z.object({ provider: z.literal('reserva_csv'), driveFolderId: driveFolderIdSchema }),
+]);
+export type TenantCustomerImportSettings = z.infer<typeof tenantCustomerImportSettingsSchema>;
+
 // ── POST /api/admin/customers/import(管理者のみ) ────────────
 
 export const customerCsvImportRequestSchema = z.object({

@@ -16,8 +16,7 @@ interface BridgeWriteResult {
 
 /**
  * outboxから取り出したミラージョブを、GAS版(gas-childcare-visit-app)のWeb Appデプロイ(Bridge.js)
- * 経由でGoogleスプレッドシート/Driveへ書き込む。読み取り側(GasBridgeSchedulePort/
- * GasBridgeMapsPort)と同じく、実際にどの列に書くかのロジックはBridge.js側(GAS版本番のシート
+ * 経由でGoogleスプレッドシート/Driveへ書き込む。読み取り側(GasBridgeSchedulePort)と同じく、実際にどの列に書くかのロジックはBridge.js側(GAS版本番のシート
  * 構造をそのまま知っている)に置き、こちらはペイロードを渡すだけにする。
  *
  * Bridge.js側の書き込みaction(writeDailyReport/writeAccidentReport/writeReceipt/
@@ -60,7 +59,10 @@ export class GasBridgeMirrorSenderPort implements MirrorSenderPort {
   }
 }
 
-/** GAS_BRIDGE_URL/SECRET未設定時のフォールバック。何もせず成功扱いにする(ミラーはスキップ)。 */
+/**
+ * GAS Bridge の設定が無い時の実装。何もせず成功扱いにする(ミラーの無い環境では、ワーカーはミラーのトピックを
+ * 送る前に完了にするため、呼ばれない)。
+ */
 export class NoopMirrorSenderPort implements MirrorSenderPort {
   async sendDailyReport(): Promise<void> {}
   async sendAccidentReport(): Promise<void> {}

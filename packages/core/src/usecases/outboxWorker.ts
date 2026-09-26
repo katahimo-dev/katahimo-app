@@ -9,7 +9,8 @@ import {
   type RetryPolicy,
   reportTypeLabelOf,
 } from '../domain';
-import { MIRROR_TOPICS, type OutboxTopic, PUSH_TOPICS } from '../domain/model';
+import type { OutboxTopic } from '../domain/model';
+import { isMirrorTopic, isOutboxTopicEnabled } from '../domain/outbox';
 import { formatJstDateTime } from '../domain/reports/jstTime';
 import type { AppLogPort } from '../ports/appLog';
 import type { MailerPort } from '../ports/mailer';
@@ -17,6 +18,7 @@ import type { MirrorSenderPort } from '../ports/mirrorSender';
 import type { ClaimedOutboxMessage, OutboxQueuePort } from '../ports/outbox';
 import type { WebPushSenderPort } from '../ports/push';
 import type { StoragePort } from '../ports/storage';
+import type { TenantDirectoryPort } from '../ports/tenants';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
 import { toSheetDay } from './attendance/records';
 import { passwordResetMailPurposeOf, sendPasswordResetMail } from './auth/passwordReset';
@@ -33,8 +35,13 @@ export interface OutboxWorkerDeps extends Clock {
   /** 画面の URL(パスワード設定の案内のメールに書く。無ければ書かない)。 */
   appPublicUrl?: string | undefined;
   appLog: AppLogPort;
-  /** MIRROR_TO_GOOGLE_SHEETS。無効ならミラーのトピックは送らずに完了にする(API と同じ設定を使う)。 */
-  mirrorEnabled: boolean;
+  /**
+   * ミラーするテナントの slug(MIRROR_TO_GOOGLE_SHEETS が有効な時の GAS_BRIDGE_TENANT。API と同じ設定を使う)。
+   * null ならミラーのトピックは送らずに完了にする。別のテナントのミラーのトピックも送らずに完了にする(WARN)。
+   */
+  mirrorTenantSlug: string | null;
+  /** メッセージのテナントの slug を引く(ミラーの対象のテナントか確かめる)。 */
+  tenants: Pick<TenantDirectoryPort, 'findById'>;
   /** Web Push の送信。VAPID の設定が無ければ null(push.* は送らずに完了にする)。 */
   webPush: WebPushSenderPort | null;
   /** このワーカーの識別子(locked_by)。 */
@@ -235,7 +242,7 @@ async function logDead(
  * outbox から1件取り出して処理する(テナントを横断して FOR UPDATE SKIP LOCKED で1件ずつ。複数のワーカーが
  * 同時に動いても同じメッセージを二重に処理しない)。ミラー・メールの対象の行は処理のたびに DB から読み直す
  * (ペイロードは ID だけ)。Web Push はペイロードの文面をそのスタッフの購読へ送る。ミラーが無効・VAPID の設定が無い
- * 環境では、そのトピックを送らずに完了にする(skipped)。
+ * 環境と、ミラーするテナント(GAS_BRIDGE_TENANT)以外のミラーは、送らずに完了にする(skipped)。
  * 失敗は指数バックオフで再試行し、max_attempts 回で dead(ERROR ログ)、再試行しても直らない失敗は failed。
  * 処理中にリースが切れて別のワーカーが取り直していたら、結果は書かない(lease_lost、WARN ログ)。
  * 処理中のままリースが切れて試行回数の上限に達したもの(処理の途中でワーカーが落ち続けた等)は取り直さず dead にする。
@@ -257,10 +264,20 @@ export async function processNextOutboxMessage(deps: OutboxWorkerDeps): Promise<
     });
     return 'lease_lost';
   };
-  const disabled =
-    (!deps.mirrorEnabled && MIRROR_TOPICS.includes(message.topic)) ||
-    (!deps.webPush && PUSH_TOPICS.includes(message.topic));
-  if (disabled) {
+  const policy = { mirrorTenantSlug: deps.mirrorTenantSlug, pushEnabled: deps.webPush !== null };
+  const tenantSlug = async () => (await deps.tenants.findById(message.tenantId))?.slug ?? '';
+  if (!(await isOutboxTopicEnabled(policy, message.topic, tenantSlug))) {
+    // API は別のテナントのミラーを積まない(同じ規則)。それでも残っていたもの(設定を変える前に積んだ等)は
+    // 持ち主でないテナントの GAS版・スプレッドシートに書かないよう、送らずに完了にして記録を残す
+    if (isMirrorTopic(message.topic) && deps.mirrorTenantSlug !== null) {
+      await deps.appLog.write({
+        tenantId: message.tenantId,
+        level: 'WARN',
+        action: 'outbox.mirror_other_tenant_skipped',
+        actorType: 'system',
+        details: { messageId: message.id, topic: message.topic, mirrorTenant: deps.mirrorTenantSlug },
+      });
+    }
     return (await deps.queue.complete(message, currentTime(deps))) ? 'skipped' : leaseLost();
   }
   try {

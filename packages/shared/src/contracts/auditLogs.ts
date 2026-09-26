@@ -111,6 +111,7 @@ export const AUDIT_LOG_CATEGORIES = [
   { prefix: 'push.', label: 'スマホへの通知' },
   { prefix: 'calendar.', label: 'カレンダー' },
   { prefix: 'tenant.', label: '法人の設定(運用担当者)' },
+  { prefix: 'integration.', label: '外部システムとの連携' },
   { prefix: 'mirror.', label: 'スプレッドシートへの反映' },
   { prefix: 'outbox.', label: '外部への送信' },
   { prefix: 'maintenance.', label: '保守' },
@@ -194,6 +195,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'notification.gchat.not_configured': 'Google Chatの通知先が未設定',
   'outbox.message_failed': '外部への送信の失敗',
   'outbox.lease_lost': '外部への送信の処理が途中で切れた',
+  'outbox.mirror_other_tenant_skipped': 'ミラーの対象でない法人のスプレッドシートへの反映を止めた',
   'ai.settings.read_failed': 'AIの設定を読めなかった',
   'attendance.aggregate.refresh_denied': '勤怠集計の書き直しを断った',
   'attendance.aggregate.refresh_failed': '勤怠集計の書き直しの失敗',
@@ -221,6 +223,11 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'schedule.route_fresh.error': '記録用の予定の取得のエラー',
   'tenant.provisioned': '法人の作成',
   'tenant.calendar_settings.updated': 'カレンダーの設定の変更(運用担当者)',
+  'tenant.customer_import_settings.updated': '顧客データの取込元の設定の変更(運用担当者)',
+  'tenant.api_key.created': '外部連携のAPIキーの発行(運用担当者)',
+  'tenant.api_key.revoked': '外部連携のAPIキーの失効(運用担当者)',
+  'integration.customers.ingested': '外部システムからの顧客の受け取り',
+  'integration.auth_failed': '外部連携のAPIキーの認証の失敗',
   'rate_limit.exceeded': '回数の上限を超えた',
 };
 

@@ -52,6 +52,19 @@ describe('loadEnv', () => {
     }
   });
 
+  it('ミラーは GAS Bridge の持ち主のテナント(GAS_BRIDGE_TENANT)が無いと起動できない', () => {
+    const bridge = { GAS_BRIDGE_URL: 'https://script.google.com/macros/s/x/exec', GAS_BRIDGE_SECRET: 's' };
+    expect(() => loadEnv({ ...development, ...bridge, MIRROR_TO_GOOGLE_SHEETS: 'true' })).toThrow(
+      /GAS_BRIDGE_TENANT/,
+    );
+    expect(() => loadEnv({ ...development, MIRROR_TO_GOOGLE_SHEETS: 'true' })).toThrow(
+      /MIRROR_TO_GOOGLE_SHEETS/,
+    );
+    expect(
+      loadEnv({ ...development, ...bridge, GAS_BRIDGE_TENANT: 'Cutest', MIRROR_TO_GOOGLE_SHEETS: 'true' }),
+    ).toMatchObject({ GAS_BRIDGE_TENANT: 'cutest', MIRROR_TO_GOOGLE_SHEETS: true });
+  });
+
   it('SECRET_BOX_LOCAL_KEY の無いローカル設定は起動できない', () => {
     expect(() => loadEnv({ ...development, SECRET_BOX_LOCAL_KEY: '' })).toThrow(/SECRET_BOX_LOCAL_KEY/);
   });
