@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { APIRequestContext, BrowserContext, Page } from 'playwright-core';
@@ -442,6 +442,28 @@ async function runJourney() {
       return undefined;
     });
 
+    await step(page, 'attendance-monthly-excel', async () => {
+      const dialog = page.getByRole('dialog').filter({ has: page.locator('#attendanceMonthlyMonth') });
+      const saved: string[] = [];
+      for (const name of ['⬇ Excelで保存', '⬇ 全員分をExcelで保存']) {
+        const [download] = await Promise.all([
+          page.waitForEvent('download', { timeout: 30_000 }),
+          dialog.getByRole('button', { name }).click(),
+        ]);
+        const path = await download.path();
+        const buf = readFileSync(path);
+        // .xlsx は zip(先頭が PK)
+        assert(buf.subarray(0, 2).toString('latin1') === 'PK', `${name} のファイルが .xlsx でない`);
+        assert(
+          download.suggestedFilename().endsWith('.xlsx'),
+          `${name} のファイル名: ${download.suggestedFilename()}`,
+        );
+        saved.push(`${download.suggestedFilename()}(${buf.length}バイト)`);
+        await expectToast(page, 'Excelファイルを保存しました');
+      }
+      return saved.join(' / ');
+    });
+
     await step(page, 'settings-text-size', async () => {
       await page
         .getByRole('dialog')
@@ -811,6 +833,10 @@ async function runJourney() {
           [
             'POST /api/admin/customers/import',
             req.post(`${WEB_URL}/api/admin/customers/import`, { data: {} }),
+          ],
+          [
+            'GET /api/attendance/export/all',
+            req.get(`${WEB_URL}/api/attendance/export/all?month=${today.slice(0, 7)}`),
           ],
           [
             'POST /api/attendance/day/aggregate/refresh',

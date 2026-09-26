@@ -103,6 +103,34 @@ export function buildUrl(path: string, query?: Query): string {
   return qs ? `${path}?${qs}` : path;
 }
 
+/** fetch を呼ぶ(通信の失敗は NetworkError。中断はそのまま投げる)。 */
+async function send(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, { credentials: 'include', ...init });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e;
+    throw new NetworkError(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/** 失敗の応答をエラーにする(本文の JSON は json に読んだもの)。 */
+function failureOf(
+  method: string,
+  url: string,
+  res: Response,
+  json: unknown,
+  options: RequestOptions,
+): Error {
+  const parsedError = apiErrorSchema.safeParse(json);
+  // サーバーが理由(message)を付けて返したものは、5xx(外部サービスの失敗等)でもその理由を出す。
+  // 理由の無い失敗・想定外の失敗(code=internal)は通信失敗と同じ扱いにする。
+  if (parsedError.success && parsedError.data.code !== 'internal') {
+    if (res.status === 401 && !options.skipAuthHandler) unauthenticatedListener?.();
+    return new ApiRequestError(res.status, parsedError.data, parseRetryAfter(res.headers.get('Retry-After')));
+  }
+  return new NetworkError(`${method} ${url} が ${res.status} を返しました`, res.status);
+}
+
 async function request<S extends z.ZodTypeAny>(
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   url: string,
@@ -110,36 +138,16 @@ async function request<S extends z.ZodTypeAny>(
   body: unknown,
   options: RequestOptions = {},
 ): Promise<z.output<S>> {
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method,
-      credentials: 'include',
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: options.signal,
-    });
-  } catch (e) {
-    if (e instanceof DOMException && e.name === 'AbortError') throw e;
-    throw new NetworkError(e instanceof Error ? e.message : String(e));
-  }
+  const res = await send(url, {
+    method,
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: options.signal,
+  });
 
   const json: unknown = await res.json().catch(() => undefined);
 
-  if (!res.ok) {
-    const parsedError = apiErrorSchema.safeParse(json);
-    // サーバーが理由(message)を付けて返したものは、5xx(外部サービスの失敗等)でもその理由を出す。
-    // 理由の無い失敗・想定外の失敗(code=internal)は通信失敗と同じ扱いにする。
-    if (parsedError.success && parsedError.data.code !== 'internal') {
-      if (res.status === 401 && !options.skipAuthHandler) unauthenticatedListener?.();
-      throw new ApiRequestError(
-        res.status,
-        parsedError.data,
-        parseRetryAfter(res.headers.get('Retry-After')),
-      );
-    }
-    throw new NetworkError(`${method} ${url} が ${res.status} を返しました`, res.status);
-  }
+  if (!res.ok) throw failureOf(method, url, res, json, options);
 
   const parsed = schema.safeParse(json);
   if (!parsed.success) {
@@ -147,6 +155,54 @@ async function request<S extends z.ZodTypeAny>(
     throw new NetworkError(`${method} ${url} の応答が契約と一致しません`, res.status);
   }
   return parsed.data;
+}
+
+/** ダウンロードしたファイル。 */
+export interface DownloadedFile {
+  blob: Blob;
+  /** Content-Disposition の名前(filename* の UTF-8 を優先)。無ければ fallbackName。 */
+  filename: string;
+}
+
+/** Content-Disposition からファイル名を読む(RFC 5987 の filename* を優先)。 */
+export function filenameFromDisposition(header: string | null, fallbackName: string): string {
+  if (!header) return fallbackName;
+  const extended = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
+  if (extended?.[1]) {
+    try {
+      return decodeURIComponent(extended[1].trim());
+    } catch {
+      // 読めない名前は下の filename を使う
+    }
+  }
+  const plain = /filename\s*=\s*"([^"]*)"/i.exec(header) ?? /filename\s*=\s*([^;]+)/i.exec(header);
+  return plain?.[1]?.trim() || fallbackName;
+}
+
+/**
+ * ファイルをダウンロードする(GET)。失敗は JSON の理由を読んで、ふつうの API と同じエラーにする
+ * (<a download> で開くと、断られたときに理由の JSON がファイルとして保存されてしまうため)。
+ * 成功しても期待した種類(expectedType)でなければ通信の失敗として扱う。
+ */
+async function download(
+  path: string,
+  query: Query | undefined,
+  expectedType: string,
+  fallbackName: string,
+  options: RequestOptions = {},
+): Promise<DownloadedFile> {
+  const url = buildUrl(path, query);
+  const res = await send(url, { method: 'GET', signal: options.signal });
+  if (!res.ok) {
+    const json: unknown = await res.json().catch(() => undefined);
+    throw failureOf('GET', url, res, json, options);
+  }
+  const type = res.headers.get('Content-Type') ?? '';
+  if (!type.startsWith(expectedType)) {
+    throw new NetworkError(`GET ${url} の応答の種類が違います(${type})`, res.status);
+  }
+  const blob = await res.blob();
+  return { blob, filename: filenameFromDisposition(res.headers.get('Content-Disposition'), fallbackName) };
 }
 
 export const api = {
@@ -165,4 +221,5 @@ export const api = {
   delete<S extends z.ZodTypeAny>(path: string, schema: S, body?: unknown, options?: RequestOptions) {
     return request('DELETE', path, schema, body, options);
   },
+  download,
 };

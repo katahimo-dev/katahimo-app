@@ -35,6 +35,13 @@
   (顧客CSVの取込元の Drive のフォルダ)。
 - 報告・領収書のテナント全体の一覧のための索引 `care_records (tenant_id, occurred_at DESC, id DESC)`・
   `receipts (tenant_id, receipted_at DESC, id DESC)`。
+- 出勤簿の Excel の書き出し(GAS版の個別出勤簿 `<スタッフ名>_出勤簿_<年度>年度` のファイルの置き換え): 今月のまとめの「⬇ Excelで保存」
+  (選んだ月)・「⬇ <年度>年度分」(4月〜3月の12シート)、管理者は「⬇ 全員分をExcelで保存」(その月に在籍している全員を1つのファイルに
+  1人1シート)。列・見出し・計算式は出勤簿テンプレートと同じ(式は Excel が計算し、今月のまとめと同じ値になる)で、働いた時間・
+  日ごとの領収書の金額・月の集計・領収書の明細(日付・時刻・お客様・店名・金額・申し送り)と領収書月集計を加える。
+  API `GET /api/attendance/export`(`month` か `fiscalYear`)・`GET /api/attendance/export/all`、回数の上限 `attendance_export_staff`
+  (1人1時間30回)、操作ログ `attendance.export.downloaded`・`attendance.export_all.downloaded`(`doc/02_機能仕様.md` 8.6)。
+  API の依存に `exceljs` を追加。
 
 ### 変更
 
