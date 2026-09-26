@@ -5391,6 +5391,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "calendar_settings": {
+          "name": "calendar_settings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
         "terminated_at": {
           "name": "terminated_at",
           "type": "timestamp with time zone",

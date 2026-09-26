@@ -62,6 +62,10 @@ describe('自宅住所だけのスタッフの出勤・退勤経路', () => {
     });
     expect(staff).toMatchObject({ homeAddress: HOME, hasHomeGeo: false });
     await ctx.addCustomer('山田 花子', 'C0001');
+    ctx.db.calendarSettings.set(ctx.tenantId, {
+      sharedCalendars: [{ calendarId: 'reserva@group.calendar.google.com' }],
+      allowedStaffCalendars: [],
+    });
 
     const maps = new FakeMaps();
     const schedule = new GoogleSchedulePort({
@@ -89,7 +93,6 @@ describe('自宅住所だけのスタッフの出勤・退勤経路', () => {
       directory: createScheduleDirectory({ uow: ctx.uow }),
       routeCache: new InMemoryTtlCache({ maxEntries: 10 }),
       appLog: ctx.appLog,
-      calendarSources: [{ calendarId: 'reserva@group.calendar.google.com' }],
     });
     const deps = { ...ctx.deps, schedule };
 

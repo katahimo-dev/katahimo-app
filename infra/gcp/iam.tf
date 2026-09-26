@@ -1,7 +1,7 @@
 # 実行用サービスアカウント(用途ごとに分け、必要な権限だけを付ける)。
 #
 # Google Calendar / Drive は IAM ロールではなく「共有」で読み取りを許可する:
-#   - 各スタッフのカレンダー(と GOOGLE_CALENDAR_IDS のカレンダー)を katahimo-api / katahimo-worker の
+#   - 各スタッフのカレンダー(とテナントの共有カレンダー。pnpm tenant:calendars)を katahimo-api / katahimo-worker の
 #     メールアドレスに「予定の表示(すべての予定の詳細)」で共有する
 #   - 顧客CSVの Drive フォルダ(CUSTOMER_CSV_DRIVE_FOLDERS)を同じ2つに「閲覧者」で共有する
 # (ドメイン全体の委任 GOOGLE_CALENDAR_IMPERSONATE は SA キーが必要になるため使わない。doc/07_インフラ・運用.md 3.4)

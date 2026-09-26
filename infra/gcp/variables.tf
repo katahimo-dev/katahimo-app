@@ -61,12 +61,6 @@ variable "schedule_provider" {
   default     = "google"
 }
 
-variable "google_calendar_ids" {
-  description = "GOOGLE_CALENDAR_IDS(staff.calendar_id 以外に読むカレンダー。カンマ区切り)"
-  type        = string
-  default     = ""
-}
-
 variable "gas_bridge_url" {
   description = "GAS_BRIDGE_URL(稼働中の gas-childcare-visit-app の Web App /exec)。空ならミラー送信しない"
   type        = string
@@ -81,6 +75,12 @@ variable "mirror_to_google_sheets" {
 
 variable "customer_csv_drive_folders" {
   description = "CUSTOMER_CSV_DRIVE_FOLDERS({\"テナントslug\":\"DriveフォルダID\"} の JSON)"
+  type        = string
+  default     = ""
+}
+
+variable "app_public_url" {
+  description = "APP_PUBLIC_URL(画面の URL。パスワード設定の案内のメールに書く。空なら書かない)"
   type        = string
   default     = ""
 }

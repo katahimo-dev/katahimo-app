@@ -25,7 +25,7 @@ import { describe, expect, it } from 'vitest';
 import { withTenant } from '../client';
 import { DrizzlePlatformMaintenance } from '../repositories/platform/maintenance';
 import { DrizzleOutboxQueue } from '../repositories/platform/outboxQueue';
-import { DrizzleTenantDirectory } from '../repositories/platform/tenants';
+import { DrizzleTenantCalendarSettingsStore, DrizzleTenantDirectory } from '../repositories/platform/tenants';
 import { DrizzleUnitOfWork } from '../uow';
 import { connect } from './testDb';
 
@@ -41,6 +41,11 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
 
   it('夜間の反映・顧客の取込・翌日の予定のお知らせ・ミラーとメールと通知の送信・free/busy・保守がワーカーの権限で動く', async () => {
     const tenantId = await createTenant('wk');
+    // 運用担当者が許可したカレンダーだけを読む(ワーカーは platform.tenants.calendar_settings を読める)
+    await new DrizzleTenantCalendarSettingsStore(owner).set(tenantId, {
+      sharedCalendars: [],
+      allowedStaffCalendars: ['@cutest.co.jp'],
+    });
     const workerUow = new DrizzleUnitOfWork(workerDb);
     const tenants = new DrizzleTenantDirectory(workerDb);
     const tenant = await tenants.findById(tenantId);
@@ -107,7 +112,7 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
     });
     await withTenant(app, tenantId, (tx) =>
       tx.execute(
-        sql`insert into staff_calendars (tenant_id, id, staff_id, calendar_id, purpose) values (${tenantId}, ${newId()}, ${staffId}, 'cal-1', 'busy')`,
+        sql`insert into staff_calendars (tenant_id, id, staff_id, calendar_id, purpose) values (${tenantId}, ${newId()}, ${staffId}, 'cal-1@cutest.co.jp', 'busy')`,
       ),
     );
 

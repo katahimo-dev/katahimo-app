@@ -1,5 +1,5 @@
 import { AUDIT_LOG_DEFAULT_RANGE_DAYS, AUDIT_LOG_MAX_RANGE_DAYS } from '@katahimo/shared';
-import { addDays, countDaysInclusive, invalid, zonedBusinessDate, zonedInstant } from '../domain';
+import { addDays, countDaysInclusive, invalid, zonedBusinessDate, zonedDayRange } from '../domain';
 import type { ActorType, AppLogLevel } from '../domain/model';
 import type { AppLogFilter, AppLogPort, AppLogPosition, AppLogRecord } from '../ports/appLog';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
@@ -75,8 +75,8 @@ async function resolveCriteria(
   return {
     range: { from, to, timeZone },
     filter: {
-      from: zonedInstant(from, 0, timeZone),
-      to: zonedInstant(to, 24 * 60, timeZone),
+      from: zonedDayRange(from, timeZone).from,
+      to: zonedDayRange(to, timeZone).to,
       level: criteria.level,
       staffId: criteria.staffId,
       actionPrefix: criteria.action,
@@ -212,13 +212,14 @@ export async function exportAuditLogs(
   return {
     range,
     async *entries() {
+      // 氏名は最初に1回だけ読む(書き出しの途中で登録されたスタッフは氏名なしになる)
+      const names = await deps.uow.run(actor.tenantId, staffNames);
       let after: AppLogPosition | null = null;
       while (true) {
         const batch: { entries: AuditLogEntryView[]; last: AppLogPosition | null } = await deps.uow.run(
           actor.tenantId,
           async (r) => {
             const records = await r.appLogs.list(filter, { after, limit: EXPORT_BATCH_SIZE });
-            const names = await staffNames(r);
             return {
               entries: records.map((record) => toEntry(record, names)),
               last: records.at(-1)?.position ?? null,

@@ -1,7 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { provisionTenant, registerStaff } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
-import { DrizzleTenantDirectory, DrizzleTenantProvisioning } from '@katahimo/db/repositories';
+import {
+  DrizzleTenantCalendarSettingsStore,
+  DrizzleTenantDirectory,
+  DrizzleTenantProvisioning,
+} from '@katahimo/db/repositories';
 import type { AdminStaffResponse, AuditLogListResponse } from '@katahimo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
@@ -52,6 +56,11 @@ async function createTenant(): Promise<TestTenant> {
     { tenants: new DrizzleTenantDirectory(ownerDb), provisioning: new DrizzleTenantProvisioning(ownerDb) },
     { slug, name: '管理画面 結合テスト' },
   );
+  // 運用担当者の設定(pnpm tenant:calendars と同じ): このテナントのスタッフに @cutest.biz のカレンダーを許可する
+  await new DrizzleTenantCalendarSettingsStore(ownerDb).set(tenant.id, {
+    sharedCalendars: [],
+    allowedStaffCalendars: ['@cutest.biz'],
+  });
   const register = (name: string, email: string, role: 'staff' | 'admin') =>
     registerStaff(container, { tenantId: tenant.id, name, email, password: PASSWORD, role });
   const admin = await register('管理 太郎', `admin-${slug}@example.com`, 'admin');
@@ -199,6 +208,79 @@ describe('API: スタッフ管理', () => {
     expect(guided.status).toBe(200);
     const already = await send('POST', `/api/admin/staff/${t.staffId}/password-guide`, t.adminCookie);
     expect(already.status).toBe(400);
+  });
+});
+
+describe('API: スタッフ管理の守り', () => {
+  it('許可の一覧に無いカレンダーは 400(項目の誤り)。テナントのカレンダーの設定はアプリの接続からは書けない', async () => {
+    const res = await send('POST', '/api/admin/staff', t.adminCookie, {
+      name: '他社 カレンダー',
+      email: `cal-${t.slug}@example.com`,
+      scheduleCalendarId: 'someone@other-tenant.example.org',
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: 'validation_failed',
+      fields: { scheduleCalendarId: 'このカレンダーは使えません。運用担当者に登録を依頼してください' },
+    });
+    await expect(
+      new DrizzleTenantCalendarSettingsStore(appDb).set(t.id, {
+        sharedCalendars: [],
+        allowedStaffCalendars: ['@x.jp'],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('変更の履歴(AIプロンプトの版)に残っている管理者は、管理者を外しても削除できない', async () => {
+    const email = `editor-${t.slug}@example.com`;
+    const created = (await (
+      await send('POST', '/api/admin/staff', t.adminCookie, {
+        name: '編集 者',
+        email,
+        role: 'admin',
+        initialPassword: PASSWORD,
+      })
+    ).json()) as AdminStaffResponse;
+    const editorCookie = await login(t.slug, email);
+    const prompts = (await (await get('/api/settings/admin/prompts', editorCookie)).json()) as {
+      prompts: { key: string; revision: number }[];
+    };
+    const prompt = prompts.prompts[0];
+    const saved = await send('PUT', '/api/settings/admin/prompts', editorCookie, {
+      prompts: [{ key: prompt?.key, body: '編集者の文', revision: prompt?.revision }],
+    });
+    expect(saved.status).toBe(200);
+    await send('PUT', '/api/settings/admin/prompts', editorCookie, {
+      prompts: [{ key: prompt?.key, body: null }],
+    });
+    const demoted = await send('PATCH', `/api/admin/staff/${created.staff.id}`, t.adminCookie, {
+      role: 'staff',
+    });
+    expect(demoted.status).toBe(200);
+    const res = await send('DELETE', `/api/admin/staff/${created.staff.id}`, t.adminCookie);
+    expect(res.status).toBe(409);
+  });
+
+  it('2人の管理者が同時に互いを外しても、管理者は1人残る', async () => {
+    const other = await createTenant();
+    const second = (await (
+      await send('POST', '/api/admin/staff', other.adminCookie, {
+        name: '二人目 管理者',
+        email: `second-${other.slug}@example.com`,
+        role: 'admin',
+        initialPassword: PASSWORD,
+      })
+    ).json()) as AdminStaffResponse;
+    const secondCookie = await login(other.slug, `second-${other.slug}@example.com`);
+    const [a, b] = await Promise.all([
+      send('PATCH', `/api/admin/staff/${second.staff.id}`, other.adminCookie, { role: 'staff' }),
+      send('PATCH', `/api/admin/staff/${other.adminId}`, secondCookie, { role: 'staff' }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 403]);
+    const list = (await (
+      await get('/api/admin/staff', a.status === 200 ? other.adminCookie : secondCookie)
+    ).json()) as { staff: { role: string }[] };
+    expect(list.staff.filter((s) => s.role === 'admin')).toHaveLength(1);
   });
 });
 

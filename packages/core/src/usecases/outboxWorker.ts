@@ -30,6 +30,8 @@ export interface OutboxWorkerDeps extends Clock {
   storage: StoragePort;
   sender: MirrorSenderPort;
   mailer: MailerPort;
+  /** 画面の URL(パスワード設定の案内のメールに書く。無ければ書かない)。 */
+  appPublicUrl?: string | undefined;
   appLog: AppLogPort;
   /** MIRROR_TO_GOOGLE_SHEETS。無効ならミラーのトピックは送らずに完了にする(API と同じ設定を使う)。 */
   mirrorEnabled: boolean;

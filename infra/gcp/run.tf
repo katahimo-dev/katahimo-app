@@ -14,7 +14,6 @@ locals {
     STORAGE_PROVIDER           = "gcs"
     GCS_BUCKET                 = google_storage_bucket.receipts.name
     SCHEDULE_PROVIDER          = var.schedule_provider
-    GOOGLE_CALENDAR_IDS        = var.google_calendar_ids
     GAS_BRIDGE_URL             = var.gas_bridge_url
     CUSTOMER_CSV_DRIVE_FOLDERS = var.customer_csv_drive_folders
     VAPID_PUBLIC_KEY           = var.web_push.public_key
@@ -31,12 +30,13 @@ locals {
 
   # パスワード再設定メールは outbox 経由でワーカーが送る(API は応答時間からアカウントの有無が分からないよう送らない)
   worker_env = merge(local.common_env, { for k, v in {
-    DB_POOL_MAX   = "3"
-    SMTP_HOST     = var.smtp.host
-    SMTP_PORT     = tostring(var.smtp.port)
-    SMTP_USER     = var.smtp.user
-    SMTP_FROM     = var.smtp.from
-    VAPID_SUBJECT = var.web_push.subject
+    DB_POOL_MAX    = "3"
+    SMTP_HOST      = var.smtp.host
+    SMTP_PORT      = tostring(var.smtp.port)
+    SMTP_USER      = var.smtp.user
+    SMTP_FROM      = var.smtp.from
+    VAPID_SUBJECT  = var.web_push.subject
+    APP_PUBLIC_URL = var.app_public_url
   } : k => v if v != "" })
 
   # 環境変数名 = シークレット名(secrets.tf)。optional のものは var.optional_secrets にあるときだけ渡す。

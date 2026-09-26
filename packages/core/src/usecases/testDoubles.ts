@@ -10,12 +10,14 @@ import {
   conflict,
   consumeRateLimit,
   DomainError,
+  EMPTY_CALENDAR_SETTINGS,
   refundRateLimit,
   STALE_PROMPT_MESSAGE,
   STALE_WRITE_MESSAGE,
 } from '../domain';
 import type { OutboxTopic, TenantSecretName } from '../domain/model';
 import type { CareRecordContent } from '../domain/reports/careRecord';
+import type { TenantCalendarSettings } from '../domain/schedule/calendarPolicy';
 import type { AppLogEntry, AppLogPort, AppLogRecord } from '../ports/appLog';
 import type {
   AttendanceDayRow,
@@ -85,6 +87,7 @@ import type {
 import type { StoragePort, StoredFile } from '../ports/storage';
 import type {
   ProvisionTenantInput,
+  TenantCalendarSettingsStore,
   TenantDirectoryPort,
   TenantProvisioningPort,
   TenantRecord,
@@ -140,6 +143,8 @@ export interface TenantData {
   aiPrompts: AiPromptRecord[];
   /** キー → 最新の版(ai_prompt_revisions の最大値)。 */
   aiPromptRevisions: Record<string, number>;
+  /** ai_prompt_revisions.created_by(保存・既定に戻したスタッフ)。 */
+  aiPromptRevisionAuthors: string[];
   importRuns: (ImportRunRecord & { message: string | null })[];
   calendars: StaffCalendarRecord[];
   busyBlocks: { staffId: string; start: Date; end: Date }[];
@@ -178,6 +183,7 @@ function emptyTenantData(): TenantData {
     secrets: [],
     aiPrompts: [],
     aiPromptRevisions: {},
+    aiPromptRevisionAuthors: [],
     importRuns: [],
     calendars: [],
     busyBlocks: [],
@@ -195,6 +201,8 @@ const sameBytes = (a: Uint8Array | null, b: Uint8Array | null) =>
 export class MemoryDatabase {
   readonly tenants = new Map<string, TenantRecord>();
   readonly data = new Map<string, TenantData>();
+  /** テナント → カレンダーの設定(platform.tenants.calendar_settings)。 */
+  readonly calendarSettings = new Map<string, TenantCalendarSettings>();
   /** skipOutboxTopics と同じ(ミラーを無効にした環境)。 */
   skipOutboxTopics = new Set<OutboxTopic>();
   private seq = 0;
@@ -381,6 +389,9 @@ export function fakeRepositories(
       if (!tenant) throw new Error('テナントがありません');
       return tenant;
     },
+    async calendarSettings() {
+      return structuredClone(db.calendarSettings.get(tenantId) ?? EMPTY_CALENDAR_SETTINGS);
+    },
     staff: {
       async findById(id) {
         const row = staffById(id);
@@ -447,11 +458,33 @@ export function fakeRepositories(
         }
         return staffRecordOf(row);
       },
+      async lockActiveAdmins(date) {
+        return d()
+          .staff.filter(
+            (s) => s.record.role === 'admin' && (!s.record.retiredOn || s.record.retiredOn > date),
+          )
+          .map((s) => ({ id: s.record.id, retiredOn: s.record.retiredOn }))
+          .sort((a, b) => a.id.localeCompare(b.id));
+      },
+      async listPasswordStatuses() {
+        return new Map(
+          d().staff.map(
+            (s) =>
+              [
+                s.record.id,
+                s.credentials.passwordHash ? 'set' : s.credentials.legacyPasswordHash ? 'legacy' : 'unset',
+              ] as const,
+          ),
+        );
+      },
       async deleteIfUnreferenced(id) {
         if (!staffById(id)) return 'not_found';
         const data = d();
         // DB の外部キー(ON DELETE の無い参照)と同じく、業務の記録があれば消さない
         const referenced =
+          data.entityChanges.some((x) => x.changedBy === id) ||
+          data.careRecordRevisions.some((x) => x.changedBy === id) ||
+          data.aiPromptRevisionAuthors.includes(id) ||
           data.days.some((x) => x.staffId === id) ||
           data.careRecords.some((x) => x.authorStaffId === id) ||
           data.receipts.some((x) => x.staffId === id) ||
@@ -840,15 +873,17 @@ export function fakeRepositories(
       async save({ expectedRevision, ...input }) {
         const revision = nextPromptRevision(input.key, expectedRevision);
         d().aiPromptRevisions[input.key] = revision;
+        d().aiPromptRevisionAuthors.push(input.updatedBy);
         d().aiPrompts = [
           ...d().aiPrompts.filter((x) => x.key !== input.key),
           { ...input, revision, updatedAt: new Date() },
         ];
       },
-      async reset(key, _updatedBy, expectedRevision) {
+      async reset(key, updatedBy, expectedRevision) {
         const revision = nextPromptRevision(key, expectedRevision);
         if (!d().aiPrompts.some((x) => x.key === key)) return;
         d().aiPromptRevisions[key] = revision;
+        d().aiPromptRevisionAuthors.push(updatedBy);
         d().aiPrompts = d().aiPrompts.filter((x) => x.key !== key);
       },
     },
@@ -1098,6 +1133,16 @@ export class FakeOutboxQueue implements OutboxQueuePort {
     now: Date,
   ): Promise<boolean> {
     return this.finish(lease, { status, lastError: error, completedAt: now });
+  }
+}
+
+export class FakeTenantCalendarSettingsStore implements TenantCalendarSettingsStore {
+  constructor(private readonly db: MemoryDatabase) {}
+  async get(tenantId: string) {
+    return structuredClone(this.db.calendarSettings.get(tenantId) ?? EMPTY_CALENDAR_SETTINGS);
+  }
+  async set(tenantId: string, settings: TenantCalendarSettings) {
+    this.db.calendarSettings.set(tenantId, structuredClone(settings));
   }
 }
 

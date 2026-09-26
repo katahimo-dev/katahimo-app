@@ -31,22 +31,41 @@ export const RESET_CODE_MAX_ATTEMPTS = 5;
  */
 export type PasswordResetMailPurpose = 'reset' | 'setup_guide';
 
-/** reset は GAS版 requestPasswordReset のメール文面そのまま。 */
+/** 案内のメールに書くログインの手がかり(法人ID・画面の URL)。 */
+export interface PasswordResetMailContext {
+  tenantSlug: string;
+  /** 画面の URL(APP_PUBLIC_URL)。無ければ URL は書かない。 */
+  appPublicUrl?: string | undefined;
+}
+
+/** 法人IDつきのログイン画面の URL(`?t=<法人ID>` で法人IDの欄を出さずに開く。web の lib/tenant.ts)。 */
+export function loginUrlFor(appPublicUrl: string, tenantSlug: string): string {
+  const url = new URL(appPublicUrl);
+  url.searchParams.set('t', tenantSlug);
+  return url.toString();
+}
+
+/** reset は GAS版 requestPasswordReset のメール文面そのまま。setup_guide には法人ID・ログイン画面の URL も書く。 */
 export function buildPasswordResetMail(
   to: string,
   code: string,
   purpose: PasswordResetMailPurpose = 'reset',
+  context?: PasswordResetMailContext,
 ): MailMessage {
   if (purpose === 'setup_guide') {
-    return {
-      to,
-      subject: '【保育日報】パスワード設定のご案内',
-      text:
-        'ログインに使うパスワードを設定してください。\n' +
-        'ログイン画面の「パスワードを忘れたときはこちら」→「番号が届いている方はこちら」を押し、' +
-        'このメールアドレス・下の番号・新しいパスワードを入力します。\n\n' +
-        `コード: ${code}\n有効期限: 30分`,
-    };
+    const lines = [
+      'ログインに使うパスワードを設定してください。',
+      'ログイン画面の「パスワードを忘れたときはこちら」→「番号が届いている方はこちら」を押し、' +
+        'このメールアドレス・下の番号・新しいパスワードを入力します。',
+      '',
+      ...(context?.appPublicUrl
+        ? [`ログイン画面: ${loginUrlFor(context.appPublicUrl, context.tenantSlug)}`]
+        : []),
+      ...(context ? [`法人ID(事業所ID): ${context.tenantSlug}`] : []),
+      `コード: ${code}`,
+      '有効期限: 30分',
+    ];
+    return { to, subject: '【保育日報】パスワード設定のご案内', text: lines.join('\n') };
   }
   return {
     to,
@@ -221,6 +240,8 @@ export async function requestPasswordReset(
 export interface PasswordResetMailDeps extends Clock {
   uow: UnitOfWorkPort;
   mailer: MailerPort;
+  /** 画面の URL(案内のメールに書く)。 */
+  appPublicUrl?: string | undefined;
 }
 
 /**
@@ -243,10 +264,15 @@ export async function sendPasswordResetMail(
       await r.passwordResetCodes.clearMailCode(codeId);
       return null;
     }
-    return code;
+    return { code, tenantSlug: (await r.tenant()).slug };
   });
-  if (!record?.mailCode) return;
-  await deps.mailer.send(buildPasswordResetMail(record.sentToEmail, record.mailCode, purpose));
+  if (!record?.code.mailCode) return;
+  await deps.mailer.send(
+    buildPasswordResetMail(record.code.sentToEmail, record.code.mailCode, purpose, {
+      tenantSlug: record.tenantSlug,
+      appPublicUrl: deps.appPublicUrl,
+    }),
+  );
   await deps.uow.run(tenantId, (r) => r.passwordResetCodes.clearMailCode(codeId));
 }
 
