@@ -199,6 +199,41 @@ describe('API: 日報・事故報告の一覧', () => {
     }
   });
 
+  it('年の端(0001年・9999年)の続きの位置は DB に渡しても 500 にならない(0000年は 400)', async () => {
+    const forge = (value: unknown) =>
+      encodeURIComponent(Buffer.from(JSON.stringify(value), 'utf8').toString('base64url'));
+    const id = '0192f1d2-0000-7000-8000-000000000001';
+    for (const at of ['0001-01-01T00:00:00.000Z', '9999-12-31T23:59:59.999Z']) {
+      const cursor = forge([at, id]);
+      for (const path of [
+        `/api/reports?cursor=${cursor}`,
+        `/api/reports/history?customerId=${t.customerId}&before=${cursor}`,
+        `/api/admin/audit-logs?cursor=${cursor}`,
+      ]) {
+        const res = await get(path, t.adminCookie);
+        expect(res.status, `${path} ${at}`).toBe(200);
+      }
+    }
+    const yearZero = forge(['0000-01-01T00:00:00.000Z', id]);
+    expect((await get(`/api/reports?cursor=${yearZero}`, t.adminCookie)).status).toBe(400);
+  });
+
+  it('日報の訪問日は実在する 2000〜2100年の日付だけ(400)', async () => {
+    for (const reportDate of ['1999-12-31', '2101-01-01', '2026-02-30', '0001-01-01']) {
+      const res = await post('/api/reports/daily', t.adminCookie, {
+        customerId: t.customerId,
+        reportDate,
+        startTime: '09:00',
+        endTime: '10:00',
+      });
+      expect(res.status, reportDate).toBe(400);
+      expect(await res.json()).toMatchObject({
+        code: 'validation_failed',
+        fields: { reportDate: expect.any(String) },
+      });
+    }
+  });
+
   it('一般スタッフは staffId を送っても本人の記録だけ', async () => {
     const page = (await (
       await get(`/api/reports?staffId=${t.otherId}`, t.staffCookie)

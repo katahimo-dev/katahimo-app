@@ -9,7 +9,7 @@ export interface CsvImportJobTenantResult extends CustomerCsvImportResult {
 /**
  * 顧客CSVの自動取込(GAS版 checkAndImportLatestCsv の定期実行)。推奨: 毎日03:00 JST
  * (22時の出勤簿反映より前に顧客住所を最新化しておくため)。新しいCSVが無ければ何もしない。
- * 取込失敗・要確認(消失率超過)があれば失敗扱い(終了コード1)にする。
+ * 取込失敗・要確認(消失率超過)・他の取込が実行中(busy)があれば失敗扱い(終了コード1。Cloud Run Jobs が再試行する)にする。
  */
 export async function runCsvImportJob(
   container: WorkerContainer,
@@ -19,7 +19,9 @@ export async function runCsvImportJob(
     const result = await importLatestCustomerCsv(container, { tenant });
     results.push({ tenant: tenant.slug, ...result });
   }
-  const ok = results.every((r) => r.status !== 'failed' && r.status !== 'review_required');
+  const ok = results.every(
+    (r) => r.status !== 'failed' && r.status !== 'review_required' && r.status !== 'busy',
+  );
   logJson(ok ? 'INFO' : 'ERROR', '顧客CSVの自動取込が終わりました', {
     results: results.map((r) => ({
       tenant: r.tenant,

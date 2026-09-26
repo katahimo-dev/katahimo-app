@@ -15,6 +15,8 @@ export const customerCsvImportStatusSchema = z.enum([
   'imported',
   /** 消失率が安全装置の閾値を超えたため適用しなかった(人手の確認が必要) */
   'review_required',
+  /** 同じテナントの他の顧客の取込(外部連携の API 等)が実行中で、ロックを待ちきれなかった(送り直せば通る) */
+  'busy',
   'failed',
 ]);
 export type CustomerCsvImportStatus = z.infer<typeof customerCsvImportStatusSchema>;

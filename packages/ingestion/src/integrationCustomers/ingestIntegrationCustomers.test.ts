@@ -180,6 +180,41 @@ describe('ingestIntegrationCustomers(外部システムからの顧客の受け�
     expect(ctx.db.customerImportLocks).toEqual([ctx.tenantId]);
   });
 
+  it('表示名を省いて姓名を変えたら、既定の形(「姓 名」)の表示名は作り直し、取込元が付けた表示名は今のまま', async () => {
+    const { ctx, key } = setup();
+    const send = (c: IntegrationCustomersRequest['customers'][number]) =>
+      ingestIntegrationCustomers(ctx.deps, key, parse({ customers: [c] }));
+    const nameOf = (externalId: string) => {
+      const link = ctx.data().sourceRecords.find((s) => s.externalId === externalId);
+      return ctx.data().customers.find((c) => c.id === link?.customerId)?.displayName;
+    };
+    await send({ externalId: 'D-1', familyName: '佐藤', givenName: '花子' });
+    await send({ externalId: 'D-2', familyName: '佐藤', givenName: '花子', displayName: 'さとう はなこ様' });
+    await send({ externalId: 'D-3', familyName: '佐藤', givenName: '花子', displayName: '佐藤花子' });
+    expect([nameOf('D-1'), nameOf('D-2'), nameOf('D-3')]).toEqual([
+      '佐藤 花子',
+      'さとう はなこ様',
+      '佐藤花子',
+    ]);
+
+    // 姓だけ送る(名・表示名は省く)
+    await send({ externalId: 'D-1', familyName: '鈴木' });
+    await send({ externalId: 'D-2', familyName: '鈴木' });
+    await send({ externalId: 'D-3', familyName: '鈴木' });
+    expect([nameOf('D-1'), nameOf('D-2'), nameOf('D-3')]).toEqual([
+      '鈴木 花子',
+      'さとう はなこ様',
+      '鈴木 花子',
+    ]);
+
+    // 姓名が変わらなければ今のまま(unchanged)
+    const same = await send({ externalId: 'D-2', familyName: '鈴木', givenName: '花子' });
+    expect(same.counts.unchanged).toBe(1);
+    // 名だけ変える
+    await send({ externalId: 'D-1', familyName: '鈴木', givenName: '一子' });
+    expect(nameOf('D-1')).toBe('鈴木 一子');
+  });
+
   it('適用に失敗したら全体を戻し、ERROR integration.customers.ingest_failed を残して投げる(顧客の値は残さない)', async () => {
     const { ctx, key } = setup();
     const failing = {

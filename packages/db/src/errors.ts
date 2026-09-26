@@ -19,6 +19,8 @@ export function pgErrorOf(error: unknown): { code?: string; constraint?: string 
 export const UNIQUE_VIOLATION = '23505';
 export const FOREIGN_KEY_VIOLATION = '23503';
 export const EXCLUSION_VIOLATION = '23P01';
+/** lock_timeout を超えてロックを待った(lock_not_available)。 */
+export const LOCK_NOT_AVAILABLE = '55P03';
 
 /**
  * DB の制約・トリガーの拒否を、利用者に見せてよいエラー(DomainError)にする。対象外のエラーはそのまま返す

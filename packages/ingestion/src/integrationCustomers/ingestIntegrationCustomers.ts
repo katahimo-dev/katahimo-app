@@ -88,10 +88,11 @@ export async function ingestIntegrationCustomers(
   try {
     outcome = await work;
   } catch (error) {
-    // トランザクション全体が戻る(import_runs も残らない)ため、失敗は操作ログに残す(顧客の値は残さない)
+    // トランザクション全体が戻る(import_runs も残らない)ため、失敗は操作ログに残す(顧客の値は残さない)。
+    // 利用者に理由を返す失敗(他の取込が実行中の 409 等)は WARN、想定外の失敗は ERROR
     await deps.appLog.write({
       tenantId: key.tenantId,
-      level: 'ERROR',
+      level: error instanceof DomainError ? 'WARN' : 'ERROR',
       action: 'integration.customers.ingest_failed',
       actorType: 'system',
       details: {

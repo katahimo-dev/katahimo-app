@@ -1,4 +1,6 @@
 import {
+  CUSTOMER_IMPORT_BUSY_MESSAGE,
+  CUSTOMER_IMPORT_BUSY_REASON,
   conflict,
   type ImportSource,
   isOutboxTopicEnabled,
@@ -24,6 +26,7 @@ import type {
   TenantSettingsRepository,
 } from '@katahimo/core/ports';
 import { and, asc, desc, eq, max, sql } from 'drizzle-orm';
+import { LOCK_NOT_AVAILABLE, pgErrorOf } from '../../errors';
 import {
   aiPromptRevisions,
   aiPrompts,
@@ -188,9 +191,17 @@ export class DrizzleAiPromptRepository extends TenantBound implements AiPromptRe
 
 export class DrizzleImportRunRepository extends TenantBound implements ImportRunRepository {
   async lockTenantCustomerImports(): Promise<void> {
-    await this.tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`customer_import:${this.tenantId}`}, 0))`,
-    );
+    try {
+      await this.tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`customer_import:${this.tenantId}`}, 0))`,
+      );
+    } catch (error) {
+      // 他の取込が lock_timeout(API 5秒・ワーカー 10秒)より長くロックを持っている。500 にせず、送り直せば通る 409 にする
+      if (pgErrorOf(error)?.code === LOCK_NOT_AVAILABLE) {
+        throw conflict(CUSTOMER_IMPORT_BUSY_MESSAGE, undefined, CUSTOMER_IMPORT_BUSY_REASON);
+      }
+      throw error;
+    }
   }
 
   async start(input: {
