@@ -141,7 +141,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `GET /month?month=&staffId?` | `attendanceMonthQuerySchema` / `attendanceMonthResponseSchema` | `{ month: { yearMonth, staffId, staffName, days, totals, receipts: { byDay, total } } }`(月の全日) |
 | `GET /week?start=&end=&staffId?` | `attendanceWeekQuerySchema` / `attendanceWeekResponseSchema` | `{ events: [{ date, slotKey, title, eventType, start, end }] }`(最大31日) |
 | `GET /export?month=\|fiscalYear=&staffId?` | `attendanceExportQuerySchema`(`month` か `fiscalYear` のどちらか一方)/ .xlsx | 出勤簿の Excel(`XLSX_CONTENT_TYPE`)。1か月は1シート、年度(4月〜翌3月)は12シート。対象スタッフの決め方は `/month` と同じ。`Content-Disposition: attachment; filename="attendance_<月>.xlsx"; filename*=UTF-8''<日本語の名前>`(RFC 5987)、`Cache-Control: no-store`。中身は 02 8.6。INFO `attendance.export.downloaded`(自分の分も)。回数制限 `attendance_export_staff`(429) |
-| `GET /export/all?month=` | `attendanceBulkExportQuerySchema` / .xlsx | **管理者だけ**(`requireAdmin`、他は 403 + WARN `attendance.export_all.access_denied`)。その月に在籍している全員を1人1シート(100人まで、超えると 400)。SECURITY `attendance.export_all.downloaded`(`staffCount`。全スタッフの記録を持ち出すため、操作ログの CSV と同じ扱い)。回数制限は上と共通。1つのサーバーで同時に1つだけ(重なれば 429) |
+| `GET /export/all?month=` | `attendanceBulkExportQuerySchema` / .xlsx | **管理者だけ**(`requireAdmin`、他は 403 + WARN `attendance.export_all.access_denied`)。その月に在籍している全員を1人1シート(100人まで(`MAX_ATTENDANCE_EXPORT_STAFF`)。在籍している管理者・コーディネーターも数える。超えると 400 で何も作らない)。SECURITY `attendance.export_all.downloaded`(`staffCount`。全スタッフの記録を持ち出すため、操作ログの CSV と同じ扱い)。回数制限は上と共通。1つのサーバーで同時に1つだけ(重なれば 429) |
 
 `rowData` のキーは出勤簿の列記号(`C`・`D`・`E` … `AO`。意味は `sheetLayout.ts` の `ATTENDANCE_COLUMNS`)、値は文字列。
 書き込みは全て INFO、失敗・拒否は WARN/ERROR、閲覧は管理者・コーディネーターが他のスタッフを見たときだけ INFO(`targetStaffId`)。

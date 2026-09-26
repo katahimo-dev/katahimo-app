@@ -45,6 +45,50 @@ const TOTAL_CHECKS = [
   ['AP', 'workedMinutes'],
 ] as const;
 
+/**
+ * 書き出したファイルの中の、式のセルの結果の値(`<c r="F4"><f>…</f><v>0.4</v></c>` の v)。exceljs は読むときに
+ * 0 の結果を捨て、時刻の形式の結果を Date にするため、ファイルの XML から直接読む。
+ */
+function cachedResultsOf(buffer: Buffer, sheetIndex: number): Map<string, number> {
+  const xml = readZipEntry(buffer, `xl/worksheets/sheet${sheetIndex + 1}.xml`);
+  const results = new Map<string, number>();
+  for (const match of xml.matchAll(/<c r="([A-Z]+\d+)"[^>]*?(\/>|>(.*?)<\/c>)/g)) {
+    const [, address, , body = ''] = match as unknown as [string, string, string, string | undefined];
+    if (!body.includes('<f>')) continue;
+    const v = /<v>([^<]*)<\/v>/.exec(body)?.[1];
+    results.set(address, v === undefined ? Number.NaN : Number(v));
+  }
+  return results;
+}
+
+/**
+ * どの式のセルにも結果の値(保護ビュー・プレビューで見える値)があり、書き出した式を計算した値と同じことを確かめる。
+ * 結果の値(セルの番地 → 値)を返す。
+ */
+function expectCachedResults(buffer: Buffer, workbook: ExcelJS.Workbook, sheetIndex: number) {
+  const ws = workbook.worksheets[sheetIndex] as ExcelJS.Worksheet;
+  const results = cachedResultsOf(buffer, sheetIndex);
+  const value = createFormulaEvaluator(ws);
+  let formulaCount = 0;
+  ws.eachRow((row) => {
+    row.eachCell((cell) => {
+      const raw = cell.value as { formula?: string } | null;
+      if (!raw || typeof raw !== 'object' || !('formula' in raw)) return;
+      // 結合したセルの左上以外は左上の値を見せるだけ(ファイルには式が無い)
+      if (cell.master.address !== cell.address) return;
+      formulaCount++;
+      const result = results.get(cell.address);
+      expect(Number.isFinite(result), `${cell.address} の結果の値`).toBe(true);
+      // 空のセルをそのまま返す式(=E4 等)の結果は、Excel では 0
+      const evaluated = value(cell.address) ?? 0;
+      expect(typeof evaluated, `${cell.address} の式の計算`).toBe('number');
+      expect(result as number, `${cell.address} ${raw.formula}`).toBeCloseTo(evaluated as number, 6);
+    });
+  });
+  expect(results.size).toBe(formulaCount);
+  return results;
+}
+
 describe('出勤簿の Excel の書き出し', () => {
   it('全員分は1人1シートで、シート名は Excel の決まりに直して重ならないようにする', async () => {
     const staff = [
@@ -52,6 +96,7 @@ describe('出勤簿の Excel の書き出し', () => {
       exportStaffFixture('佐藤/花子', '2026-09', {}),
       exportStaffFixture('山田 太郎', '2026-09', {}),
       exportStaffFixture('とても長い名前のスタッフとても長い名前のスタッフとても長い', '2026-09', {}),
+      exportStaffFixture('𠮷'.repeat(20), '2026-09', {}),
     ];
     const buffer = await buildAttendanceWorkbook(allStaffWorkbookSheets(staff));
     const workbook = await load(buffer);
@@ -60,12 +105,15 @@ describe('出勤簿の Excel の書き出し', () => {
       '佐藤_花子',
       '山田 太郎 (2)',
       'とても長い名前のスタッフとても長い名前のスタッフとても長い'.slice(0, 31),
+      // Excel の31文字は UTF-16 の単位(𠮷 は2つ分)。サロゲートペアの途中では切らない
+      `${'𠮷'.repeat(15)}`,
     ]);
     // 開いたときに Excel が全ての式を計算する(exceljs は読むときにこの設定を戻さないので XML を見る)
     expect(readZipEntry(buffer, 'xl/workbook.xml')).toMatch(/<calcPr[^>]*fullCalcOnLoad="1"/);
 
-    // どのシートにも同じ計算式が入っている(データの無いスタッフも)
-    for (const ws of workbook.worksheets) {
+    // どのシートにも同じ計算式が入っている(データの無いスタッフも)。式のセルには結果の値もある
+    for (const [index, ws] of workbook.worksheets.entries()) {
+      expectCachedResults(buffer, workbook, index);
       const layout = sheetLayoutOf(30, ws.name === '山田 太郎' ? SAMPLE_RECEIPTS.length : 0);
       expect(formulaOf(ws, 'F4')).toBe('E4');
       expect(formulaOf(ws, 'G4')).toBe('F4+H4/1440');
@@ -87,6 +135,10 @@ describe('出勤簿の Excel の書き出し', () => {
       );
       expect(formulaOf(ws, `AD${layout.totals}`)).toBe('SUM(AD4:AD33)');
       expect(formulaOf(ws, `AQ${layout.totals}`)).toBe('SUM(AQ4:AQ33)');
+      // 距離の入力の列も合計の行に SUM(テンプレートの35行目と同じ)
+      for (const col of ['AG', 'AH', 'AI', 'AJ']) {
+        expect(formulaOf(ws, `${col}${layout.totals}`)).toBe(`SUM(${col}4:${col}33)`);
+      }
       expect(formulaOf(ws, `F${layout.receiptTotal}`)).toBe(
         `SUM($H$${layout.receiptFirst}:$H$${layout.receiptLast})`,
       );
@@ -119,6 +171,9 @@ describe('出勤簿の Excel の書き出し', () => {
     expect(ws.getCell('AG4').value).toBe(5.55);
     expect(ws.getCell('AO4').value).toBe('雨のため遅延');
     expect(ws.getCell('C5').value).toBeNull();
+    // 分の小数の列はテンプレートと同じ表示(整数でも「40.」にならない)。記録の無い日の0は空に見せる
+    expect(ws.getCell('J4').numFmt).toBe('#,##0.00;-#,##0.00;');
+    expect(ws.getCell(`AE${sheetLayoutOf(30, SAMPLE_RECEIPTS.length).totals}`).numFmt).toBe('#,##0.00');
 
     const layout = sheetLayoutOf(30, SAMPLE_RECEIPTS.length);
     const first = layout.receiptFirst;
@@ -137,7 +192,8 @@ describe('出勤簿の Excel の書き出し', () => {
     const staff = exportStaffFixture('山田 太郎', '2026-09', SAMPLE_ROWS, SAMPLE_RECEIPTS);
     const month = staff.months[0]?.month;
     if (!month) throw new Error('fixture');
-    const workbook = await load(await buildAttendanceWorkbook(staffWorkbookSheets(staff)));
+    const buffer = await buildAttendanceWorkbook(staffWorkbookSheets(staff));
+    const workbook = await load(buffer);
     const ws = workbook.worksheets[0] as ExcelJS.Worksheet;
     const value = createFormulaEvaluator(ws);
     const layout = sheetLayoutOf(month.days.length, SAMPLE_RECEIPTS.length);
@@ -158,6 +214,28 @@ describe('出勤簿の Excel の書き出し', () => {
     expect(value(`F${layout.receiptCount}`)).toBe(SAMPLE_RECEIPTS.length);
     // 月の集計の欄は合計の行を指す
     expect(value(`F${layout.summaryFirst}`)).toBe(month.totals.workedMinutes);
+
+    // 式のセルには結果の値もあり(保護ビュー・プレビューで空にならない)、式の計算・アプリの計算と同じ
+    // (30日 × 計算の列16 + 合計の行17 + 月の集計の欄(時間:分の列を含む)+ 領収書の枚数・月集計)
+    const cached = expectCachedResults(buffer, workbook, 0);
+    expect(cached.size).toBeGreaterThan(30 * 16 + 17);
+    const resultOf = (_ws: ExcelJS.Worksheet, ref: string) => cached.get(ref);
+    month.days.forEach((day, index) => {
+      const row = layout.firstDay + index;
+      for (const [col, key] of DAY_CHECKS) {
+        expect(resultOf(ws, `${col}${row}`), `${day.businessDate} ${col}`).toBe(day.derived[key]);
+      }
+      expect(resultOf(ws, `AQ${row}`)).toBe(month.receipts.byDay[day.businessDate] ?? 0);
+    });
+    for (const [col, key] of TOTAL_CHECKS) {
+      expect(resultOf(ws, `${col}${layout.totals}`), `合計 ${col}`).toBe(month.totals[key]);
+    }
+    expect(resultOf(ws, `AG${layout.totals}`)).toBe(month.totals.leg1DistanceKmTotal);
+    expect(resultOf(ws, `AJ${layout.totals}`)).toBe(month.totals.leavingDistanceKmTotal);
+    expect(resultOf(ws, `AQ${layout.totals}`)).toBe(2450);
+    expect(resultOf(ws, `F${layout.receiptTotal}`)).toBe(2450);
+    expect(resultOf(ws, `F${layout.receiptCount}`)).toBe(SAMPLE_RECEIPTS.length);
+    expect(resultOf(ws, `F${layout.summaryFirst}`)).toBe(month.totals.workedMinutes);
   });
 
   it('乱数で作った多くの日でも、式の計算とアプリの計算が一致する(入力は画面・取込が受け付ける形)', async () => {
@@ -168,7 +246,8 @@ describe('出勤簿の Excel の書き出し', () => {
     const staff = exportStaffFixture('乱数', '2026-09', rows);
     const month = staff.months[0]?.month;
     if (!month) throw new Error('fixture');
-    const workbook = await load(await buildAttendanceWorkbook(staffWorkbookSheets(staff)));
+    const buffer = await buildAttendanceWorkbook(staffWorkbookSheets(staff));
+    const workbook = await load(buffer);
     const value = createFormulaEvaluator(workbook.worksheets[0] as ExcelJS.Worksheet);
     month.days.forEach((day, index) => {
       const row = 4 + index;
@@ -190,6 +269,30 @@ describe('出勤簿の Excel の書き出し', () => {
     });
     const layout = sheetLayoutOf(30, 0);
     for (const [col, key] of TOTAL_CHECKS) {
+      expect(value(`${col}${layout.totals}`), `合計 ${col}`).toBeCloseTo(month.totals[key], 6);
+    }
+    // 結果の値も、式の計算・アプリの計算と同じ(空のセルを0とする移動・待機の列も)
+    const ws = workbook.worksheets[0] as ExcelJS.Worksheet;
+    const cached = expectCachedResults(buffer, workbook, 0);
+    const resultOf = (_ws: ExcelJS.Worksheet, ref: string) => cached.get(ref);
+    month.days.forEach((day, index) => {
+      const row = 4 + index;
+      for (const [col, key] of DAY_CHECKS) {
+        expect(resultOf(ws, `${col}${row}`)).toBe(day.derived[key]);
+      }
+      if (day.derived.leg1WaitMin !== '') expect(resultOf(ws, `K${row}`)).toBe(day.derived.leg1WaitMin);
+      if (day.derived.leg2WaitMin !== '') expect(resultOf(ws, `T${row}`)).toBe(day.derived.leg2WaitMin);
+    });
+    for (const [col, key] of TOTAL_CHECKS) {
+      expect(resultOf(ws, `${col}${layout.totals}`)).toBe(month.totals[key]);
+    }
+    for (const [col, key] of [
+      ['AG', 'leg1DistanceKmTotal'],
+      ['AH', 'leg2DistanceKmTotal'],
+      ['AI', 'attendanceDistanceKmTotal'],
+      ['AJ', 'leavingDistanceKmTotal'],
+    ] as const) {
+      expect(resultOf(ws, `${col}${layout.totals}`), `合計 ${col}`).toBe(month.totals[key]);
       expect(value(`${col}${layout.totals}`), `合計 ${col}`).toBeCloseTo(month.totals[key], 6);
     }
   });

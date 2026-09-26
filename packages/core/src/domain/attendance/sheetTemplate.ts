@@ -1,7 +1,7 @@
 import type { AttendanceColumnKey } from '@katahimo/shared';
 import { parseTimeToMinutes } from './attendanceCalc';
 import { ATTENDANCE_COLUMNS, ATTENDANCE_SLOTS, VISIT_SLOTS } from './sheetLayout';
-import type { AttendanceRowData } from './types';
+import type { AttendanceDayDerived, AttendanceMonthlyTotals, AttendanceRowData } from './types';
 
 /**
  * Excel に書き出す出勤簿(`GET /api/attendance/export`)の列の定義。
@@ -12,6 +12,8 @@ import type { AttendanceRowData } from './types';
  * 計算の列(F・G・J・K・O・P・S・T・AD・AE・AF・AK・AL・AM)はテンプレートの式をそのまま Excel の式として書き、
  * Excel が計算する(式の意味は attendanceCalc.ts と同じ。値が一致することも sheetTemplate.test.ts が確かめる)。
  * テンプレートに無い AP(働いた時間)・AQ(その日の領収書の金額)を右に足している。
+ * 計算の列・合計の行には、式と一緒に式の結果の値(cachedResult / cachedTotal。アプリの計算の値)も書く。Excel の保護ビューや
+ * プレビュー(式を計算しない表示)でも値が見えるように。開けば Excel が計算し直す(同じ値になる)。
  *
  * 列記号を書いてよいのは sheetLayout.ts(rowData の列)とこのファイル(書き出す表の列)だけ。
  */
@@ -35,6 +37,21 @@ export type SheetCellKind =
  */
 export type SheetColumnRole = 'date' | 'calendar' | 'manual' | 'formula';
 
+/** 1日分の値(計算の列の結果の値を作るのに使う。今月のまとめと同じ loadAttendanceMonth の値)。 */
+export interface SheetDayValues {
+  rowData: AttendanceRowData;
+  derived: AttendanceDayDerived;
+  /** その日の領収書の金額(円)。 */
+  receiptYen: number;
+}
+
+/** 1か月分の値(合計の行の結果の値を作るのに使う)。 */
+export interface SheetMonthValues {
+  totals: AttendanceMonthlyTotals;
+  /** 月の領収書の金額(円)。 */
+  receiptYen: number;
+}
+
 /** 計算式が参照する、同じシートの中の範囲(領収書の明細の日付・金額の列)。 */
 export interface SheetFormulaContext {
   receiptDateRange: string;
@@ -53,8 +70,15 @@ export interface AttendanceSheetColumn {
   input?: AttendanceColumnKey;
   /** 計算の列: 行 row の式(先頭の '=' は付けない)。 */
   formula?: (row: number, context: SheetFormulaContext) => string;
+  /**
+   * 計算の列: 式の結果としてセルに書いておく値(式と同じ意味の、アプリの計算の値。時刻は1日を1とした値)。
+   * 空のセルを0として扱うのは Excel の式と同じ。
+   */
+  cachedResult?: (day: SheetDayValues) => number;
   /** 合計の行に SUM を置く列。 */
   sumInTotals?: boolean;
+  /** 合計の行の SUM の結果としてセルに書いておく値(月合計 computeMonthlyTotals の値)。 */
+  cachedTotal?: (month: SheetMonthValues) => number;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -101,27 +125,76 @@ function overtimeFormula(row: number): string {
 
 const DISTANCE_COLUMNS = ['AG', 'AH', 'AI', 'AJ'] as const;
 
+// ─────────────────────────────────────────────────────────────
+// 式の結果の値(Excel と同じく、空・時刻でない値は0として計算する)
+// ─────────────────────────────────────────────────────────────
+
+/** 時刻の入力の列の分(空・形の合わない値は0。Excel の空のセルと同じ)。 */
+const minutesOf = (rowData: AttendanceRowData, key: AttendanceColumnKey): number =>
+  parseTimeToMinutes(rowData[key]) ?? 0;
+
+/** 数の入力の列の値(空・数でない値は0)。 */
+const numberOf = (rowData: AttendanceRowData, key: AttendanceColumnKey): number => {
+  const n = Number((rowData[key] ?? '').trim() || 0);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const blankToZero = (value: number | ''): number => (value === '' ? 0 : value);
+
+/** F/O 移動開始(=前の訪問の終業)・G/P 移動終了(=移動開始+計画移動時間)の分。 */
+const moveStartMinutes = (d: SheetDayValues, end: AttendanceColumnKey) => minutesOf(d.rowData, end);
+const moveEndMinutes = (d: SheetDayValues, end: AttendanceColumnKey, planned: AttendanceColumnKey) =>
+  minutesOf(d.rowData, end) + numberOf(d.rowData, planned);
+/** K/T 待機時間(分) = MAX(0, 次の始業 - 移動終了)。 */
+const waitMinutes = (
+  d: SheetDayValues,
+  end: AttendanceColumnKey,
+  planned: AttendanceColumnKey,
+  nextStart: AttendanceColumnKey,
+) => Math.max(0, minutesOf(d.rowData, nextStart) - moveEndMinutes(d, end, planned));
+
 const input = (
   key: AttendanceColumnKey,
   header: string,
   role: 'calendar' | 'manual',
   width: number,
   kind?: SheetCellKind,
+  cachedTotal?: (month: SheetMonthValues) => number,
 ): AttendanceSheetColumn => {
   const columnKind = ATTENDANCE_COLUMNS[key].kind;
   const defaultKind: SheetCellKind =
     columnKind === 'time' ? 'time' : columnKind === 'number' ? 'number' : 'text';
-  return { letter: key, header, role, width, input: key, kind: kind ?? defaultKind };
+  return {
+    letter: key,
+    header,
+    role,
+    width,
+    input: key,
+    kind: kind ?? defaultKind,
+    ...(cachedTotal ? { sumInTotals: true, cachedTotal } : {}),
+  };
 };
 
+/** 計算の列。cachedTotal を渡した列は合計の行に SUM を置く。 */
 const formula = (
   letter: string,
   header: string,
   kind: SheetCellKind,
   width: number,
   build: (row: number, context: SheetFormulaContext) => string,
-  sumInTotals = false,
-): AttendanceSheetColumn => ({ letter, header, kind, role: 'formula', width, formula: build, sumInTotals });
+  cachedResult: (day: SheetDayValues) => number,
+  cachedTotal?: (month: SheetMonthValues) => number,
+): AttendanceSheetColumn => ({
+  letter,
+  header,
+  kind,
+  role: 'formula',
+  width,
+  formula: build,
+  cachedResult,
+  sumInTotals: cachedTotal !== undefined,
+  ...(cachedTotal ? { cachedTotal } : {}),
+});
 
 const [slot1, slot2, slot3] = VISIT_SLOTS;
 
@@ -135,21 +208,77 @@ export const ATTENDANCE_SHEET_COLUMNS: readonly AttendanceSheetColumn[] = [
   input(slot1.title, '#1訪問先等', 'calendar', 14),
   input(slot1.start, '始業時刻', 'calendar', 7),
   input(slot1.end, '終業時刻', 'calendar', 7),
-  formula('F', '移動開始時刻', 'time', 7, (r) => `E${r}`),
-  formula('G', '移動終了時刻', 'time', 7, (r) => `F${r}+H${r}/1440`),
+  formula(
+    'F',
+    '移動開始時刻',
+    'time',
+    7,
+    (r) => `E${r}`,
+    (d) => moveStartMinutes(d, 'E') / 1440,
+  ),
+  formula(
+    'G',
+    '移動終了時刻',
+    'time',
+    7,
+    (r) => `F${r}+H${r}/1440`,
+    (d) => moveEndMinutes(d, 'E', 'H') / 1440,
+  ),
   input('H', '計画移動時間(分)', 'calendar', 8),
   input('I', '気象状況', 'manual', 7),
-  formula('J', '移動時間', 'minutesDecimal', 7, (r) => `IF(I${r}="雪", H${r}*1.3, H${r})`),
-  formula('K', '待機時間(分）', 'minutesDecimal', 7, (r) => `MAX(0,(M${r}-G${r})*1440)`),
+  formula(
+    'J',
+    '移動時間',
+    'minutesDecimal',
+    7,
+    (r) => `IF(I${r}="雪", H${r}*1.3, H${r})`,
+    (d) => blankToZero(d.derived.leg1WeatherAdjustedMoveMin),
+  ),
+  formula(
+    'K',
+    '待機時間(分）',
+    'minutesDecimal',
+    7,
+    (r) => `MAX(0,(M${r}-G${r})*1440)`,
+    (d) => waitMinutes(d, 'E', 'H', 'M'),
+  ),
   input(slot2.title, '#2訪問先等', 'calendar', 14),
   input(slot2.start, '始業時刻', 'calendar', 7),
   input(slot2.end, '終業時刻', 'calendar', 7),
-  formula('O', '移動開始時刻', 'time', 7, (r) => `N${r}`),
-  formula('P', '移動終了時刻', 'time', 7, (r) => `O${r}+Q${r}/1440`),
+  formula(
+    'O',
+    '移動開始時刻',
+    'time',
+    7,
+    (r) => `N${r}`,
+    (d) => moveStartMinutes(d, 'N') / 1440,
+  ),
+  formula(
+    'P',
+    '移動終了時刻',
+    'time',
+    7,
+    (r) => `O${r}+Q${r}/1440`,
+    (d) => moveEndMinutes(d, 'N', 'Q') / 1440,
+  ),
   input('Q', '計画移動時間(分)', 'calendar', 8),
   input('R', '気象状況', 'manual', 7),
-  formula('S', '移動時間', 'minutesDecimal', 7, (r) => `IF(R${r}="雪", Q${r}*1.3, Q${r})`),
-  formula('T', '待機時間(分）', 'minutesDecimal', 7, (r) => `MAX(0,(V${r}-P${r})*1440)`),
+  formula(
+    'S',
+    '移動時間',
+    'minutesDecimal',
+    7,
+    (r) => `IF(R${r}="雪", Q${r}*1.3, Q${r})`,
+    (d) => blankToZero(d.derived.leg2WeatherAdjustedMoveMin),
+  ),
+  formula(
+    'T',
+    '待機時間(分）',
+    'minutesDecimal',
+    7,
+    (r) => `MAX(0,(V${r}-P${r})*1440)`,
+    (d) => waitMinutes(d, 'N', 'Q', 'V'),
+  ),
   input(slot3.title, '#3訪問先等', 'calendar', 14),
   input(slot3.start, '始業時刻', 'calendar', 7),
   input(slot3.end, '終業時刻', 'calendar', 7),
@@ -159,21 +288,55 @@ export const ATTENDANCE_SHEET_COLUMNS: readonly AttendanceSheetColumn[] = [
   input('AA', '事務作業２', 'manual', 12),
   input('AB', '開始時刻', 'manual', 7),
   input('AC', '終了時刻', 'manual', 7),
-  formula('AD', '労働時間数(分)\n所定内 10:00〜17:00', 'minutes', 11, laborFormula, true),
-  formula('AE', '残業時間(分)\n所定外', 'minutesDecimal', 9, overtimeFormula, true),
-  formula('AF', '移動時間(分)', 'minutesDecimal', 8, (r) => `J${r}+S${r}`, true),
-  input('AG', '#1移動距離(km)', 'calendar', 8, 'km'),
-  input('AH', '#2移動距離(km)', 'calendar', 8, 'km'),
-  input('AI', '出勤距離(km)', 'calendar', 8, 'km'),
-  input('AJ', '退勤距離(km)', 'calendar', 8, 'km'),
-  formula('AK', '総移動距離(km)', 'km', 8, (r) => `SUM(AG${r}:AJ${r})`, true),
+  formula(
+    'AD',
+    '労働時間数(分)\n所定内 10:00〜17:00',
+    'minutes',
+    11,
+    laborFormula,
+    (d) => d.derived.laborMinutes,
+    (m) => m.totals.laborMinutes,
+  ),
+  formula(
+    'AE',
+    '残業時間(分)\n所定外',
+    'minutesDecimal',
+    9,
+    overtimeFormula,
+    (d) => d.derived.overtimeMinutes,
+    (m) => m.totals.overtimeMinutes,
+  ),
+  formula(
+    'AF',
+    '移動時間(分)',
+    'minutesDecimal',
+    8,
+    (r) => `J${r}+S${r}`,
+    (d) => d.derived.totalMoveMin,
+    (m) => m.totals.totalMoveMin,
+  ),
+  // 距離の入力の列も合計の行に SUM を置く(テンプレートの35行目と同じ)
+  input('AG', '#1移動距離(km)', 'calendar', 8, 'km', (m) => m.totals.leg1DistanceKmTotal),
+  input('AH', '#2移動距離(km)', 'calendar', 8, 'km', (m) => m.totals.leg2DistanceKmTotal),
+  input('AI', '出勤距離(km)', 'calendar', 8, 'km', (m) => m.totals.attendanceDistanceKmTotal),
+  input('AJ', '退勤距離(km)', 'calendar', 8, 'km', (m) => m.totals.leavingDistanceKmTotal),
+  formula(
+    'AK',
+    '総移動距離(km)',
+    'km',
+    8,
+    (r) => `SUM(AG${r}:AJ${r})`,
+    (d) => d.derived.totalDistanceKm,
+    (m) => m.totals.totalDistanceKm,
+  ),
   formula(
     'AL',
     '基準距離超過回数',
     'count',
     8,
     (r) => DISTANCE_COLUMNS.map((c) => `INT(MAX(0, ${c}${r} - 15) / 5)`).join(' + '),
-    true,
+    (d) => d.derived.overThresholdCount,
+    (m) => m.totals.overThresholdCount,
   ),
   formula(
     'AM',
@@ -182,18 +345,28 @@ export const ATTENDANCE_SHEET_COLUMNS: readonly AttendanceSheetColumn[] = [
     7,
     (r) =>
       `IF(ISNUMBER(AH${r}), 3, IF(ISNUMBER(AG${r}), 2, IF(OR(ISNUMBER(AI${r}), ISNUMBER(AJ${r})), 1, 0)))`,
-    true,
+    (d) => d.derived.visitCount,
+    (m) => m.totals.visitCountTotal,
   ),
-  { ...input('AN', '買物代行', 'manual', 7), sumInTotals: true },
+  input('AN', '買物代行', 'manual', 7, undefined, (m) => m.totals.shoppingErrandTotal),
   input('AO', '備考', 'manual', 30),
-  formula('AP', '働いた時間(分)\n所定内+残業', 'minutesDecimal', 10, (r) => `AD${r}+AE${r}`, true),
+  formula(
+    'AP',
+    '働いた時間(分)\n所定内+残業',
+    'minutesDecimal',
+    10,
+    (r) => `AD${r}+AE${r}`,
+    (d) => d.derived.workedMinutes,
+    (m) => m.totals.workedMinutes,
+  ),
   formula(
     'AQ',
     '領収書(円)',
     'yen',
     9,
     (r, ctx) => `SUMIFS(${ctx.receiptAmountRange}, ${ctx.receiptDateRange}, A${r})`,
-    true,
+    (d) => d.receiptYen,
+    (m) => m.receiptYen,
   ),
 ];
 
@@ -260,7 +433,7 @@ export function sheetInputValue(
   return raw;
 }
 
-/** Excel のシート名の決まり(31文字まで、: \ / ? * [ ] を使えない、先頭・末尾の ' を使えない、空は不可)に直す。 */
+/** Excel のシート名の決まり(UTF-16 で31文字まで、: \ / ? * [ ] を使えない、先頭・末尾の ' を使えない、空は不可)に直す。 */
 export function sanitizeSheetName(name: string, fallback = 'シート'): string {
   const cleaned = name
     .replace(/[:\\/?*[\]]/g, '_')
@@ -270,7 +443,20 @@ export function sanitizeSheetName(name: string, fallback = 'シート'): string 
     .replace(/^'+|'+$/g, '')
     .trim();
   const base = cleaned === '' || cleaned.toLowerCase() === 'history' ? fallback : cleaned;
-  return [...base].slice(0, 31).join('');
+  return truncateUtf16(base, SHEET_NAME_MAX_LENGTH);
+}
+
+/** Excel のシート名の上限(UTF-16 の単位で数える。𠮷 のようなサロゲートペアの文字は2つ分)。 */
+const SHEET_NAME_MAX_LENGTH = 31;
+
+/** UTF-16 の単位で max までに切る(サロゲートペアの途中では切らない)。 */
+export function truncateUtf16(value: string, max: number): string {
+  let result = '';
+  for (const char of value) {
+    if (result.length + char.length > max) break;
+    result += char;
+  }
+  return result;
 }
 
 /**
@@ -283,7 +469,7 @@ export function uniqueSheetNames(names: readonly string[]): string[] {
     let candidate = base;
     for (let n = 2; used.has(candidate.toLowerCase()); n++) {
       const suffix = ` (${n})`;
-      candidate = [...base].slice(0, 31 - suffix.length).join('') + suffix;
+      candidate = truncateUtf16(base, SHEET_NAME_MAX_LENGTH - suffix.length) + suffix;
     }
     used.add(candidate.toLowerCase());
     return candidate;

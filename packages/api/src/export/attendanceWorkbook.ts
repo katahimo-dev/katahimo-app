@@ -6,7 +6,10 @@ import {
   excelTimeValue,
   type SheetCellKind,
   type SheetColumnRole,
+  type SheetDayValues,
   type SheetFormulaContext,
+  type SheetMonthValues,
+  sheetColumnOf,
   sheetInputValue,
   uniqueSheetNames,
 } from '@katahimo/core/domain';
@@ -17,7 +20,9 @@ import ExcelJS from 'exceljs';
  * 出勤簿の Excel(.xlsx)を作る(GET /api/attendance/export ・ /export/all)。列の並び・見出し・計算式は
  * core の sheetTemplate.ts(お客様の出勤簿テンプレートと同じ)。ここはシートの組み立て(見出し・日の行・合計・
  * 月の集計・領収書の明細)と見た目だけを受け持つ。計算の列は Excel の式で書き、開いたときに計算させる
- * (fullCalcOnLoad)。入力の値は今月のまとめと同じ読み方(loadAttendanceMonth)の rowData。
+ * (fullCalcOnLoad)。式のセルには結果の値(アプリの計算の値。sheetTemplate の cachedResult / cachedTotal)も書き、
+ * 保護ビュー・プレビュー(式を計算しない表示)でも空にならないようにする。入力の値は今月のまとめと同じ読み方
+ * (loadAttendanceMonth)の rowData。
  */
 
 const FONT_NAME = '游ゴシック';
@@ -42,7 +47,8 @@ function numberFormat(kind: SheetCellKind, hideZero: boolean): string {
     date: 'd',
     time: 'h:mm',
     minutes: '#,##0',
-    minutesDecimal: '#,##0.##',
+    // テンプレートの K・T・AE・AF と同じ(「#,##0.##」は整数のとき Excel で「40.」と出る)
+    minutesDecimal: '#,##0.00',
     km: '#,##0.0#',
     count: '#,##0',
     yen: '#,##0',
@@ -199,17 +205,35 @@ function writeColumnHeaders(ws: ExcelJS.Worksheet): void {
   }
 }
 
+/** 式と、その結果の値(Excel の保護ビュー・プレビューはこの値を見せる)。 */
+function formulaCell(formula: string, result: number): ExcelJS.CellFormulaValue {
+  return { formula, result, date1904: false };
+}
+
 function dayCellValue(
   column: AttendanceSheetColumn,
   businessDate: string,
-  rowData: AttendanceExportMonth['month']['days'][number]['rowData'],
+  day: SheetDayValues,
   row: number,
   context: SheetFormulaContext,
 ): ExcelJS.CellValue {
-  if (column.formula) return { formula: column.formula(row, context) };
+  if (column.formula) {
+    if (!column.cachedResult) throw new Error(`計算の列 ${column.letter} に結果の値がありません`);
+    return formulaCell(column.formula(row, context), column.cachedResult(day));
+  }
   if (column.kind === 'date') return excelDate(businessDate);
   if (column.kind === 'weekday') return weekdayOf(businessDate);
-  return sheetInputValue(column, rowData);
+  return sheetInputValue(column, day.rowData);
+}
+
+function monthValuesOf(month: AttendanceExportMonth): SheetMonthValues {
+  return { totals: month.month.totals, receiptYen: month.month.receipts.total };
+}
+
+/** 合計の行の値(SUM の結果の値)。 */
+function totalOf(column: AttendanceSheetColumn, month: AttendanceExportMonth): number {
+  if (!column.cachedTotal) throw new Error(`合計の列 ${column.letter} に結果の値がありません`);
+  return column.cachedTotal(monthValuesOf(month));
 }
 
 function writeDays(ws: ExcelJS.Worksheet, month: AttendanceExportMonth, layout: SheetLayout): void {
@@ -220,7 +244,17 @@ function writeDays(ws: ExcelJS.Worksheet, month: AttendanceExportMonth, layout: 
     const weekendColor = weekday === '日' ? 'FFCC0000' : weekday === '土' ? 'FF1155CC' : undefined;
     for (const column of ATTENDANCE_SHEET_COLUMNS) {
       const cell = ws.getCell(`${column.letter}${row}`);
-      cell.value = dayCellValue(column, day.businessDate, day.rowData, row, context);
+      cell.value = dayCellValue(
+        column,
+        day.businessDate,
+        {
+          rowData: day.rowData,
+          derived: day.derived,
+          receiptYen: month.month.receipts.byDay[day.businessDate] ?? 0,
+        },
+        row,
+        context,
+      );
       const isDateColumn = column.role === 'date';
       cell.style = {
         font: font(isDateColumn && weekendColor ? { color: { argb: weekendColor } } : {}),
@@ -241,14 +275,17 @@ function writeDays(ws: ExcelJS.Worksheet, month: AttendanceExportMonth, layout: 
   });
 }
 
-function writeTotals(ws: ExcelJS.Worksheet, layout: SheetLayout): void {
+function writeTotals(ws: ExcelJS.Worksheet, month: AttendanceExportMonth, layout: SheetLayout): void {
   const row = layout.totals;
   ws.getCell(`A${row}`).value = '合計';
   ws.mergeCells(`A${row}:C${row}`);
   for (const column of ATTENDANCE_SHEET_COLUMNS) {
     const cell = ws.getCell(`${column.letter}${row}`);
     if (column.sumInTotals) {
-      cell.value = { formula: `SUM(${column.letter}${layout.firstDay}:${column.letter}${layout.lastDay})` };
+      cell.value = formulaCell(
+        `SUM(${column.letter}${layout.firstDay}:${column.letter}${layout.lastDay})`,
+        totalOf(column, month),
+      );
     }
     cell.style = {
       font: font({ bold: true }),
@@ -264,7 +301,7 @@ function writeTotals(ws: ExcelJS.Worksheet, layout: SheetLayout): void {
   note.style = { font: font({ size: 9, color: { argb: 'FF34A853' } }) };
 }
 
-function writeSummary(ws: ExcelJS.Worksheet, layout: SheetLayout): void {
+function writeSummary(ws: ExcelJS.Worksheet, month: AttendanceExportMonth, layout: SheetLayout): void {
   const title = ws.getCell(`A${layout.summaryTitle}`);
   title.value = '月の集計';
   title.style = { font: font({ bold: true, size: 12 }) };
@@ -280,18 +317,25 @@ function writeSummary(ws: ExcelJS.Worksheet, layout: SheetLayout): void {
     border: BOX,
     numFmt: numberFormat(kind, false),
   });
-  const writeItem = (row: number, label: string, formula: string, kind: SheetCellKind, labelFill: string) => {
+  const writeItem = (
+    row: number,
+    label: string,
+    formula: string,
+    result: number,
+    kind: SheetCellKind,
+    labelFill: string,
+  ) => {
     ws.getCell(`A${row}`).value = label;
     ws.mergeCells(`A${row}:E${row}`);
     ws.getCell(`A${row}`).style = labelStyle(labelFill);
     const value = ws.getCell(`F${row}`);
-    value.value = { formula };
+    value.value = formulaCell(formula, result);
     value.style = valueStyle(kind);
     ws.mergeCells(`F${row}:G${row}`);
     if (kind === 'minutes' || kind === 'minutesDecimal') {
       // 分を「時間:分」でも見せる
       const hm = ws.getCell(`H${row}`);
-      hm.value = { formula: `F${row}/1440` };
+      hm.value = formulaCell(`F${row}/1440`, result / 1440);
       hm.style = { font: font(), alignment: { horizontal: 'right' }, numFmt: '[h]:mm' };
       ws.getCell(`I${row}`).value = '(時間:分)';
       ws.getCell(`I${row}`).style = { font: font({ size: 9, color: { argb: 'FF666666' } }) };
@@ -302,13 +346,28 @@ function writeSummary(ws: ExcelJS.Worksheet, layout: SheetLayout): void {
       layout.summaryFirst + i,
       item.label,
       `${item.letter}${layout.totals}`,
+      totalOf(sheetColumnOf(item.letter), month),
       item.kind,
       ROLE_FILL.date,
     );
   });
   const { receiptDateRange, receiptAmountRange } = formulaContext(layout);
-  writeItem(layout.receiptCount, '領収書の枚数', `COUNT(${receiptDateRange})`, 'count', ROLE_FILL.date);
-  writeItem(layout.receiptTotal, '領収書月集計(円)', `SUM(${receiptAmountRange})`, 'yen', RECEIPT_TOTAL_FILL);
+  writeItem(
+    layout.receiptCount,
+    '領収書の枚数',
+    `COUNT(${receiptDateRange})`,
+    month.receipts.length,
+    'count',
+    ROLE_FILL.date,
+  );
+  writeItem(
+    layout.receiptTotal,
+    '領収書月集計(円)',
+    `SUM(${receiptAmountRange})`,
+    month.month.receipts.total,
+    'yen',
+    RECEIPT_TOTAL_FILL,
+  );
 }
 
 function writeReceipts(ws: ExcelJS.Worksheet, month: AttendanceExportMonth, layout: SheetLayout): void {
@@ -401,8 +460,8 @@ function addMonthSheet(
   writeHeader(ws, staff, month);
   writeColumnHeaders(ws);
   writeDays(ws, month, layout);
-  writeTotals(ws, layout);
-  writeSummary(ws, layout);
+  writeTotals(ws, month, layout);
+  writeSummary(ws, month, layout);
   writeReceipts(ws, month, layout);
 }
 
@@ -422,7 +481,7 @@ export async function buildAttendanceWorkbook(
   workbook.creator = 'katahimo';
   workbook.created = createdAt;
   workbook.modified = createdAt;
-  // 計算式の結果は書かないので、開いたときに Excel に全て計算させる
+  // 式の結果の値も書くが(保護ビュー・プレビュー用)、開いたときには Excel に全て計算し直させる
   workbook.calcProperties.fullCalcOnLoad = true;
   const names = uniqueSheetNames(sheets.map((s) => s.name));
   sheets.forEach((sheet, i) => {

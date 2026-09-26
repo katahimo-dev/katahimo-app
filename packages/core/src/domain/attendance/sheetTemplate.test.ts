@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { computeDayDerived } from './attendanceCalc';
 import { ATTENDANCE_COLUMN_KEYS, ATTENDANCE_COLUMNS } from './sheetLayout';
 import {
   ATTENDANCE_SHEET_COLUMNS,
@@ -21,6 +22,51 @@ describe('書き出す出勤簿の列', () => {
     for (const c of inputs) expect(c.letter).toBe(c.input);
     // 入力の列に式は無く、計算の列には必ず式がある
     for (const c of ATTENDANCE_SHEET_COLUMNS) expect(Boolean(c.formula)).toBe(c.role === 'formula');
+    // 計算の列には式の結果の値、合計の行に SUM を置く列には合計の値がある(保護ビュー・プレビューで空にしない)
+    for (const c of ATTENDANCE_SHEET_COLUMNS) {
+      expect(Boolean(c.cachedResult), c.letter).toBe(Boolean(c.formula));
+      expect(Boolean(c.cachedTotal), c.letter).toBe(Boolean(c.sumInTotals));
+    }
+  });
+
+  it('合計の行に SUM を置く列はテンプレートの35行目と同じ(距離の入力の列 AG〜AJ を含む)+ AP・AQ', () => {
+    expect(ATTENDANCE_SHEET_COLUMNS.filter((c) => c.sumInTotals).map((c) => c.letter)).toEqual([
+      'AD',
+      'AE',
+      'AF',
+      'AG',
+      'AH',
+      'AI',
+      'AJ',
+      'AK',
+      'AL',
+      'AM',
+      'AN',
+      'AP',
+      'AQ',
+    ]);
+  });
+
+  it('式の結果の値: 空のセルは0(Excel の式と同じ)、移動・待機はその日の入力から、集計はアプリの計算の値', () => {
+    const derived = computeDayDerived({ E: '10:00', H: '20', I: '雪', M: '11:00', AG: '16' });
+    const day = {
+      rowData: { E: '10:00', H: '20', I: '雪', M: '11:00', AG: '16' },
+      derived,
+      receiptYen: 1200,
+    };
+    const result = (letter: string) => sheetColumnOf(letter).cachedResult?.(day);
+    expect(result('F')).toBe(600 / 1440);
+    expect(result('G')).toBe(620 / 1440);
+    expect(result('J')).toBe(26);
+    expect(result('K')).toBe(40);
+    // #2 の移動は入力が無いので0(Excel の =N4 等も空のセルは0)
+    expect([result('O'), result('P'), result('S'), result('T')]).toEqual([0, 0, 0, 0]);
+    expect(result('AL')).toBe(derived.overThresholdCount);
+    expect(result('AM')).toBe(2);
+    expect(result('AQ')).toBe(1200);
+    // 終業と次の始業だけ(計画移動時間なし)でも Excel と同じく待機時間を出す
+    const noPlan = { rowData: { E: '10:00', M: '10:30' }, derived: computeDayDerived({}), receiptYen: 0 };
+    expect(sheetColumnOf('K').cachedResult?.(noPlan)).toBe(30);
   });
 
   it('時刻の入力の列は時刻、距離は km、それ以外の数の列は数', () => {
@@ -52,6 +98,19 @@ describe('シート名', () => {
     expect(sanitizeSheetName('   ')).toBe('シート');
     expect(sanitizeSheetName('history')).toBe('シート');
     expect([...sanitizeSheetName('あ'.repeat(40))]).toHaveLength(31);
+  });
+
+  it('31文字は UTF-16 の単位で数え(𠮷 は2つ分)、サロゲートペアの途中では切らない', () => {
+    const name = sanitizeSheetName('𠮷'.repeat(20));
+    expect(name).toBe('𠮷'.repeat(15));
+    expect(name.length).toBe(30);
+    expect(sanitizeSheetName(`あ${'𠮷'.repeat(20)}`)).toBe(`あ${'𠮷'.repeat(15)}`);
+    expect(sanitizeSheetName(`あ${'𠮷'.repeat(20)}`).length).toBe(31);
+    const unique = uniqueSheetNames(['𠮷'.repeat(20), '𠮷'.repeat(20)]);
+    expect(unique[1]).toBe(`${'𠮷'.repeat(13)} (2)`);
+    expect((unique[1] as string).length).toBeLessThanOrEqual(31);
+    // 切った後に孤立したサロゲートが残らない
+    for (const n of unique) expect(n).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
 
   it('同じ名前(大文字小文字の違いを含む)は (2)・(3) を付ける', () => {
