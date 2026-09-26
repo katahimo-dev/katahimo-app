@@ -71,7 +71,13 @@ import type {
   WebPushTarget,
 } from '../ports/push';
 import type { RateLimiterPort } from '../ports/rateLimiter';
-import type { CareRecordRow, ReceiptRow, ReceiptUploadRow, StoredFileRow } from '../ports/records';
+import type {
+  CareRecordRow,
+  ReceiptListFilter,
+  ReceiptRow,
+  ReceiptUploadRow,
+  StoredFileRow,
+} from '../ports/records';
 import type {
   ScheduleLightResult,
   SchedulePort,
@@ -209,6 +215,21 @@ const touchedAt = () => new Date(Date.UTC(2026, 0, 1) + ++pushTouch);
 
 const sameBytes = (a: Uint8Array | null, b: Uint8Array | null) =>
   a !== null && b !== null && Buffer.from(a).equals(Buffer.from(b));
+
+/** 領収書の一覧の条件に合う行(領収書日時・ID の新しい順)。 */
+function matchingReceipts(data: TenantData, filter: ReceiptListFilter): ReceiptRow[] {
+  return data.receipts
+    .filter(
+      (r) =>
+        r.receiptedAt >= filter.from &&
+        r.receiptedAt < filter.to &&
+        (filter.staffId === undefined || r.staffId === filter.staffId) &&
+        (filter.customerId === undefined || r.customerId === filter.customerId),
+    )
+    .sort(
+      (a, b) => b.receiptedAt.getTime() - a.receiptedAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+    );
+}
 
 /** 全テナントのインメモリの DB。 */
 export class MemoryDatabase {
@@ -874,6 +895,55 @@ export function fakeRepositories(
         return structuredClone(
           d().receipts.filter((r) => r.staffId === staffId && r.receiptedAt >= from && r.receiptedAt < to),
         );
+      },
+      async list(filter, after, limit) {
+        return matchingReceipts(d(), filter)
+          .filter(
+            (r) =>
+              !after ||
+              r.receiptedAt.getTime() < after.receiptedAt.getTime() ||
+              (r.receiptedAt.getTime() === after.receiptedAt.getTime() && r.id < after.id),
+          )
+          .slice(0, limit)
+          .map((r) => {
+            const file = d().files.find((f) => f.id === r.fileId);
+            return {
+              id: r.id,
+              uploadId: r.uploadId,
+              staffId: r.staffId,
+              staffName: d().staff.find((x) => x.record.id === r.staffId)?.record.displayName ?? null,
+              customerId: r.customerId,
+              customerDisplayName: r.customerId
+                ? (d().customers.find((c) => c.id === r.customerId)?.displayName ?? null)
+                : null,
+              customerNameText: r.customerNameText,
+              receiptedAt: new Date(r.receiptedAt),
+              amountYen: r.amountYen,
+              storeName: r.storeName,
+              handoffText: d().uploads.find((u) => u.id === r.uploadId)?.handoffText ?? null,
+              contentType: file?.contentType ?? 'application/octet-stream',
+              byteSize: file?.byteSize ?? 0,
+            };
+          });
+      },
+      async summarize(filter) {
+        const rows = matchingReceipts(d(), filter);
+        return {
+          count: rows.length,
+          totalYen: rows.reduce((sum, r) => sum + (r.amountYen ?? 0), 0),
+          noAmountCount: rows.filter((r) => r.amountYen === null).length,
+        };
+      },
+      async findImage(receiptId) {
+        const r = d().receipts.find((x) => x.id === receiptId);
+        const file = r ? d().files.find((f) => f.id === r.fileId) : undefined;
+        if (!r || !file) return null;
+        return {
+          receiptId: r.id,
+          staffId: r.staffId,
+          storageKey: file.storageKey,
+          contentType: file.contentType,
+        };
       },
     },
     storedFiles: {

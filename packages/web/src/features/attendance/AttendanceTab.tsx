@@ -34,11 +34,13 @@ import { type CalendarEvent, computeHourRange, todayJst, updatedAtLabel } from '
 const loadMonthlyModal = () => import('./components/MonthlyModal');
 const loadRangeSyncModal = () => import('./components/RangeSyncModal');
 const loadCalendarSyncDiffModal = () => import('./components/CalendarSyncDiffModal');
+const loadReceiptListModal = () => import('./components/ReceiptListModal');
 const MonthlyModal = lazy(() => loadMonthlyModal().then((m) => ({ default: m.MonthlyModal })));
 const RangeSyncModal = lazy(() => loadRangeSyncModal().then((m) => ({ default: m.RangeSyncModal })));
 const CalendarSyncDiffModal = lazy(() =>
   loadCalendarSyncDiffModal().then((m) => ({ default: m.CalendarSyncDiffModal })),
 );
+const ReceiptListModal = lazy(() => loadReceiptListModal().then((m) => ({ default: m.ReceiptListModal })));
 
 /**
  * 「🕒 出勤簿」タブ(GAS版 #tabPastSchedule)と、その中のダイアログ(今月のまとめ・まとめて取り込む・
@@ -70,6 +72,9 @@ export function AttendanceTab() {
   const [monthlyOpen, setMonthlyOpen] = useState(false);
   /** 今月のまとめは一度開いたら閉じても残す(月の欄の値がGAS版と同じく残る) */
   const [monthlyMounted, setMonthlyMounted] = useState(false);
+  /** 領収書の一覧(null = 閉じている)。月は今月のまとめから開いたときはその月 */
+  const [receipts, setReceipts] = useState<{ month: string | null } | null>(null);
+  const [receiptsMounted, setReceiptsMounted] = useState(false);
   const [rangeSyncOpen, setRangeSyncOpen] = useState(false);
   /** 開くたびに増やして、まとめて取り込むダイアログを作り直す(日付を選んでいる日に戻す) */
   const [rangeSyncKey, setRangeSyncKey] = useState(0);
@@ -105,6 +110,7 @@ export function AttendanceTab() {
       runWhenIdle(() => {
         void loadMonthlyModal();
         void loadCalendarSyncDiffModal();
+        void loadReceiptListModal();
         if (isAdmin) void loadRangeSyncModal();
       }),
     [isAdmin],
@@ -113,6 +119,10 @@ export function AttendanceTab() {
   const openMonthly = () => {
     setMonthlyMounted(true);
     setMonthlyOpen(true);
+  };
+  const openReceipts = (month: string | null) => {
+    setReceiptsMounted(true);
+    setReceipts({ month });
   };
   /** 取り込み中でなければ前回の進みぐあいを消して開く(GAS版 openCalendarSyncRangeModal) */
   const openRangeSync = () => {
@@ -195,19 +205,26 @@ export function AttendanceTab() {
     <>
       <AdminTargetStaffSelect id="pastScheduleStaffSelect" />
 
-      <div className="flex gap-3 mb-4">
+      <div className="flex flex-wrap gap-3 mb-4">
         <button
           type="button"
           onClick={openMonthly}
-          className="flex-1 min-h-12 py-3 rounded-xl text-base font-bold bg-gray-200 text-gray-800 transition-colors"
+          className="flex-1 basis-[40%] min-h-12 py-3 rounded-xl text-base font-bold bg-gray-200 text-gray-800 transition-colors"
         >
           📊 今月のまとめ
+        </button>
+        <button
+          type="button"
+          onClick={() => openReceipts(null)}
+          className="flex-1 basis-[40%] min-h-12 py-3 rounded-xl text-base font-bold bg-gray-200 text-gray-800 transition-colors"
+        >
+          🧾 領収書
         </button>
         {isAdmin ? (
           <button
             type="button"
             onClick={openRangeSync}
-            className="flex-1 min-h-12 py-3 rounded-xl text-base font-bold bg-blue-600 text-white transition-colors"
+            className="flex-1 basis-full min-h-12 py-3 rounded-xl text-base font-bold bg-blue-600 text-white transition-colors"
           >
             📅 まとめて取り込む
           </button>
@@ -326,6 +343,16 @@ export function AttendanceTab() {
             open={monthlyOpen}
             onClose={() => setMonthlyOpen(false)}
             onOpenSlot={(date, slotKey, prefill) => openSlot(date, slotKey, prefill)}
+            onOpenReceipts={openReceipts}
+          />
+        </Suspense>
+      ) : null}
+      {receiptsMounted ? (
+        <Suspense fallback={null}>
+          <ReceiptListModal
+            open={receipts !== null}
+            initialMonth={receipts?.month ?? null}
+            onClose={() => setReceipts(null)}
           />
         </Suspense>
       ) : null}

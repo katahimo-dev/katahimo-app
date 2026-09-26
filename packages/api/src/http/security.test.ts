@@ -2,10 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Database } from '@katahimo/db';
+import { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../app';
 import { createContainer } from '../container';
 import { loadEnv } from '../env';
+import { noStoreApiResponses } from './security';
 
 /** DBに触らないエンドポイントだけを叩くため、DBは使われたら分かる偽物にする。 */
 const noDb = new Proxy({} as Database, {
@@ -53,6 +55,17 @@ describe('セキュリティヘッダー', () => {
     expect(res.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(res.headers.get('strict-transport-security')).toBeNull();
+  });
+
+  it('API の応答は no-store。ルートが no-store を含む指定(private, no-store)を付けていればそのまま', async () => {
+    const app = new Hono();
+    app.use('*', noStoreApiResponses());
+    app.get('/plain', (c) => c.text('x'));
+    app.get('/cached', (c) => c.text('x', 200, { 'Cache-Control': 'max-age=60' }));
+    app.get('/image', (c) => c.body('x', 200, { 'Cache-Control': 'private, no-store' }));
+    expect((await app.request('/plain')).headers.get('cache-control')).toBe('no-store');
+    expect((await app.request('/cached')).headers.get('cache-control')).toBe('no-store');
+    expect((await app.request('/image')).headers.get('cache-control')).toBe('private, no-store');
   });
 
   it('画面(静的ファイル)の応答にも同じヘッダーを付け、キャッシュ方針は画面用のまま', async () => {

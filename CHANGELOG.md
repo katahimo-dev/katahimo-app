@@ -25,6 +25,11 @@
   絞り込んだ一覧、1件の中身(読むだけ。直した回数つき)、GAS版の「日報」「事故報告」シートと同じ列の CSV(BOM つき UTF-8)。
   スプレッドシートのミラーを止めても全員分を見られる。一覧・中身・CSV の書き出しは操作ログに残る(`doc/02_機能仕様.md` 10.2)。
   API `GET /api/reports`・`GET /api/reports/:id`・`GET /api/reports/export.csv`(`doc/04_API仕様.md` 2.6)。
+- 領収書の一覧と画像(出勤簿タブの「🧾 領収書」、今月のまとめの「🧾 領収書の一覧・画像を見る」): 月ごとの一覧(日時・スタッフ・
+  お客様・金額・店名・申し送り)と月の合計、小さい画像と押して拡大。本人の分を見られ、管理者・コーディネーターは他のスタッフ・全員分と
+  CSV で保存。GAS版で「領収書一覧」シートと Drive で見ていたものの置き換え(ミラーを止める前に要るものの1つ。`doc/02_機能仕様.md` 7.1)。
+  API `GET /api/receipts`・`GET /api/receipts/csv`・`GET /api/receipts/:id/image`(画像は API が権限を確かめて返す。署名付きURLは使わない。
+  `doc/04_API仕様.md` 2.7)。他の人の分の閲覧・CSV は操作ログに残る。
 - ワーカーの環境変数 `APP_PUBLIC_URL`: パスワード設定の案内のメールに法人IDつきのログイン画面の URL を書く(terraform の `app_public_url`)。
 - 外部システムからの顧客の受け取り `POST /api/integrations/customers`(RESERVA 等との連携の受け口): テナントごとの API キー
   (`Authorization: Bearer kth_…`。Cookie のセッションは使わない)で、1回500件までの顧客を作成・更新する(削除・アーカイブはしない)。

@@ -126,9 +126,12 @@ function createRunner(results: StepResult[]) {
     n += 1;
     const file = resolve(E2E_DIR, `${String(n).padStart(2, '0')}-${name}.png`);
     const errors: string[] = [];
-    const onConsole = (m: { type(): string; text(): string }) => {
+    const onConsole = (m: { type(): string; text(): string; location(): { url: string } }) => {
       // 未ログインでの /api/auth/me 等の 401 は想定どおり(ログイン画面を出すための確認)
-      if (m.type() === 'error' && !/status of 401/.test(m.text())) errors.push(m.text());
+      if (m.type() !== 'error' || /status of 401/.test(m.text())) return;
+      // 使い回している開発用DBでは、別の環境(ファイル置き場)で送った古い領収書の画像が 404 になる(画面は「画像なし」)
+      if (/status of 404/.test(m.text()) && /\/api\/receipts\/[^/]+\/image$/.test(m.location().url)) return;
+      errors.push(m.text());
     };
     const onPageError = (e: Error) => errors.push(e.message);
     const onResponse = (r: { status(): number; url(): string; request(): { method(): string } }) => {
@@ -316,18 +319,21 @@ async function runJourney() {
       return ((await res.json()) as { message?: string }).message ?? '';
     });
 
+    /** この回に送った領収書の束(領収書の一覧の手順で、その画像を開く) */
+    let uploadBatchId: string | null = null;
     await step(page, 'receipt-upload', async () => {
       const jpeg = await makeJpeg(page, `e2e ${Date.now()}`);
       await page
         .locator('#galleryInput')
         .setInputFiles({ name: 'receipt.jpg', mimeType: 'image/jpeg', buffer: jpeg });
       await wait(page, 1500);
-      const { message, uploadedCount } = await clickForResponse<{ message: string; uploadedCount: number }>(
-        page,
-        'POST',
-        '/api/receipts',
-        () => button(page, 'この領収書を送る').click(),
-      );
+      const uploaded = await clickForResponse<{
+        message: string;
+        uploadedCount: number;
+        uploadBatchId: string | null;
+      }>(page, 'POST', '/api/receipts', () => button(page, 'この領収書を送る').click());
+      const { message, uploadedCount } = uploaded;
+      uploadBatchId = uploaded.uploadBatchId;
       assert(uploadedCount === 1, `領収書が登録されない: ${message}`);
       await expectToast(page, message);
       return message;
@@ -462,6 +468,57 @@ async function runJourney() {
         await expectToast(page, 'Excelファイルを保存しました');
       }
       return saved.join(' / ');
+    });
+
+    // 今月のまとめから領収書の一覧を開き、この回に送った領収書の画像(サムネイル・拡大)が API から読めることを確かめる
+    let adminReceiptId: string | null = null;
+    await step(page, 'attendance-receipts', async () => {
+      const month = today.slice(0, 7);
+      const listed = page.waitForResponse(
+        (r) => new URL(r.url()).pathname === '/api/receipts' && r.request().method() === 'GET',
+        { timeout: 20_000 },
+      );
+      await button(page, '🧾 領収書の一覧・画像を見る').click();
+      const res = await listed;
+      assert(res.ok(), `GET /api/receipts が ${res.status()}`);
+      const { summary } = (await res.json()) as { summary: { count: number } };
+      assert(summary.count >= 2, `今月の領収書が一覧に出ない: ${summary.count}件`);
+      // この回に送った領収書の ID(一覧は新しい順。開発用DBに古い分が多くても探せるように API で引く)
+      const mine = await page.request.get(`${WEB_URL}/api/receipts?month=${month}&limit=200`);
+      const { receipts } = (await mine.json()) as { receipts: { id: string; uploadBatchId: string }[] };
+      adminReceiptId = receipts.find((r) => r.uploadBatchId === uploadBatchId)?.id ?? null;
+      assert(adminReceiptId, 'この回に送った領収書が一覧に無い');
+
+      const dialog = page.getByRole('dialog').filter({ has: page.locator('#receiptListMonth') });
+      const list = dialog.getByRole('list', { name: '領収書の一覧' });
+      await list.waitFor({ timeout: 10_000 });
+      const thumbnailSelector = `img[src="/api/receipts/${adminReceiptId}/image"]`;
+      const thumbnail = list.locator(thumbnailSelector);
+      for (let i = 0; i < 5 && (await thumbnail.count()) === 0; i += 1) {
+        await dialog.getByRole('button', { name: 'もっと見る' }).click();
+        await wait(page, 800);
+      }
+      await thumbnail.scrollIntoViewIfNeeded();
+      const loaded = (el: Element | null) =>
+        el instanceof HTMLImageElement && el.complete && el.naturalWidth > 0;
+      await page.waitForFunction(loaded, await thumbnail.elementHandle(), { timeout: 10_000 });
+      await list
+        .getByRole('button')
+        .filter({ has: page.locator(thumbnailSelector) })
+        .click();
+      const viewer = page.locator('[role="dialog"][aria-labelledby="receiptImageTitle"]');
+      await viewer.waitFor({ timeout: 10_000 });
+      const large = viewer.getByRole('img', { name: '領収書の画像', exact: true });
+      await page.waitForFunction(loaded, await large.elementHandle(), { timeout: 10_000 });
+      await viewer.getByRole('button', { name: '閉じる' }).last().click();
+      await wait(page, 300);
+      const csv = await page.request.get(`${WEB_URL}/api/receipts/csv?month=${month}&allStaff=true`);
+      assert(csv.ok(), `GET /api/receipts/csv が ${csv.status()}`);
+      const buf = await csv.body();
+      assert(buf.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), '領収書のCSVの先頭にBOMが無い');
+      await dialog.getByRole('button', { name: '閉じる' }).last().click();
+      await wait(page, 300);
+      return `${summary.count}件`;
     });
 
     await step(page, 'settings-text-size', async () => {
@@ -862,6 +919,25 @@ async function runJourney() {
           `他人の staffId で他人の出勤簿が見えた: ${attendance.staffId}`,
         );
         return `${statuses.join(', ')}; staffId 指定は無視(本人)`;
+      });
+
+      await step(staffPage, 'staff-receipts-own-only', async () => {
+        const req = staffPage.request;
+        const month = today.slice(0, 7);
+        const all = await req.get(`${WEB_URL}/api/receipts?month=${month}&allStaff=true`);
+        assert(all.status() === 403, `一般スタッフの全員分の領収書が ${all.status()}`);
+        const csv = await req.get(`${WEB_URL}/api/receipts/csv?month=${month}`);
+        assert(csv.status() === 403, `一般スタッフの領収書のCSVが ${csv.status()}`);
+        // 他人の staffId を指定しても本人の一覧になる(admin-vs-self)
+        const own = await req.get(`${WEB_URL}/api/receipts?month=${month}&staffId=${adminMe.staff.staffId}`);
+        assert(own.ok(), `GET /api/receipts が ${own.status()}`);
+        const { staff } = (await own.json()) as { staff: { id: string } | null };
+        assert(staff?.id === staffId, `他人の staffId で他人の領収書が見えた: ${staff?.id}`);
+        if (adminReceiptId) {
+          const image = await req.get(`${WEB_URL}/api/receipts/${adminReceiptId}/image`);
+          assert(image.status() === 403, `他人の領収書の画像が ${image.status()}`);
+        }
+        return adminReceiptId ? '全員分・CSV・他人の画像は 403' : '全員分・CSV は 403(画像は未確認)';
       });
 
       await step(staffPage, 'staff-logout', async () => {
