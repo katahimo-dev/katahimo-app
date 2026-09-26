@@ -318,24 +318,30 @@ describe('保育日報のプロンプトの組み立て', () => {
 });
 
 describe('AI の答えの後処理', () => {
-  it('使ったキーワードは ID・キーワード名のどちらでも表の行に直し、表に無い答えはそのまま残す', () => {
+  it('使ったキーワードは ID・キーワード名のどちらでも候補の行に直し、候補外・表に無い答えは使った語に数えない', () => {
+    const candidates = masters.keywords.filter((k) => k.code === 'K01' || k.code === 'K04');
     expect(
-      resolveUsedKeywords(['K01 見守りの語', 'k04', '協力の語', 'K01', 'X99 謎の語', 3], masters.keywords),
+      resolveUsedKeywords(
+        ['K01 見守りの語', 'k04', '協力の語', 'K02', 'K01', 'X99 謎の語', 3],
+        candidates,
+        masters.keywords,
+      ),
     ).toEqual({
       items: [
-        { code: 'K01', keyword: '見守りの語', known: true },
-        { code: 'K04', keyword: '指先の語', known: true },
-        { code: 'K02', keyword: '協力の語', known: true },
-        { code: 'X99 謎の語', keyword: null, known: false },
+        { code: 'K01', keyword: '見守りの語', status: 'used' },
+        { code: 'K04', keyword: '指先の語', status: 'used' },
+        { code: 'K02', keyword: '協力の語', status: 'not_offered' },
+        { code: 'X99 謎の語', keyword: null, status: 'unknown' },
       ],
-      keywordIds: [
-        '00000000-0000-7000-8000-00000000a001',
-        '00000000-0000-7000-8000-00000000a004',
-        '00000000-0000-7000-8000-00000000a002',
-      ],
-      unresolved: ['X99 謎の語'],
+      keywordIds: ['00000000-0000-7000-8000-00000000a001', '00000000-0000-7000-8000-00000000a004'],
+      unresolved: ['協力の語', 'X99 謎の語'],
     });
-    expect(resolveUsedKeywords(undefined, masters.keywords).items).toEqual([]);
+    // 候補が無ければ(PSI 2 以下等)表にある語も使った語にしない
+    expect(resolveUsedKeywords(['K01'], [], masters.keywords)).toMatchObject({
+      keywordIds: [],
+      items: [{ code: 'K01', status: 'not_offered' }],
+    });
+    expect(resolveUsedKeywords(undefined, candidates, masters.keywords).items).toEqual([]);
   });
 
   it('PSI 1 の warnings には「管理者へ連絡」が必ず入る(AI が入れていれば足さない)', () => {

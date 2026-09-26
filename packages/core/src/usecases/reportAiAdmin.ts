@@ -11,6 +11,7 @@ import {
   conflict,
   DomainError,
   invalid,
+  keywordAnswerMatcher,
   newId,
   type ParsedReportAiImport,
   zonedDayRange,
@@ -107,8 +108,18 @@ async function logRejected(
   });
 }
 
+/** 自然キーの呼び名(重なったときの文言)。 */
+const KEY_LABELS: Record<ReportAiRowTable, string> = {
+  keywords: 'ID',
+  ageBands: '年齢帯',
+  phrases: '表現',
+  stanceRules: '項目',
+};
+
 /**
- * 行を足す(id が null)か書き換える。自然キー(キーワードID・年齢帯・区分+表現・項目)が他の行と重なれば 409。
+ * 行を足す(id が null)か書き換える。自然キー(キーワードID・年齢帯・区分+表現・項目)が他の行と重なれば 409
+ * (アーカイブした行も含む。キーの一意制約はアーカイブした行にもかかるため)。ただし足すときにアーカイブした行と
+ * 同じキーなら、その行を戻して書き換える。
  * 年齢帯は書いたあとの全ての帯で月齢範囲が重ならないことを確かめる(重なれば 400。同時の保存は DB の EXCLUDE 制約が
  * 止める)。
  */
@@ -125,12 +136,19 @@ export async function saveReportAiRow<T extends ReportAiRowTable>(
       actor.tenantId,
       async (r) => {
         const sameKey = await r.reportAi.findRowByKey(table, naturalKeyOf(table, value));
-        if (sameKey && sameKey.id !== id && !sameKey.archived) {
-          throw conflict(
-            `同じ${table === 'keywords' ? 'ID' : table === 'phrases' ? '表現' : table === 'ageBands' ? '年齢帯' : '項目'}の${TABLE_LABELS[table]}が既にあります`,
-            undefined,
-            'duplicate_key',
-          );
+        if (sameKey && sameKey.id !== id) {
+          const key = KEY_LABELS[table];
+          if (!sameKey.archived) {
+            throw conflict(`同じ${key}の${TABLE_LABELS[table]}が既にあります`, undefined, 'duplicate_key');
+          }
+          // 足すときは下で戻す。別の行をアーカイブした行のキーに書き換えることはできない
+          if (id) {
+            throw conflict(
+              `同じ${key}の${TABLE_LABELS[table]}がアーカイブされています。別の${key}にするか、「＋ 追加」で同じ${key}を足してアーカイブした行を戻してください`,
+              undefined,
+              'duplicate_key',
+            );
+          }
         }
         let meta: ReportAiRowMeta;
         if (id) {
@@ -420,12 +438,19 @@ export interface KeywordUsageCsvRow {
   keyword: string;
   category: string | null;
   candidateCount: number;
+  /** 候補に出したうえで AI が使ったと答えた回数。 */
   usedCount: number;
+  /** 候補に出していないのに AI が使ったと答えた回数(使った回数には数えない)。 */
+  notOfferedCount: number;
 }
 
+/** 利用状況の CSV で、表に無い答えをまとめる行の ID 欄。 */
+export const UNKNOWN_KEYWORD_ANSWER_CODE = '(表に無い答え)';
+
 /**
- * 教育キーワードの利用状況(期間の AI 生成で候補に出した回数・AI が使ったと答えた回数)。期間は業務日の両端を含む
- * (テナントのタイムゾーン)。アーカイブした語も数える(期間の途中で外した語)。
+ * 教育キーワードの利用状況(期間の AI 生成で候補に出した回数・AI が使ったと答えた回数・候補外なのに使ったと
+ * 答えた回数)。期間は業務日の両端を含む(テナントのタイムゾーン)。アーカイブした語も数える(期間の途中で
+ * 外した語)。候補外の答えは生成の後処理と同じ突き合わせで今の表の語に直し、直せない答えは1行にまとめる。
  */
 export async function reportAiKeywordUsage(
   deps: ReportAiAdminDeps,
@@ -437,8 +462,17 @@ export async function reportAiKeywordUsage(
     const from = zonedDayRange(range.from, tenant.timezone).from;
     const to = zonedDayRange(addIsoDays(range.to, 1), tenant.timezone).from;
     const usage = await r.reportAiGenerations.keywordUsage(from, to);
+    const unresolved = await r.reportAiGenerations.unresolvedAnswerUsage(from, to);
     const { keywords } = await r.reportAi.listRecords();
     const byId = new Map(keywords.map((k) => [k.id, k]));
+    const matchAnswer = keywordAnswerMatcher(keywords);
+    const notOffered = new Map<string, number>();
+    let unknownCount = 0;
+    for (const { answer, count } of unresolved) {
+      const hit = matchAnswer(answer);
+      if (hit) notOffered.set(hit.id, (notOffered.get(hit.id) ?? 0) + count);
+      else unknownCount += count;
+    }
     const result: KeywordUsageCsvRow[] = [];
     for (const u of usage) {
       const keyword = byId.get(u.keywordId);
@@ -448,9 +482,10 @@ export async function reportAiKeywordUsage(
         category: keyword?.category ?? null,
         candidateCount: u.candidateCount,
         usedCount: u.usedCount,
+        notOfferedCount: keyword ? (notOffered.get(keyword.id) ?? 0) : 0,
       });
     }
-    // 候補に一度も出なかった語も0回として並べる
+    // 候補に一度も出なかった語も並べる(候補外の答えの回数はある)
     for (const k of keywords) {
       if (!usage.some((u) => u.keywordId === k.id)) {
         result.push({
@@ -459,10 +494,22 @@ export async function reportAiKeywordUsage(
           category: k.category,
           candidateCount: 0,
           usedCount: 0,
+          notOfferedCount: notOffered.get(k.id) ?? 0,
         });
       }
     }
-    return result.sort((a, b) => a.code.localeCompare(b.code));
+    result.sort((a, b) => a.code.localeCompare(b.code));
+    if (unknownCount > 0) {
+      result.push({
+        code: UNKNOWN_KEYWORD_ANSWER_CODE,
+        keyword: '',
+        category: null,
+        candidateCount: 0,
+        usedCount: 0,
+        notOfferedCount: unknownCount,
+      });
+    }
+    return result;
   });
   await deps.appLog.write({
     tenantId: actor.tenantId,

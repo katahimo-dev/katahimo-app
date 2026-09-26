@@ -172,7 +172,7 @@ describe('useReportController', () => {
       }) as never;
     const AI = {
       generationId: '00000000-0000-7000-8000-0000000000e1',
-      usedKeywords: [{ code: 'K01', keyword: '見守りの語', known: true }],
+      usedKeywords: [{ code: 'K01', keyword: '見守りの語', status: 'used' as const }],
       candidateCount: 3,
       escalationRequired: true,
       childAgeMonths: 14,

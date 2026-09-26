@@ -270,6 +270,7 @@
 | 準備 | スタッフごとの予定を読むカレンダー・自宅住所・移動手段の設定(🛠 管理 →「スタッフ」) | 管理者 | 2.1 |
 | 準備 | カレンダーと顧客CSVのフォルダをサービスアカウントに共有 | カレンダー・Drive の持ち主 | 2.1 |
 | 準備 | Google Chat の Webhook・Gemini のキーの保存(設定の詳細設定) | 管理者 | 2.1 |
+| 準備 | 日報AIの会社の方針(🛠 管理 →「AIプロンプト」の `daily_report.company_policy` に、お客様のプロンプト変更案の社是の1文)と、日報キーワード表現マスターの取込(「日報AIの調整」) | 管理者 | 2.1 |
 | 準備 | Web Push の鍵(`pnpm push:vapid-keys` → VAPID の設定)とテスト通知の確認 | 運用者 | 2.1 |
 | 準備(ミラーを続けるなら) | GAS版に `Bridge.js` Ver. 1.1.38 以降をデプロイし、`gas_bridge_url`・`gas-bridge-secret`・`gas_bridge_tenant`・`mirror_to_google_sheets` を設定。GAS版の Web App を公開したままにする | GAS のアカウントを持つ人・運用者 | 2.2 |
 | 切替の直前 | 当月の個別出勤簿を CSV にして取り込む(`pnpm import:attendance`) | 運用者 | 2.3・4 |

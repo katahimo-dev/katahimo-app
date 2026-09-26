@@ -100,6 +100,23 @@ describe('日報AIの調整(管理画面)', () => {
       expect((await listReportAiMasters(ctx.deps, admin)).keywords.map((k) => k.keyword)).toEqual(['戻した']);
     });
 
+    it('別の行を、外した行と同じ ID に書き換えることはできない(409。キーの一意制約は外した行にもかかる)', async () => {
+      const archived = await saveReportAiRow(ctx.deps, admin, 'keywords', null, keyword('K01'));
+      await archiveReportAiRow(ctx.deps, admin, 'keywords', archived.id);
+      const other = await saveReportAiRow(ctx.deps, admin, 'keywords', null, keyword('K02'));
+      const rejected = saveReportAiRow(
+        ctx.deps,
+        admin,
+        'keywords',
+        other.id,
+        keyword('K01'),
+        other.rowVersion,
+      );
+      await expect(rejected).rejects.toMatchObject({ code: 'conflict', reason: 'duplicate_key' });
+      await expect(rejected).rejects.toThrow(/アーカイブされています/);
+      expect((await listReportAiMasters(ctx.deps, admin)).keywords.map((k) => k.code)).toEqual(['K02']);
+    });
+
     it('年齢帯の月齢範囲は重ねられない(隣り合う帯は重ならない)', async () => {
       await saveReportAiRow(ctx.deps, admin, 'ageBands', null, band('0-6ヶ月', 0, 6));
       await saveReportAiRow(ctx.deps, admin, 'ageBands', null, band('6-12ヶ月', 6, 12));
@@ -212,7 +229,7 @@ describe('日報AIの調整(管理画面)', () => {
     });
   });
 
-  it('書き出し・キーワードの利用状況(期間の候補・使用の回数)を操作ログに残す', async () => {
+  it('書き出し・キーワードの利用状況(期間の候補・使用・候補外の回数)を操作ログに残す', async () => {
     const k1 = await saveReportAiRow(ctx.deps, admin, 'keywords', null, keyword('K01'));
     await saveReportAiRow(ctx.deps, admin, 'keywords', null, keyword('K02'));
     const customerId = await ctx.addCustomer('佐藤 花子');
@@ -239,15 +256,17 @@ describe('日報AIの調整(管理画面)', () => {
         escalationRequired: false,
         candidateKeywordIds: [k1.id],
         usedKeywordIds: [k1.id],
-        unresolvedUsedCodes: [],
+        // 候補外の語(K02)と表に無い答えは、使った回数に数えず別に数える
+        unresolvedUsedCodes: ['K02 語K02', '謎の語'],
         output: {},
         errorCode: null,
       }),
     );
     const rows = await reportAiKeywordUsage(ctx.deps, admin, { from: '2026-09-01', to: '2026-09-30' });
-    expect(rows.map((r) => [r.code, r.candidateCount, r.usedCount])).toEqual([
-      ['K01', 1, 1],
-      ['K02', 0, 0],
+    expect(rows.map((r) => [r.code, r.candidateCount, r.usedCount, r.notOfferedCount])).toEqual([
+      ['K01', 1, 1, 0],
+      ['K02', 0, 0, 1],
+      ['(表に無い答え)', 0, 0, 1],
     ]);
     expect(
       (await reportAiKeywordUsage(ctx.deps, admin, { from: '2026-09-21', to: '2026-09-30' }))[0],

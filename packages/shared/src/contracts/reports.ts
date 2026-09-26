@@ -26,7 +26,10 @@ export const saveDailyReportRequestSchema = z.object({
   customerText: textSchema,
   riskRating: ratingSchema.default(null),
   esRating: ratingSchema.default(null),
-  /** 日報の対象のお子様(お客様の世帯の子。未選択は省略)。 */
+  /**
+   * 日報の対象のお子様(お客様の世帯の子)。null = 選ばない。省略すると、世帯にアーカイブされていない子が
+   * ちょうど1人ならその子(画面の自動選択と同じ)。
+   */
   careRecipientId: idSchema.nullable().optional(),
   /**
    * この日報の下書きを作った AI 生成の記録(generate の応答の generationId)。同じスタッフ・同じお客様の生成だけを
@@ -44,7 +47,10 @@ export const dailyReportViewSchema = z.object({
   riskRating: ratingSchema,
   esRating: ratingSchema,
   careRecipientId: idSchema.nullable(),
-  /** PSI 2 以下(注意・危険)で保存したため管理者へ知らせた。 */
+  /**
+   * この保存で管理者へ PSI の知らせを出した(PSI 2 以下(注意・危険)で、新しい日報か PSI が前の保存から
+   * 変わったとき。同じ PSI のまま保存し直しても知らせない)。
+   */
   psiAlert: z.boolean(),
   rowVersion: rowVersionSchema,
   content: z.object({
@@ -110,7 +116,8 @@ export type GenerateReportRequest = z.infer<typeof generateReportRequestSchema>;
 /**
  * POST /api/reports/daily/generate のリクエスト(GAS版 generateReportWithWarnings の引数 + 日報AIの3軸)。
  * - customerId: 日報を書くお客様(家庭の教育思考★を読む)
- * - careRecipientId: 対象のお子様(月齢 → 年齢帯。未選択なら年齢帯の言葉を使わない)
+ * - careRecipientId: 対象のお子様(月齢 → 年齢帯)。null = 選ばない(年齢帯の言葉を使わない)。省略すると
+ *   世帯にアーカイブされていない子がちょうど1人ならその子(画面の自動選択と同じ)
  * - riskRating: 生成の前に付けた PSI(未評価は省略。言葉の絞り込みは PSI 4 = 通常運用として扱う)
  * - reportDate: 訪問日(月齢を数える日。省略時はテナントの今日)
  */
@@ -133,11 +140,14 @@ export const dailyReportDraftSchema = z.object({
 });
 export type DailyReportDraft = z.infer<typeof dailyReportDraftSchema>;
 
-/** AI が使ったと答えた教育キーワード(表に無い答えは known=false で、そのまま出す)。 */
+/**
+ * AI が使ったと答えた教育キーワード。status: used = 候補として見せた語 / not_offered = 表にはあるが候補に
+ * 見せていない語(使った語には数えない) / unknown = 表に無い答え(code にそのまま出し、keyword は null)。
+ */
 export const usedReportKeywordSchema = z.object({
   code: z.string(),
   keyword: z.string().nullable(),
-  known: z.boolean(),
+  status: z.enum(['used', 'not_offered', 'unknown']),
 });
 export type UsedReportKeyword = z.infer<typeof usedReportKeywordSchema>;
 

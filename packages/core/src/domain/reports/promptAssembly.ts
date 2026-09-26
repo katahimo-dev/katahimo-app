@@ -460,42 +460,73 @@ export function enforceEscalationWarning(warnings: readonly string[]): string[] 
   return warnings.some((w) => w.includes('管理者へ連絡')) ? [...warnings] : [...warnings, ESCALATION_WARNING];
 }
 
+/**
+ * AI が使ったと答えた教育キーワードの扱い: used = 候補として見せた語 / not_offered = 表にはあるが候補に見せて
+ * いない語(この家庭・月齢・PSI では使わない語) / unknown = 表に無い答え。
+ */
+export type UsedKeywordStatus = 'used' | 'not_offered' | 'unknown';
+
 export interface ResolvedUsedKeywords {
-  /** 画面に出す(表に無い答えも known=false で残す)。 */
-  items: { code: string; keyword: string | null; known: boolean }[];
-  /** 表の行(キーワードの ID)。 */
+  /** 画面に出す(候補外・表に無い答えも残す)。 */
+  items: { code: string; keyword: string | null; status: UsedKeywordStatus }[];
+  /** 候補として見せた語のうち、使ったと答えた行(キーワードの ID)。 */
   keywordIds: string[];
-  /** 表に無い答え(そのままの文字列。長すぎる・多すぎる分は切る)。 */
+  /** 候補に見せた語に直せなかった答え(候補外・表に無い。そのままの文字列。長すぎる・多すぎる分は切る)。 */
   unresolved: string[];
 }
 
 /**
- * AI が「使った」と答えた教育キーワード(「K11 粗大運動」「K11」「粗大運動」のどれでも)を表の行に直す。
- * 先頭の ID で突き合わせ、無ければキーワード名で突き合わせる。同じ語は1回だけ。
+ * AI の答え(「K11 粗大運動」「K11」「粗大運動」のどれでも)を表の行に直す関数を作る。先頭の ID で突き合わせ、
+ * 無ければキーワード名で突き合わせる。生成の後処理と利用状況の CSV で同じ突き合わせを使う。
+ */
+export function keywordAnswerMatcher<K extends Pick<ReportKeywordEntry, 'code' | 'keyword'>>(
+  keywords: readonly K[],
+): (answer: string) => K | undefined {
+  const byCode = new Map(keywords.map((k) => [k.code.normalize('NFKC').toUpperCase(), k]));
+  const byName = new Map(keywords.map((k) => [k.keyword.normalize('NFKC'), k]));
+  return (answer) => {
+    const text = answer.normalize('NFKC').trim();
+    if (!text) return undefined;
+    const [head = '', ...rest] = text.split(/\s+/);
+    return byCode.get(head.toUpperCase()) ?? byName.get(text) ?? byName.get(rest.join(' '));
+  };
+}
+
+/**
+ * AI が「使った」と答えた教育キーワードを、候補として見せた語(candidates)に直す。候補に無い語は、表(keywords)に
+ * あれば not_offered、無ければ unknown として unresolved に残す(使った語には数えない)。同じ語は1回だけ。
  */
 export function resolveUsedKeywords(
   answers: readonly unknown[] | undefined,
+  candidates: readonly ReportKeywordEntry[],
   keywords: readonly ReportKeywordEntry[],
 ): ResolvedUsedKeywords {
-  const byCode = new Map(keywords.map((k) => [k.code.normalize('NFKC').toUpperCase(), k]));
-  const byName = new Map(keywords.map((k) => [k.keyword.normalize('NFKC'), k]));
+  const offered = keywordAnswerMatcher(candidates);
+  const inTable = keywordAnswerMatcher(keywords);
   const result: ResolvedUsedKeywords = { items: [], keywordIds: [], unresolved: [] };
+  const seen = new Set<string>();
   for (const raw of (answers ?? []).slice(0, 20)) {
     if (typeof raw !== 'string') continue;
     const text = raw.normalize('NFKC').trim();
     if (!text) continue;
-    const [head = '', ...rest] = text.split(/\s+/);
-    const hit = byCode.get(head.toUpperCase()) ?? byName.get(text) ?? byName.get(rest.join(' '));
+    const hit = offered(text);
     if (hit) {
-      if (!result.keywordIds.includes(hit.id)) {
-        result.keywordIds.push(hit.id);
-        result.items.push({ code: hit.code, keyword: hit.keyword, known: true });
-      }
-    } else if (result.unresolved.length < 10) {
-      const code = text.slice(0, 100);
-      result.unresolved.push(code);
-      result.items.push({ code, keyword: null, known: false });
+      if (seen.has(hit.id)) continue;
+      seen.add(hit.id);
+      result.keywordIds.push(hit.id);
+      result.items.push({ code: hit.code, keyword: hit.keyword, status: 'used' });
+      continue;
     }
+    const other = inTable(text);
+    if ((other && seen.has(other.id)) || result.unresolved.length >= 10) continue;
+    if (other) seen.add(other.id);
+    const answer = text.slice(0, 100);
+    result.unresolved.push(answer);
+    result.items.push(
+      other
+        ? { code: other.code, keyword: other.keyword, status: 'not_offered' }
+        : { code: answer, keyword: null, status: 'unknown' },
+    );
   }
   return result;
 }

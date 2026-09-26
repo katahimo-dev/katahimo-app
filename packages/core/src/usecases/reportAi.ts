@@ -6,10 +6,10 @@ import {
   assembleDailyReportPrompt,
   dailyTimeInfo,
   enforceEscalationWarning,
-  invalid,
   newId,
   notFound,
   type ReportAiErrorCode,
+  type ResolvedUsedKeywords,
   renderAccidentReportPrompt,
   resolveUsedKeywords,
   zonedBusinessDate,
@@ -28,6 +28,7 @@ import type { SecretBoxPort } from '../ports/secretBox';
 import type { TenantSettingsRecord } from '../ports/settings';
 import type { TenantRepositories } from '../ports/unitOfWork';
 import type { AiPromptDeps } from './aiPrompts';
+import { resolveReportCareRecipient } from './reportCareRecipient';
 import type { Actor, Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
 import { readTenantSecret } from './settings';
@@ -107,6 +108,7 @@ export interface GenerateDailyReportDraftInput {
   start?: string | undefined;
   end?: string | undefined;
   customerId: string;
+  /** 対象のお子様(null = 選ばない、省略 = 世帯の子が1人ならその子。resolveReportCareRecipient)。 */
   careRecipientId?: string | null | undefined;
   riskRating?: number | null | undefined;
   /** 月齢を数える日('YYYY-MM-DD')。省略時はテナントの今日。 */
@@ -117,7 +119,7 @@ export interface DailyReportGeneration {
   draft: DailyReportDraft;
   ai: {
     generationId: string | null;
-    usedKeywords: { code: string; keyword: string | null; known: boolean }[];
+    usedKeywords: ResolvedUsedKeywords['items'];
     candidateCount: number;
     escalationRequired: boolean;
     childAgeMonths: number | null;
@@ -153,19 +155,7 @@ export async function generateDailyReportDraft(
   const context = await deps.uow.run(caller.tenantId, async (r) => {
     const customer = await r.customers.findById(input.customerId);
     if (!customer) throw notFound('お客様が見つかりません', 'customer_not_found');
-    let birthDate: string | null = null;
-    if (input.careRecipientId) {
-      const recipients = await r.careRecipients.listByCustomer(input.customerId, { includeArchived: true });
-      const recipient = recipients.find((c) => c.id === input.careRecipientId);
-      if (!recipient) {
-        throw invalid(
-          '対象のお子様がこのお客様の世帯にいません。画面を開きなおしてください',
-          { careRecipientId: '対象のお子様が正しくありません' },
-          'care_recipient_mismatch',
-        );
-      }
-      birthDate = recipient.birthDate;
-    }
+    const recipient = await resolveReportCareRecipient(r, input.customerId, input.careRecipientId);
     const [profile, masters, template, companyPolicy, tenant] = await Promise.all([
       r.customerReportProfiles.find(input.customerId),
       r.reportAi.loadActive(),
@@ -173,11 +163,12 @@ export async function generateDailyReportDraft(
       resolvePrompt(r, AI_PROMPT_KEYS.DAILY_REPORT_COMPANY_POLICY),
       r.tenant(),
     ]);
-    return { birthDate, profile, masters, template, companyPolicy, timeZone: tenant.timezone };
+    return { recipient, profile, masters, template, companyPolicy, timeZone: tenant.timezone };
   });
 
   const onDate = input.reportDate ?? zonedBusinessDate(startedAt, context.timeZone);
-  const childAgeMonths = context.birthDate ? ageInMonths(context.birthDate, onDate) : null;
+  const birthDate = context.recipient?.birthDate ?? null;
+  const childAgeMonths = birthDate ? ageInMonths(birthDate, onDate) : null;
   const timeInfo = dailyTimeInfo(input.start, input.end);
   const riskRating = input.riskRating ?? null;
   const assembled = assembleDailyReportPrompt({
@@ -195,7 +186,11 @@ export async function generateDailyReportDraft(
   const raw = await reportAi.generateDailyReport({ prompt: assembled.prompt });
   const errorCode = errorCodeOf(raw);
   if (errorCode) await logAiError(deps, caller, 'ai.daily_report.generate_failed', raw.internal);
-  const used = resolveUsedKeywords(errorCode ? [] : raw.usedKeywords, context.masters.keywords);
+  const used = resolveUsedKeywords(
+    errorCode ? [] : raw.usedKeywords,
+    assembled.candidates,
+    context.masters.keywords,
+  );
   const { adjustment } = assembled;
   const warnings =
     !errorCode && adjustment.escalationRequired ? enforceEscalationWarning(raw.warnings) : raw.warnings;
@@ -206,7 +201,7 @@ export async function generateDailyReportDraft(
     id: generationId,
     staffId: caller.staffId,
     customerId: input.customerId,
-    careRecipientId: input.careRecipientId ?? null,
+    careRecipientId: context.recipient?.id ?? null,
     promptKey: AI_PROMPT_KEYS.DAILY_REPORT_GENERATE,
     promptRevision: context.template.revision,
     defaultPromptSha256: context.template.revision === null ? sha256(context.template.body) : null,

@@ -14,7 +14,7 @@ import type {
   ReportAiRowTypes,
   ReportKeywordUsageRow,
 } from '@katahimo/core/ports';
-import { and, asc, eq, isNull, type SQL, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, or, type SQL, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import {
   customerReportProfiles,
@@ -429,11 +429,21 @@ export class DrizzleReportAiGenerationRepository extends TenantBound implements 
     return rows[0] ?? null;
   }
 
-  async linkToCareRecord(id: string, careRecordId: string): Promise<void> {
-    await this.tx
-      .update(reportAiGenerations)
+  async linkToCareRecord(id: string, careRecordId: string): Promise<boolean> {
+    const g = reportAiGenerations;
+    // まだ結び付いていないか同じ日報のときだけ書く(並んだ2つの保存が同じ生成を別々の日報に結び付けない)
+    const rows = await this.tx
+      .update(g)
       .set({ careRecordId })
-      .where(and(eq(reportAiGenerations.tenantId, this.tenantId), eq(reportAiGenerations.id, id)));
+      .where(
+        and(
+          eq(g.tenantId, this.tenantId),
+          eq(g.id, id),
+          or(isNull(g.careRecordId), eq(g.careRecordId, careRecordId)),
+        ),
+      )
+      .returning({ id: g.id });
+    return rows.length > 0;
   }
 
   async keywordUsage(from: Date, to: Date): Promise<ReportKeywordUsageRow[]> {
@@ -460,5 +470,16 @@ export class DrizzleReportAiGenerationRepository extends TenantBound implements 
       candidateCount: Number(r.candidate_count),
       usedCount: Number(r.used_count),
     }));
+  }
+
+  async unresolvedAnswerUsage(from: Date, to: Date): Promise<{ answer: string; count: number }[]> {
+    const g = reportAiGenerations;
+    const rows = await this.tx.execute<{ answer: string; count: number }>(sql`
+      select answer, count(*)::int as count
+      from ${g}, unnest(${g.unresolvedUsedCodes}) as answer
+      where ${g.tenantId} = ${this.tenantId} and ${g.createdAt} >= ${from.toISOString()}::timestamptz
+        and ${g.createdAt} < ${to.toISOString()}::timestamptz
+      group by answer`);
+    return rows.map((r) => ({ answer: r.answer, count: Number(r.count) }));
   }
 }

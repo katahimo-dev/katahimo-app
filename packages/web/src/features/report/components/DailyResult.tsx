@@ -85,10 +85,11 @@ export function DailyResult({
                 key={k.code}
                 className={cx(
                   'px-2 py-0.5 rounded-full font-bold',
-                  k.known ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600',
+                  k.status === 'used' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600',
                 )}
               >
                 {k.keyword ? `${k.code} ${k.keyword}` : k.code}
+                {k.status === 'not_offered' ? '（候補外）' : k.status === 'unknown' ? '（表に無い）' : ''}
               </span>
             ))}
           </div>

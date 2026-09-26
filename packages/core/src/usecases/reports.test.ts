@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SaveDailyReportInput } from './reports';
 import {
   getCustomerHistory,
@@ -249,6 +249,36 @@ describe('保育日報・事故報告', () => {
       expect(ctx.data().careRecords).toHaveLength(1);
     });
 
+    it('読んだ後に別の日報に結び付いた生成は、結び付けずに保存ごと戻す(並んだ2つの保存)', async () => {
+      await addGeneration();
+      const first = await saveDailyReport(
+        ctx.deps,
+        staff,
+        daily({ aiGenerationId: '00000000-0000-7000-8000-0000000000e1' }),
+      );
+      // 2つ目の保存は、1つ目が結び付ける前に生成の記録を読んだ(まだ結び付いていないように見える)
+      const run = ctx.uow.run.bind(ctx.uow);
+      vi.spyOn(ctx.uow, 'run').mockImplementationOnce((tenantId, work) =>
+        run(tenantId, (r) =>
+          work({
+            ...r,
+            reportAiGenerations: {
+              ...r.reportAiGenerations,
+              findById: async (id) => {
+                const g = await r.reportAiGenerations.findById(id);
+                return g ? { ...g, careRecordId: null } : null;
+              },
+            },
+          }),
+        ),
+      );
+      await expect(
+        saveDailyReport(ctx.deps, staff, daily({ aiGenerationId: '00000000-0000-7000-8000-0000000000e1' })),
+      ).rejects.toMatchObject({ code: 'conflict', reason: 'ai_generation_linked' });
+      expect(ctx.data().careRecords).toHaveLength(1);
+      expect(ctx.data().reportAiGenerations[0]?.careRecordId).toBe(first.id);
+    });
+
     it('対象のお子様はお客様の世帯の子だけ保存できる', async () => {
       const withChild = await ctx.addCustomer('高橋 三郎', 'C3', [
         { name: 'さくら', birthDate: '2024-04-01' },
@@ -269,7 +299,24 @@ describe('保育日報・事故報告', () => {
       );
     });
 
-    it('PSI 2 以下は管理者の全ての端末に Web Push を積み(記録の版ごとに1回)、Google Chat にも知らせる', async () => {
+    it('対象のお子様を省略すると世帯の子が1人ならその子、null は選ばない(画面の自動選択と同じ)', async () => {
+      const one = await ctx.addCustomer('高橋 三郎', 'C3', [{ name: 'さくら', birthDate: '2024-04-01' }]);
+      const two = await ctx.addCustomer('伊藤 四郎', 'C4', [
+        { name: 'あお', birthDate: '2023-04-01' },
+        { name: 'みどり', birthDate: '2025-04-01' },
+      ]);
+      const child = ctx.data().recipients.find((c) => c.customerId === one)?.id as string;
+      expect((await saveDailyReport(ctx.deps, staff, daily({ customerId: one }))).careRecipientId).toBe(
+        child,
+      );
+      expect(
+        (await saveDailyReport(ctx.deps, staff, daily({ customerId: one, careRecipientId: null })))
+          .careRecipientId,
+      ).toBeNull();
+      expect((await saveDailyReport(ctx.deps, staff, daily({ customerId: two }))).careRecipientId).toBeNull();
+    });
+
+    it('PSI 2 以下の新しい日報・PSI が変わった保存は管理者の全ての端末に Web Push を積み、Google Chat にも知らせる', async () => {
       const keys = { p256dh: 'p'.repeat(87), auth: 'a'.repeat(22) };
       await ctx.uow.run(ctx.tenantId, async (r) => {
         await r.pushSubscriptions.upsert({
@@ -314,12 +361,26 @@ describe('保育日報・事故報告', () => {
         level: 'WARN',
         details: { reportId: saved.id, riskRating: 1, pushQueued: 2 },
       });
-      // 保存し直すと新しい版の知らせを積む。PSI 3 以上なら知らせない
-      await saveDailyReport(ctx.deps, staff, daily({ reportId: saved.id, riskRating: 2 }));
-      expect(ctx.data().outbox.filter((m) => m.topic === 'push.psi_alert')).toHaveLength(4);
+      // 同じ PSI のまま保存し直しても(文面の手直し等)知らせない(Web Push・Google Chat・操作ログ・画面の案内)
+      const resaved = await saveDailyReport(ctx.deps, staff, daily({ reportId: saved.id, riskRating: 1 }));
+      expect(resaved.psiAlert).toBe(false);
+      expect(ctx.data().outbox.filter((m) => m.topic === 'push.psi_alert')).toHaveLength(2);
+      expect(ctx.notifier.notifications.filter((n) => n.text.startsWith('【PSI'))).toHaveLength(1);
+      expect(ctx.appLog.byAction('report.psi_alert')).toHaveLength(1);
+      // PSI が変われば(2 以下のまま)もう一度知らせる。PSI 3 以上なら知らせない
+      const changed = await saveDailyReport(ctx.deps, staff, daily({ reportId: saved.id, riskRating: 2 }));
+      expect(changed.psiAlert).toBe(true);
+      expect(
+        ctx
+          .data()
+          .outbox.filter((m) => m.topic === 'push.psi_alert')
+          .map((m) => m.dedupeKey)
+          .filter((k) => k.endsWith(`:${saved.id}:2`)),
+      ).toHaveLength(2);
       const calm = await saveDailyReport(ctx.deps, staff, daily({ reportId: saved.id, riskRating: 3 }));
       expect(calm.psiAlert).toBe(false);
       expect(ctx.data().outbox.filter((m) => m.topic === 'push.psi_alert')).toHaveLength(4);
+      expect(ctx.notifier.notifications.filter((n) => n.text.startsWith('【PSI'))).toHaveLength(2);
       expect(ctx.appLog.byAction('report.psi_alert')).toHaveLength(2);
     });
   });

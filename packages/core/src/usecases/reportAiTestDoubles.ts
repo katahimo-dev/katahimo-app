@@ -231,7 +231,9 @@ export function fakeReportAiRepositories(d: () => ReportAiFakeData): {
     },
     async linkToCareRecord(id, careRecordId) {
       const g = d().reportAiGenerations.find((x) => x.id === id);
-      if (g) g.careRecordId = careRecordId;
+      if (!g || (g.careRecordId !== null && g.careRecordId !== careRecordId)) return false;
+      g.careRecordId = careRecordId;
+      return true;
     },
     async keywordUsage(from, to) {
       const counts = new Map<string, { candidateCount: number; usedCount: number }>();
@@ -249,6 +251,14 @@ export function fakeReportAiRepositories(d: () => ReportAiFakeData): {
         }
       }
       return [...counts].map(([keywordId, c]) => ({ keywordId, ...c }));
+    },
+    async unresolvedAnswerUsage(from, to) {
+      const counts = new Map<string, number>();
+      for (const g of d().reportAiGenerations) {
+        if (g.createdAt < from || g.createdAt >= to) continue;
+        for (const answer of g.unresolvedUsedCodes) counts.set(answer, (counts.get(answer) ?? 0) + 1);
+      }
+      return [...counts].map(([answer, count]) => ({ answer, count }));
     },
   };
 

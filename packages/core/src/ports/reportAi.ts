@@ -175,8 +175,13 @@ export interface ReportKeywordUsageRow {
 export interface ReportAiGenerationRepository {
   insert(input: ReportAiGenerationInput): Promise<void>;
   findById(id: string): Promise<ReportAiGenerationRecord | null>;
-  /** 日報に結び付ける(care_record_id だけを書く)。 */
-  linkToCareRecord(id: string, careRecordId: string): Promise<void>;
+  /**
+   * 日報に結び付ける(care_record_id だけを書く)。まだ結び付いていないか同じ日報のときだけ書き、書けたか返す
+   * (別の日報に結び付いていれば false)。
+   */
+  linkToCareRecord(id: string, careRecordId: string): Promise<boolean>;
   /** [from, to) に作った生成の、キーワードごとの候補・使用の回数。 */
   keywordUsage(from: Date, to: Date): Promise<ReportKeywordUsageRow[]>;
+  /** [from, to) に作った生成の、候補に直せなかった答え(unresolved_used_codes)ごとの回数。 */
+  unresolvedAnswerUsage(from: Date, to: Date): Promise<{ answer: string; count: number }[]>;
 }

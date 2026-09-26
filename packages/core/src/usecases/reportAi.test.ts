@@ -57,7 +57,7 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
       warnings: [],
       internal: '社内',
       customer: '保護者',
-      usedKeywords: ['K04 指先の語', 'Z99 なぞ'],
+      usedKeywords: ['K04 指先の語', 'K02 協力の語', 'Z99 なぞ'],
     });
     deps = {
       uow: ctx.uow,
@@ -76,6 +76,7 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
       start: '09:00',
       end: '12:00',
       customerId,
+      careRecipientId: null,
     });
     expect(ai.prompts[0]).toContain('* 保育時間: 09:00〜12:00');
     expect(ai.prompts[0]).not.toContain('【日報キーワード表】');
@@ -104,7 +105,7 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
     expect(JSON.stringify(ctx.data().appLogs)).not.toContain('メモ');
   });
 
-  it('対象のお子様の月齢(訪問日の時点)・家庭の★・PSI で候補を絞り、使った語を表の行に直す', async () => {
+  it('対象のお子様の月齢(訪問日の時点)・家庭の★・PSI で候補を絞り、使った語を候補の行に直す', async () => {
     await seedMasters(ctx, staff.staffId);
     await ctx.uow.run(ctx.tenantId, (r) =>
       r.customerReportProfiles.save(customerId, 5, staff.staffId, undefined),
@@ -123,15 +124,17 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
       candidateCount: 3,
       escalationRequired: false,
       usedKeywords: [
-        { code: 'K04', keyword: '指先の語', known: true },
-        { code: 'Z99 なぞ', keyword: null, known: false },
+        { code: 'K04', keyword: '指先の語', status: 'used' },
+        // 表にはあるが月齢の外で候補に見せていない語は、使った語に数えない
+        { code: 'K02', keyword: '協力の語', status: 'not_offered' },
+        { code: 'Z99 なぞ', keyword: null, status: 'unknown' },
       ],
     });
     expect(ai.prompts[0]).toContain('【年齢帯：1歳（月齢12〜24か月）】');
     const [generation] = ctx.data().reportAiGenerations;
     expect(generation?.candidateKeywordIds).toHaveLength(3);
     expect(generation?.usedKeywordIds).toEqual(['00000000-0000-7000-8000-00000000a004']);
-    expect(generation?.unresolvedUsedCodes).toEqual(['Z99 なぞ']);
+    expect(generation?.unresolvedUsedCodes).toEqual(['K02 協力の語', 'Z99 なぞ']);
     expect(generation?.careRecipientId).toBe(recipientId);
   });
 
@@ -164,6 +167,25 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
     expect(result.draft.warnings).toEqual(['API Key Missing']);
     expect(ctx.data().reportAiGenerations[0]).toMatchObject({ output: null, errorCode: 'api_key_missing' });
     expect(ctx.appLog.actions()).toContain('ai.daily_report.generate_failed');
+  });
+
+  it('対象のお子様を省略すると世帯の子が1人ならその子の月齢で絞る(null は選ばない)', async () => {
+    await seedMasters(ctx, staff.staffId);
+    const auto = await generateDailyReportDraft(deps, staff, {
+      text: 'メモ',
+      customerId,
+      reportDate: '2026-09-20',
+    });
+    expect(auto.ai.childAgeMonths).toBe(14);
+    expect(ctx.data().reportAiGenerations[0]?.careRecipientId).toBe(recipientId);
+    const none = await generateDailyReportDraft(deps, staff, {
+      text: 'メモ',
+      customerId,
+      careRecipientId: null,
+      reportDate: '2026-09-20',
+    });
+    expect(none.ai.childAgeMonths).toBeNull();
+    expect(ctx.data().reportAiGenerations[1]?.careRecipientId).toBeNull();
   });
 
   it('別の世帯の子を指定すると生成の前に 400(AI を呼ばない)', async () => {

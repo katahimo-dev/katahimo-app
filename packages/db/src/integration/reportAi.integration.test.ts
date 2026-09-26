@@ -128,7 +128,7 @@ describe('日報AIの調整の表', () => {
     ]);
   });
 
-  it('アプリは生成の記録の結び付けの列だけ書ける(答え・プロンプトは書き換えられない)', async () => {
+  it('アプリは生成の記録の結び付けの列だけ書け、別の日報には結び付け直さない(答え・プロンプトは書き換えられない)', async () => {
     const tenantId = await createTenant('rai');
     const g = await uow.run(tenantId, async (r) => {
       const staffId = await createStaff(r);
@@ -136,7 +136,11 @@ describe('日報AIの調整の表', () => {
       const row = generation(staffId, customerId);
       await r.reportAiGenerations.insert(row);
       const recordId = await careRecord(r, staffId, customerId, '2031-01-01');
-      await r.reportAiGenerations.linkToCareRecord(row.id, recordId);
+      expect(await r.reportAiGenerations.linkToCareRecord(row.id, recordId)).toBe(true);
+      // 同じ日報へは結び付け直せる。別の日報には結び付けない(書かずに false)
+      expect(await r.reportAiGenerations.linkToCareRecord(row.id, recordId)).toBe(true);
+      const otherRecord = await careRecord(r, staffId, customerId, '2031-01-02');
+      expect(await r.reportAiGenerations.linkToCareRecord(row.id, otherRecord)).toBe(false);
       return { id: row.id, recordId };
     });
     expect((await uow.run(tenantId, (r) => r.reportAiGenerations.findById(g.id)))?.careRecordId).toBe(
@@ -162,6 +166,45 @@ describe('日報AIの調整の表', () => {
         await r.reportAiGenerations.insert(generation(staffId, customerId, { errorCode: 'api_error' }));
       }),
     ).rejects.toThrow();
+  });
+
+  it('利用状況: 期間の生成のキーワードごとの候補・使用の回数と、候補に直せなかった答えごとの回数', async () => {
+    const tenantId = await createTenant('rai');
+    const [k1, k2] = [newId(), newId()];
+    const usage = await uow.run(tenantId, async (r) => {
+      const staffId = await createStaff(r);
+      const customerId = await createCustomer(r);
+      await r.reportAiGenerations.insert(
+        generation(staffId, customerId, {
+          candidateKeywordIds: [k1, k2],
+          usedKeywordIds: [k1],
+          unresolvedUsedCodes: ['K03', '謎の語'],
+        }),
+      );
+      await r.reportAiGenerations.insert(
+        generation(staffId, customerId, {
+          candidateKeywordIds: [k1],
+          usedKeywordIds: [],
+          unresolvedUsedCodes: ['K03'],
+        }),
+      );
+      const from = new Date(Date.now() - 60_000);
+      const to = new Date(Date.now() + 60_000);
+      return {
+        keywords: await r.reportAiGenerations.keywordUsage(from, to),
+        answers: await r.reportAiGenerations.unresolvedAnswerUsage(from, to),
+        empty: await r.reportAiGenerations.unresolvedAnswerUsage(to, new Date(to.getTime() + 60_000)),
+      };
+    });
+    expect(usage.keywords.sort((a, b) => b.candidateCount - a.candidateCount)).toEqual([
+      { keywordId: k1, candidateCount: 2, usedCount: 1 },
+      { keywordId: k2, candidateCount: 1, usedCount: 0 },
+    ]);
+    expect(usage.answers.sort((a, b) => b.count - a.count)).toEqual([
+      { answer: 'K03', count: 2 },
+      { answer: '謎の語', count: 1 },
+    ]);
+    expect(usage.empty).toEqual([]);
   });
 
   it.skipIf(!worker)(

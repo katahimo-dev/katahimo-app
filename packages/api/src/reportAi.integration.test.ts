@@ -257,7 +257,7 @@ describe('管理画面「日報AIの調整」', () => {
     const bytes = Buffer.from(await res.arrayBuffer());
     expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     expect(bytes.subarray(3).toString('utf8').split('\r\n')[0]).toBe(
-      'ID,キーワード,カテゴリ,候補に出した回数,AIが使った回数',
+      'ID,キーワード,カテゴリ,候補に出した回数,AIが使った回数,候補外でAIが使ったと答えた回数',
     );
     expect(
       (await request('GET', '/api/admin/report-ai/usage.csv?from=2025-01-01&to=2026-12-31', t.adminCookie))
@@ -322,7 +322,7 @@ describe('日報の生成 → 保存', () => {
     expect((await generate(t.staffCookie, { customerId: other.customerId })).status).toBe(404);
   });
 
-  it('保存で生成の記録を結び付け・対象のお子様を持ち、PSI 2 以下は管理者の端末に知らせを積む', async () => {
+  it('保存で生成の記録を結び付け・対象のお子様を持ち、PSI 2 以下は管理者の端末に知らせを積む(同じ PSI の保存し直しでは積まない)', async () => {
     // 管理者の端末を登録する
     const subscribed = await request('POST', '/api/push/subscriptions', t.adminCookie, {
       endpoint: `https://fcm.googleapis.com/fcm/send/admin-${t.slug}`,
@@ -378,7 +378,9 @@ describe('日報の生成 → 保存', () => {
     const saved = await request('POST', '/api/reports/daily', t.staffCookie, daily);
     expect(saved.status).toBe(200);
     const report = (
-      (await saved.json()) as { report: { id: string; psiAlert: boolean; careRecipientId: string } }
+      (await saved.json()) as {
+        report: { id: string; psiAlert: boolean; careRecipientId: string; rowVersion: number };
+      }
     ).report;
     expect(report).toMatchObject({ psiAlert: true, careRecipientId: t.childId });
     const linked = await container.uow.run(t.id, (r) => r.reportAiGenerations.findById(generationId));
@@ -387,6 +389,19 @@ describe('日報の生成 → 保存', () => {
       tx.execute(sql`select topic, payload from outbox_messages where topic = 'push.psi_alert'`),
     )) as unknown as { topic: string; payload: { staffId: string } }[];
     expect(outbox.map((m) => m.payload.staffId)).toEqual([t.adminId]);
+    // 同じ PSI のまま保存し直しても、もう一度は知らせない
+    const resaved = await request('POST', '/api/reports/daily', t.staffCookie, {
+      ...daily,
+      reportId: report.id,
+      rowVersion: report.rowVersion,
+      customerText: '保護者(手直し)',
+    });
+    expect(resaved.status).toBe(200);
+    expect(((await resaved.json()) as { report: { psiAlert: boolean } }).report.psiAlert).toBe(false);
+    const outboxAfter = (await withTenant(ownerDb, t.id, (tx) =>
+      tx.execute(sql`select id from outbox_messages where topic = 'push.psi_alert'`),
+    )) as unknown as unknown[];
+    expect(outboxAfter).toHaveLength(1);
     // 報告一覧の PSI(印は画面が PSI 2 以下で付ける)
     const list = (await (
       await request('GET', '/api/reports?kind=daily_report&from=2026-09-01&to=2026-09-30', t.adminCookie)

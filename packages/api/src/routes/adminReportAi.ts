@@ -112,10 +112,24 @@ export function createAdminReportAiRoutes(container: Container) {
     const rows = await reportAiKeywordUsage(container, actorOf(c), query.data);
     const csv =
       UTF8_BOM +
-      csvLine(['ID', 'キーワード', 'カテゴリ', '候補に出した回数', 'AIが使った回数']) +
+      csvLine([
+        'ID',
+        'キーワード',
+        'カテゴリ',
+        '候補に出した回数',
+        'AIが使った回数',
+        '候補外でAIが使ったと答えた回数',
+      ]) +
       rows
         .map((r) =>
-          csvLine([r.code, r.keyword, r.category ?? '', String(r.candidateCount), String(r.usedCount)]),
+          csvLine([
+            r.code,
+            r.keyword,
+            r.category ?? '',
+            String(r.candidateCount),
+            String(r.usedCount),
+            String(r.notOfferedCount),
+          ]),
         )
         .join('');
     c.header('Content-Type', 'text/csv; charset=utf-8');
