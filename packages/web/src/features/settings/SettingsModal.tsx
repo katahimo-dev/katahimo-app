@@ -1,9 +1,11 @@
 import { isAdminRole } from '@katahimo/shared';
 import { useEffect, useState } from 'react';
+import { STORAGE_KEYS, userStorageKey } from '../../lib/storage';
 import { confirmNative } from '../../ui/confirm';
 import { FadeModal, ModalHeader } from '../../ui/modal';
 import { showToast } from '../../ui/toast';
 import { useSession } from '../auth';
+import { NotificationSettingsSection, stopPushOnThisDevice } from '../notifications';
 import { AdminSettingsSection } from './AdminSettingsSection';
 import { TextSizeOptions } from './TextSizeOptions';
 import { useAdminSettingsForm } from './useAdminSettingsForm';
@@ -19,7 +21,7 @@ interface SettingsModalProps {
  * 閉じても中身を残す(GAS版と同じく<details>の開き具合などが次に開いたときも残る)。
  */
 export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsModalProps) {
-  const { user, logout } = useSession();
+  const { user, logout, storageScope } = useSession();
   const adminForm = useAdminSettingsForm(open, isAdminRole(user.role));
   const [saving, setSaving] = useState(false);
 
@@ -46,7 +48,8 @@ export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsM
   // 押し間違い防止のため一度確認する(GAS版 confirmLogout は標準の confirm を使う)
   const confirmLogout = () => {
     if (!confirmNative('ログアウトしますか？')) return;
-    void logout();
+    // ログアウトした端末には通知(お客様のお名前)を出さない
+    void stopPushOnThisDevice(userStorageKey(STORAGE_KEYS.pushEndpoint, storageScope)).then(logout);
   };
 
   return (
@@ -60,6 +63,8 @@ export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsM
         <ModalHeader title="設定" titleId="settingsModalTitle" onClose={onClose} />
         <div className="p-6 space-y-6 overflow-y-auto">
           <TextSizeOptions />
+
+          <NotificationSettingsSection open={open} />
 
           <div className="border-t pt-4">
             <button

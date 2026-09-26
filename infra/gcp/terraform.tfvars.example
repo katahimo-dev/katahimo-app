@@ -21,8 +21,15 @@ smtp = {
   from = "保育日報 <noreply@example.com>"
 }
 
+# Web Push(翌日の予定のお知らせ)。pnpm push:vapid-keys の公開鍵と連絡先。秘密鍵は Secret Manager の
+# vapid-private-key に登録し、optional_secrets に足す(使わないなら3つとも空・外す)
+web_push = {
+  public_key = "<VAPID の公開鍵>"
+  subject    = "mailto:ops@example.com"
+}
+
 # 値を登録した任意シークレット(secrets.tf)
-optional_secrets = ["smtp-pass", "google-maps-api-key", "gemini-api-key", "legacy-auth-salt"]
+optional_secrets = ["smtp-pass", "google-maps-api-key", "gemini-api-key", "legacy-auth-salt", "vapid-private-key"]
 
 # 監視・予算(monitoring.tf)。通知先のメールと、予算を作る請求先アカウント(空なら予算は作らない)
 alert_emails       = ["ops@example.com"]

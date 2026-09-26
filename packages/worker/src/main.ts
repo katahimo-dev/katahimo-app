@@ -8,13 +8,14 @@ import { logJson } from './jobs/log';
 import { runMaintenanceJob } from './jobs/maintenance';
 import { runNightlyCalendarSyncJob } from './jobs/nightlyCalendarSync';
 import { runOutboxPoller } from './jobs/outboxPoller';
+import { runRouteNoticeJob } from './jobs/routeNotice';
 import { StopSignal } from './jobs/stopSignal';
 import { loadDotenv } from './loadDotenv';
 
-// 常駐ワーカー: outbox(ミラー・再設定メール)を処理し続ける。
-// 夜間ジョブ(カレンダー反映・顧客CSV取込・保守)は本番では Cloud Scheduler → Cloud Run Jobs で
+// 常駐ワーカー: outbox(ミラー・再設定メール・Web Push)を処理し続ける。
+// 夜間ジョブ(翌日の予定のお知らせ・カレンダー反映・顧客CSV取込・保守)は本番では Cloud Scheduler → Cloud Run Jobs で
 // entrypoints/*.ts を1回ずつ実行する。WORKER_IN_PROCESS_CRON=true のときだけ、ローカル開発用に
-// この常駐プロセスの中でも同じ時刻(JST 22:00 / 03:00 / 04:00)に実行する。
+// この常駐プロセスの中でも既定の時刻(JST 19:00 / 22:00 / 03:00 / 04:00)に実行する。
 // WORKER_HEALTH_PORT が設定されている(Cloud Run サービス)ときはヘルスチェック用に待ち受ける。
 
 loadDotenv();
@@ -37,6 +38,9 @@ const stop = new StopSignal().listen((signal) => {
 
 if (env.WORKER_IN_PROCESS_CRON) {
   stopCron.push(
+    scheduleDailyJst(19, 0, async () => {
+      await runRouteNoticeJob(container, { stop });
+    }),
     scheduleDailyJst(22, 0, async () => {
       await runNightlyCalendarSyncJob(container, { stop });
     }),
@@ -49,7 +53,7 @@ if (env.WORKER_IN_PROCESS_CRON) {
   );
   logJson(
     'INFO',
-    'プロセス内の定期実行を有効にしました(夜間反映 22:00 / 顧客CSV取込 03:00 / 保守 04:00 JST)',
+    'プロセス内の定期実行を有効にしました(予定のお知らせ 19:00 / 夜間反映 22:00 / 顧客CSV取込 03:00 / 保守 04:00 JST)',
   );
 }
 
@@ -57,6 +61,7 @@ logJson('INFO', 'katahimo worker を起動しました', {
   workerId: container.workerId,
   pollIntervalMs: env.OUTBOX_POLL_INTERVAL_MS,
   mirrorEnabled: container.mirrorEnabled,
+  webPushEnabled: container.webPush !== null,
 });
 runOutboxPoller(container, {
   intervalMs: env.OUTBOX_POLL_INTERVAL_MS,

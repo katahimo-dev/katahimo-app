@@ -41,6 +41,11 @@ export const STORAGE_KEYS = {
    * 区別するため別のキー名にしている(予定・お客様の担当が使う)。
    */
   scheduleRouteCachePrefix: 'katahimo_schedule_route_v1_',
+  /**
+   * この端末で通知(Web Push)をオンにしたときの購読の endpoint。新アプリ固有 + 使う人(userStorageKey)。
+   * 同じ端末で別の人がログインしたとき、その人の通知がオンかどうかを見分けるために持つ。
+   */
+  pushEndpoint: 'katahimo_push_endpoint',
   /** 出勤簿タブの週間予定の2時間キャッシュ(接頭辞。後ろに `<スタッフ>_<週の日曜>`)。GAS版と同じ(出勤簿タブ担当が使う)。 */
   pastScheduleWeekCachePrefix: 'pastSchedWeek_',
   /** 今月のまとめの2時間キャッシュ(接頭辞。後ろに `<スタッフ>_<YYYY-MM>`)。GAS版と同じ(出勤簿タブ担当が使う)。 */
@@ -58,6 +63,7 @@ export const USER_SCOPED_KEYS = [
   STORAGE_KEYS.lastStartHour,
   STORAGE_KEYS.lastStartMinute,
   STORAGE_KEYS.lastAccidentTime,
+  STORAGE_KEYS.pushEndpoint,
 ] as const;
 export type UserScopedKey = (typeof USER_SCOPED_KEYS)[number];
 

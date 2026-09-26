@@ -22,6 +22,7 @@ import {
   DrizzleCustomerRepository,
   DrizzleCustomerSourceRecordRepository,
 } from './repositories/tenant/customers';
+import { DrizzlePushSubscriptionRepository } from './repositories/tenant/push';
 import {
   DrizzleCareRecordRepository,
   DrizzleReceiptRepository,
@@ -78,6 +79,7 @@ export function bindRepositories(
     importRuns: new DrizzleImportRunRepository(tx, tenantId),
     staffCalendars: new DrizzleStaffCalendarRepository(tx, tenantId),
     busyBlocks: new DrizzleStaffBusyBlockRepository(tx, tenantId),
+    pushSubscriptions: new DrizzlePushSubscriptionRepository(tx, tenantId),
     outbox: new DrizzleOutboxWriter(tx, tenantId, skip),
     appLogs: new DrizzleAppLogReadRepository(tx, tenantId),
     entityChanges: new DrizzleEntityChangeWriter(tx, tenantId),

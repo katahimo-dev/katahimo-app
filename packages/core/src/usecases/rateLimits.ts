@@ -30,6 +30,8 @@ export interface RateLimitPolicy {
   receiptOcrStaff: RateLimitRule;
   /** 予定の「ルート再計算」(forceRefresh、スタッフ単位の1時間の上限。Maps の従量課金対策)。 */
   scheduleForceRefreshStaff: RateLimitRule;
+  /** 設定画面の「テスト通知を送る」(スタッフ単位の1時間の上限)。 */
+  pushTestStaff: RateLimitRule;
 }
 
 export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
@@ -47,6 +49,7 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   aiGenerateStaff: { name: 'ai_generate_staff', limit: 200, windowMs: DAY_MS },
   receiptOcrStaff: { name: 'receipt_ocr_staff', limit: 300, windowMs: DAY_MS },
   scheduleForceRefreshStaff: { name: 'schedule_force_refresh_staff', limit: 30, windowMs: HOUR_MS },
+  pushTestStaff: { name: 'push_test_staff', limit: 10, windowMs: HOUR_MS },
 };
 
 /** 回数だけを差し替えた規則一式を作る(環境変数での調整用。0以下・未指定は既定値のまま)。 */

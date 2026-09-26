@@ -128,6 +128,7 @@ describe('スキーマの約束事(カタログ)', () => {
     expect(of('public.matching_run_candidates')).toEqual(['DELETE', 'SELECT']);
     expect(of('public.entity_changes')).toEqual(['INSERT']);
     expect(of('public.customers')).toEqual(['INSERT', 'SELECT', 'UPDATE']);
+    expect(of('public.push_subscriptions')).toEqual(['DELETE', 'SELECT', 'UPDATE']);
     expect(of('platform.plans')).toEqual([]);
   });
 

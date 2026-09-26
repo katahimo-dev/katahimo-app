@@ -23,6 +23,7 @@ import {
   FakeStoragePort,
   FakeTenantDirectory,
   FakeUnitOfWork,
+  FakeWebPushSender,
   MemoryDatabase,
 } from './testDoubles';
 
@@ -43,6 +44,7 @@ export function createTestContext(options: { now?: string; mirrorEnabled?: boole
   const rateLimiter = new FakeRateLimiter();
   const queue = new FakeOutboxQueue(db);
   const tenants = new FakeTenantDirectory(db);
+  const webPush = new FakeWebPushSender();
 
   const deps = {
     uow,
@@ -61,6 +63,8 @@ export function createTestContext(options: { now?: string; mirrorEnabled?: boole
     resetCodeSecret: 'test-secret',
     legacyAuthSalt: undefined as string | undefined,
     mirrorEnabled: options.mirrorEnabled ?? true,
+    webPush: webPush as FakeWebPushSender | null,
+    pushPublicKey: 'test-vapid-public-key' as string | null,
     workerId: 'test-worker',
     leaseMs: 60_000,
     now,
@@ -83,6 +87,7 @@ export function createTestContext(options: { now?: string; mirrorEnabled?: boole
     passwordHasher,
     rateLimiter,
     queue,
+    webPush,
     /** このテナントのインメモリの行。 */
     data(tenantId: string = tenant.id): TenantData {
       return db.of(tenantId);

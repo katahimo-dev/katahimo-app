@@ -3,7 +3,7 @@ import { lazy, type ReactNode, Suspense, useEffect, useState } from 'react';
 import { ChangePasswordModal, useSession } from '../features/auth';
 import { CustomerSearchProvider, CustomersTab } from '../features/customers';
 import { ReportModalProvider } from '../features/report';
-import { ScheduleTab } from '../features/schedule';
+import { ScheduleTab, useScheduleLinkNavigation } from '../features/schedule';
 import { SettingsModal } from '../features/settings';
 import { runWhenIdle } from '../lib/idle';
 import { SectionErrorBoundary } from '../ui/ErrorBoundary';
@@ -45,6 +45,7 @@ function ShellLayout() {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
   useDataVersionPolling();
+  useScheduleLinkNavigation();
   useUiConfig(); // 日報ダイアログを開く前に読み始めておく(GAS版 loadUiConfig)
   useEffect(() => runWhenIdle(() => void loadAttendance()), []);
 

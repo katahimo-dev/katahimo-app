@@ -7,13 +7,16 @@ import {
   FakeNotifierPort,
   FakeSchedulePort,
   FakeStoragePort,
+  FakeWebPushSender,
 } from '@katahimo/core/test-utils';
 import {
   applyCustomerSnapshot,
   drainOutbox,
   runMaintenance,
   runNightlyCalendarSync,
+  runRouteNoticeJob,
   saveDailyReport,
+  subscribePush,
   syncStaffBusyBlocks,
   uploadReceipts,
 } from '@katahimo/core/usecases';
@@ -36,7 +39,7 @@ const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
 describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(katahimo_worker の権限)', () => {
   const workerDb = worker as NonNullable<typeof worker>;
 
-  it('夜間の反映・顧客の取込・ミラーとメールの送信・free/busy・保守がワーカーの権限で動く', async () => {
+  it('夜間の反映・顧客の取込・翌日の予定のお知らせ・ミラーとメールと通知の送信・free/busy・保守がワーカーの権限で動く', async () => {
     const tenantId = await createTenant('wk');
     const workerUow = new DrizzleUnitOfWork(workerDb);
     const tenants = new DrizzleTenantDirectory(workerDb);
@@ -169,6 +172,22 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
     expect(nightly).toMatchObject({ failed: 0, interrupted: false });
     expect(nightly.tenants[0]).toMatchObject({ succeeded: 1, changedStaffCount: 1 });
 
+    // ── 翌日の予定のお知らせ(購読は API が本人の端末として登録し、ジョブが積み、outbox が送る) ──
+    const keys = { p256dh: 'p'.repeat(87), auth: 'a'.repeat(22) };
+    // outbox はテナントを横断して取り出すため、このテストの送り先はテナントの ID で見分ける
+    const okEndpoint = `https://fcm.googleapis.com/fcm/send/it-ok-${tenantId}`;
+    const goneEndpoint = `https://web.push.apple.com/it-gone-${tenantId}`;
+    const pushDeps = { uow: appUow, appLog, pushPublicKey: 'test-vapid-public-key' };
+    await subscribePush(pushDeps, actor, { endpoint: okEndpoint, ...keys });
+    await subscribePush(pushDeps, actor, { endpoint: goneEndpoint, ...keys });
+    const webPush = new FakeWebPushSender();
+    webPush.setOutcome(goneEndpoint, 'expired');
+    const notices = await runRouteNoticeJob(
+      { uow: workerUow, appLog, schedule, tenants: onlyThisTenant },
+      { date: '2026-09-24' },
+    );
+    expect(notices).toMatchObject({ queued: 1, failed: 0, interrupted: false });
+
     // ── outbox(ミラー4種・再設定メール) ──
     const sender = new FakeMirrorSenderPort();
     const mailer = new FakeMailerPort();
@@ -181,6 +200,7 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
         mailer,
         appLog,
         mirrorEnabled: true,
+        webPush,
         workerId: 'worker-it',
         leaseMs: 60_000,
       },
@@ -194,6 +214,13 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
     ).toBe(true);
     expect(sender.attendanceAggregates.some((p) => p.staffName === '山田 太郎')).toBe(true);
     expect(mailer.sent.some((m) => m.to === 'taro@example.com')).toBe(true);
+    expect(
+      webPush.sent.filter((p) => p.endpoint.endsWith(tenantId)).map((p) => [p.endpoint, p.notice.title]),
+    ).toEqual([[okEndpoint, '明日の予定 9/24(木) 1件']]);
+    // もう無い購読(410)はワーカーが消し、届いた購読には成功の時刻が残る
+    const subscriptions = await appUow.run(tenantId, (r) => r.pushSubscriptions.listForStaff(staffId));
+    expect(subscriptions).toEqual([expect.objectContaining({ endpoint: okEndpoint, failureCount: 0 })]);
+    expect(subscriptions[0]?.lastSuccessAt).toBeInstanceOf(Date);
 
     // ── free/busy の同期 ──
     const busy = await syncStaffBusyBlocks(

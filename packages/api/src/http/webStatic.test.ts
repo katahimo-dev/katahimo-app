@@ -78,6 +78,7 @@ describe('registerWebStatic', () => {
 describe('cacheControlFor', () => {
   it('区切り文字や先頭の / によらず同じ判定になり、workbox のハッシュ付きファイルも長期キャッシュする', () => {
     expect(cacheControlFor('/index.html')).toBe('no-cache');
+    expect(cacheControlFor('push-sw.js')).toBe('no-cache');
     expect(cacheControlFor('assets\\x-1.css')).toBe('public, max-age=31536000, immutable');
     expect(cacheControlFor('workbox-9c191d2f.js')).toBe('public, max-age=31536000, immutable');
   });

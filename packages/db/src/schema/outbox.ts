@@ -6,8 +6,9 @@ import { tenantScoped } from './_helpers';
 
 /**
  * トランザクショナル・アウトボックス。ドメインの書き込みと同じトランザクションで積み、ワーカーが
- * 1件ずつ取り出して送る(スプレッドシートへのミラー・メール)。
- * - payload は ID 等だけ(個人情報を入れない。ワーカーが DB から読み直す)。
+ * 1件ずつ取り出して送る(スプレッドシートへのミラー・メール・Web Push)。
+ * - payload はミラー・メールでは ID 等だけ(個人情報を入れない。ワーカーが DB から読み直す)。Web Push(push.*)は
+ *   送る通知の文面(予定の時刻と表示名だけ。住所・電話番号は入れない)とスタッフの ID。
  * - dedupe_key は決定的(`<topic>:<aggregate_id>:<版>`)で、同じ書き込みの再試行が二重に積まれない。
  * - ワーカーはテナントを横断して FOR UPDATE SKIP LOCKED で取り、locked_until(リース)を過ぎた
  *   processing は取り直す。ワーカー用のポリシー(outbox_messages_worker)は 0001_baseline_custom.sql。

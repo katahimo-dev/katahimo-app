@@ -104,6 +104,25 @@ variable "gemini_models" {
   default = { report = "", ocr = "" }
 }
 
+variable "web_push" {
+  description = <<-EOT
+    Web Push(翌日の予定のお知らせ)の VAPID の公開鍵(VAPID_PUBLIC_KEY)と連絡先(VAPID_SUBJECT。mailto: か https:)。
+    鍵は pnpm push:vapid-keys で作り、秘密鍵は Secret Manager の vapid-private-key に登録して optional_secrets に足す。
+    public_key が空なら通知は使わない(doc/07_インフラ・運用.md)。
+  EOT
+  type = object({
+    public_key = string
+    subject    = string
+  })
+  default = { public_key = "", subject = "" }
+}
+
+variable "route_notice_schedule" {
+  description = "翌日の予定のお知らせ(job:route-notice)を積む時刻(cron、JST)。GAS版 gas-root-serach の夜間 main() の置き換え"
+  type        = string
+  default     = "0 19 * * *"
+}
+
 # ── Cloud Run の規模 ──────────────────────────────────────────
 variable "api_max_instances" {
   description = "API の最大インスタンス数。DB接続数 = これ × DB_POOL_MAX(+ワーカー・ジョブ)を Cloud SQL の max_connections 未満に保つ"
@@ -135,9 +154,9 @@ variable "optional_secrets" {
   validation {
     condition = alltrue([
       for s in var.optional_secrets :
-      contains(["smtp-pass", "google-maps-api-key", "gemini-api-key", "legacy-auth-salt", "gas-bridge-secret"], s)
+      contains(["smtp-pass", "google-maps-api-key", "gemini-api-key", "legacy-auth-salt", "gas-bridge-secret", "vapid-private-key"], s)
     ])
-    error_message = "optional_secrets は smtp-pass / google-maps-api-key / gemini-api-key / legacy-auth-salt / gas-bridge-secret から選んでください。"
+    error_message = "optional_secrets は smtp-pass / google-maps-api-key / gemini-api-key / legacy-auth-salt / gas-bridge-secret / vapid-private-key から選んでください。"
   }
 }
 
