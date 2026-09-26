@@ -175,12 +175,13 @@ export class DrizzleStaffRepository extends TenantBound implements StaffReposito
   }
 
   async listRouteProfiles(): Promise<StaffRouteProfile[]> {
-    return this.tx
+    const rows = await this.tx
       .select({
         id: staff.id,
         displayName: staff.displayName,
         homeAddress: staff.homeAddress,
-        homeGeoEnc: staff.homeGeoEnc,
+        homeLat: staff.homeLat,
+        homeLng: staff.homeLng,
         travelMode: staff.travelMode,
         scheduleCalendarId: staffCalendars.calendarId,
         retiredOn: staff.retiredOn,
@@ -196,5 +197,9 @@ export class DrizzleStaffRepository extends TenantBound implements StaffReposito
       )
       .where(eq(staff.tenantId, this.tenantId))
       .orderBy(asc(staff.displayName), asc(staff.id));
+    return rows.map(({ homeLat, homeLng, ...row }) => ({
+      ...row,
+      homeGeo: homeLat !== null && homeLng !== null ? { lat: homeLat, lng: homeLng } : null,
+    }));
   }
 }

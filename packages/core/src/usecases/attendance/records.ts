@@ -7,7 +7,6 @@ import {
   minutesSinceZonedMidnight,
   newId,
   outboxDedupeKey,
-  ENCRYPTION_PURPOSES as P,
   type TravelLegEntity,
   type VisitEntity,
   type WorkSegmentEntity,
@@ -23,13 +22,12 @@ import type {
   VisitRow,
   WorkSegmentRow,
 } from '../../ports/attendance';
-import type { CryptoPort } from '../../ports/crypto';
 import type { TenantRepositories } from '../../ports/unitOfWork';
 
 /**
  * 勤怠の DB の行(ports/attendance.ts)と、タイムゾーンに依存しない実体(domain/attendance/entities.ts)の変換。
- * 時刻の範囲 ↔ 業務日の 0:00 からの分はテナントのタイムゾーンで変換し、暗号化した値(訪問先の表示名・
- * 作業内容・備考)はここで復号・暗号化する。
+ * 時刻の範囲 ↔ 業務日の 0:00 からの分はテナントのタイムゾーンで変換する。自由記述(訪問先の表示名・
+ * 作業内容・備考)は、実体では空文字、DB では NULL を「無し」とする。
  */
 
 function toMinutes(range: InstantRangeValue | null, date: string, timeZone: string) {
@@ -52,53 +50,42 @@ function toRange(
   };
 }
 
-/** DB の1日分を実体にする(復号する)。 */
-export async function toSheetDay(
-  crypto: CryptoPort,
-  tenantId: string,
-  timeZone: string,
-  rows: AttendanceDayRows,
-): Promise<AttendanceSheetDay> {
+/** DB の1日分を実体にする。 */
+export function toSheetDay(timeZone: string, rows: AttendanceDayRows): AttendanceSheetDay {
   const date = rows.businessDate;
-  const decrypt = (purpose: (typeof P)[keyof typeof P], rowId: string, value: Uint8Array | null) =>
-    value ? crypto.decrypt({ tenantId, purpose, rowId }, value) : Promise.resolve('');
   return {
     day: {
       id: rows.day?.id ?? '',
       shoppingErrandCount: rows.day?.shoppingErrandCount ?? null,
-      remarks: rows.day ? await decrypt(P.attendanceRemarks, rows.day.id, rows.day.remarksEnc) : '',
+      remarks: rows.day?.remarks ?? '',
       overriddenFields: rows.day?.overriddenFields ?? [],
     },
-    visits: await Promise.all(
-      rows.visits.map(async (v): Promise<VisitEntity> => {
-        const actual = toMinutes(v.actualPeriod, date, timeZone);
-        const planned = toMinutes(v.plannedPeriod, date, timeZone);
-        return {
-          id: v.id,
-          seq: v.seq,
-          customerId: v.customerId,
-          label: await decrypt(P.visitLabel, v.id, v.labelEnc),
-          start: actual.start,
-          end: actual.end,
-          plannedStart: planned.start,
-          plannedEnd: planned.end,
-          status: v.status,
-          source: v.source,
-          externalEventId: v.externalEventId,
-          overriddenFields: v.overriddenFields,
-        };
+    visits: rows.visits.map((v): VisitEntity => {
+      const actual = toMinutes(v.actualPeriod, date, timeZone);
+      const planned = toMinutes(v.plannedPeriod, date, timeZone);
+      return {
+        id: v.id,
+        seq: v.seq,
+        customerId: v.customerId,
+        label: v.label ?? '',
+        start: actual.start,
+        end: actual.end,
+        plannedStart: planned.start,
+        plannedEnd: planned.end,
+        status: v.status,
+        source: v.source,
+        externalEventId: v.externalEventId,
+        overriddenFields: v.overriddenFields,
+      };
+    }),
+    segments: rows.segments.map(
+      (s): WorkSegmentEntity => ({
+        id: s.id,
+        seq: s.seq,
+        description: s.description ?? '',
+        ...toMinutes(s.period, date, timeZone),
+        overriddenFields: s.overriddenFields,
       }),
-    ),
-    segments: await Promise.all(
-      rows.segments.map(
-        async (s): Promise<WorkSegmentEntity> => ({
-          id: s.id,
-          seq: s.seq,
-          description: await decrypt(P.workSegmentDescription, s.id, s.descriptionEnc),
-          ...toMinutes(s.period, date, timeZone),
-          overriddenFields: s.overriddenFields,
-        }),
-      ),
     ),
     legs: rows.legs.map(
       (l): TravelLegEntity => ({
@@ -115,15 +102,14 @@ export async function toSheetDay(
 }
 
 export interface SheetWriteContext {
-  crypto: CryptoPort;
   timeZone: string;
   changedBy: string | null;
   changeSource: ChangeSource;
 }
 
 /**
- * 変更前の値を履歴の用途で暗号化して entity_changes に追記する。before は書き残す値そのもの
- * (更新は変わった項目だけ、削除は実体の全ての項目)。
+ * 変更前の値を entity_changes に追記する。before は書き残す値そのもの(更新は変わった項目だけ、削除は実体の
+ * 全ての項目)。
  */
 async function appendChange(
   r: TenantRepositories,
@@ -133,21 +119,14 @@ async function appendChange(
   changedFields: string[],
   before: Record<string, unknown> | null,
 ): Promise<void> {
-  const id = newId();
-  const beforeEnc = before
-    ? await ctx.crypto.encrypt(
-        { tenantId: r.tenantId, purpose: P.entityChangeBefore, rowId: id },
-        JSON.stringify(before),
-      )
-    : null;
   await r.entityChanges.append({
-    id,
+    id: newId(),
     entityType,
     entityId,
     changedBy: ctx.changedBy,
     changeSource: ctx.changeSource,
     changedFields,
-    beforeEnc,
+    before,
   });
 }
 
@@ -206,13 +185,8 @@ export async function writeSheetDiff(
   const diff = diffAttendanceSheets(current, next);
   if (isEmptyDiff(diff)) return null;
   const date = rows.businessDate;
-  const tenantId = r.tenantId;
-  const existingVisit = new Map(rows.visits.map((v) => [v.id, v]));
-  const existingSegment = new Map(rows.segments.map((s) => [s.id, s]));
-  const encrypt = (purpose: (typeof P)[keyof typeof P], rowId: string, value: string) =>
-    value ? ctx.crypto.encrypt({ tenantId, purpose, rowId }, value) : Promise.resolve(null);
 
-  const visitRow = async (v: VisitEntity, before?: VisitEntity): Promise<VisitRow> => ({
+  const visitRow = (v: VisitEntity): VisitRow => ({
     id: v.id,
     seq: v.seq,
     customerId: v.customerId,
@@ -221,20 +195,14 @@ export async function writeSheetDiff(
     status: v.status,
     source: v.source,
     externalEventId: v.externalEventId,
-    labelEnc:
-      before && before.label === v.label
-        ? (existingVisit.get(v.id)?.labelEnc ?? null)
-        : await encrypt(P.visitLabel, v.id, v.label),
+    label: v.label || null,
     overriddenFields: v.overriddenFields,
   });
-  const segmentRow = async (s: WorkSegmentEntity, before?: WorkSegmentEntity): Promise<WorkSegmentRow> => ({
+  const segmentRow = (s: WorkSegmentEntity): WorkSegmentRow => ({
     id: s.id,
     seq: s.seq,
     period: toRange(s.start, s.end, date, ctx.timeZone),
-    descriptionEnc:
-      before && before.description === s.description
-        ? (existingSegment.get(s.id)?.descriptionEnc ?? null)
-        : await encrypt(P.workSegmentDescription, s.id, s.description),
+    description: s.description || null,
     overriddenFields: s.overriddenFields,
   });
   const visitIdBySeq = new Map(next.visits.map((v) => [v.seq, v.id]));
@@ -264,20 +232,17 @@ export async function writeSheetDiff(
   const write: AttendanceDayWrite = {
     day: {
       shoppingErrandCount: next.day.shoppingErrandCount,
-      remarksEnc:
-        current.day.remarks === next.day.remarks
-          ? rows.day.remarksEnc
-          : await encrypt(P.attendanceRemarks, rows.day.id, next.day.remarks),
+      remarks: next.day.remarks || null,
       overriddenFields: next.day.overriddenFields,
     },
     visits: {
-      insert: await Promise.all(diff.visits.insert.map((v) => visitRow(v))),
-      update: await Promise.all(diff.visits.update.map((u) => visitRow(u.after, u.before))),
+      insert: diff.visits.insert.map(visitRow),
+      update: diff.visits.update.map((u) => visitRow(u.after)),
       delete: diff.visits.delete.map((v) => v.id),
     },
     segments: {
-      insert: await Promise.all(diff.segments.insert.map((s) => segmentRow(s))),
-      update: await Promise.all(diff.segments.update.map((u) => segmentRow(u.after, u.before))),
+      insert: diff.segments.insert.map(segmentRow),
+      update: diff.segments.update.map((u) => segmentRow(u.after)),
       delete: diff.segments.delete.map((s) => s.id),
     },
     // 訪問の出入りで from / to が変わるため、残る移動は全て書き直す

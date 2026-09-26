@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { TenantSecretName } from '../domain/model';
+import type { ReportAiPort } from '../ports/ai';
+import { notifyWithLog } from './notify';
+import type { ReportAiDeps } from './reportAi';
+import { generateDailyReportDraft } from './reportAi';
 import type { SettingsActor, SettingsDeps } from './settings';
 import {
   getAdminSettings,
@@ -10,7 +15,6 @@ import {
 import type { TestContext } from './testContext';
 import { createTestContext } from './testContext';
 import type { FakeAppLogPort } from './testDoubles';
-import { fakePlaintext } from './testDoubles';
 
 describe('管理者設定(app_settings)', () => {
   let deps: SettingsDeps;
@@ -28,7 +32,7 @@ describe('管理者設定(app_settings)', () => {
     listedWith = [];
     deps = {
       uow: ctx.uow,
-      crypto: ctx.crypto,
+      secretBox: ctx.secretBox,
       appLog,
       listGeminiModels: async (apiKey) => {
         listedWith.push(apiKey);
@@ -37,10 +41,14 @@ describe('管理者設定(app_settings)', () => {
     };
   });
 
-  /** 保存済みの平文(tenant_secrets)。 */
+  /** 保存済みの値(tenant_secrets の暗号文を開いたもの)。 */
   const stored = async (tenantId = actor.tenantId) => {
-    const plain = (name: string) =>
-      fakePlaintext(ctx.data(tenantId).secrets.find((s) => s.name === name)?.valueEnc ?? null) ?? '';
+    const plain = (name: TenantSecretName) => {
+      const secret = ctx.data(tenantId).secrets.find((s) => s.name === name);
+      return secret
+        ? Buffer.from(secret.sealedValue).toString('utf8').replace(`SEALED|${tenantId}|${name}|`, '')
+        : '';
+    };
     return {
       geminiApiKey: plain('gemini_api_key'),
       report: plain('gchat_report_webhook'),
@@ -209,6 +217,103 @@ describe('管理者設定(app_settings)', () => {
       expect(appLog.entries.at(-1)).toMatchObject({
         level: 'ERROR',
         action: 'settings.gemini_models.list_failed',
+      });
+    });
+  });
+
+  describe('保存済みの秘密値が開けないとき(SecretBox の鍵・プロバイダを変えた等)', () => {
+    beforeEach(async () => {
+      await saveGeminiApiKey(deps, actor, 'AIzaSyExampleKey1234');
+      await saveGoogleChatWebhookSettings(deps, actor, REPORT_URL, RECEIPT_URL);
+      ctx.secretBox.failOpen = true;
+    });
+    const unreadableLogs = () => appLog.entries.filter((e) => e.action === 'settings.secret.unreadable');
+
+    it('設定画面は開け、設定済み・伏せ字は空で返し、ERRORログに名前だけを残す(値は残さない)', async () => {
+      expect(await getAdminSettings(deps, actor)).toMatchObject({
+        geminiApiKey: '',
+        geminiApiKeySet: true,
+        gchatReportWebhookUrl: '',
+        gchatReportWebhookUrlSet: true,
+        gchatReceiptWebhookUrl: '',
+        gchatReceiptWebhookUrlSet: true,
+      });
+      expect(unreadableLogs().map((e) => [e.level, e.details?.name])).toEqual([
+        ['ERROR', 'gemini_api_key'],
+        ['ERROR', 'gchat_report_webhook'],
+        ['ERROR', 'gchat_receipt_webhook'],
+      ]);
+      expect(JSON.stringify(appLog.entries)).not.toContain('AIzaSyExampleKey1234');
+    });
+
+    it('APIキーは入力し直した値で上書きできる(同じ値でも比べずに保存する)', async () => {
+      expect(await saveGeminiApiKey(deps, actor, 'AIzaSyExampleKey1234')).toMatchObject({
+        ok: true,
+        changed: true,
+      });
+      ctx.secretBox.failOpen = false;
+      expect((await stored()).geminiApiKey).toBe('AIzaSyExampleKey1234');
+    });
+
+    it('APIキーの伏せ字を送っても開けない値は残せない(一部伏せ字として拒否)', async () => {
+      expect(await saveGeminiApiKey(deps, actor, '••••••••1234')).toMatchObject({
+        ok: false,
+        reason: 'partially_masked',
+      });
+    });
+
+    it('Webhook URLは入力し直した方だけ上書きし、入力し直さなければ空として拒否する', async () => {
+      const NEW_REPORT = 'https://chat.googleapis.com/v1/spaces/CCCC/messages?key=k3&token=t3';
+      expect(await saveGoogleChatWebhookSettings(deps, actor, NEW_REPORT, undefined)).toMatchObject({
+        ok: false,
+        reason: 'empty',
+      });
+      expect(await saveGoogleChatWebhookSettings(deps, actor, NEW_REPORT, RECEIPT_URL)).toMatchObject({
+        ok: true,
+        changed: true,
+      });
+      ctx.secretBox.failOpen = false;
+      expect(await stored()).toMatchObject({ report: NEW_REPORT, receipt: RECEIPT_URL });
+    });
+
+    it('AIの下書きは .env の設定(deps.reportAi)に戻す', async () => {
+      const used: string[] = [];
+      const portOf = (label: string): ReportAiPort => ({
+        async generateDailyReport() {
+          used.push(label);
+          return { warnings: [], internal: '', customer: '' };
+        },
+        async generateAccidentReport() {
+          return { error: 'unused' };
+        },
+        async extractReceiptAmount() {
+          return { amount: '', storeName: '', receiptDate: '' };
+        },
+      });
+      const aiDeps: ReportAiDeps = {
+        uow: ctx.uow,
+        secretBox: ctx.secretBox,
+        appLog,
+        reportAi: portOf('env'),
+        reportAiFactory: { create: () => portOf('tenant') },
+      };
+      await generateDailyReportDraft(aiDeps, actor, { text: 'メモ' });
+      ctx.secretBox.failOpen = false;
+      await generateDailyReportDraft(aiDeps, actor, { text: 'メモ' });
+      expect(used).toEqual(['env', 'tenant']);
+    });
+
+    it('通知の送信先を解決できなくても日報の保存は失敗させない(通知の失敗をログに残す)', async () => {
+      ctx.deps.notifier.notify = async () => {
+        throw new Error('resolve failed');
+      };
+      await expect(
+        notifyWithLog(ctx.deps, actor.tenantId, 'report', '本文', actor.staffId),
+      ).resolves.toBeUndefined();
+      expect(appLog.entries.at(-1)).toMatchObject({
+        level: 'ERROR',
+        action: 'notification.gchat.failed',
+        details: { channel: 'report', error: 'notifier_error' },
       });
     });
   });

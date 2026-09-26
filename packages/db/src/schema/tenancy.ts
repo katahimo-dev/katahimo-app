@@ -1,7 +1,6 @@
 import {
   CUSTOM_FIELD_ENTITIES,
   CUSTOM_FIELD_VALUE_TYPES,
-  DATA_KEY_STATES,
   IMPORT_RUN_STATUSES,
   IMPORT_SOURCES,
   TENANT_SECRET_NAMES,
@@ -19,7 +18,6 @@ import {
   text,
   timestamp,
   unique,
-  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { constraintName, createdAt, idColumn, oneOf, tenantIdColumn, updatedAt } from './_columns';
@@ -42,36 +40,6 @@ export const tenantFeatures = pgTable(
     primaryKey({ name: 'tenant_features_pkey', columns: [t.tenantId, t.featureKey] }),
     tenantFk('tenant_features', t),
     tenantIsolation(),
-  ],
-).enableRLS();
-
-/**
- * テナントのデータ暗号化鍵(DEK)。平文の DEK は保存せず、KEK(Cloud KMS / 開発は LOCAL_DEV_KEK)で
- * ラップした値だけを持つ。版ごとに1行: active(暗号化に使う。テナントに1つ)/ decrypt_only(ローテーション後、
- * 古い暗号文の復号だけに使う)/ destroyed(暗号学的削除。wrapped_dek を消す)。暗号文の先頭に版を書くため、
- * 古い版の暗号文も読める。
- */
-export const tenantDataKeys = pgTable(
-  'tenant_data_keys',
-  {
-    tenantId: tenantIdColumn(),
-    version: integer().notNull(),
-    wrappedDek: bytea(),
-    /** ラップに使った KEK の名前(Cloud KMS の鍵名、開発は 'local')。 */
-    kekKeyName: text().notNull(),
-    state: text({ enum: DATA_KEY_STATES }).notNull(),
-    destroyedAt: timestamp({ withTimezone: true }),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (t) => [
-    primaryKey({ name: 'tenant_data_keys_pkey', columns: [t.tenantId, t.version] }),
-    tenantFk('tenant_data_keys', t),
-    tenantIsolation(),
-    uniqueIndex('tenant_data_keys_tenant_id_active_key').on(t.tenantId).where(sql`state = 'active'`),
-    check('tenant_data_keys_state_check', oneOf(t.state, DATA_KEY_STATES)),
-    check('tenant_data_keys_version_check', sql`${t.version} between 1 and 65535`),
-    check('tenant_data_keys_wrapped_dek_check', sql`(${t.state} = 'destroyed') = (${t.wrappedDek} is null)`),
   ],
 ).enableRLS();
 
@@ -98,14 +66,15 @@ export const tenantSettings = pgTable(
 ).enableRLS();
 
 /**
- * テナントの秘密値(Gemini API キー・Google Chat の Webhook URL)。値は暗号化(AAD にテナント・用途・name)。
+ * テナントの秘密値(Gemini API キー・Google Chat の Webhook URL)。値は SecretBox で封をした暗号文だけを持つ
+ * (テナントID・name に結び付く。integrations/src/secret-box)。
  */
 export const tenantSecrets = pgTable(
   'tenant_secrets',
   {
     tenantId: tenantIdColumn(),
     name: text({ enum: TENANT_SECRET_NAMES }).notNull(),
-    valueEnc: bytea().notNull(),
+    sealedValue: bytea().notNull(),
     updatedBy: uuid(),
     rotatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     createdAt: createdAt(),

@@ -1,8 +1,9 @@
+import { createHash } from 'node:crypto';
+
 /**
  * 領収書の重複判定キー組み立て。GAS版Main.js processReceiptImagesの
  * normalizeAmount/normalizeText/buildKeyと完全に同一のロジック
- * (このキーの正規化前の値をそのままBlindIndexPortに渡すと、登録時と照合時で
- * インデックスがずれるため、必ずこの関数を通した文字列を渡すこと)。
+ * (登録時と照合時で同じキーになるよう、必ずこの関数を通した文字列を使うこと)。
  */
 export function normalizeAmount(val: string | number | null | undefined): string {
   if (val === null || val === undefined || val === '') return '';
@@ -39,4 +40,12 @@ export function buildReceiptDedupeKey(input: ReceiptDedupeKeyInput): string {
     normalizeAmount(input.amount),
     normalizeText(input.storeName),
   ].join('||');
+}
+
+/**
+ * receipts.dedupe_hash に入れる値(キーの SHA-256)。キーは店名を含み長さに上限が無いため、UNIQUE 索引には
+ * 固定長のハッシュを載せる。
+ */
+export function receiptDedupeHash(key: string): Uint8Array {
+  return createHash('sha256').update(key, 'utf8').digest();
 }

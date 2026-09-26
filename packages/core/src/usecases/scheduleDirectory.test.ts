@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { ENCRYPTION_PURPOSES } from '../domain';
 import type { CachePort } from '../ports/cache';
 import { applyCustomerSnapshot } from './customers';
 import { createScheduleDirectory } from './scheduleDirectory';
@@ -7,10 +6,13 @@ import { createTestContext } from './testContext';
 
 class MapCache implements CachePort {
   readonly values = new Map<string, unknown>();
+  /** DB から読み直した回数(読み直すたびに set する)。 */
+  sets = 0;
   async get<T>(key: string) {
     return this.values.get(key) as T | undefined;
   }
   async set<T>(key: string, value: T) {
+    this.sets++;
     this.values.set(key, value);
   }
 }
@@ -19,7 +21,7 @@ async function setup() {
   const ctx = createTestContext();
   await ctx.uow.run(ctx.tenantId, (r) =>
     applyCustomerSnapshot(
-      { crypto: ctx.crypto, runId: null },
+      { runId: null },
       r,
       {
         source: 'reserva',
@@ -44,16 +46,13 @@ async function setup() {
   const row = ctx.data().staff.find((s) => s.record.id === staff.id);
   if (row) {
     row.homeAddress = '東京都世田谷区用賀4-1-1';
-    row.homeGeoEnc = await ctx.crypto.encrypt(
-      { tenantId: ctx.tenantId, purpose: ENCRYPTION_PURPOSES.staffHomeGeo, rowId: staff.id },
-      '35.6264,139.6336',
-    );
+    row.homeGeo = { lat: 35.6264, lng: 139.6336 };
   }
   return { ctx, staffId: staff.id };
 }
 
 describe('createScheduleDirectory', () => {
-  it('顧客・スタッフを DB から読み、緯度経度を復号して予定計算用の形にする(監査は1件)', async () => {
+  it('顧客・スタッフを DB から読み、予定計算用の形にする', async () => {
     const { ctx, staffId } = await setup();
     const directory = await createScheduleDirectory(ctx.deps).load(ctx.tenantId);
     expect(directory.customers).toEqual([
@@ -80,7 +79,6 @@ describe('createScheduleDirectory', () => {
         calendarId: null,
       },
     ]);
-    expect(ctx.audit.entries).toHaveLength(1);
   });
 
   it('キャッシュは顧客データの版数ごと。取込で版数が上がれば読み直す。同時の読み込みは1回にまとめる', async () => {
@@ -88,12 +86,12 @@ describe('createScheduleDirectory', () => {
     const cache = new MapCache();
     const directory = createScheduleDirectory({ ...ctx.deps, cache });
     await Promise.all([directory.load(ctx.tenantId), directory.load(ctx.tenantId)]);
-    expect(ctx.audit.entries).toHaveLength(1);
+    expect(cache.sets).toBe(1);
     await directory.load(ctx.tenantId);
-    expect(ctx.audit.entries).toHaveLength(1);
+    expect(cache.sets).toBe(1);
     await ctx.uow.run(ctx.tenantId, (r) => r.settings.bumpCustomerDataVersion());
     await directory.load(ctx.tenantId);
-    expect(ctx.audit.entries).toHaveLength(2);
+    expect(cache.sets).toBe(2);
     expect([...cache.values.keys()]).toEqual([
       `schedule-directory:v1:${ctx.tenantId}:0`,
       `schedule-directory:v1:${ctx.tenantId}:1`,

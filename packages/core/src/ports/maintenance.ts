@@ -10,6 +10,11 @@ export interface RetentionCutoffs {
   outboxFailedBefore: Date;
   /** 期限がこの日時より前のパスワード再設定コード。 */
   passwordResetCodesBefore: Date;
+  /**
+   * この日時までに期限が切れた・使われた再設定コードのメール用の値(mail_code)を消す(行は残す)。送信に失敗して
+   * 送られないまま終わったコードも、期限が切れた時点で消える。
+   */
+  mailCodesExpiredAt: Date;
   /** 作成がこの日時より前のマッチングの候補。 */
   matchingCandidatesBefore: Date;
 }

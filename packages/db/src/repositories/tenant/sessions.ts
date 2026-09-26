@@ -85,7 +85,7 @@ function toCode(row: CodeRow): PasswordResetCodeRecord {
     usedAt: row.usedAt,
     attemptCount: row.attemptCount,
     maxAttempts: row.maxAttempts,
-    mailCodeEnc: row.mailCodeEnc,
+    mailCode: row.mailCode,
   };
 }
 
@@ -101,7 +101,7 @@ export class DrizzlePasswordResetCodeRepository extends TenantBound implements P
   async replaceActive(input: NewPasswordResetCodeInput, now: Date): Promise<PasswordResetCodeRecord> {
     await this.tx
       .update(passwordResetCodes)
-      .set({ usedAt: now, mailCodeEnc: null })
+      .set({ usedAt: now, mailCode: null })
       .where(
         and(
           eq(passwordResetCodes.tenantId, this.tenantId),
@@ -156,7 +156,7 @@ export class DrizzlePasswordResetCodeRepository extends TenantBound implements P
   async consume(id: string, now: Date): Promise<boolean> {
     const rows = await this.tx
       .update(passwordResetCodes)
-      .set({ usedAt: now, mailCodeEnc: null })
+      .set({ usedAt: now, mailCode: null })
       .where(and(this.byId(id), isNull(passwordResetCodes.usedAt)))
       .returning({ id: passwordResetCodes.id });
     return rows.length > 0;
@@ -165,11 +165,11 @@ export class DrizzlePasswordResetCodeRepository extends TenantBound implements P
   async markUsed(id: string, at: Date): Promise<void> {
     await this.tx
       .update(passwordResetCodes)
-      .set({ usedAt: at, mailCodeEnc: null })
+      .set({ usedAt: at, mailCode: null })
       .where(and(this.byId(id), isNull(passwordResetCodes.usedAt)));
   }
 
   async clearMailCode(id: string): Promise<void> {
-    await this.tx.update(passwordResetCodes).set({ mailCodeEnc: null }).where(this.byId(id));
+    await this.tx.update(passwordResetCodes).set({ mailCode: null }).where(this.byId(id));
   }
 }

@@ -15,6 +15,9 @@
 - 日付は業務日 `YYYY-MM-DD`(`businessDateSchema`)、年月 `YYYY-MM`、時刻 `HH:MM`、ID は UUID(`idSchema`)。日時は ISO 8601。
 - 入力は `parseJsonBody` / `parseQuery` で契約に通す(失敗は 400)。成功の応答は `jsonOk(c, schema, body)` で**応答の契約にも
   通してから**返す(食い違いは 500 になりログに残る。契約に無い項目は落ちる)。画面(`web/src/api/client.ts`)も同じ契約で応答を検証する。
+- 自由記述の欄(日報・事故報告の本文、領収書の店名・引き継ぎ、出勤簿のセル、AI のプロンプト、スタッフの氏名・電話 等)は、
+  契約(`freeText`)でタブ・改行・復帰以外の制御文字(U+0000 等)を取り除いてから使う(PostgreSQL は U+0000 を保存できない)。
+  顧客CSV・スタッフ台帳・出勤簿の CSV の取込も同じ規則で取り除く(`stripControlChars`)。
 - `tenantId` は**セッション Cookie からだけ**決まる。要求の本体・クエリに入れても使わない。
 
 ### 1.2 認証とセッション Cookie
@@ -108,7 +111,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | メソッド・パス | 契約 | 応答 | 備考 |
 | --- | --- | --- | --- |
 | `GET /?familyName=` | `customerListQuerySchema` / `customerListResponseSchema` | `{ customers: [{ id, name, phone, city }], cities }` | `familyName` 省略でアーカイブされていない全件(絞り込みは画面)。指定すると苗字の完全一致 |
-| `GET /:id` | — / `customerDetailResponseSchema` | 住所・連絡先・子ども(アレルギー等)を復号した全項目 | 形の違う ID は 404。INFO `customer.detail.viewed`(`details.customerId`) |
+| `GET /:id` | — / `customerDetailResponseSchema` | 住所・連絡先・子ども(アレルギー等)の全項目 | 形の違う ID は 404。INFO `customer.detail.viewed`(`details.customerId`) |
 
 ### 2.4 予定 `/api/schedule`(`routes/schedule.ts`、全てログイン)
 

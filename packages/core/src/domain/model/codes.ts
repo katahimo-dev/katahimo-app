@@ -20,9 +20,6 @@ export const TENANT_LIFECYCLE_EVENTS = [
   'purged',
 ] as const;
 
-export const DATA_KEY_STATES = ['active', 'decrypt_only', 'destroyed'] as const;
-export type DataKeyState = (typeof DATA_KEY_STATES)[number];
-
 /** テナントの秘密値(tenant_secrets.name)。 */
 export const TENANT_SECRET_NAMES = [
   'gemini_api_key',

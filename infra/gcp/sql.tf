@@ -5,11 +5,14 @@
 # - DB・ロールは Terraform では作らない(infra/cloudsql/*.sql。google_sql_user で作ると
 #   cloudsqlsuperuser のメンバーになってしまい、パスワードも state に残るため)。
 #   組み込みの postgres ユーザーのパスワードは gcloud sql users set-password で設定する。
+# - ディスク・バックアップ・リードレプリカはこのアプリ専用の鍵(CMEK。kms.tf)で暗号化する。鍵はインスタンスの
+#   作成時にしか指定できない(変えるとインスタンスの作り直しになる)。
 resource "google_sql_database_instance" "main" {
   name                = var.sql_instance_name
   region              = var.region
   database_version    = var.sql_database_version
   deletion_protection = var.sql_deletion_protection
+  encryption_key_name = google_kms_crypto_key.cloudsql.id
 
   settings {
     # PostgreSQL 16 以降の新規インスタンスは既定が Enterprise Plus になるため明示する(共有コアは Enterprise のみ)
@@ -55,5 +58,6 @@ resource "google_sql_database_instance" "main" {
     }
   }
 
-  depends_on = [google_project_service.enabled]
+  # Cloud SQL のサービスエージェントが鍵を使えるようになってから作る(権限の反映を待つ)
+  depends_on = [google_project_service.enabled, time_sleep.cmek_iam_propagation]
 }

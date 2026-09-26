@@ -25,8 +25,7 @@ function appFor(overrides: Record<string, string> = {}) {
   const env = loadEnv({
     DATABASE_URL: 'postgres://katahimo_app:x@localhost:5432/katahimo_dev',
     SESSION_SECRET: 'test-session-secret-0123456789',
-    BLIND_INDEX_MASTER_KEY: 'a'.repeat(64),
-    LOCAL_DEV_KEK: 'b'.repeat(64),
+    SECRET_BOX_LOCAL_KEY: 'a'.repeat(64),
     SCHEDULE_PROVIDER: 'noop',
     WEB_DIST_DIR: distDir,
     ...overrides,
@@ -141,8 +140,8 @@ describe('本番の設定', () => {
   const production = {
     NODE_ENV: 'production',
     SESSION_SECRET: 'f'.repeat(64),
-    KMS_PROVIDER: 'gcp',
-    GCP_KMS_KEY_NAME: 'projects/p/locations/asia-northeast1/keyRings/katahimo/cryptoKeys/tenant-kek',
+    SECRET_BOX_PROVIDER: 'gcp',
+    SECRET_BOX_KMS_KEY: 'projects/p/locations/asia-northeast1/keyRings/katahimo/cryptoKeys/tenant-secrets',
     STORAGE_PROVIDER: 'gcs',
     GCS_BUCKET: 'p-katahimo-receipts',
   };

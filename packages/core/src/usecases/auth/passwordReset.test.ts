@@ -49,7 +49,11 @@ describe('パスワード再設定', () => {
     // リクエストの中では送らず、outboxに積むだけ(応答時間からアカウントの有無が分からないように)
     expect(ctx.mailer.sent).toHaveLength(0);
     expect(ctx.data().outbox.map((j) => j.topic)).toEqual(['mail.password_reset']);
-    expect(ctx.data().resetCodes[0]?.mailCodeEnc).not.toBeNull();
+    expect(ctx.data().resetCodes[0]?.mailCode).toMatch(/^\d{6}$/);
+    // outbox の payload にはコードを入れない
+    expect(JSON.stringify(ctx.data().outbox[0]?.payload ?? {})).not.toContain(
+      ctx.data().resetCodes[0]?.mailCode,
+    );
     await ctx.drain();
     const mail = ctx.mailer.sent[0];
     expect(mail?.to).toBe('hanako@gmail.com');
@@ -59,7 +63,7 @@ describe('パスワード再設定', () => {
     );
     const row = ctx.data().resetCodes[0];
     expect(row?.codeHash).not.toContain(lastCode());
-    expect(row?.mailCodeEnc).toBeNull();
+    expect(row?.mailCode).toBeNull();
     expect(row?.expiresAt.getTime()).toBe(ctx.clock.now.getTime() + 30 * 60 * 1000);
     expect(ctx.appLog.entries.at(-1)).toMatchObject({
       level: 'SECURITY',
@@ -207,7 +211,7 @@ describe('パスワード再設定', () => {
     await requestPasswordReset(ctx.deps, { tenantSlug: 'test-tenant', email: 'hanako@gmail.com' });
     expect(await ctx.drain()).toMatchObject({ retried: 1 });
     expect(ctx.data().outbox[0]?.lastError).toMatch(/SMTP/);
-    expect(ctx.data().resetCodes[0]?.mailCodeEnc).not.toBeNull();
+    expect(ctx.data().resetCodes[0]?.mailCode).not.toBeNull();
   });
 
   it('期限切れ・使用済みのコードのメールは送らない', async () => {
@@ -215,7 +219,7 @@ describe('パスワード再設定', () => {
     ctx.clock.now = new Date(ctx.clock.now.getTime() + 31 * 60 * 1000);
     await ctx.drain();
     expect(ctx.mailer.sent).toHaveLength(0);
-    expect(ctx.data().resetCodes[0]?.mailCodeEnc).toBeNull();
+    expect(ctx.data().resetCodes[0]?.mailCode).toBeNull();
   });
 
   it('未登録アカウントの確認も「無効な認証コード」と同じ結果(列挙防止)', async () => {

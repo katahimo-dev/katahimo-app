@@ -2,7 +2,6 @@ import type { OutboxTopic } from '@katahimo/core/domain';
 import { MIRROR_TOPICS } from '@katahimo/core/domain';
 import { z } from 'zod';
 import { parseTenantFolderMap } from '../customer-csv/createCustomerCsvSource';
-import { KMS_PROVIDERS, kmsEnvProblems } from '../kms-provider';
 import { SCHEDULE_PROVIDERS, scheduleEnvProblems } from '../schedule-provider';
 import { STORAGE_PROVIDERS, storageEnvProblems } from '../storage-provider';
 
@@ -24,22 +23,13 @@ export const optionalPositiveInt = z.preprocess(
   z.coerce.number().int().positive().optional(),
 );
 
-const hex32 = (name: string) =>
-  z.string().regex(/^[0-9a-f]{64}$/i, `${name} は32バイト(64桁の16進数)にしてください`);
-
 /**
- * API とワーカーで同じ値にしなければならない環境変数(鍵・保存先・予定の取得元・ミラー・取込元)。
- * 片方だけ変えると、もう片方が暗号文を読めない・画像を見つけられない・ミラーの扱いが食い違う。
+ * API とワーカーで同じ値にしなければならない環境変数(保存先・予定の取得元・ミラー・取込元)。
+ * 片方だけ変えると、もう片方が画像を見つけられない・ミラーの扱いが食い違う。
  * 各アプリの env はこれに自分だけの変数を足す(packages/api/src/env.ts・packages/worker/src/env.ts)。
  */
 export const sharedEnvShape = {
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-
-  // テナントのデータ暗号化鍵(DEK)をラップする KEK。local: LOCAL_DEV_KEK(開発用) / gcp: Cloud KMS の
-  // GCP_KMS_KEY_NAME(本番は必須)。ラップした DEK は tenant_data_keys にあり、kek_key_name で実装を確かめる。
-  KMS_PROVIDER: z.preprocess(emptyToUndefined, z.enum(KMS_PROVIDERS).default('local')),
-  LOCAL_DEV_KEK: z.preprocess(emptyToUndefined, hex32('LOCAL_DEV_KEK').optional()),
-  GCP_KMS_KEY_NAME: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // 領収書画像の保存先。local: LOCAL_RECEIPT_STORAGE_DIR(開発用) / gcs: GCS_BUCKET(本番は必須)。
   // ワーカーは API が保存した画像を読み直して GAS版へミラーする。
@@ -88,11 +78,7 @@ export type SharedEnv = z.infer<typeof sharedEnvSchema>;
 /** 項目単体では表せない組み合わせの検証(共通部分)。 */
 export function sharedEnvProblems(env: SharedEnv): string[] {
   const isProduction = env.NODE_ENV === 'production';
-  return [
-    ...kmsEnvProblems(env, isProduction),
-    ...storageEnvProblems(env, isProduction),
-    ...scheduleEnvProblems(env, isProduction),
-  ];
+  return [...storageEnvProblems(env, isProduction), ...scheduleEnvProblems(env, isProduction)];
 }
 
 /** 環境変数を検証する。問題があれば全てをまとめた例外にする(起動前に落とす)。 */

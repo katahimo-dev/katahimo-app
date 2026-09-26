@@ -20,9 +20,7 @@ import { loadDotenv } from './loadDotenv';
 loadDotenv();
 const env = loadWorkerEnv();
 const db = createDatabase(env.WORKER_DATABASE_URL);
-// テナントの鍵の読み込み専用のプール(api の server.ts と同じ)
-const keyDb = createDatabase(env.WORKER_DATABASE_URL, { max: 1 });
-const container = createWorkerContainer(env, db, keyDb);
+const container = createWorkerContainer(env, db);
 const healthServer = env.WORKER_HEALTH_PORT ? startHealthServer(env.WORKER_HEALTH_PORT) : null;
 const stopCron: Array<() => void> = [];
 
@@ -66,7 +64,7 @@ runOutboxPoller(container, {
   stop,
 })
   .then(async () => {
-    await Promise.all([closeDatabase(db), closeDatabase(keyDb)]).catch(() => undefined);
+    await closeDatabase(db).catch(() => undefined);
     logJson('INFO', 'katahimo worker を停止しました');
     process.exit(0);
   })

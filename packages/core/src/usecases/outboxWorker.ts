@@ -3,7 +3,6 @@ import {
   type AttendanceColumnKey,
   DEFAULT_RETRY_POLICY,
   decideOnFailure,
-  ENCRYPTION_PURPOSES as P,
   PermanentOutboxError,
   parseCareRecordBody,
   projectDay,
@@ -13,7 +12,6 @@ import {
 import { MIRROR_TOPICS, type OutboxTopic } from '../domain/model';
 import { formatJstDateTime } from '../domain/reports/jstTime';
 import type { AppLogPort } from '../ports/appLog';
-import type { CryptoPort } from '../ports/crypto';
 import type { MailerPort } from '../ports/mailer';
 import type { MirrorSenderPort } from '../ports/mirrorSender';
 import type { ClaimedOutboxMessage, OutboxQueuePort } from '../ports/outbox';
@@ -27,7 +25,6 @@ import { currentTime } from './requestMeta';
 export interface OutboxWorkerDeps extends Clock {
   queue: OutboxQueuePort;
   uow: UnitOfWorkPort;
-  crypto: CryptoPort;
   storage: StoragePort;
   sender: MirrorSenderPort;
   mailer: MailerPort;
@@ -70,11 +67,7 @@ const mirrorCareRecord: Handler = async (deps, message) => {
   });
   if (!loaded) return;
   const { record, staffName, customer } = loaded;
-  const json = await deps.crypto.decrypt(
-    { tenantId: message.tenantId, purpose: P.careRecordBody, rowId: record.id },
-    record.bodyEnc,
-  );
-  const body = parseCareRecordBody(record.recordType, json, record.bodySchemaVer);
+  const body = parseCareRecordBody(record.recordType, record.body, record.bodySchemaVer);
   const common = {
     reportId: record.id,
     timestampJst: formatJstDateTime(record.occurredAt),
@@ -129,19 +122,8 @@ const mirrorReceipt: Handler = async (deps, message) => {
     });
     return;
   }
-  const ctx = (purpose: (typeof P)[keyof typeof P], rowId: string) => ({
-    tenantId: message.tenantId,
-    purpose,
-    rowId,
-  });
-  const [storeName, handoffText] = await Promise.all([
-    receipt.storeNameEnc
-      ? deps.crypto.decrypt(ctx(P.receiptStoreName, receipt.id), receipt.storeNameEnc)
-      : '',
-    isFirst && upload?.handoffTextEnc
-      ? deps.crypto.decrypt(ctx(P.receiptHandoffText, upload.id), upload.handoffTextEnc)
-      : '',
-  ]);
+  const storeName = receipt.storeName ?? '';
+  const handoffText = isFirst ? (upload?.handoffText ?? '') : '';
   await deps.sender.sendReceipt({
     receiptId: receipt.id,
     uploadBatchId: receipt.uploadId,
@@ -170,7 +152,7 @@ const mirrorAttendanceDay: Handler = async (deps, message) => {
     return {
       rows,
       staffName: await staffNameOf(r, rows.staffId),
-      sheet: await toSheetDay(deps.crypto, r.tenantId, timeZone, rows),
+      sheet: toSheetDay(timeZone, rows),
     };
   });
   if (!loaded) return;

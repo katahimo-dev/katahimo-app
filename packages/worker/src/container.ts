@@ -1,7 +1,6 @@
 import { hostname } from 'node:os';
 import type {
   AppLogPort,
-  CryptoPort,
   CustomerCsvSourcePort,
   MailerPort,
   MirrorSenderPort,
@@ -20,20 +19,16 @@ import {
   DrizzleAppLogRepository,
   DrizzleOutboxQueue,
   DrizzlePlatformMaintenance,
-  DrizzleTenantDataKeyReader,
   DrizzleTenantDirectory,
 } from '@katahimo/db/repositories';
 import {
-  ConsoleAuditLogPort,
   ConsoleMailerPort,
   createCustomerCsvSource,
   createGoogleCalendarPort,
-  createKeyManagementPort,
   createScheduleServices,
   createStoragePort,
   GasBridgeMirrorSenderPort,
   InMemoryTtlCache,
-  LocalCryptoPort,
   NoopMirrorSenderPort,
   SmtpMailerPort,
   skippedOutboxTopics,
@@ -49,7 +44,6 @@ export interface WorkerContainer {
   tenants: TenantDirectoryPort;
   queue: OutboxQueuePort;
   platform: PlatformMaintenancePort;
-  crypto: CryptoPort;
   storage: StoragePort;
   sender: MirrorSenderPort;
   mailer: MailerPort;
@@ -78,11 +72,8 @@ function createMailer(env: WorkerEnv): MailerPort {
   });
 }
 
-/** keyDb はテナントの鍵の読み込み専用の小さなプール(省略時は db。api の createContainer と同じ考え方)。 */
-export function createWorkerContainer(env: WorkerEnv, db: Database, keyDb: Database = db): WorkerContainer {
-  const crypto = new LocalCryptoPort(new DrizzleTenantDataKeyReader(keyDb), createKeyManagementPort(env));
-  const uow = new DrizzleUnitOfWork(db, { skipOutboxTopics: skippedOutboxTopics(env), crypto });
-  const audit = new ConsoleAuditLogPort();
+export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerContainer {
+  const uow = new DrizzleUnitOfWork(db, { skipOutboxTopics: skippedOutboxTopics(env) });
   const appLog = new DrizzleAppLogRepository(db);
   const bridge =
     env.GAS_BRIDGE_URL && env.GAS_BRIDGE_SECRET
@@ -90,7 +81,7 @@ export function createWorkerContainer(env: WorkerEnv, db: Database, keyDb: Datab
       : null;
   // API と同じ予定・ルート計算の実装を使う(夜間の反映は fresh のためルートのキャッシュは使わない)
   const scheduleServices = createScheduleServices(env, {
-    directory: createScheduleDirectory({ uow, crypto, audit }),
+    directory: createScheduleDirectory({ uow }),
     appLog,
     routeCache: new InMemoryTtlCache({ maxEntries: 100 }),
   });
@@ -100,7 +91,6 @@ export function createWorkerContainer(env: WorkerEnv, db: Database, keyDb: Datab
     tenants: new DrizzleTenantDirectory(db),
     queue: new DrizzleOutboxQueue(db),
     platform: new DrizzlePlatformMaintenance(db),
-    crypto,
     storage: createStoragePort(env),
     sender: bridge ? new GasBridgeMirrorSenderPort(bridge) : new NoopMirrorSenderPort(),
     mailer: createMailer(env),

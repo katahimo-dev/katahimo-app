@@ -88,8 +88,6 @@ CREATE TRIGGER "staff_employment_terms_set_updated_at" BEFORE UPDATE ON "staff_e
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "staff_weekly_availability_set_updated_at" BEFORE UPDATE ON "staff_weekly_availability"
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
-CREATE TRIGGER "tenant_data_keys_set_updated_at" BEFORE UPDATE ON "tenant_data_keys"
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "tenant_features_set_updated_at" BEFORE UPDATE ON "tenant_features"
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "tenant_secrets_set_updated_at" BEFORE UPDATE ON "tenant_secrets"
@@ -240,7 +238,7 @@ $$;--> statement-breakpoint
 -- ─────────────────────────────────────────────────────────────
 -- 5. 記録の守りと本文の変更履歴(全ての UPDATE・DELETE で動く。WHEN で絞らない)。
 --    - locked(確定済み)の記録は、本文以外の列も含めて変更・削除できない(SQLSTATE KH002)。locked から他の状態へも戻せない。
---    - 下書き以外(submitted)の記録の本文(暗号文・本文の形式の版)が変わったら、変更前を care_record_revisions に写す。
+--    - 下書き以外(submitted)の記録の本文(body・本文の形式の版)が変わったら、変更前を care_record_revisions に写す。
 --      変更者はセッションの app.actor_id(UoW が設定)。
 --    - テナントの消去(platform.tenants の行の削除からの cascade)では確かめない。
 -- ─────────────────────────────────────────────────────────────
@@ -256,16 +254,16 @@ BEGIN
     RAISE EXCEPTION 'care record % is locked', OLD.id USING ERRCODE = 'KH002';
   END IF;
   IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
-  IF OLD.status <> 'draft' AND (OLD.body_enc IS DISTINCT FROM NEW.body_enc
+  IF OLD.status <> 'draft' AND (OLD.body IS DISTINCT FROM NEW.body
                                 OR OLD.body_schema_ver IS DISTINCT FROM NEW.body_schema_ver) THEN
-    INSERT INTO care_record_revisions (tenant_id, id, care_record_id, revision_no, body_enc, body_schema_ver, changed_by)
+    INSERT INTO care_record_revisions (tenant_id, id, care_record_id, revision_no, body, body_schema_ver, changed_by)
     VALUES (
       OLD.tenant_id,
       gen_random_uuid(),
       OLD.id,
       coalesce((SELECT max(revision_no) FROM care_record_revisions
                 WHERE tenant_id = OLD.tenant_id AND care_record_id = OLD.id), 0) + 1,
-      OLD.body_enc,
+      OLD.body,
       OLD.body_schema_ver,
       nullif(current_setting('app.actor_id', true), '')::uuid
     );
@@ -387,15 +385,13 @@ $$;--> statement-breakpoint
 SELECT platform.ensure_app_log_partitions(12);--> statement-breakpoint
 
 -- ─────────────────────────────────────────────────────────────
--- 7. テナントの作成(運用の CLI・シードから)。所有者の権限で tenants・最初の DEK・設定をまとめて作る。
---    DEK のラップ(KMS)は呼び出し側が行い、ラップ済みの値を渡す(AAD にテナントIDを含めるため ID も呼び出し側が決める)。
+-- 7. テナントの作成(運用の CLI・シードから)。所有者の権限で tenants・設定・ライフサイクルの記録をまとめて作る。
+--    ID は呼び出し側が決める(アプリが生成する UUIDv7)。
 -- ─────────────────────────────────────────────────────────────
 CREATE FUNCTION platform.provision_tenant(
   p_id uuid,
   p_slug text,
   p_name text,
-  p_wrapped_dek bytea,
-  p_kek_key_name text,
   p_timezone text DEFAULT 'Asia/Tokyo',
   p_business_type text DEFAULT 'babysitting'
 ) RETURNS uuid
@@ -409,8 +405,6 @@ BEGIN
   VALUES (p_id, p_slug, p_name, 'active', p_timezone, p_business_type);
   -- テナントのテーブルは所有者にも RLS が掛かる(FORCE)ため、このトランザクションの中だけテナントを設定する
   PERFORM set_config('app.tenant_id', p_id::text, true);
-  INSERT INTO public.tenant_data_keys (tenant_id, version, wrapped_dek, kek_key_name, state)
-  VALUES (p_id, 1, p_wrapped_dek, p_kek_key_name, 'active');
   INSERT INTO public.tenant_settings (tenant_id) VALUES (p_id);
   INSERT INTO platform.tenant_lifecycle_events (id, tenant_id, event, actor)
   VALUES (gen_random_uuid(), p_id, 'provisioned', session_user);
@@ -492,7 +486,6 @@ ALTER TABLE "staff_login_emails" FORCE ROW LEVEL SECURITY;--> statement-breakpoi
 ALTER TABLE "staff_service_areas" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "staff_weekly_availability" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "stored_files" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
-ALTER TABLE "tenant_data_keys" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "tenant_features" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "tenant_secrets" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "tenant_settings" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -512,7 +505,7 @@ CREATE POLICY "outbox_messages_worker" ON "outbox_messages" AS PERMISSIVE FOR AL
 -- ─────────────────────────────────────────────────────────────
 REVOKE ALL ON SCHEMA platform FROM PUBLIC;--> statement-breakpoint
 GRANT USAGE ON SCHEMA public, platform TO katahimo_app, katahimo_worker, katahimo_readonly;--> statement-breakpoint
-REVOKE ALL ON FUNCTION platform.provision_tenant(uuid, text, text, bytea, text, text, text) FROM PUBLIC;--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.provision_tenant(uuid, text, text, text, text) FROM PUBLIC;--> statement-breakpoint
 REVOKE ALL ON FUNCTION platform.purge_tenant(uuid) FROM PUBLIC;--> statement-breakpoint
 REVOKE ALL ON FUNCTION platform.unlock_attendance_period(uuid, uuid, text) FROM PUBLIC;--> statement-breakpoint
 REVOKE ALL ON FUNCTION platform.ensure_app_log_partitions(integer) FROM PUBLIC;--> statement-breakpoint
@@ -526,8 +519,7 @@ GRANT SELECT ON "platform"."tenants", "platform"."plans", "platform"."plan_featu
 GRANT SELECT, INSERT, UPDATE, DELETE ON "platform"."rate_limit_buckets" TO katahimo_app;--> statement-breakpoint
 -- 追記専用(UPDATE・DELETE なし。操作ログの保存期間の削除はパーティションごと)
 GRANT SELECT, INSERT ON "app_logs", "ai_prompt_revisions", "care_record_revisions", "entity_changes" TO katahimo_app;--> statement-breakpoint
--- 鍵は読むだけ(作成は provision_tenant)。outbox は積むだけ(状態の更新はワーカー)。設定の行は provision_tenant が作る
-GRANT SELECT ON "tenant_data_keys" TO katahimo_app;--> statement-breakpoint
+-- outbox は積むだけ(状態の更新はワーカー)。設定の行は provision_tenant が作る
 GRANT SELECT, INSERT ON "outbox_messages" TO katahimo_app;--> statement-breakpoint
 GRANT SELECT, UPDATE ON "tenant_settings" TO katahimo_app;--> statement-breakpoint
 GRANT SELECT, INSERT, UPDATE ON "import_runs", "staff_credentials" TO katahimo_app;--> statement-breakpoint
@@ -549,7 +541,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
 --    マッチングの表には権限を与えない)。ジョブを足すときはここと catalog.integration.test.ts の一覧を直す ──
 -- outbox: 取り出し・状態の更新・保存期間の削除(テナント横断のポリシー outbox_messages_worker)、夜間の反映の積み込み
 GRANT SELECT, INSERT, UPDATE, DELETE ON "outbox_messages" TO katahimo_worker;--> statement-breakpoint
-GRANT SELECT ON "platform"."tenants", "tenant_data_keys" TO katahimo_worker;--> statement-breakpoint
+GRANT SELECT ON "platform"."tenants" TO katahimo_worker;--> statement-breakpoint
 GRANT INSERT ON "app_logs", "entity_changes" TO katahimo_worker;--> statement-breakpoint
 -- 夜間のカレンダー反映(勤怠の書き込み。締めの判定のため attendance_periods を読む)・予定のマスタの読み込み
 GRANT SELECT, INSERT, UPDATE, DELETE ON "attendance_days", "visits", "work_segments", "travel_legs" TO katahimo_worker;--> statement-breakpoint

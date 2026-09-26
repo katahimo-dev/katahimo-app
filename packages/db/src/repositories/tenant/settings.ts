@@ -65,7 +65,7 @@ export class DrizzleTenantSecretRepository extends TenantBound implements Tenant
     const rows = await this.tx
       .select({
         name: tenantSecrets.name,
-        valueEnc: tenantSecrets.valueEnc,
+        sealedValue: tenantSecrets.sealedValue,
         rotatedAt: tenantSecrets.rotatedAt,
       })
       .from(tenantSecrets)
@@ -73,13 +73,13 @@ export class DrizzleTenantSecretRepository extends TenantBound implements Tenant
     return rows[0] ?? null;
   }
 
-  async put(name: TenantSecretName, valueEnc: Uint8Array, updatedBy: string | null): Promise<void> {
+  async put(name: TenantSecretName, sealedValue: Uint8Array, updatedBy: string | null): Promise<void> {
     await this.tx
       .insert(tenantSecrets)
-      .values({ tenantId: this.tenantId, name, valueEnc, updatedBy })
+      .values({ tenantId: this.tenantId, name, sealedValue, updatedBy })
       .onConflictDoUpdate({
         target: [tenantSecrets.tenantId, tenantSecrets.name],
-        set: { valueEnc, updatedBy, rotatedAt: sql`now()` },
+        set: { sealedValue, updatedBy, rotatedAt: sql`now()` },
       });
   }
 }

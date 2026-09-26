@@ -1,14 +1,12 @@
 import type {
   ProvisionTenantInput,
-  TenantDataKeyReaderPort,
-  TenantDataKeyRecord,
   TenantDirectoryPort,
   TenantProvisioningPort,
   TenantRecord,
 } from '@katahimo/core/ports';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { type Database, type Executor, withTenant } from '../../client';
-import { tenantDataKeys, tenants } from '../../schema';
+import { asc, eq, sql } from 'drizzle-orm';
+import type { Database, Executor } from '../../client';
+import { tenants } from '../../schema';
 
 const tenantColumns = {
   id: tenants.id,
@@ -59,38 +57,7 @@ export class DrizzleTenantProvisioning implements TenantProvisioningPort {
 
   async provision(input: ProvisionTenantInput): Promise<void> {
     await this.db.execute(
-      sql`select platform.provision_tenant(${input.id}::uuid, ${input.slug}, ${input.name}, ${Buffer.from(
-        input.wrappedDek,
-      )}::bytea, ${input.kekKeyName}, ${input.timezone}, ${input.businessType})`,
+      sql`select platform.provision_tenant(${input.id}::uuid, ${input.slug}, ${input.name}, ${input.timezone}, ${input.businessType})`,
     );
-  }
-}
-
-/** 復号に使える DEK の読み出し(CryptoPort が使う。テナントの RLS の中で読む)。 */
-export class DrizzleTenantDataKeyReader implements TenantDataKeyReaderPort {
-  constructor(private readonly db: Database) {}
-
-  listUsable(tenantId: string): Promise<TenantDataKeyRecord[]> {
-    return withTenant(this.db, tenantId, async (tx) => {
-      const rows = await tx
-        .select({
-          version: tenantDataKeys.version,
-          wrappedDek: tenantDataKeys.wrappedDek,
-          kekKeyName: tenantDataKeys.kekKeyName,
-          state: tenantDataKeys.state,
-        })
-        .from(tenantDataKeys)
-        .where(
-          and(
-            eq(tenantDataKeys.tenantId, tenantId),
-            inArray(tenantDataKeys.state, ['active', 'decrypt_only']),
-          ),
-        );
-      return rows.flatMap((r) =>
-        r.wrappedDek && r.state !== 'destroyed'
-          ? [{ version: r.version, wrappedDek: r.wrappedDek, kekKeyName: r.kekKeyName, state: r.state }]
-          : [],
-      );
-    });
   }
 }

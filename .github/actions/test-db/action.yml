@@ -21,8 +21,8 @@ runs:
     - name: 開発用の鍵を生成
       shell: bash
       run: |
-        # ジョブの中だけで使う使い捨ての値(BLIND_INDEX_MASTER_KEY と LOCAL_DEV_KEK は別の値にする)
-        for name in SESSION_SECRET BLIND_INDEX_MASTER_KEY LOCAL_DEV_KEK; do
+        # ジョブの中だけで使う使い捨ての値
+        for name in SESSION_SECRET SECRET_BOX_LOCAL_KEY; do
           value="$(openssl rand -hex 32)"
           echo "::add-mask::${value}"
           echo "${name}=${value}" >> "$GITHUB_ENV"

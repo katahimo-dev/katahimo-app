@@ -38,7 +38,7 @@ export interface AttendanceMonthView {
 }
 
 /**
- * 月の出勤簿(全日)・合計・領収書の日別/月合計。領収書の金額は平文の整数(円)のため復号しない。日の境界は
+ * 月の出勤簿(全日)・合計・領収書の日別/月合計。領収書の金額は整数(円)の列をそのまま合計する。日の境界は
  * テナントのタイムゾーン。
  */
 export async function getAttendanceMonth(
@@ -56,7 +56,7 @@ export async function getAttendanceMonth(
     const records = await r.attendance.loadRange(target.staffId, from, to);
     const rowDataByDate = new Map<string, AttendanceRowData>();
     for (const rows of records) {
-      const sheet = await toSheetDay(deps.crypto, r.tenantId, timeZone, rows);
+      const sheet = toSheetDay(timeZone, rows);
       rowDataByDate.set(rows.businessDate, compactRowData(projectDay(sheet).rowData));
     }
     const days = datesOfMonth(yearMonth).map((businessDate) => {

@@ -35,5 +35,5 @@ export function uuidv7(now: number = Date.now()): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-/** 新しい行のID。テーブルの主キーは全てこれで採番する(暗号化のAADに行IDを含めるため、INSERT前に決める)。 */
+/** 新しい行のID。テーブルの主キーは全てこれで採番する(INSERT 前に決め、子の行・outbox に同じトランザクションで使う)。 */
 export const newId = (): string => uuidv7();

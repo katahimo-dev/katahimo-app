@@ -1,4 +1,5 @@
 import { excelSerialDateToIso, parseFamilyInfo } from '@katahimo/core/domain';
+import { stripControlChars } from '@katahimo/shared';
 import { parse } from 'csv-parse/sync';
 import { decodeReservaCsv, detectDelimiter } from './decode';
 import type { ReservaCsvRow } from './types';
@@ -88,8 +89,9 @@ function resolveHeaderIndex(header: string[]): HeaderIndex {
   };
 }
 
+/** 列の値(前後の空白と制御文字を除く。U+0000 等は DB に保存できないため)。 */
 function col(row: string[], index: number): string {
-  return index >= 0 ? (row[index] ?? '').trim() : '';
+  return index >= 0 ? stripControlChars(row[index] ?? '').trim() : '';
 }
 
 /**

@@ -5,7 +5,9 @@
  */
 import type { RateLimitBucket, RateLimitDecision, RateLimitRule } from '../domain';
 import { conflict, consumeRateLimit, DomainError, refundRateLimit, STALE_WRITE_MESSAGE } from '../domain';
-import type { OutboxTopic } from '../domain/model';
+import type { GeoPoint } from '../domain/geo';
+import type { OutboxTopic, TenantSecretName } from '../domain/model';
+import type { CareRecordContent } from '../domain/reports/careRecord';
 import type { AppLogEntry, AppLogPort } from '../ports/appLog';
 import type {
   AttendanceDayRow,
@@ -17,14 +19,6 @@ import type {
   WorkSegmentRow,
 } from '../ports/attendance';
 import type { StaffCalendarRecord } from '../ports/calendars';
-import type {
-  AuditLogPort,
-  BlindIndexPort,
-  BlindIndexPurpose,
-  CipherContext,
-  CryptoPort,
-  DecryptAuditEntry,
-} from '../ports/crypto';
 import type {
   CustomerCsvSourceFile,
   CustomerCsvSourcePort,
@@ -38,7 +32,6 @@ import type {
   CustomerSourceRecord,
 } from '../ports/customers';
 import type { ImportRunRecord } from '../ports/imports';
-import type { KeyManagementPort, WrappedDek } from '../ports/kms';
 import type { MailerPort, MailMessage } from '../ports/mailer';
 import type {
   AccidentReportMirrorPayload,
@@ -65,6 +58,7 @@ import type {
   ScheduleWithRouteOptions,
   ScheduleWithRouteResult,
 } from '../ports/schedule';
+import type { SecretBoxPort } from '../ports/secretBox';
 import type { AiPromptRecord, TenantSecretRecord, TenantSettingsRecord } from '../ports/settings';
 import type {
   NewStaffInput,
@@ -91,7 +85,7 @@ interface StaffRow {
   record: StaffRecord;
   credentials: StaffCredentials & { failedCount: number; lockedUntil: Date | null };
   homeAddress: string | null;
-  homeGeoEnc: Uint8Array | null;
+  homeGeo: GeoPoint | null;
   travelMode: 'car' | 'bicycle' | 'transit' | 'walk' | null;
 }
 
@@ -124,7 +118,7 @@ export interface TenantData {
   legs: (TravelLegRow & { staffId: string; businessDate: string })[];
   lockedPeriods: { staffId: string; yearMonth: string }[];
   careRecords: CareRecordRow[];
-  careRecordRevisions: { careRecordId: string; bodyEnc: Uint8Array; changedBy: string | null }[];
+  careRecordRevisions: { careRecordId: string; body: CareRecordContent; changedBy: string | null }[];
   uploads: ReceiptUploadRow[];
   receipts: ReceiptRow[];
   files: StoredFileRow[];
@@ -299,7 +293,7 @@ export function fakeRepositories(
           staffId,
           businessDate,
           shoppingErrandCount: null,
-          remarksEnc: null,
+          remarks: null,
           overriddenFields: [],
           rowVersion: 1,
         });
@@ -403,7 +397,7 @@ export function fakeRepositories(
             lockedUntil: null,
           },
           homeAddress: null,
-          homeGeoEnc: null,
+          homeGeo: null,
           travelMode: null,
         });
         return structuredClone(record);
@@ -458,7 +452,7 @@ export function fakeRepositories(
           id: s.record.id,
           displayName: s.record.displayName,
           homeAddress: s.homeAddress,
-          homeGeoEnc: s.homeGeoEnc,
+          homeGeo: s.homeGeo,
           travelMode: s.travelMode,
           scheduleCalendarId:
             d().calendars.find((c) => c.staffId === s.record.id && c.purpose === 'schedule')?.calendarId ??
@@ -493,7 +487,7 @@ export function fakeRepositories(
     passwordResetCodes: {
       async replaceActive(input, now) {
         for (const c of d().resetCodes) {
-          if (c.staffId === input.staffId && !c.usedAt) Object.assign(c, { usedAt: now, mailCodeEnc: null });
+          if (c.staffId === input.staffId && !c.usedAt) Object.assign(c, { usedAt: now, mailCode: null });
         }
         const record: PasswordResetCodeRecord = { ...input, usedAt: null, attemptCount: 0 };
         d().resetCodes.push(record);
@@ -518,16 +512,16 @@ export function fakeRepositories(
       async consume(id, now) {
         const c = d().resetCodes.find((x) => x.id === id);
         if (!c || c.usedAt) return false;
-        Object.assign(c, { usedAt: now, mailCodeEnc: null });
+        Object.assign(c, { usedAt: now, mailCode: null });
         return true;
       },
       async markUsed(id, at) {
         const c = d().resetCodes.find((x) => x.id === id && !x.usedAt);
-        if (c) Object.assign(c, { usedAt: at, mailCodeEnc: null });
+        if (c) Object.assign(c, { usedAt: at, mailCode: null });
       },
       async clearMailCode(id) {
         const c = d().resetCodes.find((x) => x.id === id);
-        if (c) c.mailCodeEnc = null;
+        if (c) c.mailCode = null;
       },
     },
     customers: {
@@ -556,9 +550,9 @@ export function fakeRepositories(
           givenNameKana: null,
           email: null,
           phone: null,
-          memoEnc: null,
-          benefitMemberIdEnc: null,
-          evacuationSiteEnc: null,
+          memo: null,
+          benefitMemberId: null,
+          evacuationSite: null,
           ...input,
           archivedAt: null,
           archiveReason: null,
@@ -690,10 +684,10 @@ export function fakeRepositories(
           throw new DomainError('locked', '確定済みの記録は変更できません。', undefined, 'record_locked');
         }
         const bodyChanged =
-          (patch.bodyEnc && !sameBytes(patch.bodyEnc, c.bodyEnc)) ||
+          (patch.body && JSON.stringify(patch.body) !== JSON.stringify(c.body)) ||
           (patch.bodySchemaVer !== undefined && patch.bodySchemaVer !== c.bodySchemaVer);
         if (bodyChanged && c.status !== 'draft') {
-          d().careRecordRevisions.push({ careRecordId: id, bodyEnc: c.bodyEnc, changedBy: null });
+          d().careRecordRevisions.push({ careRecordId: id, body: structuredClone(c.body), changedBy: null });
         }
         Object.assign(c, structuredClone(patch), { rowVersion: c.rowVersion + 1 });
         return structuredClone(c);
@@ -722,7 +716,7 @@ export function fakeRepositories(
         return u ? structuredClone(u) : null;
       },
       async insertIfNew(input) {
-        if (input.dedupeBidx && d().receipts.some((r) => sameBytes(r.dedupeBidx, input.dedupeBidx)))
+        if (input.dedupeHash && d().receipts.some((r) => sameBytes(r.dedupeHash, input.dedupeHash)))
           return false;
         d().receipts.push(structuredClone(input));
         return true;
@@ -775,10 +769,10 @@ export function fakeRepositories(
         const s = d().secrets.find((x) => x.name === name);
         return s ? structuredClone(s) : null;
       },
-      async put(name, valueEnc) {
+      async put(name, sealedValue) {
         d().secrets = [
           ...d().secrets.filter((x) => x.name !== name),
-          { name, valueEnc, rotatedAt: new Date() },
+          { name, sealedValue, rotatedAt: new Date() },
         ];
       },
     },
@@ -1007,44 +1001,23 @@ export class FakeTenantProvisioning implements TenantProvisioningPort {
 // 外部サービス
 // ─────────────────────────────────────────────────────────────
 
-/** 暗号文の代わりに `ENC|用途|行ID|平文` を返す。AAD(用途・行ID)が違えば本物と同じく復号に失敗する。 */
-export class FakeCryptoPort implements CryptoPort {
-  async encrypt(context: CipherContext, plaintext: string): Promise<Uint8Array> {
-    return Buffer.from(`ENC|${context.tenantId}|${context.purpose}|${context.rowId}|${plaintext}`, 'utf8');
+/**
+ * 暗号文の代わりに `SEALED|テナントID|名前|平文` を返す。テナント・名前が違えば本物と同じく開けない
+ * (テストは保存された値が平文でないことも確かめられる)。
+ */
+export class FakeSecretBox implements SecretBoxPort {
+  /** true にすると open が例外を投げる(鍵・プロバイダを変えて開けなくなった状態を再現する)。 */
+  failOpen = false;
+
+  async seal(tenantId: string, name: TenantSecretName, plaintext: string): Promise<Uint8Array> {
+    return Buffer.from(`SEALED|${tenantId}|${name}|${plaintext}`, 'utf8');
   }
-  async decrypt(context: CipherContext, ciphertext: Uint8Array): Promise<string> {
-    const prefix = `ENC|${context.tenantId}|${context.purpose}|${context.rowId}|`;
-    const text = Buffer.from(ciphertext).toString('utf8');
-    if (!text.startsWith(prefix)) throw new Error(`復号できません(文脈が違います): ${context.purpose}`);
+  async open(tenantId: string, name: TenantSecretName, sealed: Uint8Array): Promise<string> {
+    if (this.failOpen) throw new Error('秘密値を開けません(鍵が違います)');
+    const prefix = `SEALED|${tenantId}|${name}|`;
+    const text = Buffer.from(sealed).toString('utf8');
+    if (!text.startsWith(prefix)) throw new Error(`秘密値を開けません(テナント・名前が違います): ${name}`);
     return text.slice(prefix.length);
-  }
-  async prepare(): Promise<void> {}
-}
-
-/** テストで平文を読むための補助(FakeCryptoPort の暗号文から平文を取り出す)。 */
-export function fakePlaintext(value: Uint8Array | null): string | null {
-  return value ? Buffer.from(value).toString('utf8').split('|').slice(4).join('|') : null;
-}
-
-export class FakeBlindIndexPort implements BlindIndexPort {
-  async compute(tenantId: string, purpose: BlindIndexPurpose, normalizedValue: string): Promise<Uint8Array> {
-    return Buffer.from(`BIDX|${tenantId}|${purpose}|${normalizedValue}`, 'utf8');
-  }
-}
-
-export class FakeKmsPort implements KeyManagementPort {
-  async wrap(dek: Uint8Array, tenantId: string): Promise<WrappedDek> {
-    return { wrapped: Buffer.concat([Buffer.from(`${tenantId}|`), dek]), kekKeyName: 'fake' };
-  }
-  async unwrap(wrapped: WrappedDek): Promise<Uint8Array> {
-    return Buffer.from(wrapped.wrapped).subarray(37);
-  }
-}
-
-export class FakeAuditLogPort implements AuditLogPort {
-  readonly entries: DecryptAuditEntry[] = [];
-  recordDecrypt(entry: DecryptAuditEntry): void {
-    this.entries.push(entry);
   }
 }
 

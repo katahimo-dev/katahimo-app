@@ -2,8 +2,7 @@
 #   printf '%s' "$VALUE" | gcloud secrets versions add <名前> --data-file=-
 # で登録する(値を state に残さないため。doc/07_インフラ・運用.md 3.3)。
 #
-# LOCAL_DEV_KEK は本番では使わない(KMS_PROVIDER=gcp、Cloud KMS の tenant-kek を使う)。
-# BLIND_INDEX_MASTER_KEY はブラインドインデックスの HMAC のマスター鍵(データの暗号化鍵とは別)。
+# テナントの秘密値の封(SecretBox)は Secret Manager ではなく Cloud KMS の tenant-secrets(kms.tf)を使う。
 # DB の接続はロールごとに別の secret(API = katahimo_app、ワーカー = katahimo_worker、migrate = katahimo_migrator)。
 locals {
   secrets = {
@@ -12,7 +11,6 @@ locals {
     "worker-database-url"    = ["worker"]  # postgres://katahimo_worker:...@/katahimo?host=/cloudsql/<接続名>
     "migration-database-url" = ["migrate"] # postgres://katahimo_migrator:...@/katahimo?host=/cloudsql/<接続名>
     "session-secret"         = ["api"]
-    "blind-index-key"        = ["api"]    # BLIND_INDEX_MASTER_KEY
     "legacy-auth-salt"       = ["api"]    # GAS版の AUTH_SALT(移行期のみ)
     "smtp-pass"              = ["worker"] # パスワード再設定メールはワーカーが送る
     "gemini-api-key"         = ["api"]

@@ -18,13 +18,14 @@ export interface TenantSettingsRepository {
 
 export interface TenantSecretRecord {
   name: TenantSecretName;
-  valueEnc: Uint8Array;
+  /** SecretBoxPort.seal の暗号文。 */
+  sealedValue: Uint8Array;
   rotatedAt: Date;
 }
 
 export interface TenantSecretRepository {
   get(name: TenantSecretName): Promise<TenantSecretRecord | null>;
-  put(name: TenantSecretName, valueEnc: Uint8Array, updatedBy: string | null): Promise<void>;
+  put(name: TenantSecretName, sealedValue: Uint8Array, updatedBy: string | null): Promise<void>;
 }
 
 export interface AiPromptRecord {

@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import { newPasswordSchema } from './auth';
-import { businessDateSchema, idSchema } from './common';
+import { businessDateSchema, freeText, idSchema } from './common';
 import { staffRoleSchema } from './roles';
 
 const emailSchema = z.string().trim().email('メールアドレスの形式が正しくありません');
-const nameSchema = z.string().trim().min(1, '氏名を入力してください');
+const nameSchema = freeText(z.string().trim().min(1, '氏名を入力してください'));
 
 /** 管理者向けスタッフ一覧の1件(退職者を含む)。 */
 export const adminStaffViewSchema = z.object({
@@ -41,7 +41,7 @@ export const createStaffRequestSchema = z.object({
   name: nameSchema,
   email: emailSchema,
   altEmail: emailSchema.nullable().optional(),
-  phone: z.string().trim().nullable().optional(),
+  phone: freeText(z.string().trim().nullable().optional()),
   role: staffRoleSchema.default('staff'),
   initialPassword: newPasswordSchema.optional(),
 });
@@ -53,7 +53,7 @@ export const updateStaffRequestSchema = z
     name: nameSchema,
     email: emailSchema,
     altEmail: emailSchema.nullable(),
-    phone: z.string().trim().nullable(),
+    phone: freeText(z.string().trim().nullable()),
     role: staffRoleSchema,
     retiredOn: businessDateSchema.nullable(),
   })

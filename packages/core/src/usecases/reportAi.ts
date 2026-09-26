@@ -8,7 +8,8 @@ import type {
   ReportAiPortFactory,
 } from '../ports/ai';
 import type { AppLogPort } from '../ports/appLog';
-import type { CryptoPort } from '../ports/crypto';
+import type { SecretBoxPort } from '../ports/secretBox';
+import type { TenantSettingsRecord } from '../ports/settings';
 import type { AiPromptDeps } from './aiPrompts';
 import { resolvePromptBody } from './aiPrompts';
 import { readTenantSecret } from './settings';
@@ -16,7 +17,7 @@ import { readTenantSecret } from './settings';
 export interface ReportAiDeps extends AiPromptDeps {
   /** テナントが独自の Gemini API キーを設定していない場合に使うフォールバック(.env の設定か Noop)。 */
   reportAi: ReportAiPort;
-  crypto: CryptoPort;
+  secretBox: SecretBoxPort;
   reportAiFactory: ReportAiPortFactory;
   appLog: AppLogPort;
 }
@@ -28,13 +29,26 @@ export interface ReportAiCaller {
 
 /**
  * テナントの秘密値(tenant_secrets)に Gemini API キーがあればそれとテナントのモデル設定を使い、無ければ .env の
- * 設定(deps.reportAi、未設定なら Noop)にする。
+ * 設定(deps.reportAi、未設定なら Noop)にする。キーが開けない・設定を読めないときも .env の設定に戻す
+ * (AI の下書き・読み取りは失敗しても結果の形で返す処理のため、ここで例外にしない)。
  */
 async function resolveReportAiPort(deps: ReportAiDeps, tenantId: string): Promise<ReportAiPort> {
-  const { apiKey, settings } = await deps.uow.run(tenantId, async (r) => ({
-    apiKey: await readTenantSecret(deps.crypto, r, 'gemini_api_key'),
-    settings: await r.settings.get(),
-  }));
+  let apiKey: string;
+  let settings: TenantSettingsRecord;
+  try {
+    [apiKey, settings] = await Promise.all([
+      readTenantSecret(deps, tenantId, 'gemini_api_key'),
+      deps.uow.run(tenantId, (r) => r.settings.get()),
+    ]);
+  } catch (e) {
+    await deps.appLog.write({
+      tenantId,
+      level: 'ERROR',
+      action: 'ai.settings.read_failed',
+      details: { error: e instanceof Error ? e.name : 'unknown' },
+    });
+    return deps.reportAi;
+  }
   if (!apiKey) return deps.reportAi;
   return deps.reportAiFactory.create({
     apiKey,

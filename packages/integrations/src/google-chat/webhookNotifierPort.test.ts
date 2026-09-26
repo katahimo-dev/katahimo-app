@@ -43,4 +43,16 @@ describe('Google Chat Webhook 通知', () => {
       status: 'not_configured',
     });
   });
+
+  it('送信先の解決が例外を投げても例外にせず失敗の結果を返す', async () => {
+    const resolver = {
+      resolve: async () => {
+        throw new Error('秘密値を開けません');
+      },
+    };
+    expect(await new WebhookNotifierPort(resolver).notify('t1', 'report', 'x')).toEqual({
+      status: 'failed',
+      error: 'resolve_failed',
+    });
+  });
 });

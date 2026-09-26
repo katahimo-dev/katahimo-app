@@ -1,7 +1,7 @@
 import type { Place, ScheduleCustomer } from '../domain/schedule/types';
 import type { TravelMode } from './maps';
 
-/** 復号済みのスタッフ(予定計算用)。 */
+/** 予定計算に使うスタッフ(自宅の位置・移動手段)。 */
 export interface ScheduleStaff {
   id: string;
   name: string;

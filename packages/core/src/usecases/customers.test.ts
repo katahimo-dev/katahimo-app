@@ -8,7 +8,6 @@ import {
 } from './customers';
 import type { TestContext } from './testContext';
 import { createTestContext } from './testContext';
-import { fakePlaintext } from './testDoubles';
 
 function snapshot(overrides: Partial<CustomerSnapshot> = {}): CustomerSnapshot {
   return {
@@ -34,9 +33,7 @@ function snapshot(overrides: Partial<CustomerSnapshot> = {}): CustomerSnapshot {
 describe('applyCustomerSnapshot(取込の差分適用)', () => {
   let ctx: TestContext;
   const apply = (s: CustomerSnapshot) =>
-    ctx.uow.run(ctx.tenantId, (r) =>
-      applyCustomerSnapshot({ crypto: ctx.crypto, runId: null }, r, s, ctx.clock.now),
-    );
+    ctx.uow.run(ctx.tenantId, (r) => applyCustomerSnapshot({ runId: null }, r, s, ctx.clock.now));
 
   beforeEach(() => {
     ctx = createTestContext();
@@ -55,11 +52,34 @@ describe('applyCustomerSnapshot(取込の差分適用)', () => {
     expect(await apply(snapshot({ attributes: { gender: '女性', member_type: '一般' } }))).toBe('unchanged');
   });
 
-  it('個人情報の列は暗号化して保存し、行IDを AAD に使う', async () => {
+  it('緯度経度は数値で持ち、読めない値は緯度経度なし(区画も無し)にする。表記はそのまま残す', async () => {
     await apply(snapshot());
-    const customer = ctx.data().customers[0];
-    expect(fakePlaintext(customer?.memoEnc ?? null)).toBe('玄関は裏口');
-    expect(Buffer.from(customer?.memoEnc ?? []).toString()).toContain(customer?.id);
+    expect(ctx.data().addresses[0]).toMatchObject({
+      geo: { lat: 35.66, lng: 139.7 },
+      latLngText: '35.66,139.70',
+      geoCell: 'xn76fg',
+    });
+    const home = (latLng: string) => snapshot({ home: { addressLine: '渋谷1-2-3', city: '渋谷区', latLng } });
+    expect(await apply(home('abc'))).toBe('updated');
+    expect(ctx.data().addresses[0]).toMatchObject({ geo: null, latLngText: 'abc', geoCell: null });
+    // 片方が空の値を 0 として持たない
+    for (const latLng of ['35.68,', ' , ']) {
+      await apply(home(latLng));
+      expect(ctx.data().addresses[0]?.geo).toBeNull();
+    }
+    await apply(home('35.68°,139.76'));
+    expect(ctx.data().addresses[0]?.geo).toEqual({ lat: 35.68, lng: 139.76 });
+    await apply(home('35.6810，139.7670'));
+    expect(ctx.data().addresses[0]?.geo).toEqual({ lat: 35.681, lng: 139.767 });
+  });
+
+  it('詳細の緯度・経度は取込元の表記のまま返す(GAS版と同じ)', async () => {
+    await apply(
+      snapshot({ home: { addressLine: '渋谷1-2-3', city: '渋谷区', latLng: '35.6810, 139.7670' } }),
+    );
+    const { actor } = await ctx.addStaff('山田 太郎', 'taro@example.com');
+    const id = ctx.data().customers[0]?.id ?? '';
+    expect((await getCustomerDetail(ctx.deps, actor, id)).latLng).toBe('35.6810, 139.7670');
   });
 
   it('変わった子どもだけを更新し、ID を保つ。取込元から消えた子どもはアーカイブする', async () => {
@@ -72,7 +92,7 @@ describe('applyCustomerSnapshot(取込の差分適用)', () => {
     ).toBe('updated');
     const after = ctx.data().recipients;
     expect(after.find((r) => r.id === ichiro?.id)?.archivedAt).toBeNull();
-    expect(fakePlaintext(after.find((r) => r.id === ichiro?.id)?.allergyEnc ?? null)).toBe('卵・小麦');
+    expect(after.find((r) => r.id === ichiro?.id)?.allergy).toBe('卵・小麦');
     expect(after.find((r) => r.id === jiro?.id)?.archivedAt).toEqual(ctx.clock.now);
   });
 
@@ -91,9 +111,9 @@ describe('顧客の一覧・検索・詳細', () => {
   beforeEach(async () => {
     ctx = createTestContext();
     await ctx.uow.run(ctx.tenantId, async (r) => {
-      await applyCustomerSnapshot({ crypto: ctx.crypto, runId: null }, r, snapshot(), ctx.clock.now);
+      await applyCustomerSnapshot({ runId: null }, r, snapshot(), ctx.clock.now);
       await applyCustomerSnapshot(
-        { crypto: ctx.crypto, runId: null },
+        { runId: null },
         r,
         snapshot({
           externalId: 'R-002',
@@ -121,7 +141,7 @@ describe('顧客の一覧・検索・詳細', () => {
     expect(await searchCustomersByFamilyName(ctx.deps, ctx.tenantId, '田中')).toEqual([]);
   });
 
-  it('詳細は子ども・アレルギー・緊急連絡先を復号して返し、復号の監査は1件にまとめる', async () => {
+  it('詳細は子ども・アレルギー・緊急連絡先を含めて返す', async () => {
     const { actor } = await ctx.addStaff('山田 太郎', 'taro@example.com');
     const id = ctx.data().customers.find((c) => c.displayName === '佐藤 花子')?.id ?? '';
     const detail = await getCustomerDetail(ctx.deps, actor, id);
@@ -138,13 +158,6 @@ describe('顧客の一覧・検索・詳細', () => {
     expect(detail.familyMembers).toEqual([
       expect.objectContaining({ name: '佐藤 一郎', dob: '2022/4/1', allergy: '卵' }),
       expect.objectContaining({ name: '佐藤 二郎', dob: '2024/1/15', allergy: null }),
-    ]);
-    expect(ctx.audit.entries).toEqual([
-      expect.objectContaining({
-        tenantId: ctx.tenantId,
-        operation: 'customer.detail',
-        actorStaffId: actor.staffId,
-      }),
     ]);
   });
 

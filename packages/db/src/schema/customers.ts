@@ -4,6 +4,7 @@ import {
   boolean,
   check,
   date,
+  doublePrecision,
   index,
   jsonb,
   pgTable,
@@ -20,19 +21,20 @@ import {
   constraintName,
   createdAt,
   idColumn,
+  latLngCheck,
   oneOf,
   rowVersion,
   tenantIdColumn,
   updatedAt,
 } from './_columns';
 import { tenantFk, tenantIsolation, tenantRef, tenantScoped } from './_helpers';
-import { bytea, daterange } from './_types';
+import { daterange } from './_types';
 import { serviceItems } from './services';
 import { importRuns } from './tenancy';
 
 /**
- * 顧客(利用世帯)。氏名・かな・メール・電話は平文。自由記述(memo)・他システムの会員ID・避難場所
- * (通学先を特定しうる)は暗号化。住所は customer_addresses、連絡先(第三者)は customer_contacts、
+ * 顧客(利用世帯)。memo は自由記述、benefit_member_id は他システムの会員ID、evacuation_site は避難場所。
+ * 住所は customer_addresses、連絡先(第三者)は customer_contacts、
  * 子ども(サービスの対象者)は care_recipients、取込元固有の項目は customer_source_records に分ける。
  * 取込元から消えた顧客・手動で外した顧客は archived_at(+理由)。個人情報の消去依頼は purged_at。
  */
@@ -49,9 +51,9 @@ export const customers = pgTable(
     givenNameKana: text(),
     email: text(),
     phone: text(),
-    memoEnc: bytea(),
-    benefitMemberIdEnc: bytea(),
-    evacuationSiteEnc: bytea(),
+    memo: text(),
+    benefitMemberId: text(),
+    evacuationSite: text(),
     customFields: jsonb().$type<Record<string, unknown>>().notNull().default({}),
     archivedAt: timestamp({ withTimezone: true }),
     archiveReason: text({ enum: ARCHIVE_REASONS }),
@@ -108,7 +110,8 @@ export const customerSourceRecords = pgTable(
 /**
  * 住所。kind: home(自宅。期間の重なる自宅は EXCLUDE で禁止)/ secondary(単身赴任先等の期間限定の住所、
  * GAS版の「住所2」)/ visit(訪問先が自宅以外の場合)。address_line は取込元の住所文字列のまま
- * (prefecture・city は検索・絞り込み用に取り出した値)。正確な緯度経度は geo_enc、粗い区画は geo_cell。
+ * (prefecture・city は検索・絞り込み用に取り出した値)。緯度経度は lat / lng(ルート計算に使う)、取込元の表記は
+ * lat_lng_text(画面に出す)、粗い区画(geohash 6文字)は geo_cell。
  * valid は `[開始日, 終了日の翌日)`(無期限は上限なし)。
  */
 export const customerAddresses = pgTable(
@@ -125,7 +128,10 @@ export const customerAddresses = pgTable(
     building: text(),
     parkingArea: text(),
     parkingDetail: text(),
-    geoEnc: bytea(),
+    lat: doublePrecision(),
+    lng: doublePrecision(),
+    /** 取込元の「緯度・経度」の表記のまま(画面にはこれを出す)。読めない表記も残し、lat / lng は null にする。 */
+    latLngText: text(),
     geoCell: text(),
     valid: daterange().notNull().default(sql`'(,)'::daterange`),
     isPrimary: boolean().notNull().default(false),
@@ -143,13 +149,11 @@ export const customerAddresses = pgTable(
     check('customer_addresses_kind_check', oneOf(t.kind, ADDRESS_KINDS)),
     check('customer_addresses_valid_check', sql`not isempty(${t.valid})`),
     check('customer_addresses_geo_cell_check', sql`${t.geoCell} ~ '^[0-9b-hjkmnp-z]{6}$'`),
+    latLngCheck('customer_addresses_lat_lng_check', t.lat, t.lng),
   ],
 ).enableRLS();
 
-/**
- * 連絡先(緊急連絡先等)。本人ではない第三者の情報のため氏名・電話・メモを暗号化する(relation は
- * 「父」等の続柄で平文)。
- */
+/** 連絡先(緊急連絡先等。本人ではない第三者)。relation は「父」等の続柄。 */
 export const customerContacts = pgTable(
   'customer_contacts',
   {
@@ -157,9 +161,9 @@ export const customerContacts = pgTable(
     id: idColumn(),
     customerId: uuid().notNull(),
     relation: text(),
-    nameEnc: bytea(),
-    phoneEnc: bytea(),
-    notesEnc: bytea(),
+    name: text(),
+    phone: text(),
+    notes: text(),
     isEmergency: boolean().notNull().default(false),
     sortOrder: smallint().notNull().default(0),
     createdAt: createdAt(),
@@ -173,9 +177,8 @@ export const customerContacts = pgTable(
 ).enableRLS();
 
 /**
- * サービスの対象者(子ども)。氏名・かな・生年月日は平文(訪問準備・年齢の計算に使う通常の個人情報)、
- * アレルギー(健康情報)と配慮事項・付帯情報の自由記述は暗号化。取込は差分で行い(IDを保つ)、
- * 取込元から消えた子どもは archived_at。
+ * サービスの対象者(子ども)。allergy はアレルギー(健康情報)、needs は配慮事項・付帯情報の自由記述。
+ * 取込は差分で行い(IDを保つ)、取込元から消えた子どもは archived_at。
  */
 export const careRecipients = pgTable(
   'care_recipients',
@@ -187,8 +190,8 @@ export const careRecipients = pgTable(
     nameKana: text(),
     birthDate: date(),
     sex: text({ enum: GENDERS }),
-    allergyEnc: bytea(),
-    needsEnc: bytea(),
+    allergy: text(),
+    needs: text(),
     sortOrder: smallint().notNull().default(0),
     archivedAt: timestamp({ withTimezone: true }),
     createdAt: createdAt(),
@@ -235,7 +238,7 @@ export const customerPreferences = pgTable(
     customerId: uuid().notNull(),
     preferredStaffGender: text({ enum: GENDERS }),
     genderIsHard: boolean().notNull().default(false),
-    notesEnc: bytea(),
+    notes: text(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

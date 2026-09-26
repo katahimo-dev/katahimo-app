@@ -11,7 +11,7 @@ export interface AttendanceDayRow {
   staffId: string;
   businessDate: string;
   shoppingErrandCount: number | null;
-  remarksEnc: Uint8Array | null;
+  remarks: string | null;
   overriddenFields: string[];
   rowVersion: number;
 }
@@ -25,7 +25,7 @@ export interface VisitRow {
   status: VisitStatus;
   source: VisitSource;
   externalEventId: string | null;
-  labelEnc: Uint8Array | null;
+  label: string | null;
   overriddenFields: string[];
 }
 
@@ -33,7 +33,7 @@ export interface WorkSegmentRow {
   id: string;
   seq: number;
   period: InstantRangeValue | null;
-  descriptionEnc: Uint8Array | null;
+  description: string | null;
   overriddenFields: string[];
 }
 
@@ -62,7 +62,7 @@ export interface AttendanceDayRows {
 
 /** 1日分の書き込み(差分)。削除 → 更新 → 追加の順に適用する。 */
 export interface AttendanceDayWrite {
-  day: Pick<AttendanceDayRow, 'shoppingErrandCount' | 'remarksEnc' | 'overriddenFields'>;
+  day: Pick<AttendanceDayRow, 'shoppingErrandCount' | 'remarks' | 'overriddenFields'>;
   visits: { insert: VisitRow[]; update: VisitRow[]; delete: string[] };
   segments: { insert: WorkSegmentRow[]; update: WorkSegmentRow[]; delete: string[] };
   legs: { insert: TravelLegRow[]; update: TravelLegRow[]; delete: string[] };

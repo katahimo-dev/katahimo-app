@@ -40,13 +40,9 @@ function addressQuery(address: string): LocationQuery | null {
 }
 
 /**
- * 顧客CSV/スタッフ台帳の「緯度・経度」列('35.68, 139.76' 形式)を解析する。
- * 数値として読めなければnull(GAS版は parseFloat の NaN を「緯度経度なし」として扱っていた)。
+ * 保存した緯度経度(customer_addresses.lat / lng・staff.home_lat / home_lng)をルート計算に使う形にする。
+ * 緯度・経度のどちらかが 0 なら緯度経度なし(GAS版 parseLatLng と同じ。住所でジオコーディングする)。
  */
-export function parseLatLng(value: string | null | undefined): LatLng | null {
-  if (!value?.includes(',')) return null;
-  const [latText = '', lngText = ''] = value.split(',');
-  const lat = Number.parseFloat(latText.trim());
-  const lng = Number.parseFloat(lngText.trim());
-  return Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0 ? { lat, lng } : null;
+export function routeLatLngOf(point: { lat: number; lng: number } | null): LatLng | null {
+  return point && point.lat !== 0 && point.lng !== 0 ? { lat: point.lat, lng: point.lng } : null;
 }

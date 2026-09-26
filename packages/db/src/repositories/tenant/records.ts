@@ -34,7 +34,7 @@ const careRecordColumns = {
   servicePeriod: careRecords.servicePeriod,
   riskRating: careRecords.riskRating,
   esRating: careRecords.esRating,
-  bodyEnc: careRecords.bodyEnc,
+  body: careRecords.body,
   bodySchemaVer: careRecords.bodySchemaVer,
   aiGenerated: careRecords.aiGenerated,
   retainUntil: careRecords.retainUntil,
@@ -179,8 +179,8 @@ const receiptColumns = {
   customerNameText: receipts.customerNameText,
   receiptedAt: receipts.receiptedAt,
   amountYen: receipts.amountYen,
-  storeNameEnc: receipts.storeNameEnc,
-  dedupeBidx: receipts.dedupeBidx,
+  storeName: receipts.storeName,
+  dedupeHash: receipts.dedupeHash,
 };
 
 export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepository {
@@ -195,7 +195,7 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
         staffId: receiptUploads.staffId,
         customerId: receiptUploads.customerId,
         customerNameText: receiptUploads.customerNameText,
-        handoffTextEnc: receiptUploads.handoffTextEnc,
+        handoffText: receiptUploads.handoffText,
         createdBy: receiptUploads.createdBy,
       })
       .from(receiptUploads)
@@ -208,8 +208,8 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
       .insert(receipts)
       .values({ tenantId: this.tenantId, ...input })
       .onConflictDoNothing({
-        target: [receipts.tenantId, receipts.dedupeBidx],
-        where: sql`dedupe_bidx is not null`,
+        target: [receipts.tenantId, receipts.dedupeHash],
+        where: sql`dedupe_hash is not null`,
       })
       .returning({ id: receipts.id });
     return rows.length > 0;

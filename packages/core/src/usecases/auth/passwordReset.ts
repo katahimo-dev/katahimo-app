@@ -2,7 +2,6 @@ import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import type { PasswordPolicyViolation } from '@katahimo/shared';
 import { checkPasswordPolicy } from '@katahimo/shared';
 import {
-  ENCRYPTION_PURPOSES,
   isRetiredOn,
   maskEmail,
   newId,
@@ -12,7 +11,6 @@ import {
   zonedBusinessDate,
 } from '../../domain';
 import type { RateLimitRule } from '../../domain/rateLimit';
-import type { CryptoPort } from '../../ports/crypto';
 import type { MailerPort, MailMessage } from '../../ports/mailer';
 import type { StaffRecord } from '../../ports/staff';
 import type { TenantRecord } from '../../ports/tenants';
@@ -100,7 +98,8 @@ export type RequestPasswordResetOutcome =
 
 /**
  * パスワード再設定コードを発行し、メール送信を outbox に積む(GAS版 Auth.js requestPasswordReset)。
- * - コードは6桁の数字。照合用には HMAC だけを保存し、メール送信までの間だけ暗号化したコードを持つ。
+ * - コードは6桁の数字。照合用には HMAC だけを保存する。メールに書くコード(mail_code)は
+ *   送信までの間だけ持ち、送信後に消す(outbox の payload にも入れない)。
  * - コードの作成とメールの積み込みは同じトランザクション(片方だけが残らない)。メールはワーカーが送る
  *   (SMTP の所要時間から、アカウントの有無が応答時間に表れないように)。
  * - 新しいコードを発行すると古いコードは無効。発行要求は送信元IP・アカウント単位で回数を制限し、上限を
@@ -147,10 +146,6 @@ export async function requestPasswordReset(
   const sentTo = resolvePasswordResetAddress(staff, loginId);
   const code = String(randomInt(100000, 1000000));
   const codeId = newId();
-  const mailCodeEnc = await deps.crypto.encrypt(
-    { tenantId: tenant.id, purpose: ENCRYPTION_PURPOSES.passwordResetMailCode, rowId: codeId },
-    code,
-  );
   await deps.uow.run(tenant.id, async (r) => {
     await r.passwordResetCodes.replaceActive(
       {
@@ -160,7 +155,7 @@ export async function requestPasswordReset(
         sentToEmail: sentTo,
         expiresAt: new Date(now.getTime() + RESET_CODE_TTL_MS),
         maxAttempts: RESET_CODE_MAX_ATTEMPTS,
-        mailCodeEnc,
+        mailCode: code,
       },
       now,
     );
@@ -185,12 +180,12 @@ export async function requestPasswordReset(
 
 export interface PasswordResetMailDeps extends Clock {
   uow: UnitOfWorkPort;
-  crypto: CryptoPort;
   mailer: MailerPort;
 }
 
 /**
- * outbox の mail.password_reset 1件分: 送信待ちのコードを復号してメールを送り、送信後にコードを消す。
+ * outbox の mail.password_reset 1件分: 送信待ちのコードをメールで送り、送信後にコードを消す(照合は code_hash
+ * だけで行うため、コードそのものは送信までしか持たない。outbox の payload にも入れない)。
  * 使用済み・無効化済み・期限切れ・送信済みのコードには何もしない(再試行・二重実行に対して冪等)。
  * 送信に失敗したら例外にし、outbox の再試行に任せる。送信はトランザクションの外で行う。
  */
@@ -202,19 +197,15 @@ export async function sendPasswordResetMail(
   const now = currentTime(deps);
   const record = await deps.uow.run(tenantId, async (r) => {
     const code = await r.passwordResetCodes.findById(codeId);
-    if (!code?.mailCodeEnc || code.usedAt) return null;
+    if (!code?.mailCode || code.usedAt) return null;
     if (code.expiresAt.getTime() <= now.getTime()) {
       await r.passwordResetCodes.clearMailCode(codeId);
       return null;
     }
     return code;
   });
-  if (!record?.mailCodeEnc) return;
-  const code = await deps.crypto.decrypt(
-    { tenantId, purpose: ENCRYPTION_PURPOSES.passwordResetMailCode, rowId: codeId },
-    record.mailCodeEnc,
-  );
-  await deps.mailer.send(buildPasswordResetMail(record.sentToEmail, code));
+  if (!record?.mailCode) return;
+  await deps.mailer.send(buildPasswordResetMail(record.sentToEmail, record.mailCode));
   await deps.uow.run(tenantId, (r) => r.passwordResetCodes.clearMailCode(codeId));
 }
 

@@ -2,11 +2,9 @@
 // このパッケージだけが googleapis / Google Maps Platform / Gemini に依存する。
 // 予定・ルート計算は google-schedule(Google Calendar API + Google Maps Platform を直接呼ぶ)と
 // gas-bridge(GAS版Web Appに委ねる移行期の実装)を schedule-provider で切り替える。
-// ファイル保存(local-storage / gcs-storage)と鍵管理(local-kms / cloud-kms)も同様に
-// storage-provider / kms-provider で開発用と本番(GCP)の実装を切り替える。
-export * from './audit';
+// ファイル保存(local-storage / gcs-storage)も同様に storage-provider で開発用と本番(GCS)の実装を切り替える。
+// テナントの秘密値の封(secret-box)は開発用のローカル鍵と本番の Cloud KMS を切り替える。
 export * from './cache';
-export * from './cloud-kms';
 export * from './customer-csv';
 export * from './gas-bridge';
 export * from './gcs-storage';
@@ -15,12 +13,10 @@ export * from './google-calendar';
 export * from './google-chat';
 export * from './google-maps';
 export * from './google-schedule';
-export * from './kms-provider';
-export * from './local-crypto';
-export * from './local-kms';
 export * from './local-storage';
 export * from './mail';
 export * from './noop';
 export * from './runtime-env';
 export * from './schedule-provider';
+export * from './secret-box';
 export * from './storage-provider';

@@ -3,7 +3,6 @@ import type { ScheduleAppointmentWithRoute } from '../../ports/schedule';
 import type { Actor } from '../requestMeta';
 import type { TestContext } from '../testContext';
 import { createTestContext } from '../testContext';
-import { fakePlaintext } from '../testDoubles';
 import { applyCalendarSync, previewCalendarSync, refreshAttendanceAggregate } from './calendarSync';
 import { getAttendanceDay, updateAttendanceDay } from './day';
 import { runNightlyCalendarSync } from './nightlySync';
@@ -88,7 +87,7 @@ describe('出勤簿の閲覧・手入力', () => {
       .data()
       .entityChanges.find((c) => c.entityType === 'visit' && c.changedFields.includes('deleted'));
     expect(deleted?.entityId).toBe(visitId);
-    const before = JSON.parse(fakePlaintext(deleted?.beforeEnc ?? null) ?? 'null');
+    const before = deleted?.before;
     expect(before).toMatchObject({ seq: 1, label: '佐藤様', start: 540, end: 720, source: 'manual' });
     expect(before).not.toHaveProperty('id');
     // 更新は変わった項目だけ
@@ -99,7 +98,7 @@ describe('出勤簿の閲覧・手入力', () => {
       .entityChanges.filter((c) => c.entityType === 'visit')
       .at(-1);
     expect(updated?.changedFields).toEqual(['label']);
-    expect(JSON.parse(fakePlaintext(updated?.beforeEnc ?? null) ?? 'null')).toEqual({ label: '田中様' });
+    expect(updated?.before).toEqual({ label: '田中様' });
   });
 
   it('変更が無ければ何も書かない(日の行も作らない)', async () => {

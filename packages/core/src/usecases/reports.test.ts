@@ -9,7 +9,6 @@ import {
 import type { Actor } from './requestMeta';
 import type { TestContext } from './testContext';
 import { createTestContext } from './testContext';
-import { fakePlaintext } from './testDoubles';
 
 describe('保育日報・事故報告', () => {
   let ctx: TestContext;
@@ -41,15 +40,24 @@ describe('保育日報・事故報告', () => {
     otherCustomerId = await ctx.addCustomer('田中 一郎');
   });
 
-  it('本文を暗号化して保存し、ミラーを同じトランザクションで積み、保存後に通知する', async () => {
+  it('本文を保存し、ミラーを同じトランザクションで積み、保存後に通知する', async () => {
     const saved = await saveDailyReport(ctx.deps, staff, daily());
     const row = ctx.data().careRecords[0];
-    expect(JSON.parse(fakePlaintext(row?.bodyEnc ?? null) ?? '{}')).toMatchObject({ inputText: 'メモ' });
+    expect(row?.body).toMatchObject({ inputText: 'メモ' });
     expect(row?.occurredAt.toISOString()).toBe('2026-09-25T00:00:00.000Z');
     expect(row?.retainUntil).toBe('2031-09-24');
     expect(ctx.data().outbox.map((m) => m.dedupeKey)).toEqual([`mirror.care_record:${saved.id}:1`]);
     expect(ctx.notifier.notifications).toHaveLength(1);
     expect(saved.rowVersion).toBe(1);
+  });
+
+  it('通知が例外を投げても保存は成功する(通知は保存の成否に関わらない)', async () => {
+    ctx.notifier.notify = async () => {
+      throw new Error('送信先を解決できません');
+    };
+    const saved = await saveDailyReport(ctx.deps, staff, daily());
+    expect(ctx.data().careRecords.map((r) => r.id)).toEqual([saved.id]);
+    expect(ctx.appLog.actions()).toContain('notification.gchat.failed');
   });
 
   it('一般スタッフが他人の名義を指定しても本人の名義で保存する', async () => {

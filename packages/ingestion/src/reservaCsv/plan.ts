@@ -1,5 +1,5 @@
 import { newId } from '@katahimo/core/domain';
-import type { CryptoPort, UnitOfWorkPort } from '@katahimo/core/ports';
+import type { UnitOfWorkPort } from '@katahimo/core/ports';
 import { applyCustomerSnapshot, type CustomerSnapshotIssue } from '@katahimo/core/usecases';
 import { toCustomerSnapshot } from './toCustomerSnapshot';
 import type { ReservaCsvRow } from './types';
@@ -60,7 +60,6 @@ export function planReservaImport(
 
 export interface ReservaImportDeps {
   uow: UnitOfWorkPort;
-  crypto: CryptoPort;
   now?: () => Date;
 }
 
@@ -133,12 +132,7 @@ export async function applyReservaImport(
         issues[issue] = (issues[issue] ?? 0) + 1;
       };
       for (const row of rows) {
-        const outcome = await applyCustomerSnapshot(
-          { crypto: deps.crypto, runId, onIssue },
-          r,
-          toCustomerSnapshot(row),
-          now,
-        );
+        const outcome = await applyCustomerSnapshot({ runId, onIssue }, r, toCustomerSnapshot(row), now);
         counts[outcome]++;
       }
       for (const customerId of plan.toArchiveCustomerIds) {

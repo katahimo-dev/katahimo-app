@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasLocation, locationQueryFor, parseLatLng } from './place';
+import { hasLocation, locationQueryFor, routeLatLngOf } from './place';
 import type { Place } from './types';
 
 const tokyo = { lat: 35.6812, lng: 139.7671 };
@@ -66,17 +66,14 @@ describe('locationQueryFor', () => {
   });
 });
 
-describe('parseLatLng', () => {
-  it("'緯度, 経度' 形式を数値にする", () => {
-    expect(parseLatLng('35.6437, 139.6708')).toEqual({ lat: 35.6437, lng: 139.6708 });
-    expect(parseLatLng('35.6437,139.6708')).toEqual({ lat: 35.6437, lng: 139.6708 });
+describe('routeLatLngOf', () => {
+  it('保存した緯度経度をそのまま使う', () => {
+    expect(routeLatLngOf({ lat: 35.6437, lng: 139.6708 })).toEqual({ lat: 35.6437, lng: 139.6708 });
   });
 
-  it('読めない値・0は緯度経度なし', () => {
-    expect(parseLatLng(null)).toBeNull();
-    expect(parseLatLng('')).toBeNull();
-    expect(parseLatLng('35.6437')).toBeNull();
-    expect(parseLatLng('abc,def')).toBeNull();
-    expect(parseLatLng('0,0')).toBeNull();
+  it('無い値・0は緯度経度なし', () => {
+    expect(routeLatLngOf(null)).toBeNull();
+    expect(routeLatLngOf({ lat: 0, lng: 0 })).toBeNull();
+    expect(routeLatLngOf({ lat: 35.6437, lng: 0 })).toBeNull();
   });
 });

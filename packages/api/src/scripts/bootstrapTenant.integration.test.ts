@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto';
 import { normalizeEmailForIndex } from '@katahimo/core/domain';
-import { FakeKmsPort } from '@katahimo/core/test-utils';
 import { bootstrapTenant } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase, DrizzleUnitOfWork } from '@katahimo/db';
 import {
@@ -27,11 +26,10 @@ const deps = {
   appLog: new DrizzleAppLogRepository(appDb),
   tenants: new DrizzleTenantDirectory(ownerDb),
   provisioning: new DrizzleTenantProvisioning(ownerDb),
-  kms: new FakeKmsPort(),
 };
 
 describe('bootstrapTenant(実DB)', () => {
-  it('テナント・鍵・設定と管理者を作り、2回目は何もしない', async () => {
+  it('テナント・設定と管理者を作り、2回目は何もしない', async () => {
     const slug = `boot-${randomBytes(4).toString('hex')}`;
     const request = {
       slug,

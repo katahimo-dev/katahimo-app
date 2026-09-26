@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { businessDateSchema, idSchema } from './common';
+import { businessDateSchema, freeText, idSchema } from './common';
 
 const ratingSchema = z.number().int().min(1).max(5).nullable();
-const textSchema = z.string().default('');
+const textSchema = freeText(z.string().default(''));
 
 /**
  * POST /api/reports/daily
@@ -92,7 +92,7 @@ export const saveAccidentReportResponseSchema = z.object({
  * generateAccidentReport の引数)。start/end は 'HH:mm'。
  */
 export const generateReportRequestSchema = z.object({
-  text: z.string().trim().min(1, 'text が必要です').max(20_000, 'メモが長すぎます'),
+  text: freeText(z.string().trim().min(1, 'text が必要です').max(20_000, 'メモが長すぎます')),
   start: z.string().optional(),
   end: z.string().optional(),
 });

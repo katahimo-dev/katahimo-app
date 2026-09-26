@@ -20,7 +20,6 @@ import {
 } from 'drizzle-orm/pg-core';
 import { createdAt, idColumn, oneOf, tenantIdColumn, updatedAt } from './_columns';
 import { tenantFk, tenantIsolation, tenantRef, tenantScoped } from './_helpers';
-import { bytea } from './_types';
 import { storedFiles } from './records';
 import { staff } from './staff';
 
@@ -65,7 +64,7 @@ export const dataSubjectRequests = pgTable(
     receivedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     dueOn: date(),
     completedAt: timestamp({ withTimezone: true }),
-    notesEnc: bytea(),
+    notes: text(),
     handledBy: uuid(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

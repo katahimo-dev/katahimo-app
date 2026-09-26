@@ -78,12 +78,11 @@ describe('スキーマの約束事(カタログ)', () => {
     expect(grants.filter((g) => g.privilege === 'TRUNCATE')).toEqual([]);
   });
 
-  it('アプリは鍵の表を読むだけ・ワーカーは認証情報を読めない', async () => {
+  it('ワーカーは認証情報・秘密値を読めず、アプリは outbox の状態・テナントを変えられない', async () => {
     const has = async (role: string, table: string, privilege: string) =>
       (await rows<{ ok: boolean }>(sql`select has_table_privilege(${role}, ${table}, ${privilege}) as ok`))[0]
         ?.ok;
-    expect(await has('katahimo_app', 'tenant_data_keys', 'SELECT')).toBe(true);
-    expect(await has('katahimo_app', 'tenant_data_keys', 'INSERT')).toBe(false);
+    expect(await has('katahimo_worker', 'tenant_secrets', 'SELECT')).toBe(false);
     expect(await has('katahimo_worker', 'staff_credentials', 'SELECT')).toBe(false);
     expect(await has('katahimo_app', 'outbox_messages', 'UPDATE')).toBe(false);
     expect(await has('katahimo_app', 'platform.tenants', 'UPDATE')).toBe(false);

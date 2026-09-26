@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import { provisionTenant, registerStaff } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import { DrizzleTenantDirectory, DrizzleTenantProvisioning } from '@katahimo/db/repositories';
-import { createKeyManagementPort } from '@katahimo/integrations';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
@@ -18,8 +17,7 @@ const env = loadEnv({
   SCHEDULE_PROVIDER: 'noop',
   MIRROR_TO_GOOGLE_SHEETS: 'false',
   SESSION_SECRET: process.env.SESSION_SECRET ?? 'integration-test-session-secret',
-  BLIND_INDEX_MASTER_KEY: process.env.BLIND_INDEX_MASTER_KEY ?? 'a'.repeat(64),
-  LOCAL_DEV_KEK: process.env.LOCAL_DEV_KEK ?? 'b'.repeat(64),
+  SECRET_BOX_LOCAL_KEY: process.env.SECRET_BOX_LOCAL_KEY ?? 'a'.repeat(64),
 });
 const appDb = createDatabase(env.DATABASE_URL, { max: 4 });
 const ownerDb = createDatabase(process.env.MIGRATION_DATABASE_URL ?? '', { max: 1, onnotice: () => {} });
@@ -61,7 +59,6 @@ beforeAll(async () => {
     {
       tenants: new DrizzleTenantDirectory(ownerDb),
       provisioning: new DrizzleTenantProvisioning(ownerDb),
-      kms: createKeyManagementPort(env),
     },
     { slug, name: 'API 結合テスト' },
   );

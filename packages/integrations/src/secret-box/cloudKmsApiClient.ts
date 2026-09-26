@@ -1,11 +1,11 @@
 import type { cloudkms_v1 } from 'googleapis';
-import type { CloudKmsClient } from './cloudKmsPort';
+import type { CloudKmsClient } from './cloudKmsSecretBox';
 
 const CLOUD_KMS_SCOPE = 'https://www.googleapis.com/auth/cloudkms';
 
 /**
  * Application Default Credentials(Cloud Run の実行サービスアカウント)で Cloud KMS を呼ぶクライアント。
- * 実行SAには鍵に対する `roles/cloudkms.cryptoKeyEncrypterDecrypter` が必要。
+ * 実行SAには鍵に対する `roles/cloudkms.cryptoKeyEncrypterDecrypter` が必要(infra/gcp/kms.tf)。
  */
 export function createCloudKmsApiClient(): CloudKmsClient {
   let kmsPromise: Promise<cloudkms_v1.Cloudkms> | null = null;

@@ -28,8 +28,8 @@ export type DecodedReceiptImage =
 const BASE64_BODY = /^[A-Za-z0-9+/]+={0,2}$/;
 
 /**
- * `data:<mime>;base64,<本体>` を復号して検証する。本体だけ(data: の接頭辞なし)の base64 も受け付ける
- * (GAS版の OCR は本体だけを送ることがあったため)。maxBytes は復号後の大きさの上限。
+ * `data:<mime>;base64,<本体>` をデコードして検証する。本体だけ(data: の接頭辞なし)の base64 も受け付ける
+ * (GAS版の OCR は本体だけを送ることがあったため)。maxBytes はデコード後の大きさの上限。
  */
 export function decodeReceiptImage(value: string, maxBytes: number): DecodedReceiptImage {
   const commaIndex = value.indexOf(',');
@@ -38,7 +38,7 @@ export function decodeReceiptImage(value: string, maxBytes: number): DecodedRece
     return { ok: false, reason: 'malformed' };
   }
   if (!body || !BASE64_BODY.test(body)) return { ok: false, reason: 'malformed' };
-  // 復号前に大きさを見積もって、大きすぎるものは復号しない
+  // デコード前に大きさを見積もって、大きすぎるものはデコードしない
   if (Math.floor((body.length * 3) / 4) > maxBytes + 2) return { ok: false, reason: 'too_large' };
   const bytes = new Uint8Array(Buffer.from(body, 'base64'));
   if (bytes.length > maxBytes) return { ok: false, reason: 'too_large' };

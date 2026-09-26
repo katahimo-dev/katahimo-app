@@ -1,5 +1,5 @@
 import type { TestContext } from '@katahimo/core/test-utils';
-import { createTestContext, fakePlaintext } from '@katahimo/core/test-utils';
+import { createTestContext } from '@katahimo/core/test-utils';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyReservaImport } from './plan';
 import type { ReservaCsvRow } from './types';
@@ -100,7 +100,7 @@ describe('applyReservaImport(差分の適用)', () => {
     });
   });
 
-  it('子ども・アレルギー・緊急連絡先・住所2・位置を取り込み、個人情報は暗号化する', async () => {
+  it('子ども・アレルギー・緊急連絡先・住所2・位置を取り込む', async () => {
     await run([
       row({
         customerId: 'c1',
@@ -122,12 +122,12 @@ describe('applyReservaImport(差分の適用)', () => {
       ['home', '渋谷区', { start: null, end: null }],
       ['secondary', '横浜市青葉区', { start: '2026-09-20', end: '2026-10-01' }],
     ]);
-    expect(fakePlaintext(data.contacts[0]?.phoneEnc ?? null)).toBe('090-1111-2222');
-    expect(data.recipients.map((r) => [r.name, r.birthDate, fakePlaintext(r.needsEnc)])).toEqual([
+    expect(data.contacts[0]?.phone).toBe('090-1111-2222');
+    expect(data.recipients.map((r) => [r.name, r.birthDate, r.needs])).toEqual([
       ['佐藤 一郎', '2022-04-01', 'アレルギー:卵'],
       ['佐藤 二郎', null, '生年月日: 不明'],
     ]);
-    expect(fakePlaintext(data.recipients[0]?.allergyEnc ?? null)).toBe('卵');
+    expect(data.recipients[0]?.allergy).toBe('卵');
   });
 
   it('住所2の適用終了日が開始日より前(前日を含む)でも取込を止めず、期間なしで持って数を残す。氏名の無い行は飛ばす', async () => {

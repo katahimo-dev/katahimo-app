@@ -16,7 +16,7 @@ CREATE TABLE "attendance_days" (
 	"staff_id" uuid NOT NULL,
 	"business_date" date NOT NULL,
 	"shopping_errand_count" smallint,
-	"remarks_enc" "bytea",
+	"remarks" text,
 	"status" text DEFAULT 'open' NOT NULL,
 	"overridden_fields" text[] DEFAULT '{}'::text[] NOT NULL,
 	"row_version" integer DEFAULT 1 NOT NULL,
@@ -83,7 +83,7 @@ CREATE TABLE "visits" (
 	"status" text DEFAULT 'scheduled' NOT NULL,
 	"source" text NOT NULL,
 	"external_event_id" text,
-	"label_enc" "bytea",
+	"label" text,
 	"overridden_fields" text[] DEFAULT '{}'::text[] NOT NULL,
 	"row_version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -107,7 +107,7 @@ CREATE TABLE "work_segments" (
 	"seq" smallint NOT NULL,
 	"kind" text DEFAULT 'office' NOT NULL,
 	"period" "tstzrange",
-	"description_enc" "bytea",
+	"description" text,
 	"overridden_fields" text[] DEFAULT '{}'::text[] NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -127,8 +127,8 @@ CREATE TABLE "care_recipients" (
 	"name_kana" text,
 	"birth_date" date,
 	"sex" text,
-	"allergy_enc" "bytea",
-	"needs_enc" "bytea",
+	"allergy" text,
+	"needs" text,
 	"sort_order" smallint DEFAULT 0 NOT NULL,
 	"archived_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -150,7 +150,9 @@ CREATE TABLE "customer_addresses" (
 	"building" text,
 	"parking_area" text,
 	"parking_detail" text,
-	"geo_enc" "bytea",
+	"lat" double precision,
+	"lng" double precision,
+	"lat_lng_text" text,
 	"geo_cell" text,
 	"valid" daterange DEFAULT '(,)'::daterange NOT NULL,
 	"is_primary" boolean DEFAULT false NOT NULL,
@@ -159,7 +161,8 @@ CREATE TABLE "customer_addresses" (
 	CONSTRAINT "customer_addresses_pkey" PRIMARY KEY("tenant_id","id"),
 	CONSTRAINT "customer_addresses_kind_check" CHECK ("customer_addresses"."kind" in ('home', 'secondary', 'visit')),
 	CONSTRAINT "customer_addresses_valid_check" CHECK (not isempty("customer_addresses"."valid")),
-	CONSTRAINT "customer_addresses_geo_cell_check" CHECK ("customer_addresses"."geo_cell" ~ '^[0-9b-hjkmnp-z]{6}$')
+	CONSTRAINT "customer_addresses_geo_cell_check" CHECK ("customer_addresses"."geo_cell" ~ '^[0-9b-hjkmnp-z]{6}$'),
+	CONSTRAINT "customer_addresses_lat_lng_check" CHECK (("customer_addresses"."lat" is null) = ("customer_addresses"."lng" is null) and "customer_addresses"."lat" between -90 and 90 and "customer_addresses"."lng" between -180 and 180)
 );
 --> statement-breakpoint
 ALTER TABLE "customer_addresses" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -168,9 +171,9 @@ CREATE TABLE "customer_contacts" (
 	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
 	"customer_id" uuid NOT NULL,
 	"relation" text,
-	"name_enc" "bytea",
-	"phone_enc" "bytea",
-	"notes_enc" "bytea",
+	"name" text,
+	"phone" text,
+	"notes" text,
 	"is_emergency" boolean DEFAULT false NOT NULL,
 	"sort_order" smallint DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -184,7 +187,7 @@ CREATE TABLE "customer_preferences" (
 	"customer_id" uuid NOT NULL,
 	"preferred_staff_gender" text,
 	"gender_is_hard" boolean DEFAULT false NOT NULL,
-	"notes_enc" "bytea",
+	"notes" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "customer_preferences_pkey" PRIMARY KEY("tenant_id","customer_id"),
@@ -237,9 +240,9 @@ CREATE TABLE "customers" (
 	"given_name_kana" text,
 	"email" text,
 	"phone" text,
-	"memo_enc" "bytea",
-	"benefit_member_id_enc" "bytea",
-	"evacuation_site_enc" "bytea",
+	"memo" text,
+	"benefit_member_id" text,
+	"evacuation_site" text,
 	"custom_fields" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"archived_at" timestamp with time zone,
 	"archive_reason" text,
@@ -281,7 +284,7 @@ CREATE TABLE "data_subject_requests" (
 	"received_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"due_on" date,
 	"completed_at" timestamp with time zone,
-	"notes_enc" "bytea",
+	"notes" text,
 	"handled_by" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -348,7 +351,7 @@ CREATE TABLE "customer_staff_affinities" (
 	"score" smallint DEFAULT 0 NOT NULL,
 	"is_ng" boolean DEFAULT false NOT NULL,
 	"source" text DEFAULT 'manual' NOT NULL,
-	"note_enc" "bytea",
+	"note" text,
 	"updated_by" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -417,7 +420,7 @@ CREATE TABLE "staff_attributes" (
 	"verified_at" timestamp with time zone,
 	"verified_by" uuid,
 	"evidence_file_id" uuid,
-	"note_enc" "bytea",
+	"note" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "staff_attributes_pkey" PRIMARY KEY("tenant_id","id"),
@@ -432,7 +435,7 @@ CREATE TABLE "staff_availability_exceptions" (
 	"staff_id" uuid NOT NULL,
 	"period" "tstzrange" NOT NULL,
 	"kind" text NOT NULL,
-	"reason_enc" "bytea",
+	"reason" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "staff_availability_exceptions_pkey" PRIMARY KEY("tenant_id","id"),
@@ -526,7 +529,7 @@ CREATE TABLE "entity_changes" (
 	"changed_by" uuid,
 	"change_source" text NOT NULL,
 	"changed_fields" text[] NOT NULL,
-	"before_enc" "bytea",
+	"before" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "entity_changes_pkey" PRIMARY KEY("tenant_id","id"),
 	CONSTRAINT "entity_changes_entity_type_check" CHECK ("entity_changes"."entity_type" in ('attendance_day', 'visit', 'work_segment', 'travel_leg', 'customer', 'care_recipient', 'staff')),
@@ -663,7 +666,7 @@ CREATE TABLE "care_record_revisions" (
 	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
 	"care_record_id" uuid NOT NULL,
 	"revision_no" integer NOT NULL,
-	"body_enc" "bytea" NOT NULL,
+	"body" jsonb NOT NULL,
 	"body_schema_ver" smallint NOT NULL,
 	"changed_by" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -685,7 +688,7 @@ CREATE TABLE "care_records" (
 	"service_period" "tstzrange",
 	"risk_rating" smallint,
 	"es_rating" smallint,
-	"body_enc" "bytea" NOT NULL,
+	"body" jsonb NOT NULL,
 	"body_schema_ver" smallint DEFAULT 1 NOT NULL,
 	"ai_generated" boolean DEFAULT false NOT NULL,
 	"ai_model" text,
@@ -712,7 +715,7 @@ CREATE TABLE "receipt_uploads" (
 	"staff_id" uuid NOT NULL,
 	"customer_id" uuid,
 	"customer_name_text" text,
-	"handoff_text_enc" "bytea",
+	"handoff_text" text,
 	"created_by" uuid NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "receipt_uploads_pkey" PRIMARY KEY("tenant_id","id")
@@ -729,8 +732,8 @@ CREATE TABLE "receipts" (
 	"customer_name_text" text,
 	"receipted_at" timestamp with time zone NOT NULL,
 	"amount_yen" integer,
-	"store_name_enc" "bytea",
-	"dedupe_bidx" "bytea",
+	"store_name" text,
+	"dedupe_hash" "bytea",
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "receipts_pkey" PRIMARY KEY("tenant_id","id"),
 	CONSTRAINT "receipts_amount_yen_check" CHECK ("receipts"."amount_yen" >= 0)
@@ -798,7 +801,7 @@ CREATE TABLE "reservations" (
 	"scheduled_period" "tstzrange" NOT NULL,
 	"business_date" date NOT NULL,
 	"required_staff_count" smallint DEFAULT 1 NOT NULL,
-	"notes_enc" "bytea",
+	"notes" text,
 	"external_source" text,
 	"external_id" text,
 	"row_version" integer DEFAULT 1 NOT NULL,
@@ -840,7 +843,7 @@ CREATE TABLE "password_reset_codes" (
 	"used_at" timestamp with time zone,
 	"attempt_count" integer DEFAULT 0 NOT NULL,
 	"max_attempts" integer DEFAULT 5 NOT NULL,
-	"mail_code_enc" "bytea",
+	"mail_code" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "password_reset_codes_pkey" PRIMARY KEY("tenant_id","id"),
 	CONSTRAINT "password_reset_codes_attempt_count_check" CHECK ("password_reset_codes"."attempt_count" between 0 and "password_reset_codes"."max_attempts")
@@ -880,7 +883,8 @@ CREATE TABLE "staff" (
 	"birth_year" smallint,
 	"home_area" text,
 	"home_address" text,
-	"home_geo_enc" "bytea",
+	"home_lat" double precision,
+	"home_lng" double precision,
 	"home_geo_cell" text,
 	"travel_mode" text,
 	"custom_fields" jsonb DEFAULT '{}'::jsonb NOT NULL,
@@ -892,7 +896,8 @@ CREATE TABLE "staff" (
 	CONSTRAINT "staff_gender_check" CHECK ("staff"."gender" in ('female', 'male', 'other', 'unknown')),
 	CONSTRAINT "staff_travel_mode_check" CHECK ("staff"."travel_mode" in ('car', 'bicycle', 'transit', 'walk')),
 	CONSTRAINT "staff_birth_year_check" CHECK ("staff"."birth_year" between 1900 and 2100),
-	CONSTRAINT "staff_home_geo_cell_check" CHECK ("staff"."home_geo_cell" ~ '^[0-9b-hjkmnp-z]{6}$')
+	CONSTRAINT "staff_home_geo_cell_check" CHECK ("staff"."home_geo_cell" ~ '^[0-9b-hjkmnp-z]{6}$'),
+	CONSTRAINT "staff_home_lat_lng_check" CHECK (("staff"."home_lat" is null) = ("staff"."home_lng" is null) and "staff"."home_lat" between -90 and 90 and "staff"."home_lng" between -180 and 180)
 );
 --> statement-breakpoint
 ALTER TABLE "staff" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -978,22 +983,6 @@ CREATE TABLE "import_runs" (
 );
 --> statement-breakpoint
 ALTER TABLE "import_runs" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
-CREATE TABLE "tenant_data_keys" (
-	"tenant_id" uuid NOT NULL,
-	"version" integer NOT NULL,
-	"wrapped_dek" "bytea",
-	"kek_key_name" text NOT NULL,
-	"state" text NOT NULL,
-	"destroyed_at" timestamp with time zone,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "tenant_data_keys_pkey" PRIMARY KEY("tenant_id","version"),
-	CONSTRAINT "tenant_data_keys_state_check" CHECK ("tenant_data_keys"."state" in ('active', 'decrypt_only', 'destroyed')),
-	CONSTRAINT "tenant_data_keys_version_check" CHECK ("tenant_data_keys"."version" between 1 and 65535),
-	CONSTRAINT "tenant_data_keys_wrapped_dek_check" CHECK (("tenant_data_keys"."state" = 'destroyed') = ("tenant_data_keys"."wrapped_dek" is null))
-);
---> statement-breakpoint
-ALTER TABLE "tenant_data_keys" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "tenant_features" (
 	"tenant_id" uuid NOT NULL,
 	"feature_key" text NOT NULL,
@@ -1008,7 +997,7 @@ ALTER TABLE "tenant_features" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "tenant_secrets" (
 	"tenant_id" uuid NOT NULL,
 	"name" text NOT NULL,
-	"value_enc" "bytea" NOT NULL,
+	"sealed_value" "bytea" NOT NULL,
 	"updated_by" uuid,
 	"rotated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -1150,7 +1139,6 @@ ALTER TABLE "staff_login_emails" ADD CONSTRAINT "staff_login_emails_tenant_id_st
 ALTER TABLE "custom_field_definitions" ADD CONSTRAINT "custom_field_definitions_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "import_runs" ADD CONSTRAINT "import_runs_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "import_runs" ADD CONSTRAINT "import_runs_tenant_id_triggered_by_fkey" FOREIGN KEY ("tenant_id","triggered_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "tenant_data_keys" ADD CONSTRAINT "tenant_data_keys_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tenant_features" ADD CONSTRAINT "tenant_features_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tenant_secrets" ADD CONSTRAINT "tenant_secrets_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tenant_secrets" ADD CONSTRAINT "tenant_secrets_tenant_id_updated_by_fkey" FOREIGN KEY ("tenant_id","updated_by") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -1182,7 +1170,7 @@ CREATE INDEX "tenant_lifecycle_events_tenant_id_created_at_idx" ON "platform"."t
 CREATE INDEX "care_records_tenant_id_customer_id_occurred_at_id_idx" ON "care_records" USING btree ("tenant_id","customer_id","occurred_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_author_staff_id_occurred_at_idx" ON "care_records" USING btree ("tenant_id","author_staff_id","occurred_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_visit_id_idx" ON "care_records" USING btree ("tenant_id","visit_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "receipts_tenant_id_dedupe_bidx_key" ON "receipts" USING btree ("tenant_id","dedupe_bidx") WHERE dedupe_bidx is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "receipts_tenant_id_dedupe_hash_key" ON "receipts" USING btree ("tenant_id","dedupe_hash") WHERE dedupe_hash is not null;--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_staff_id_receipted_at_idx" ON "receipts" USING btree ("tenant_id","staff_id","receipted_at");--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_upload_id_idx" ON "receipts" USING btree ("tenant_id","upload_id");--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_file_id_idx" ON "receipts" USING btree ("tenant_id","file_id");--> statement-breakpoint
@@ -1199,7 +1187,6 @@ CREATE INDEX "staff_tenant_id_family_name_kana_idx" ON "staff" USING btree ("ten
 CREATE UNIQUE INDEX "staff_login_emails_tenant_id_staff_id_primary_key" ON "staff_login_emails" USING btree ("tenant_id","staff_id") WHERE is_primary;--> statement-breakpoint
 CREATE INDEX "staff_login_emails_tenant_id_staff_id_idx" ON "staff_login_emails" USING btree ("tenant_id","staff_id");--> statement-breakpoint
 CREATE INDEX "import_runs_tenant_id_source_started_at_idx" ON "import_runs" USING btree ("tenant_id","source","started_at" DESC NULLS LAST);--> statement-breakpoint
-CREATE UNIQUE INDEX "tenant_data_keys_tenant_id_active_key" ON "tenant_data_keys" USING btree ("tenant_id") WHERE state = 'active';--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "attendance_days" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "attendance_periods" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "travel_legs" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
@@ -1249,7 +1236,6 @@ CREATE POLICY "tenant_isolation" ON "staff_employment_terms" AS PERMISSIVE FOR A
 CREATE POLICY "tenant_isolation" ON "staff_login_emails" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "custom_field_definitions" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "import_runs" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
-CREATE POLICY "tenant_isolation" ON "tenant_data_keys" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "tenant_features" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "tenant_secrets" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "tenant_settings" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());

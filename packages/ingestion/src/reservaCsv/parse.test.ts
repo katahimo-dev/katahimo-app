@@ -58,4 +58,11 @@ describe('parseReservaCsv (実サンプルCSVでの検証)', () => {
     const first = rows[0] as unknown as Record<string, unknown>;
     expect(first).not.toHaveProperty('password');
   });
+
+  it('値の制御文字(U+0000 等。タブ・改行は残す)を取り除く(DB に保存できない値で取込全体を止めない)', () => {
+    const text = buffer.toString('utf16le').replace('聖徳', '聖\u0000徳\u0007').replace('太子', '太\u001f子');
+    const [first] = parseReservaCsv(Buffer.from(text, 'utf16le'));
+    expect(first?.familyName).toBe('聖徳');
+    expect(first?.givenName).toBe('太子');
+  });
 });

@@ -1,5 +1,6 @@
 import { normalizeRetirementDate } from '@katahimo/core/domain';
 import type { StaffMasterRow } from '@katahimo/core/usecases';
+import { stripControlChars } from '@katahimo/shared';
 import { parse } from 'csv-parse/sync';
 
 /**
@@ -17,7 +18,7 @@ const STAFF_MASTER_COLUMNS = {
 } as const;
 
 function cell(row: string[], index: number): string {
-  return (row[index] ?? '').trim();
+  return stripControlChars(row[index] ?? '').trim();
 }
 
 export interface ParsedStaffMaster {

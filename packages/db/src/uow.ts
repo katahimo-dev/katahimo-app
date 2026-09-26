@@ -1,6 +1,5 @@
 import type { OutboxTopic } from '@katahimo/core/domain';
 import type {
-  CryptoPort,
   TenantRecord,
   TenantRepositories,
   UnitOfWorkOptions,
@@ -41,11 +40,6 @@ import { DrizzleStaffRepository } from './repositories/tenant/staff';
 export interface UnitOfWorkConfig {
   /** 積まない outbox のトピック(MIRROR_TO_GOOGLE_SHEETS が無効ならスプレッドシートへのミラー)。 */
   skipOutboxTopics?: readonly OutboxTopic[];
-  /**
-   * トランザクションを開く前にテナントの鍵を用意する暗号化の実装(CryptoPort.prepare)。トランザクションの中で
-   * 鍵の読み込み(別の接続)・KMS の呼び出しを待たないようにする(接続プールの取り合いで詰まらないように)。
-   */
-  crypto?: Pick<CryptoPort, 'prepare'>;
 }
 
 /** トランザクションに結び付いたリポジトリ一式を作る(テスト・ワーカーの読み出しでも使う)。 */
@@ -91,8 +85,8 @@ export function bindRepositories(
 
 /**
  * Unit of Work の Drizzle 実装。1回の run が1トランザクション(withTenant でテナントを1回だけ設定)で、
- * work の中の全てのリポジトリがそのトランザクションを使う。トランザクションを開く前にテナントの鍵を用意する
- * (config.crypto)。DB の制約・トリガーの拒否は DomainError(conflict / locked)にして投げ直す。
+ * work の中の全てのリポジトリがそのトランザクションを使う。DB の制約・トリガーの拒否は DomainError
+ * (conflict / locked)にして投げ直す。
  */
 export class DrizzleUnitOfWork implements UnitOfWorkPort {
   constructor(
@@ -105,8 +99,6 @@ export class DrizzleUnitOfWork implements UnitOfWorkPort {
     work: (repos: TenantRepositories) => Promise<T>,
     options: UnitOfWorkOptions = {},
   ): Promise<T> {
-    // 鍵の用意は先回り(失敗しても止めない。鍵が本当に要る処理が、その場で同じエラーを返す)
-    await this.config.crypto?.prepare(tenantId).catch(() => undefined);
     try {
       return await withTenant(this.db, tenantId, (tx) => work(bindRepositories(tx, tenantId, this.config)), {
         actorId: options.actorId ?? null,

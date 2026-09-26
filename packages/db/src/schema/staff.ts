@@ -4,6 +4,7 @@ import {
   boolean,
   check,
   date,
+  doublePrecision,
   index,
   inet,
   integer,
@@ -17,13 +18,13 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { createdAt, idColumn, oneOf, rowVersion, tenantIdColumn, updatedAt } from './_columns';
+import { createdAt, idColumn, latLngCheck, oneOf, rowVersion, tenantIdColumn, updatedAt } from './_columns';
 import { tenantFk, tenantIsolation, tenantRef, tenantScoped } from './_helpers';
 import { bytea, daterange } from './_types';
 
 /**
- * スタッフ。氏名・かな・電話・自宅住所は平文(TDE・RLS・権限で守る通常の個人情報)、自宅の正確な緯度経度は
- * 暗号化(home_geo_enc)し、粗い区画(geohash 6文字)だけを平文で持つ。認証情報は staff_credentials、
+ * スタッフ。自宅の緯度経度(home_lat / home_lng)は出勤・退勤経路の起点、粗い区画(geohash 6文字、home_geo_cell)は
+ * 将来のエリアの絞り込みに使う。認証情報は staff_credentials、
  * ログイン用メールは staff_login_emails に分ける(一覧の問い合わせでパスワードハッシュを読まないため)。
  * 退職は retired_on(この日以降はログイン不可)。雇用条件は staff_employment_terms(期間つき)。
  */
@@ -47,7 +48,8 @@ export const staff = pgTable(
     homeArea: text(),
     /** 自宅住所(出勤・退勤経路の起点。緯度経度が無い場合にジオコーディングする)。 */
     homeAddress: text(),
-    homeGeoEnc: bytea(),
+    homeLat: doublePrecision(),
+    homeLng: doublePrecision(),
     homeGeoCell: text(),
     travelMode: text({ enum: TRAVEL_MODES }),
     customFields: jsonb().$type<Record<string, unknown>>().notNull().default({}),
@@ -64,6 +66,7 @@ export const staff = pgTable(
     check('staff_travel_mode_check', oneOf(t.travelMode, TRAVEL_MODES)),
     check('staff_birth_year_check', sql`${t.birthYear} between 1900 and 2100`),
     check('staff_home_geo_cell_check', sql`${t.homeGeoCell} ~ '^[0-9b-hjkmnp-z]{6}$'`),
+    latLngCheck('staff_home_lat_lng_check', t.homeLat, t.homeLng),
   ],
 ).enableRLS();
 
@@ -177,7 +180,8 @@ export const sessions = pgTable(
 /**
  * パスワード再設定の確認コード。照合は HMAC(code_hash)だけ。試行回数の加算・使用済みへの遷移は
  * 1文の条件付き UPDATE で原子的に行う。スタッフごとに未使用のコードは1つまで(部分UNIQUE)。
- * mail_code_enc はワーカーがメールを送るまでの間だけ持つ暗号化したコード(送信・使用・期限切れで消す)。
+ * mail_code はワーカーがメールを送るまでの間だけ持つコード(送信・使用で NULL にし、期限が切れたものは保守ジョブが
+ * NULL にする。outbox の payload には入れない)。
  */
 export const passwordResetCodes = pgTable(
   'password_reset_codes',
@@ -191,7 +195,7 @@ export const passwordResetCodes = pgTable(
     usedAt: timestamp({ withTimezone: true }),
     attemptCount: integer().notNull().default(0),
     maxAttempts: integer().notNull().default(5),
-    mailCodeEnc: bytea(),
+    mailCode: text(),
     createdAt: createdAt(),
   },
   (t) => [

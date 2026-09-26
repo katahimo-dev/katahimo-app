@@ -1,6 +1,6 @@
 import { newId } from '@katahimo/core/domain';
 import { type SQL, sql } from 'drizzle-orm';
-import { type AnyPgColumn, integer, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { type AnyPgColumn, check, integer, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 /**
  * 全テーブル共通の列と命名。命名は PostgreSQL の既定に合わせる(`<table>_pkey` / `<table>_<cols>_key` /
@@ -23,7 +23,7 @@ export function constraintName(table: string, columns: readonly string[], suffix
   return short;
 }
 
-/** 主キー。アプリが UUIDv7 を採番する(暗号化の AAD に行IDを含めるため INSERT 前に決める)。DB の既定値は予備。 */
+/** 主キー。アプリが UUIDv7 を採番する(子の行・outbox・履歴を同じトランザクションで先に結び付けられる)。DB の既定値は予備。 */
 export const idColumn = () => uuid().notNull().$defaultFn(newId).default(sql`gen_random_uuid()`);
 
 export const tenantIdColumn = () => uuid().notNull();
@@ -37,4 +37,12 @@ export const rowVersion = () => integer().notNull().default(1);
 /** CHECK (col IN (...)) の式。 */
 export function oneOf(column: AnyPgColumn, values: readonly string[]): SQL {
   return sql`${column} in (${sql.raw(values.map((v) => `'${v}'`).join(', '))})`;
+}
+
+/** 緯度経度の組の CHECK(両方あるか両方無いか。値は度の範囲の中)。 */
+export function latLngCheck(name: string, lat: AnyPgColumn, lng: AnyPgColumn) {
+  return check(
+    name,
+    sql`(${lat} is null) = (${lng} is null) and ${lat} between -90 and 90 and ${lng} between -180 and 180`,
+  );
 }

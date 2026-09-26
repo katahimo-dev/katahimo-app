@@ -1,10 +1,7 @@
-import { ENCRYPTION_PURPOSES, newId, outboxDedupeKey } from '@katahimo/core/domain';
+import { newId, outboxDedupeKey } from '@katahimo/core/domain';
 import type { TenantDirectoryPort } from '@katahimo/core/ports';
 import {
   FakeAppLogPort,
-  FakeAuditLogPort,
-  FakeBlindIndexPort,
-  FakeCryptoPort,
   FakeMailerPort,
   FakeMirrorSenderPort,
   FakeNotifierPort,
@@ -32,18 +29,16 @@ import { connect } from './testDb';
 /**
  * ワーカーのジョブを katahimo_worker の権限で実際の DB に対して動かす(ワーカーの GRANT を絞ったため、ジョブが使う
  * 表・操作が漏れていないことを確かめる)。外部サービス(カレンダー・GAS Bridge・メール・ファイル置き場)は偽物。
- * 暗号化は FakeCryptoPort(鍵の表の権限は catalog.integration.test.ts で確かめる)。
  */
 const { app, owner, worker, uow: appUow, createTenant, createStaff, createCustomer } = connect();
 const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
 
 describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(katahimo_worker の権限)', () => {
   const workerDb = worker as NonNullable<typeof worker>;
-  const crypto = new FakeCryptoPort();
 
   it('夜間の反映・顧客の取込・ミラーとメールの送信・free/busy・保守がワーカーの権限で動く', async () => {
     const tenantId = await createTenant('wk');
-    const workerUow = new DrizzleUnitOfWork(workerDb, { crypto });
+    const workerUow = new DrizzleUnitOfWork(workerDb);
     const tenants = new DrizzleTenantDirectory(workerDb);
     const tenant = await tenants.findById(tenantId);
     if (!tenant) throw new Error('テナントがありません');
@@ -65,12 +60,9 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
     const actor = { tenantId, staffId, role: 'staff' as const };
     const appDeps = {
       uow: appUow,
-      crypto,
-      blindIndex: new FakeBlindIndexPort(),
       storage,
       notifier: new FakeNotifierPort(),
       appLog,
-      audit: new FakeAuditLogPort(),
     };
     await saveDailyReport(appDeps, actor, {
       customerId,
@@ -99,10 +91,7 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
           sentToEmail: 'taro@example.com',
           expiresAt: new Date(Date.now() + 10 * 60_000),
           maxAttempts: 5,
-          mailCodeEnc: await crypto.encrypt(
-            { tenantId, purpose: ENCRYPTION_PURPOSES.passwordResetMailCode, rowId: codeId },
-            '123456',
-          ),
+          mailCode: '123456',
         },
         new Date(),
       );
@@ -130,7 +119,7 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
         triggeredBy: null,
       });
       await applyCustomerSnapshot(
-        { crypto, runId },
+        { runId },
         r,
         {
           source: 'reserva',
@@ -174,7 +163,7 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
       },
     ]);
     const nightly = await runNightlyCalendarSync(
-      { uow: workerUow, crypto, appLog, schedule, tenants: onlyThisTenant },
+      { uow: workerUow, appLog, schedule, tenants: onlyThisTenant },
       { date: '2026-09-24' },
     );
     expect(nightly).toMatchObject({ failed: 0, interrupted: false });
@@ -187,7 +176,6 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
       {
         queue: new DrizzleOutboxQueue(workerDb),
         uow: workerUow,
-        crypto,
         storage,
         sender,
         mailer,
@@ -231,6 +219,30 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
     );
     expect(busy).toMatchObject({ syncedStaffCount: 1, failures: [] });
 
+    // 送られないまま期限が切れた再設定コード(メール用の値は保守で消す)
+    const expiredCodeId = newId();
+    await appUow.run(tenantId, (r) =>
+      r.passwordResetCodes.replaceActive(
+        {
+          id: expiredCodeId,
+          staffId,
+          codeHash: new Uint8Array(32),
+          sentToEmail: 'taro@example.com',
+          expiresAt: new Date(Date.now() - 60_000),
+          maxAttempts: 5,
+          mailCode: '654321',
+        },
+        new Date(),
+      ),
+    );
+    const mailCodeOf = async (id: string) =>
+      (
+        (await withTenant(owner, tenantId, (tx) =>
+          tx.execute(sql`select mail_code from password_reset_codes where id = ${id}`),
+        )) as unknown as { mail_code: string | null }[]
+      )[0]?.mail_code;
+    expect(await mailCodeOf(expiredCodeId)).toBe('654321');
+
     // ── 保守(パーティション・保存期間の削除・参照されないファイル) ──
     const maintenance = await runMaintenance({
       uow: workerUow,
@@ -242,6 +254,8 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
     });
     expect(maintenance).toMatchObject({ errors: [], interrupted: false });
     expect(maintenance.tenants[0]?.error).toBeUndefined();
+    expect(maintenance.tenants[0]?.deleted).toMatchObject({ password_reset_mail_codes_cleared: 1 });
+    expect(await mailCodeOf(expiredCodeId)).toBeNull();
     expect(appLog.entries.filter((e) => e.level === 'ERROR')).toEqual([]);
   });
 });

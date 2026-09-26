@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { bootstrapTenant } from './tenantProvisioning';
 import { createTestContext } from './testContext';
-import { FakeKmsPort, FakeTenantProvisioning } from './testDoubles';
+import { FakeTenantProvisioning } from './testDoubles';
 
 function setup() {
   const ctx = createTestContext();
   const deps = {
     ...ctx.deps,
     provisioning: new FakeTenantProvisioning(ctx.db),
-    kms: new FakeKmsPort(),
   };
   return { ctx, deps };
 }

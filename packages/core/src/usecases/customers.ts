@@ -1,14 +1,14 @@
+import { parseLatLngText } from '@katahimo/shared';
 import {
   addIsoDays,
   formatBirthDate,
+  type GeoPoint,
   geoCellOf,
   newId,
   normalizeStaffName,
   notFound,
-  ENCRYPTION_PURPOSES as P,
 } from '../domain';
 import type { CustomerSource } from '../domain/model';
-import type { AuditLogPort, CryptoPort } from '../ports/crypto';
 import type {
   CareRecipientRecord,
   CustomerAddressRecord,
@@ -16,13 +16,10 @@ import type {
   CustomerSummary,
 } from '../ports/customers';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
-import { DecryptSession, encryptOptional } from './cipher';
 import type { Actor } from './requestMeta';
 
 export interface CustomerDeps {
   uow: UnitOfWorkPort;
-  crypto: CryptoPort;
-  audit?: AuditLogPort;
 }
 
 export interface CustomerListResult {
@@ -104,8 +101,8 @@ function homeOf(addresses: CustomerAddressRecord[]): CustomerAddressRecord | und
 }
 
 /**
- * 顧客1件の全項目(子ども・アレルギー・緊急連絡先を含む)を復号して返す(読み出しは1トランザクション、
- * 復号の監査は1件)。無ければ not_found。
+ * 顧客1件の全項目(子ども・アレルギー・緊急連絡先を含む)を返す(読み出しは1トランザクション)。無ければ
+ * not_found。閲覧の記録(customer.detail.viewed)は API のルートが残す。
  */
 export async function getCustomerDetail(
   deps: CustomerDeps,
@@ -125,7 +122,6 @@ export async function getCustomerDetail(
   });
   if (!loaded) throw notFound('顧客が見つかりません');
   const { customer, source, addresses, contacts, recipients } = loaded;
-  const d = new DecryptSession(deps.crypto, actor.tenantId);
   const home = homeOf(addresses);
   const secondary = addresses.find((a) => a.kind === 'secondary');
   const emergency = contacts.find((c) => c.isEmergency);
@@ -144,17 +140,16 @@ export async function getCustomerDetail(
     city: home?.city ?? null,
     parkingArea: home?.parkingArea ?? null,
     parkingDetail: home?.parkingDetail ?? null,
-    emergencyContact: emergency
-      ? await d.optional(P.customerContactPhone, emergency.id, emergency.phoneEnc)
-      : null,
+    emergencyContact: emergency?.phone ?? null,
     emergencyContactRelation: emergency?.relation ?? null,
-    evacuationSite: await d.optional(P.customerEvacuationSite, customer.id, customer.evacuationSiteEnc),
-    memo: await d.optional(P.customerMemo, customer.id, customer.memoEnc),
-    benefitMemberId: await d.optional(P.customerBenefitMemberId, customer.id, customer.benefitMemberIdEnc),
+    evacuationSite: customer.evacuationSite,
+    memo: customer.memo,
+    benefitMemberId: customer.benefitMemberId,
     address2: secondary?.addressLine ?? null,
     address2StartDate: secondary?.valid.start ?? null,
     address2EndDate: secondary?.valid.end ? addIsoDays(secondary.valid.end, -1) : null,
-    latLng: home ? await d.optional(P.customerAddressGeo, home.id, home.geoEnc) : null,
+    // GAS版と同じく取込元の表記のまま出す
+    latLng: home?.latLngText ?? null,
     memberType: attr('member_type'),
     memberStatus: attr('member_status'),
     paymentMethod: attr('payment_method'),
@@ -164,17 +159,14 @@ export async function getCustomerDetail(
     registeredAt: source?.externalRegisteredAt ?? null,
     externalLastUpdatedAt: source?.externalUpdatedAt ?? null,
     archivedAt: customer.archivedAt,
-    familyMembers: await Promise.all(
-      recipients.map(async (c) => ({
-        id: c.id,
-        name: c.name,
-        dob: formatBirthDate(c.birthDate),
-        info: await d.optional(P.careRecipientNeeds, c.id, c.needsEnc),
-        allergy: await d.optional(P.careRecipientAllergy, c.id, c.allergyEnc),
-      })),
-    ),
+    familyMembers: recipients.map((c) => ({
+      id: c.id,
+      name: c.name,
+      dob: formatBirthDate(c.birthDate),
+      info: c.needs,
+      allergy: c.allergy,
+    })),
   };
-  d.flush(deps.audit, 'customer.detail', actor.staffId);
   return view;
 }
 
@@ -188,7 +180,7 @@ export interface CustomerSnapshotAddress {
   city?: string | null;
   parkingArea?: string | null;
   parkingDetail?: string | null;
-  /** 'lat,lng'(暗号化して保存し、粗い区画だけを平文にする)。 */
+  /** 取込元の「緯度・経度」の表記(表記はそのまま残し、読めなければ緯度経度なしとして持つ。@katahimo/shared parseLatLngText)。 */
   latLng?: string | null;
 }
 
@@ -240,7 +232,6 @@ export type CustomerSnapshotIssue =
   | 'missing_name';
 
 interface ApplyContext {
-  crypto: CryptoPort;
   runId: string | null;
   /** 取込元の値の誤りを見つけたとき(取込の集計に使う)。 */
   onIssue?: (issue: CustomerSnapshotIssue) => void;
@@ -288,24 +279,16 @@ function sameAttributes(a: Record<string, string>, b: Record<string, string>): b
   return sorted(a) === sorted(b);
 }
 
-/** 暗号化列を比べる(平文で比べ、変わっていれば新しい暗号文)。 */
-async function encryptedDiff(
-  ctx: ApplyContext,
-  r: TenantRepositories,
-  purpose: (typeof P)[keyof typeof P],
-  rowId: string,
-  current: Uint8Array | null,
-  next: string | null | undefined,
-): Promise<{ changed: boolean; value: Uint8Array | null }> {
-  const currentText = current
-    ? await ctx.crypto.decrypt({ tenantId: r.tenantId, purpose, rowId }, current)
-    : null;
-  if (same(currentText, next || null)) return { changed: false, value: current };
-  return { changed: true, value: await encryptOptional(ctx.crypto, r.tenantId, purpose, rowId, next) };
+/** 自由記述の取込値(空文字は null として持つ)。 */
+function textOrNull(value: string | null | undefined): string | null {
+  return value || null;
+}
+
+function sameGeo(a: GeoPoint | null, b: GeoPoint | null): boolean {
+  return a === null || b === null ? a === b : a.lat === b.lat && a.lng === b.lng;
 }
 
 async function syncAddress(
-  ctx: ApplyContext,
   r: TenantRepositories,
   customerId: string,
   kind: 'home' | 'secondary',
@@ -318,7 +301,8 @@ async function syncAddress(
     return true;
   }
   const id = existing?.id ?? newId();
-  const geo = await encryptedDiff(ctx, r, P.customerAddressGeo, id, existing?.geoEnc ?? null, next.latLng);
+  const geo = parseLatLngText(next.latLng);
+  const latLngText = next.latLng?.trim() || null;
   const valid = {
     start: next.validFrom ?? null,
     end: next.validTo ? addIsoDays(next.validTo, 1) : null,
@@ -332,8 +316,9 @@ async function syncAddress(
     building: null,
     parkingArea: next.parkingArea ?? null,
     parkingDetail: next.parkingDetail ?? null,
-    geoEnc: geo.value,
-    geoCell: geoCellOf(next.latLng),
+    geo,
+    latLngText,
+    geoCell: geoCellOf(geo),
     valid,
     isPrimary: kind === 'home',
   };
@@ -342,7 +327,8 @@ async function syncAddress(
     return true;
   }
   const changed =
-    geo.changed ||
+    !sameGeo(existing.geo, geo) ||
+    !same(existing.latLngText, latLngText) ||
     !same(existing.prefecture, fields.prefecture) ||
     !same(existing.city, fields.city) ||
     existing.addressLine !== fields.addressLine ||
@@ -355,7 +341,6 @@ async function syncAddress(
 }
 
 async function syncEmergencyContact(
-  ctx: ApplyContext,
   r: TenantRepositories,
   customerId: string,
   existing: CustomerContactRecord | undefined,
@@ -366,31 +351,22 @@ async function syncEmergencyContact(
     await r.customerContacts.delete(existing.id);
     return true;
   }
-  const id = existing?.id ?? newId();
-  const phone = await encryptedDiff(
-    ctx,
-    r,
-    P.customerContactPhone,
-    id,
-    existing?.phoneEnc ?? null,
-    next.phone,
-  );
+  const phone = textOrNull(next.phone);
   if (!existing) {
     await r.customerContacts.insert({
-      id,
+      id: newId(),
       customerId,
       relation: next.relation ?? null,
-      nameEnc: null,
-      phoneEnc: phone.value,
-      notesEnc: null,
+      name: null,
+      phone,
+      notes: null,
       isEmergency: true,
       sortOrder: 0,
     });
     return true;
   }
-  const changed = phone.changed || !same(existing.relation, next.relation);
-  if (changed)
-    await r.customerContacts.update(id, { relation: next.relation ?? null, phoneEnc: phone.value });
+  const changed = !same(existing.phone, phone) || !same(existing.relation, next.relation);
+  if (changed) await r.customerContacts.update(existing.id, { relation: next.relation ?? null, phone });
   return changed;
 }
 
@@ -399,7 +375,6 @@ async function syncEmergencyContact(
  * archived_at を付ける(ID を保つ。消して作り直さない)。同じ名前が複数いる場合は並び順で対応づける。
  */
 async function syncRecipients(
-  ctx: ApplyContext,
   r: TenantRepositories,
   customerId: string,
   next: CustomerSnapshotRecipient[],
@@ -417,22 +392,8 @@ async function syncRecipients(
     const match = pool.get(normalizeStaffName(recipient.name))?.shift();
     const id = match?.id ?? newId();
     kept.add(id);
-    const allergy = await encryptedDiff(
-      ctx,
-      r,
-      P.careRecipientAllergy,
-      id,
-      match?.allergyEnc ?? null,
-      recipient.allergy,
-    );
-    const needs = await encryptedDiff(
-      ctx,
-      r,
-      P.careRecipientNeeds,
-      id,
-      match?.needsEnc ?? null,
-      recipient.needs,
-    );
+    const allergy = textOrNull(recipient.allergy);
+    const needs = textOrNull(recipient.needs);
     if (!match) {
       await r.careRecipients.insert({
         id,
@@ -441,16 +402,16 @@ async function syncRecipients(
         nameKana: null,
         birthDate: recipient.birthDate,
         sex: null,
-        allergyEnc: allergy.value,
-        needsEnc: needs.value,
+        allergy,
+        needs,
         sortOrder: index,
       });
       changed = true;
       continue;
     }
     if (
-      allergy.changed ||
-      needs.changed ||
+      !same(match.allergy, allergy) ||
+      !same(match.needs, needs) ||
       match.name !== recipient.name ||
       !same(match.birthDate, recipient.birthDate) ||
       match.sortOrder !== index ||
@@ -459,8 +420,8 @@ async function syncRecipients(
       await r.careRecipients.update(id, {
         name: recipient.name,
         birthDate: recipient.birthDate,
-        allergyEnc: allergy.value,
-        needsEnc: needs.value,
+        allergy,
+        needs,
         sortOrder: index,
         archivedAt: null,
       });
@@ -495,25 +456,6 @@ export async function applyCustomerSnapshot(
   const linked = await r.customerSourceRecords.findByExternalId(snapshot.source, snapshot.externalId);
   const current = linked ? await r.customers.findById(linked.customerId) : null;
   const customerId = current?.id ?? newId();
-  const encrypted = {
-    memo: await encryptedDiff(ctx, r, P.customerMemo, customerId, current?.memoEnc ?? null, snapshot.memo),
-    benefit: await encryptedDiff(
-      ctx,
-      r,
-      P.customerBenefitMemberId,
-      customerId,
-      current?.benefitMemberIdEnc ?? null,
-      snapshot.benefitMemberId,
-    ),
-    evacuation: await encryptedDiff(
-      ctx,
-      r,
-      P.customerEvacuationSite,
-      customerId,
-      current?.evacuationSiteEnc ?? null,
-      snapshot.evacuationSite,
-    ),
-  };
   const fields = {
     displayName: snapshot.displayName,
     familyName: normalizeStaffName(snapshot.familyName),
@@ -522,9 +464,9 @@ export async function applyCustomerSnapshot(
     givenNameKana: snapshot.givenNameKana ?? null,
     email: snapshot.email ?? null,
     phone: snapshot.phone ?? null,
-    memoEnc: encrypted.memo.value,
-    benefitMemberIdEnc: encrypted.benefit.value,
-    evacuationSiteEnc: encrypted.evacuation.value,
+    memo: textOrNull(snapshot.memo),
+    benefitMemberId: textOrNull(snapshot.benefitMemberId),
+    evacuationSite: textOrNull(snapshot.evacuationSite),
   };
 
   let changed = false;
@@ -532,21 +474,20 @@ export async function applyCustomerSnapshot(
     await r.customers.create({ id: customerId, ...fields });
     changed = true;
   } else {
-    const customerChanged =
-      encrypted.memo.changed ||
-      encrypted.benefit.changed ||
-      encrypted.evacuation.changed ||
-      (
-        [
-          'displayName',
-          'familyName',
-          'givenName',
-          'familyNameKana',
-          'givenNameKana',
-          'email',
-          'phone',
-        ] as const
-      ).some((k) => !same(current[k], fields[k]));
+    const customerChanged = (
+      [
+        'displayName',
+        'familyName',
+        'givenName',
+        'familyNameKana',
+        'givenNameKana',
+        'email',
+        'phone',
+        'memo',
+        'benefitMemberId',
+        'evacuationSite',
+      ] as const
+    ).some((k) => !same(current[k], fields[k]));
     if (customerChanged) await r.customers.update(customerId, fields);
     if (current.archivedAt) await r.customers.unarchive(customerId);
     changed = customerChanged || current.archivedAt !== null;
@@ -570,9 +511,8 @@ export async function applyCustomerSnapshot(
   const addresses = current ? await r.customerAddresses.listByCustomer(customerId) : [];
   const contacts = current ? await r.customerContacts.listByCustomer(customerId) : [];
   const results = [
-    await syncAddress(ctx, r, customerId, 'home', homeOf(addresses), snapshot.home),
+    await syncAddress(r, customerId, 'home', homeOf(addresses), snapshot.home),
     await syncAddress(
-      ctx,
       r,
       customerId,
       'secondary',
@@ -580,13 +520,12 @@ export async function applyCustomerSnapshot(
       snapshot.secondary,
     ),
     await syncEmergencyContact(
-      ctx,
       r,
       customerId,
       contacts.find((c) => c.isEmergency),
       snapshot.emergencyContact,
     ),
-    await syncRecipients(ctx, r, customerId, snapshot.recipients, now),
+    await syncRecipients(r, customerId, snapshot.recipients, now),
   ];
   if (!current) return 'created';
   return changed || sourceChanged || results.some(Boolean) ? 'updated' : 'unchanged';

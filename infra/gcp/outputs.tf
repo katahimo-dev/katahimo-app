@@ -17,9 +17,13 @@ output "build_staging_bucket" {
   value       = google_storage_bucket.build_staging.name
 }
 
-output "kms_key_name" {
-  description = "GCP_KMS_KEY_NAME"
-  value       = google_kms_crypto_key.tenant_kek.id
+output "kms_keys" {
+  description = "Cloud KMS の鍵(CMEK: Cloud SQL・領収書バケット / SecretBox: SECRET_BOX_KMS_KEY)"
+  value = {
+    cloudsql_cmek  = google_kms_crypto_key.cloudsql.id
+    storage_cmek   = google_kms_crypto_key.storage.id
+    tenant_secrets = google_kms_crypto_key.tenant_secrets.id
+  }
 }
 
 output "service_accounts" {

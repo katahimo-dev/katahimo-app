@@ -1,4 +1,5 @@
 import type { CareRecordStatus, CareRecordType, StoredFilePurpose } from '../domain/model';
+import type { CareRecordContent } from '../domain/reports/careRecord';
 import type { InstantRangeValue } from './attendance';
 
 export interface CareRecordRow {
@@ -13,7 +14,7 @@ export interface CareRecordRow {
   servicePeriod: InstantRangeValue | null;
   riskRating: number | null;
   esRating: number | null;
-  bodyEnc: Uint8Array;
+  body: CareRecordContent;
   bodySchemaVer: number;
   aiGenerated: boolean;
   retainUntil: string | null;
@@ -29,7 +30,7 @@ export type CareRecordPatch = Partial<
     | 'servicePeriod'
     | 'riskRating'
     | 'esRating'
-    | 'bodyEnc'
+    | 'body'
     | 'bodySchemaVer'
     | 'aiGenerated'
     | 'status'
@@ -74,7 +75,7 @@ export interface ReceiptUploadRow {
   staffId: string;
   customerId: string | null;
   customerNameText: string | null;
-  handoffTextEnc: Uint8Array | null;
+  handoffText: string | null;
   createdBy: string;
 }
 
@@ -87,15 +88,16 @@ export interface ReceiptRow {
   customerNameText: string | null;
   receiptedAt: Date;
   amountYen: number | null;
-  storeNameEnc: Uint8Array | null;
-  dedupeBidx: Uint8Array | null;
+  storeName: string | null;
+  /** 重複判定のキーの SHA-256(domain/reports/receiptDedupe.ts)。判定しない領収書は null。 */
+  dedupeHash: Uint8Array | null;
 }
 
 export interface ReceiptRepository {
   createUpload(input: ReceiptUploadRow): Promise<void>;
   findUpload(id: string): Promise<ReceiptUploadRow | null>;
   /**
-   * 重複でなければ登録して true。同じ dedupe_bidx の行が既にあれば(同時の登録を含め)何もせず false
+   * 重複でなければ登録して true。同じ dedupe_hash の行が既にあれば(同時の登録を含め)何もせず false
    * (INSERT … ON CONFLICT DO NOTHING)。
    */
   insertIfNew(input: ReceiptRow): Promise<boolean>;
