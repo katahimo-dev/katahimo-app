@@ -98,6 +98,16 @@ async function clickForResponse<T>(
   return (await res.json()) as T;
 }
 
+/** 日報のダイアログで開いている「佐藤」さんのお客様の ID(API の一覧から)。 */
+async function customerIdOfReport(page: Page): Promise<string> {
+  const res = await page.request.get(`${WEB_URL}/api/customers`);
+  assert(res.ok(), `GET /api/customers が ${res.status()}`);
+  const { customers } = (await res.json()) as { customers: { id: string; name: string }[] };
+  const target = customers.find((c) => c.name.startsWith('佐藤'));
+  assert(target, 'お客様「佐藤」が見つからない');
+  return target.id;
+}
+
 /** ブラウザの canvas で小さな JPEG を作る(領収書の写真の代わり) */
 async function makeJpeg(page: Page, label: string): Promise<Buffer> {
   const dataUrl = await page.evaluate((text) => {
@@ -332,7 +342,32 @@ async function runJourney() {
       await button(page, '✏️ 日報を書く').click();
       await page.locator('#reportInput').waitFor({ state: 'visible', timeout: 10_000 });
       await page.locator('#reportInput').fill('公園で外遊び。お昼ごはんの手伝い。(e2e)');
+      // 日報AIの言葉選び: お子様が1人のお客様は最初から選ばれている。ご家庭の★と PSI は AI の前に選ぶ
+      const childSelect = page.locator('#dailyAiChild');
+      await childSelect.waitFor({ state: 'visible', timeout: 10_000 });
+      const childId = await childSelect.inputValue();
+      assert(childId !== '', 'お子様が1人なのに日報のお子様が選ばれていない');
+      await page.locator('#dailyAiSection').getByRole('radio', { name: '★4' }).waitFor({ timeout: 10_000 });
+      const profile = await clickForResponse<{ profile: { educationLevel: number } }>(
+        page,
+        'PUT',
+        new URL(`/api/customers/${await customerIdOfReport(page)}/report-profile`, WEB_URL).pathname,
+        () => page.locator('#dailyAiSection').getByRole('radio', { name: '★4' }).click(),
+      );
+      assert(profile.profile.educationLevel === 4, `ご家庭の★が保存されない: ${JSON.stringify(profile)}`);
+      await page.locator('#star-risk').getByRole('radio', { name: '3' }).click();
+      const generateRequest = page.waitForRequest(
+        (r) => new URL(r.url()).pathname === '/api/reports/daily/generate' && r.method() === 'POST',
+      );
       await page.locator('#generateBtn').click();
+      const sent = (await generateRequest).postDataJSON() as Record<string, unknown>;
+      assert(
+        sent.careRecipientId === childId &&
+          sent.riskRating === 3 &&
+          sent.reportDate === today &&
+          sent.customerId,
+        `AI に送る日報AIの材料が違う: ${JSON.stringify(sent)}`,
+      );
       await page.locator('#warningsArea').filter(visible).waitFor({ timeout: 20_000 });
       const text = (await page.locator('#warningsList').innerText()).trim();
       assert(/API Key/.test(text), `AIキー未設定の知らせが出ない: ${text}`);
@@ -800,6 +835,63 @@ async function runJourney() {
       return undefined;
     });
 
+    await step(page, 'admin-report-ai-list', async () => {
+      await page.getByRole('tab', { name: '🧩 日報AIの調整' }).click();
+      await wait(page, 600);
+      // 取込むファイルの材料にする行(何度流しても同じ ID の1行)
+      const created = await page.request.post(`${WEB_URL}/api/admin/report-ai/keywords`, {
+        data: {
+          row: {
+            code: 'E2E1',
+            keyword: 'e2e の語',
+            ageFromMonths: 0,
+            ageToMonths: 84,
+            educationLevelMin: 2,
+            educationLevelMax: 5,
+            psiMin: 3,
+            parentExplanation: 'e2e の説明',
+          },
+        },
+      });
+      assert(
+        created.status() === 201 || created.status() === 409,
+        `キーワードを足せない: ${created.status()}`,
+      );
+      // 表示を切り替えると読み直す
+      await page.getByRole('tab', { name: '📋 報告一覧' }).click();
+      await wait(page, 400);
+      await page.getByRole('tab', { name: '🧩 日報AIの調整' }).click();
+      const list = page.getByRole('list', { name: 'キーワード' });
+      await list.getByRole('button', { name: /E2E1 e2e の語/ }).waitFor({ timeout: 10_000 });
+      return undefined;
+    });
+
+    await step(page, 'admin-report-ai-import', async () => {
+      // 書き出した xlsx(お客様のマスターと同じ見出しの形)を画面から取り込む
+      const exported = await page.request.get(`${WEB_URL}/api/admin/report-ai/export.xlsx`);
+      assert(exported.ok(), `書き出しが ${exported.status()}`);
+      await page.getByRole('tab', { name: '取込・書き出し' }).click();
+      const input = page.locator('#reportAiImportFile');
+      await input.waitFor({ timeout: 10_000 });
+      const xlsx = Buffer.from(await exported.body());
+      const preview = await clickForResponse<{
+        dryRun: boolean;
+        errors: unknown[];
+        counts: { keywords: { rows: number } };
+      }>(page, 'POST', '/api/admin/report-ai/import', () =>
+        input.setInputFiles({
+          name: '日報キーワード表現マスター.xlsx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          buffer: xlsx,
+        }),
+      );
+      assert(preview.dryRun && preview.errors.length === 0, `確かめの結果が違う: ${JSON.stringify(preview)}`);
+      await page.locator('#reportAiImportPreview').waitFor({ timeout: 10_000 });
+      await button(page, '反映する').click();
+      await expectToast(page, '取り込みました');
+      return `キーワード ${preview.counts.keywords.rows}行`;
+    });
+
     await step(page, 'admin-logs-list', async () => {
       await page.getByRole('tab', { name: '📄 操作ログ' }).click();
       await wait(page, 600);
@@ -943,6 +1035,11 @@ async function runJourney() {
           ],
           ['GET /api/settings/admin', req.get(`${WEB_URL}/api/settings/admin`)],
           ['GET /api/admin/audit-logs', req.get(`${WEB_URL}/api/admin/audit-logs`)],
+          ['GET /api/admin/report-ai', req.get(`${WEB_URL}/api/admin/report-ai`)],
+          [
+            'POST /api/admin/report-ai/import',
+            req.post(`${WEB_URL}/api/admin/report-ai/import`, { data: { fileBase64: 'eA==', dryRun: true } }),
+          ],
           ['GET /api/reports/export.csv', req.get(`${WEB_URL}/api/reports/export.csv?sheet=daily`)],
           ['DELETE /api/admin/staff/:id', req.delete(`${WEB_URL}/api/admin/staff/${staffId}`)],
           [
