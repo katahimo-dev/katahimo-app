@@ -11,8 +11,8 @@
 
 ```bash
 pip install python-pptx pillow pymupdf           # pymupdf は確認用の画像を作るときだけ
-# 1. 画面の画像を用意する(架空のデータ。GAS版との自動見比べハーネスは廃止したため、
-#    GAS版・新アプリとも手で撮って doc/partner/.build/source/<場面>.gas.png・.web.png に置く。
+# 1. 画面の画像を用意する(架空のデータ。GAS版・新アプリとも手で撮って
+#    doc/partner/.build/source/<場面>.gas.png・.web.png に置く。
 #    撮り直さないときは、前に切り出した doc/partner/.build/<場面>.<gas|web>.png をそのまま使う)
 pnpm --filter @katahimo/web dev   # 別ターミナルで API も起動しておく
 # 2. スライドを作る

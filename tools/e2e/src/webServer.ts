@@ -17,7 +17,7 @@ export interface WebServerHandle {
 export interface WebServerOptions {
   /** 使う(起動済みの)サーバーのURL。null なら Vite を起動する */
   existingUrl: string | null;
-  /** 起動する Vite の /api の中継先(live モード・e2e 用。mock モードでは使われない) */
+  /** 起動する Vite の /api の中継先(e2e が起動した・または動いている API の URL。WEB_API_PROXY_TARGET として渡す) */
   apiProxyTarget?: string;
   /** 起動する Vite のポート(0 = 空いているポート) */
   port?: number;

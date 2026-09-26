@@ -26,14 +26,14 @@ runs:
         # actions/checkout の submodules: recursive だと取得できないときにジョブごと失敗するので、ここで取得する。
         available=false
         if [ -z "$TOKEN" ]; then
-          echo "::warning title=GAS版サブモジュール未取得::SUBMODULE_TOKEN が未設定のため legacy/gas-childcare-visit-app を取得しません。GAS版との一致テスト(gasParity)と見比べ撮影はスキップされます。"
+          echo "::warning title=GAS版サブモジュール未取得::SUBMODULE_TOKEN が未設定のため legacy/gas-childcare-visit-app を取得しません。GAS版との一致テスト(gasParity)はスキップされます。"
         else
           auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
           echo "::add-mask::${auth#AUTHORIZATION: basic }"
           if git -c "http.https://github.com/.extraheader=${auth}" submodule update --init --recursive --depth 1; then
             available=true
           else
-            echo "::warning title=GAS版サブモジュール未取得::legacy/gas-childcare-visit-app を取得できませんでした(SUBMODULE_TOKEN の権限を確認)。GAS版との一致テスト(gasParity)と見比べ撮影はスキップされます。"
+            echo "::warning title=GAS版サブモジュール未取得::legacy/gas-childcare-visit-app を取得できませんでした(SUBMODULE_TOKEN の権限を確認)。GAS版との一致テスト(gasParity)はスキップされます。"
           fi
         fi
         # テスト(packages/core/src/testSupport/gasLegacy.ts 等)と同じく、ファイルの有無で判定する

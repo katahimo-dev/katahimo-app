@@ -1,6 +1,6 @@
 packages:
   - 'packages/*'
-  # 開発用ツール(GAS版との見た目の比較ハーネス等)
+  # 開発用ツール(通し確認 tools/e2e)
   - 'tools/*'
 
 # package.json の engines(Node 22 以上)を満たさない Node では install を失敗させる。

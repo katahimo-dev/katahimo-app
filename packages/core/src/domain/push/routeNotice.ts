@@ -21,7 +21,7 @@ export const TEST_NOTICE_VALID_MS = 60 * 60 * 1000;
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'] as const;
 const CUSTOMER_APPOINTMENT = 'CUSTOMER APPOINTMENT';
 
-/** 'YYYY-MM-DD' → '9/27(土)'(曜日は暦の上で数える)。 */
+/** 'YYYY-MM-DD' → '9/27(日)'(曜日は暦の上で数える)。 */
 export function formatNoticeDate(date: string): string {
   const [year, month, day] = date.split('-').map(Number) as [number, number, number];
   const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
