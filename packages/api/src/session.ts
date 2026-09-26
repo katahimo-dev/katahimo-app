@@ -1,4 +1,4 @@
-import { isAdminRole, resolveTargetStaffId } from '@katahimo/core/domain';
+import { canActForOthers, isAdminRole, resolveTargetStaffId } from '@katahimo/core/domain';
 import type { Actor, ResolvedSession } from '@katahimo/core/usecases';
 import { authenticateSession } from '@katahimo/core/usecases';
 import type { Context, MiddlewareHandler } from 'hono';
@@ -106,15 +106,32 @@ export function requireSession(container: Container, deniedAction?: string): Mid
  * (GAS版Auth.js logAdminAccessDenied_に相当)。
  */
 export function requireAdmin(container: Container, action: string): MiddlewareHandler<SessionEnv> {
+  return requireRole(container, action, isAdminRole, 'not_admin');
+}
+
+/**
+ * コーディネーター・管理者(他のスタッフを扱える役割)専用ルート用ミドルウェア。未ログインは401、それ以外は403とし、
+ * どちらもWARNログに残す。
+ */
+export function requireCoordinator(container: Container, action: string): MiddlewareHandler<SessionEnv> {
+  return requireRole(container, action, canActForOthers, 'not_coordinator');
+}
+
+function requireRole(
+  container: Container,
+  action: string,
+  allowed: (role: ResolvedSession['role']) => boolean,
+  deniedReason: string,
+): MiddlewareHandler<SessionEnv> {
   return async (c, next) => {
     const session = await getAuthenticatedSession(c, container);
-    if (!session || !isAdminRole(session.role)) {
+    if (!session || !allowed(session.role)) {
       await container.appLog.write({
         tenantId: session?.tenantId ?? null,
         level: 'WARN',
         action: `${action}.access_denied`,
         actorStaffId: session?.staffId ?? null,
-        details: { reason: session ? 'not_admin' : 'invalid_session' },
+        details: { reason: session ? deniedReason : 'invalid_session' },
         ...requestMeta(c),
       });
       return session

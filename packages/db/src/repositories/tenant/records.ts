@@ -1,6 +1,8 @@
 import { conflict, STALE_WRITE_MESSAGE } from '@katahimo/core/domain';
 import type {
   CareRecordCursor,
+  CareRecordListFilter,
+  CareRecordListRow,
   CareRecordPatch,
   CareRecordRepository,
   CareRecordRow,
@@ -11,8 +13,9 @@ import type {
   StoredFileRepository,
   StoredFileRow,
 } from '@katahimo/core/ports';
-import { and, asc, desc, eq, gte, lt, notExists, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, lt, notExists, sql } from 'drizzle-orm';
 import {
+  careRecordRevisions,
   careRecords,
   dataExportRequests,
   receipts,
@@ -40,6 +43,15 @@ const careRecordColumns = {
   retainUntil: careRecords.retainUntil,
   rowVersion: careRecords.rowVersion,
 };
+
+const careRecordListColumns = { ...careRecordColumns, updatedAt: careRecords.updatedAt };
+
+/** 並び (occurred_at DESC, id DESC) で after より後ろ(行の比較。索引の範囲で読める)。 */
+function afterCursor(after: CareRecordCursor | null) {
+  return after
+    ? sql`(${careRecords.occurredAt}, ${careRecords.id}) < (${after.occurredAt.toISOString()}::timestamptz, ${after.id}::uuid)`
+    : undefined;
+}
 
 export class DrizzleCareRecordRepository extends TenantBound implements CareRecordRepository {
   async findById(id: string): Promise<CareRecordRow | null> {
@@ -87,13 +99,50 @@ export class DrizzleCareRecordRepository extends TenantBound implements CareReco
           eq(careRecords.tenantId, this.tenantId),
           eq(careRecords.customerId, customerId),
           // 行の比較にすると (tenant_id, customer_id, occurred_at DESC, id DESC) の索引の範囲で読める
-          after
-            ? sql`(${careRecords.occurredAt}, ${careRecords.id}) < (${after.occurredAt.toISOString()}::timestamptz, ${after.id}::uuid)`
-            : undefined,
+          afterCursor(after),
         ),
       )
       .orderBy(desc(careRecords.occurredAt), desc(careRecords.id))
       .limit(limit);
+  }
+
+  listByPeriod(
+    filter: CareRecordListFilter,
+    after: CareRecordCursor | null,
+    limit: number,
+  ): Promise<CareRecordListRow[]> {
+    return this.tx
+      .select(careRecordListColumns)
+      .from(careRecords)
+      .where(
+        and(
+          eq(careRecords.tenantId, this.tenantId),
+          gte(careRecords.occurredAt, filter.from),
+          lt(careRecords.occurredAt, filter.to),
+          filter.authorStaffId ? eq(careRecords.authorStaffId, filter.authorStaffId) : undefined,
+          filter.customerId ? eq(careRecords.customerId, filter.customerId) : undefined,
+          filter.recordTypes ? inArray(careRecords.recordType, [...filter.recordTypes]) : undefined,
+          afterCursor(after),
+        ),
+      )
+      .orderBy(desc(careRecords.occurredAt), desc(careRecords.id))
+      .limit(limit);
+  }
+
+  async findListRowById(id: string): Promise<CareRecordListRow | null> {
+    const rows = await this.tx
+      .select(careRecordListColumns)
+      .from(careRecords)
+      .where(and(eq(careRecords.tenantId, this.tenantId), eq(careRecords.id, id)));
+    return rows[0] ?? null;
+  }
+
+  async countRevisions(id: string): Promise<number> {
+    const [row] = await this.tx
+      .select({ n: count() })
+      .from(careRecordRevisions)
+      .where(and(eq(careRecordRevisions.tenantId, this.tenantId), eq(careRecordRevisions.careRecordId, id)));
+    return row?.n ?? 0;
   }
 }
 

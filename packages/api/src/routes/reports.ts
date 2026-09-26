@@ -1,7 +1,10 @@
 import {
+  exportReports,
   generateAccidentReportDraft,
   generateDailyReportDraft,
   getCustomerHistory,
+  getReportDetail,
+  listReports,
   saveAccidentReport,
   saveDailyReport,
   sendVisitCompleteNotification,
@@ -12,6 +15,11 @@ import {
   generateAccidentReportResponseSchema,
   generateDailyReportResponseSchema,
   generateReportRequestSchema,
+  idSchema,
+  reportCsvQuerySchema,
+  reportDetailResponseSchema,
+  reportListQuerySchema,
+  reportListResponseSchema,
   saveAccidentReportRequestSchema,
   saveAccidentReportResponseSchema,
   saveDailyReportRequestSchema,
@@ -20,11 +28,14 @@ import {
   visitCompleteResponseSchema,
 } from '@katahimo/shared';
 import { Hono } from 'hono';
+import { stream } from 'hono/streaming';
 import type { Container } from '../container';
 import { enforceStaffQuota } from '../http/quota';
-import { jsonOk, parseJsonBody, parseQuery } from '../http/responses';
+import { requestIdOf } from '../http/requestLog';
+import { apiError, jsonOk, parseJsonBody, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
-import { actorOf, requireSession } from '../session';
+import { actorOf, requireCoordinator, requireSession } from '../session';
+import { writeReportCsv } from './reportCsv';
 
 const HISTORY_LIMIT = 5;
 const AI_QUOTA_MESSAGE = '本日のAI生成の利用回数の上限に達しました。明日以降に再度お試しください。';
@@ -108,6 +119,40 @@ export function createReportRoutes(container: Container) {
       HISTORY_LIMIT,
     );
     return jsonOk(c, customerHistoryResponseSchema, page);
+  });
+
+  /**
+   * 日報・事故報告・ヒヤリハットの一覧(新しい順、keyset ページング)。コーディネーター・管理者は全員分、
+   * 一般スタッフは本人の記録だけ(staffId は無視)。
+   */
+  app.get('/', requireSession(container, 'report.list.view'), async (c) => {
+    const query = parseQuery(c, reportListQuerySchema);
+    if (!query.ok) return query.response;
+    return jsonOk(c, reportListResponseSchema, await listReports(container, actorOf(c), query.data));
+  });
+
+  /**
+   * 一覧と同じ条件の全件の CSV(コーディネーター・管理者だけ。GAS版の「日報」「事故報告」シートと同じ列)。
+   * sheet=daily は日報、sheet=accident は事故報告・ヒヤリハット。
+   */
+  app.get('/export.csv', requireCoordinator(container, 'report.list.export'), async (c) => {
+    const query = parseQuery(c, reportCsvQuerySchema);
+    if (!query.ok) return query.response;
+    const { sheet, ...criteria } = query.data;
+    const exported = await exportReports(container, actorOf(c), sheet, criteria);
+    const { from, to } = exported.range;
+    c.header('Content-Type', 'text/csv; charset=utf-8');
+    c.header('Content-Disposition', `attachment; filename="reports-${sheet}_${from}_${to}.csv"`);
+    c.header('Cache-Control', 'no-store');
+    const requestId = requestIdOf(c);
+    return stream(c, (out) => writeReportCsv(out, sheet, exported.rows(), requestId));
+  });
+
+  /** 記録1件の中身(読むだけ。一般スタッフは本人の記録だけ)。 */
+  app.get('/:id', requireSession(container, 'report.detail.view'), async (c) => {
+    const id = idSchema.safeParse(c.req.param('id'));
+    if (!id.success) return apiError(c, 404, 'not_found', '報告が見つかりません');
+    return jsonOk(c, reportDetailResponseSchema, await getReportDetail(container, actorOf(c), id.data));
   });
 
   return app;

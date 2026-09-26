@@ -10,6 +10,7 @@ export * from './pushNotifications';
 export * from './rateLimits';
 export * from './receipts';
 export * from './reportAi';
+export * from './reportList';
 export * from './reports';
 export * from './requestMeta';
 export * from './schedule';
