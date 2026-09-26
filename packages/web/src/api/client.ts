@@ -103,14 +103,41 @@ export function buildUrl(path: string, query?: Query): string {
   return qs ? `${path}?${qs}` : path;
 }
 
+function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === 'AbortError';
+}
+
 /** fetch を呼ぶ(通信の失敗は NetworkError。中断はそのまま投げる)。 */
 async function send(url: string, init: RequestInit): Promise<Response> {
   try {
     return await fetch(url, { credentials: 'include', ...init });
   } catch (e) {
-    if (e instanceof DOMException && e.name === 'AbortError') throw e;
+    if (isAbortError(e)) throw e;
     throw new NetworkError(e instanceof Error ? e.message : String(e));
   }
+}
+
+/**
+ * 本文を JSON として読む(JSON でない・読めない本文は undefined)。
+ * 応答の頭(状態コード)が届いた後、本文を読み終える前に中断された場合(TanStack Query が読み直しのために
+ * 前の読み込みを取り消した等)は、中断をそのまま投げる。undefined にすると「契約と一致しません」の
+ * エラーとして記録されてしまうため(中断は失敗ではない)。
+ */
+async function readJson(res: Response, signal: AbortSignal | undefined): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch (e) {
+    if (isAbortError(e) || signal?.aborted) throw e;
+    return undefined;
+  }
+}
+
+/** zod の食い違いを「場所: 内容」の1行にする(コンソールで [Object] にならないように) */
+function describeIssues(error: z.ZodError): string {
+  return error.issues
+    .slice(0, 5)
+    .map((issue) => `${issue.path.join('.') || '(全体)'}: ${issue.message}`)
+    .join('; ');
 }
 
 /** 失敗の応答をエラーにする(本文の JSON は json に読んだもの)。 */
@@ -145,13 +172,16 @@ async function request<S extends z.ZodTypeAny>(
     signal: options.signal,
   });
 
-  const json: unknown = await res.json().catch(() => undefined);
+  const json = await readJson(res, options.signal);
 
   if (!res.ok) throw failureOf(method, url, res, json, options);
 
   const parsed = schema.safeParse(json);
   if (!parsed.success) {
-    console.error(`${method} ${url} の応答が契約と一致しません`, parsed.error.issues);
+    console.error(
+      `${method} ${url} の応答が契約と一致しません: ${describeIssues(parsed.error)}`,
+      parsed.error.issues,
+    );
     throw new NetworkError(`${method} ${url} の応答が契約と一致しません`, res.status);
   }
   return parsed.data;
@@ -194,7 +224,7 @@ async function download(
   const url = buildUrl(path, query);
   const res = await send(url, { method: 'GET', signal: options.signal });
   if (!res.ok) {
-    const json: unknown = await res.json().catch(() => undefined);
+    const json = await readJson(res, options.signal);
     throw failureOf('GET', url, res, json, options);
   }
   const type = res.headers.get('Content-Type') ?? '';
