@@ -108,7 +108,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | メソッド・パス | 契約 | 応答 | 備考 |
 | --- | --- | --- | --- |
 | `GET /?familyName=` | `customerListQuerySchema` / `customerListResponseSchema` | `{ customers: [{ id, name, phone, city }], cities }` | `familyName` 省略でアーカイブされていない全件(絞り込みは画面)。指定すると苗字の完全一致 |
-| `GET /:id` | — / `customerDetailResponseSchema` | 住所・連絡先・子ども(アレルギー等)を復号した全項目 | 形の違う ID は 404。INFO `customer.detail.viewed`(`details.customerId`) |
+| `GET /:id` | — / `customerDetailResponseSchema` | 住所・連絡先・子ども(アレルギー等)の全項目 | 形の違う ID は 404。INFO `customer.detail.viewed`(`details.customerId`) |
 
 ### 2.4 予定 `/api/schedule`(`routes/schedule.ts`、全てログイン)
 

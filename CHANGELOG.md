@@ -21,10 +21,11 @@
 
 - PostgreSQL(Cloud SQL 17)を正データにし、マイグレーションは `0000_baseline.sql`(drizzle-kit)と `0001_baseline_custom.sql`(手書き)の2本。
   テナント分離は `tenant_id` + FORCE RLS + 複合外部キー、ロールは用途ごと(owner / migrator / app / worker / readonly)。
-- 要配慮の列の暗号化(テナントごとの DEK を KMS の KEK で包む、形式 v3)と、領収書の重複判定のブラインドインデックス。
+- 保存データは CMEK(Cloud SQL のディスク・バックアップと領収書バケットを、このアプリ専用の Cloud KMS の鍵で暗号化)と、RLS・最小権限・
+  監査ログ・回数制限で守る。テナントの秘密値(Gemini の API キー・Google Chat の Webhook URL)は Cloud KMS で封をして保存する(SecretBox)。
 - 全ての DB の読み書きを Unit of Work 越しに、書き込みと outbox を同じトランザクションに。ワーカーが GAS Bridge(Ver. 1.1.38 以降)への
   ミラーと再設定メールを送る。夜間のカレンダー反映(22:00)・顧客CSV の取込(03:00)・保守(04:00)のジョブ。
-- Cloud Run(API + Web 画面 / ワーカー / ジョブ)・Cloud SQL・Secret Manager・KMS・GCS の Terraform、Cloud Build、GitHub Actions の CI。
+- Cloud Run(API + Web 画面 / ワーカー / ジョブ)・Cloud SQL・Secret Manager・Cloud KMS(CMEK・自動ローテーション)・GCS の Terraform、Cloud Build、GitHub Actions の CI。
 
 ### この版での整理
 

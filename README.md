@@ -5,7 +5,7 @@
 スタッフはスマホ(PWA)で、今日の予定とルート、お客様の情報、日報・事故報告・領収書、出勤簿を扱う。
 
 - 画面は GAS版と**同じ見た目・文言・操作の流れ**、業務ロジックは GAS版と**同じ結果**(GAS版のコードを動かして一致を確かめている)。
-- 中身は作り直し: PostgreSQL + Row Level Security のテナント分離、個人情報の暗号化、Cookie セッション、操作ログ、Cloud Run での運用。
+- 中身は作り直し: PostgreSQL + Row Level Security のテナント分離、保存データの暗号化(CMEK)、Cookie セッション、操作ログ、Cloud Run での運用。
 - GAS版のソースはサブモジュール `legacy/gas-childcare-visit-app`(読み取り専用。**仕様の正**)。
 
 TypeScript・pnpm 11 のワークスペース(`packages/shared` / `core` / `db` / `integrations` / `ingestion` / `api` / `worker` / `web`、
@@ -20,7 +20,7 @@ git clone --recurse-submodules https://github.com/katahimo-dev/katahimo-app.git 
 pnpm install
 psql -U postgres -h localhost -f infra/initdb/00_create_database.sql              # Docker なら docker compose -f infra/docker-compose.yml up -d(:5433)
 psql -U postgres -h localhost -d katahimo_dev -f infra/initdb/01_bootstrap.sql
-cp .env.example .env    # BLIND_INDEX_MASTER_KEY と LOCAL_DEV_KEK に別々の64桁hexを入れる
+cp .env.example .env    # SECRET_BOX_LOCAL_KEY に64桁hexを入れる(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
 pnpm db:migrate && pnpm db:seed
 pnpm --filter @katahimo/api dev      # :8080
 pnpm --filter @katahimo/web dev      # :5173 → http://localhost:5173/?t=demo(admin@example.com / admin1234)
