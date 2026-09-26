@@ -167,4 +167,160 @@ describe('保育日報・事故報告', () => {
       '【訪問完了】\n担当: 山田 太郎\n顧客名: 佐藤 花子\n訪問日時: 2026/09/25 09:00〜12:00',
     );
   });
+
+  describe('日報AI: 対象のお子様・AI 生成の記録・PSI の知らせ', () => {
+    const generation = (overrides: Record<string, unknown> = {}) => ({
+      id: '00000000-0000-7000-8000-0000000000e1',
+      staffId: staff.staffId,
+      customerId,
+      careRecipientId: null,
+      promptKey: 'daily_report.generate',
+      promptRevision: 3,
+      defaultPromptSha256: null,
+      appVersion: null,
+      model: 'gemini-test',
+      promptText: 'p',
+      inputText: 'i',
+      timeInfo: 't',
+      startedAt: new Date('2026-09-25T02:00:00Z'),
+      finishedAt: new Date('2026-09-25T02:00:01Z'),
+      childAgeMonths: null,
+      educationLevel: 2,
+      effectiveEducationLevel: 2,
+      riskRating: 4,
+      escalationRequired: false,
+      candidateKeywordIds: [],
+      usedKeywordIds: [],
+      unresolvedUsedCodes: [],
+      output: { warnings: [] },
+      errorCode: null,
+      ...overrides,
+    });
+    const addGeneration = (overrides: Record<string, unknown> = {}) =>
+      ctx.uow.run(ctx.tenantId, (r) => r.reportAiGenerations.insert(generation(overrides) as never));
+
+    it('AI 生成の記録を日報に結び付け、上書きしても前の生成は結び付いたまま', async () => {
+      await addGeneration();
+      const saved = await saveDailyReport(
+        ctx.deps,
+        staff,
+        daily({ aiGenerationId: '00000000-0000-7000-8000-0000000000e1' }),
+      );
+      expect(ctx.data().reportAiGenerations[0]?.careRecordId).toBe(saved.id);
+      await addGeneration({ id: '00000000-0000-7000-8000-0000000000e2' });
+      await saveDailyReport(
+        ctx.deps,
+        staff,
+        daily({ reportId: saved.id, aiGenerationId: '00000000-0000-7000-8000-0000000000e2' }),
+      );
+      // 同じ日報の保存し直しは同じ生成でもよい
+      await saveDailyReport(
+        ctx.deps,
+        staff,
+        daily({ reportId: saved.id, aiGenerationId: '00000000-0000-7000-8000-0000000000e2' }),
+      );
+      expect(ctx.data().reportAiGenerations.map((g) => g.careRecordId)).toEqual([saved.id, saved.id]);
+    });
+
+    it('他のスタッフ・他のお客様・失敗した生成・別の日報に結び付いた生成は結び付けない', async () => {
+      await addGeneration();
+      await addGeneration({ id: '00000000-0000-7000-8000-0000000000e3', customerId: otherCustomerId });
+      await addGeneration({
+        id: '00000000-0000-7000-8000-0000000000e4',
+        output: null,
+        errorCode: 'api_error',
+      });
+      await expect(
+        saveDailyReport(ctx.deps, other, daily({ aiGenerationId: '00000000-0000-7000-8000-0000000000e1' })),
+      ).rejects.toMatchObject({ code: 'validation_failed', reason: 'ai_generation_mismatch' });
+      for (const id of ['00000000-0000-7000-8000-0000000000e3', '00000000-0000-7000-8000-0000000000e4']) {
+        await expect(saveDailyReport(ctx.deps, staff, daily({ aiGenerationId: id }))).rejects.toMatchObject({
+          reason: 'ai_generation_mismatch',
+        });
+      }
+      await saveDailyReport(
+        ctx.deps,
+        staff,
+        daily({ aiGenerationId: '00000000-0000-7000-8000-0000000000e1' }),
+      );
+      await expect(
+        saveDailyReport(ctx.deps, staff, daily({ aiGenerationId: '00000000-0000-7000-8000-0000000000e1' })),
+      ).rejects.toMatchObject({ code: 'conflict', reason: 'ai_generation_linked' });
+      expect(ctx.data().careRecords).toHaveLength(1);
+    });
+
+    it('対象のお子様はお客様の世帯の子だけ保存できる', async () => {
+      const withChild = await ctx.addCustomer('高橋 三郎', 'C3', [
+        { name: 'さくら', birthDate: '2024-04-01' },
+      ]);
+      const child = ctx.data().recipients.find((c) => c.customerId === withChild)?.id as string;
+      const saved = await saveDailyReport(
+        ctx.deps,
+        staff,
+        daily({ customerId: withChild, careRecipientId: child }),
+      );
+      expect(saved.careRecipientId).toBe(child);
+      expect(ctx.data().careRecords[0]?.careRecipientId).toBe(child);
+      await expect(saveDailyReport(ctx.deps, staff, daily({ careRecipientId: child }))).rejects.toMatchObject(
+        {
+          code: 'validation_failed',
+          reason: 'care_recipient_mismatch',
+        },
+      );
+    });
+
+    it('PSI 2 以下は管理者の全ての端末に Web Push を積み(記録の版ごとに1回)、Google Chat にも知らせる', async () => {
+      const keys = { p256dh: 'p'.repeat(87), auth: 'a'.repeat(22) };
+      await ctx.uow.run(ctx.tenantId, async (r) => {
+        await r.pushSubscriptions.upsert({
+          id: '00000000-0000-7000-8000-00000000f001',
+          staffId: admin.staffId,
+          endpoint: 'https://push.example/a1',
+          userAgent: null,
+          ...keys,
+        });
+        await r.pushSubscriptions.upsert({
+          id: '00000000-0000-7000-8000-00000000f002',
+          staffId: admin.staffId,
+          endpoint: 'https://push.example/a2',
+          userAgent: null,
+          ...keys,
+        });
+        await r.pushSubscriptions.upsert({
+          id: '00000000-0000-7000-8000-00000000f003',
+          staffId: staff.staffId,
+          endpoint: 'https://push.example/s1',
+          userAgent: null,
+          ...keys,
+        });
+      });
+      const saved = await saveDailyReport(ctx.deps, staff, daily({ riskRating: 1 }));
+      expect(saved.psiAlert).toBe(true);
+      const pushes = ctx.data().outbox.filter((m) => m.topic === 'push.psi_alert');
+      expect(pushes.map((m) => m.dedupeKey).sort()).toEqual([
+        `push.psi_alert:00000000-0000-7000-8000-00000000f001:${saved.id}:1`,
+        `push.psi_alert:00000000-0000-7000-8000-00000000f002:${saved.id}:1`,
+      ]);
+      expect(pushes[0]?.payload).toMatchObject({
+        staffId: admin.staffId,
+        notice: { title: '🚨 PSI 1（危険・緊急）の日報', url: '/' },
+      });
+      expect(JSON.stringify(pushes[0]?.payload)).not.toContain('社内向け');
+      expect(ctx.notifier.notifications.map((n) => n.text.split('\n')[0])).toEqual([
+        '【日報提出】',
+        '【PSI緊急】PSI 1（危険・緊急）の日報が保存されました',
+      ]);
+      expect(ctx.appLog.byAction('report.psi_alert')[0]).toMatchObject({
+        level: 'WARN',
+        details: { reportId: saved.id, riskRating: 1, pushQueued: 2 },
+      });
+      // 保存し直すと新しい版の知らせを積む。PSI 3 以上なら知らせない
+      await saveDailyReport(ctx.deps, staff, daily({ reportId: saved.id, riskRating: 2 }));
+      expect(ctx.data().outbox.filter((m) => m.topic === 'push.psi_alert')).toHaveLength(4);
+      const calm = await saveDailyReport(ctx.deps, staff, daily({ reportId: saved.id, riskRating: 3 }));
+      expect(calm.psiAlert).toBe(false);
+      expect(ctx.data().outbox.filter((m) => m.topic === 'push.psi_alert')).toHaveLength(4);
+      expect(ctx.appLog.byAction('report.psi_alert')).toHaveLength(2);
+    });
+  });
 });

@@ -90,6 +90,11 @@ interface TableSpec {
   fields: readonly string[];
   /** 並び。 */
   order: PgColumn[];
+  /**
+   * 自然キーの一意制約の列(INSERT … ON CONFLICT の対象。指定しないと年齢帯の EXCLUDE 制約(DEFERRABLE)も
+   * 対象になり PostgreSQL が受け付けない)。
+   */
+  conflictTarget: PgColumn[];
 }
 
 const ROW_TABLES: Record<
@@ -100,18 +105,21 @@ const ROW_TABLES: Record<
     table: reportKeywords,
     fields: KEYWORD_FIELDS,
     order: [reportKeywords.sortOrder, reportKeywords.code],
+    conflictTarget: [reportKeywords.tenantId, reportKeywords.code],
     key: (key) => eq(reportKeywords.code, key),
   },
   ageBands: {
     table: reportAgeBands,
     fields: AGE_BAND_FIELDS,
     order: [reportAgeBands.sortOrder, reportAgeBands.ageFromMonths],
+    conflictTarget: [reportAgeBands.tenantId, reportAgeBands.label],
     key: (key) => eq(reportAgeBands.label, key),
   },
   phrases: {
     table: reportPhrases,
     fields: PHRASE_FIELDS,
     order: [reportPhrases.kind, reportPhrases.sortOrder, reportPhrases.body],
+    conflictTarget: [reportPhrases.tenantId, reportPhrases.kind, reportPhrases.body],
     key: (key) => {
       const separator = key.indexOf(':');
       return and(
@@ -124,6 +132,7 @@ const ROW_TABLES: Record<
     table: reportStanceRules,
     fields: STANCE_FIELDS,
     order: [reportStanceRules.sortOrder, reportStanceRules.topic],
+    conflictTarget: [reportStanceRules.tenantId, reportStanceRules.topic],
     key: (key) => eq(reportStanceRules.topic, key),
   },
 };
@@ -133,12 +142,14 @@ const LEVEL_TABLES: Record<ReportAiLevelTable, TableSpec & { level: PgColumn }> 
     table: reportEducationLevels,
     fields: EDUCATION_LEVEL_FIELDS,
     order: [reportEducationLevels.level],
+    conflictTarget: [reportEducationLevels.tenantId, reportEducationLevels.level],
     level: reportEducationLevels.level,
   },
   psiLevels: {
     table: reportPsiLevels,
     fields: PSI_LEVEL_FIELDS,
     order: [reportPsiLevels.level],
+    conflictTarget: [reportPsiLevels.tenantId, reportPsiLevels.level],
     level: reportPsiLevels.level,
   },
 };
@@ -237,7 +248,7 @@ export class DrizzleReportAiMasterRepository extends TenantBound implements Repo
     const rows = await this.tx
       .insert(spec.table)
       .values({ tenantId: this.tenantId, id, updatedBy, ...valuesOf(spec, value) } as never)
-      .onConflictDoNothing()
+      .onConflictDoNothing({ target: spec.conflictTarget })
       .returning(metaColumns(spec));
     const row = rows[0] as ReportAiRowMeta | undefined;
     if (!row)
@@ -320,7 +331,7 @@ export class DrizzleReportAiMasterRepository extends TenantBound implements Repo
     const rows = await this.tx
       .insert(t)
       .values({ tenantId: this.tenantId, id, updatedBy, ...valuesOf(spec, value) } as never)
-      .onConflictDoNothing()
+      .onConflictDoNothing({ target: spec.conflictTarget })
       .returning(metaColumns(spec));
     const row = rows[0] as ReportAiRowMeta | undefined;
     if (!row) throw conflict(STALE_WRITE_MESSAGE, undefined, 'stale_row_version');

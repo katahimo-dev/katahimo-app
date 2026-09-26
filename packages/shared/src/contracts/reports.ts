@@ -118,7 +118,7 @@ export const generateDailyReportRequestSchema = generateReportRequestSchema.exte
   customerId: idSchema,
   careRecipientId: idSchema.nullable().optional(),
   riskRating: z.number().int().min(1).max(5).nullable().optional(),
-  reportDate: businessDateSchema.optional(),
+  reportDate: recordDateSchema.optional(),
 });
 export type GenerateDailyReportRequest = z.input<typeof generateDailyReportRequestSchema>;
 

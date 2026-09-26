@@ -184,6 +184,13 @@ function educationRuleOf(levels: readonly ReportEducationLevelEntry[], level: nu
   return DEFAULT_EDUCATION_LEVEL_RULES[level] ?? { keywordsMin: 0, keywordsMax: 0, termNamePolicy: 'forbid' };
 }
 
+/** ★の定義に「用語名の扱い」の文言が無いときの書き方。 */
+const TERM_NAME_TEXT: Record<TermNamePolicy, string> = {
+  forbid: '用語名は出さず、親向け説明の言い換えだけを使う',
+  sparing: '概念は説明し、用語名は控えめにする（出すときは親向け説明とセット）',
+  allow: '用語名を出すときは必ず親向け説明とセットにする',
+};
+
 const oneLine = (text: string | null | undefined) => (text ?? '').replace(/\s*\n\s*/g, ' ').trim();
 
 /** 【日報キーワード表】の1行(お客様の表と同じ列: ID｜カテゴリ｜キーワード｜対象年齢(月齢)｜適用★｜PSI下限｜親向け説明｜日報フレーズ例)。 */
@@ -238,16 +245,12 @@ function levelGuideOf(
   }
   if (rule.usage) lines.push(`・教育語の使い方：${oneLine(rule.usage)}`);
   if (rule.wordScope) lines.push(`・使ってよい語の範囲：${oneLine(rule.wordScope)}`);
-  const termPolicy: TermNamePolicy = adjustment.termNamesForbidden ? 'forbid' : rule.termNamePolicy;
-  const termText =
-    termPolicy === 'forbid'
-      ? '用語名は出さず、親向け説明の言い換えだけを使う'
-      : termPolicy === 'sparing'
-        ? '概念は説明し、用語名は控えめにする（出すときは親向け説明とセット）'
-        : '用語名を出すときは必ず親向け説明とセットにする';
-  lines.push(
-    `・用語名の扱い：${rule.termNameRule && !adjustment.termNamesForbidden ? `${oneLine(rule.termNameRule)}（${termText}）` : termText}`,
-  );
+  const termText = adjustment.termNamesForbidden
+    ? '用語名は出さず、親向け説明の言い換えだけを使う'
+    : rule.termNameRule
+      ? oneLine(rule.termNameRule)
+      : TERM_NAME_TEXT[rule.termNamePolicy];
+  lines.push(`・用語名の扱い：${termText}`);
   const min = Math.min(rule.keywordsMin, maxKeywords);
   lines.push(
     `・1通あたり教育語：${min === maxKeywords ? `${maxKeywords}個` : `${min}〜${maxKeywords}個`}まで`,
