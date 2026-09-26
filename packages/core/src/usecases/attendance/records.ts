@@ -278,7 +278,7 @@ export function enqueueAttendanceDayMirror(
   r: TenantRepositories,
   day: AttendanceDayRow,
   columns: readonly AttendanceColumnKey[],
-): Promise<void> {
+): Promise<boolean> {
   return r.outbox.enqueue({
     topic: 'mirror.attendance_day',
     aggregateType: 'attendance_day',

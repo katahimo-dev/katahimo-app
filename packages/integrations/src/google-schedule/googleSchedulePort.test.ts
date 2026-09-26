@@ -249,6 +249,15 @@ describe('GoogleSchedulePort', () => {
     ).rejects.toThrow('カレンダーを読み込めませんでした');
   });
 
+  it('軽量版も strict(翌日の予定のお知らせ)なら読めないカレンダーで失敗させる', async () => {
+    calendar.failing.add('reserva@group.calendar.google.com');
+    const view = await port.getSchedule(targetOf('佐藤 美咲'), date, { tenantId });
+    expect(view.appointments?.map((a) => a.title)).toEqual(['請求書']);
+    await expect(port.getSchedule(targetOf('佐藤 美咲'), date, { tenantId, strict: true })).rejects.toThrow(
+      'カレンダーを読み込めませんでした',
+    );
+  });
+
   it('スタッフ台帳に居ない名前は予定なし(カレンダーも読まない)', async () => {
     expect(await port.getScheduleWithRoute(targetOf('不明 太郎'), date, false, { tenantId })).toEqual({
       success: true,

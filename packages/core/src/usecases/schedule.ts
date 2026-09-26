@@ -30,6 +30,11 @@ export interface ScheduleViewRequest {
   meta?: RequestMeta;
 }
 
+/** 軽量版の予定の要求。strict は読めないカレンダーがあれば失敗させる(502。夜間ジョブ用)。 */
+export interface ScheduleLightViewRequest extends ScheduleViewRequest {
+  strict?: boolean;
+}
+
 export interface ScheduleRouteViewRequest extends ScheduleViewRequest {
   /** 「🔄 再取得」ボタン。共有キャッシュを読まずに再計算する(結果はキャッシュに書き直す)。 */
   forceRefresh: boolean;
@@ -49,10 +54,13 @@ export interface FreshScheduleRouteRequest {
  */
 export async function getScheduleForStaff(
   deps: ScheduleDeps,
-  request: ScheduleViewRequest,
+  request: ScheduleLightViewRequest,
 ): Promise<ScheduleLightResult> {
   return runLogged(deps, 'schedule.view', request, async (target) => {
-    const result = await deps.schedule.getSchedule(target, request.date, { tenantId: request.tenantId });
+    const result = await deps.schedule.getSchedule(target, request.date, {
+      tenantId: request.tenantId,
+      ...(request.strict ? { strict: true } : {}),
+    });
     return { result, logSuccess: false };
   });
 }

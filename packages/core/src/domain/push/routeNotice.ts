@@ -1,7 +1,7 @@
 import { type PushNotice, scheduleLinkPath } from '@katahimo/shared';
 import type { ScheduleAppointmentLight } from '../../ports/schedule';
 import { addDays } from '../calendarDate';
-import { zonedBusinessDate } from '../time';
+import { zonedBusinessDate, zonedInstant } from '../time';
 
 /**
  * 翌日の予定のお知らせ(Web Push)の文面。GAS版 gas-root-serach の夜間の LINE WORKS DM「【明日の予定: …】」を
@@ -13,10 +13,10 @@ import { zonedBusinessDate } from '../time';
 export const ROUTE_NOTICE_MAX_LINES = 5;
 /** 1行に出す名前の文字数の上限(超える分は「…」)。 */
 export const ROUTE_NOTICE_NAME_MAX_CHARS = 16;
-/** 端末がオフラインの間、プッシュサービスが届けるのを待つ時間(翌日の予定のため1日)。 */
-export const ROUTE_NOTICE_TTL_SECONDS = 24 * 60 * 60;
-/** テスト通知を待つ時間。 */
-export const TEST_NOTICE_TTL_SECONDS = 60 * 60;
+/** プッシュサービスが端末に届けるのを待つ時間の上限(期限 expiresAt までの残りがこれより長くても、これまで)。 */
+export const MAX_PUSH_TTL_SECONDS = 24 * 60 * 60;
+/** テスト通知の期限(積んでからこの時間を過ぎたら送らない)。 */
+export const TEST_NOTICE_VALID_MS = 60 * 60 * 1000;
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'] as const;
 const CUSTOMER_APPOINTMENT = 'CUSTOMER APPOINTMENT';
@@ -51,19 +51,36 @@ export function routeNoticeBody(appointments: readonly ScheduleAppointmentLight[
 }
 
 /**
- * date(翌日)の予定のお知らせ。タイトルは「明日の予定 9/27(土) 3件」、押すと予定タブで date の予定を開く。
+ * date の予定のお知らせ。date が積む時点の明日(tomorrow)ならタイトルは「明日の予定 9/27(日) 3件」、日付を指定して
+ * 流し直した別の日なら「9/27(日)の予定 3件」。押すと予定タブで date の予定を開く。
  * tag は日付ごとに同じ(送り直しても端末の上で置き換わり、二重に出ない)。
  */
 export function buildRouteNotice(
   date: string,
   appointments: readonly ScheduleAppointmentLight[],
+  { tomorrow }: { tomorrow: boolean },
 ): PushNotice {
+  const day = formatNoticeDate(date);
   return {
-    title: `明日の予定 ${formatNoticeDate(date)} ${appointments.length}件`,
+    title: tomorrow ? `明日の予定 ${day} ${appointments.length}件` : `${day}の予定 ${appointments.length}件`,
     body: routeNoticeBody(appointments),
     url: scheduleLinkPath(date),
     tag: `route-notice-${date}`,
   };
+}
+
+/**
+ * お知らせの期限(これを過ぎたら送らない)。「明日の予定」はその日が始まるまで(当日に「明日」と出さない)、日付の
+ * タイトルのものはその日が終わるまで。日の境目はテナントのタイムゾーン。
+ */
+export function routeNoticeExpiresAt(date: string, timeZone: string, tomorrow: boolean): Date {
+  return zonedInstant(date, tomorrow ? 0 : 24 * 60, timeZone);
+}
+
+/** 期限までの残り(秒。0以上 MAX_PUSH_TTL_SECONDS 以下)。プッシュサービスが端末に届けるのを待つ時間(TTL)にする。 */
+export function pushTtlSeconds(expiresAt: Date, now: Date): number {
+  const remaining = Math.floor((expiresAt.getTime() - now.getTime()) / 1000);
+  return Math.max(0, Math.min(MAX_PUSH_TTL_SECONDS, remaining));
 }
 
 /** プッシュサービスの上で同じ日のお知らせをまとめる topic(base64url の文字だけ・32文字まで)。 */

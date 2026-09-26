@@ -28,6 +28,7 @@ const app = createApp({ env, container });
 
 const PASSWORD = 'integration-pass-1';
 let slug = '';
+let tenantId = '';
 let staffId = '';
 let adminId = '';
 let staffCookie = '';
@@ -78,6 +79,7 @@ beforeAll(async () => {
     password: PASSWORD,
     role: 'admin',
   });
+  tenantId = tenant.id;
   staffId = staff.id;
   adminId = admin.id;
   staffCookie = await login(`staff-${slug}@example.com`);
@@ -224,5 +226,21 @@ describe('API: Web Push', () => {
       statuses.push((await send('POST', '/api/push/test', adminCookie, {})).status);
     }
     expect(statuses.at(-1)).toBe(429);
+  });
+
+  it('購読の登録も1時間の回数の上限で 429、1人の購読は10件まで', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < container.rateLimits.pushSubscribeStaff.limit + 1; i++) {
+      statuses.push(
+        (await send('POST', '/api/push/subscriptions', staffCookie, subscription(`many-${i}`))).status,
+      );
+    }
+    // 前のテストの1回を含めて上限まで通り、その後は 429
+    expect(statuses.filter((status) => status === 200)).toHaveLength(
+      container.rateLimits.pushSubscribeStaff.limit - 1,
+    );
+    expect(statuses.at(-1)).toBe(429);
+    const subscriptions = await container.uow.run(tenantId, (r) => r.pushSubscriptions.listForStaff(staffId));
+    expect(subscriptions).toHaveLength(10);
   });
 });

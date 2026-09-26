@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ScheduleAppointmentWithRoute } from '../ports/schedule';
 import { processNextOutboxMessage } from './outboxWorker';
 import {
+  MAX_PUSH_SUBSCRIPTIONS_PER_STAFF,
   PUSH_DISABLED_MESSAGE,
   PUSH_NOT_SUBSCRIBED_MESSAGE,
+  PUSH_REJECTION_LIMIT,
   pushConfigOf,
   runRouteNoticeJob,
   sendTestPush,
@@ -11,6 +13,7 @@ import {
   unsubscribePush,
 } from './pushNotifications';
 import type { Actor } from './requestMeta';
+import { updateStaffByAdmin } from './staffAdmin';
 import type { TestContext } from './testContext';
 import { createTestContext } from './testContext';
 
@@ -103,6 +106,29 @@ describe('Web Push の購読', () => {
     await expect(sendTestPush(deps, taro)).rejects.toMatchObject({ message: PUSH_DISABLED_MESSAGE });
   });
 
+  it(`1人の購読は ${MAX_PUSH_SUBSCRIPTIONS_PER_STAFF} 件まで(超えたら最近使っていないものから消す)`, async () => {
+    for (let i = 0; i <= MAX_PUSH_SUBSCRIPTIONS_PER_STAFF; i++) {
+      await subscribePush(ctx.deps, taro, { endpoint: `${ENDPOINT_A}-${i}`, ...keys });
+    }
+    // 最初の端末を登録し直すと新しい扱いになり、2番目が消える
+    await subscribePush(ctx.deps, taro, { endpoint: `${ENDPOINT_A}-1`, ...keys });
+    await subscribePush(ctx.deps, taro, { endpoint: `${ENDPOINT_A}-extra`, ...keys });
+    const endpoints = ctx.data().pushSubscriptions.map((p) => p.endpoint);
+    expect(endpoints).toHaveLength(MAX_PUSH_SUBSCRIPTIONS_PER_STAFF);
+    expect(endpoints).not.toContain(`${ENDPOINT_A}-0`);
+    expect(endpoints).not.toContain(`${ENDPOINT_A}-2`);
+    expect(endpoints).toContain(`${ENDPOINT_A}-1`);
+    expect(ctx.appLog.byAction('push.subscription.saved').at(-1)?.details).toMatchObject({ trimmed: 1 });
+  });
+
+  it('退職日を入れると、そのスタッフの購読を全て消す', async () => {
+    const admin = (await ctx.addStaff('管理 者', 'admin@example.com', 'admin')).actor;
+    await subscribePush(ctx.deps, taro, { endpoint: ENDPOINT_A, ...keys });
+    await subscribePush(ctx.deps, hanako, { endpoint: ENDPOINT_B, ...keys });
+    await updateStaffByAdmin(ctx.deps, admin, taro.staffId, { retiredOn: '2026-09-30' });
+    expect(ctx.data().pushSubscriptions.map((p) => p.staffId)).toEqual([hanako.staffId]);
+  });
+
   it('テスト通知は本人の全ての端末に送る(購読が無ければ断る)', async () => {
     await expect(sendTestPush(ctx.deps, taro)).rejects.toMatchObject({
       message: PUSH_NOT_SUBSCRIBED_MESSAGE,
@@ -112,9 +138,9 @@ describe('Web Push の購読', () => {
     await subscribePush(ctx.deps, hanako, { endpoint: 'https://fcm.googleapis.com/fcm/send/other', ...keys });
     expect(await sendTestPush(ctx.deps, taro)).toEqual({ subscriptionCount: 2 });
     expect(await sendTestPush(ctx.deps, taro)).toEqual({ subscriptionCount: 2 });
-    // 押すたびに積む
-    expect(ctx.data().outbox.filter((m) => m.topic === 'push.test')).toHaveLength(2);
-    expect(await ctx.drain()).toMatchObject({ done: 2 });
+    // 押すたびに、端末ごとに1件ずつ積む
+    expect(ctx.data().outbox.filter((m) => m.topic === 'push.test')).toHaveLength(4);
+    expect(await ctx.drain()).toMatchObject({ done: 4 });
     expect(ctx.webPush.sent.map((s) => s.endpoint).sort()).toEqual(
       [ENDPOINT_B, ENDPOINT_A, ENDPOINT_B, ENDPOINT_A].sort(),
     );
@@ -126,6 +152,11 @@ describe('Web Push の送信(outbox)', () => {
   let ctx: TestContext;
   let taro: Actor;
 
+  const messageFor = (endpoint: string) => {
+    const subscription = ctx.data().pushSubscriptions.find((p) => p.endpoint === endpoint);
+    return ctx.data().outbox.find((m) => m.aggregateId === subscription?.id);
+  };
+
   beforeEach(async () => {
     ctx = createTestContext({ now: '2026-09-26T10:00:00Z' });
     taro = (await ctx.addStaff('山田 太郎', 'taro@example.com')).actor;
@@ -133,30 +164,72 @@ describe('Web Push の送信(outbox)', () => {
     await subscribePush(ctx.deps, taro, { endpoint: ENDPOINT_B, ...keys });
   });
 
-  it('受け付けられたら最後の成功時刻を残す', async () => {
+  it('端末ごとに1件ずつ送り、受け付けられたら最後の成功時刻を残す', async () => {
     await sendTestPush(ctx.deps, taro);
-    expect(await processNextOutboxMessage(ctx.deps)).toBe('done');
+    expect(await ctx.drain()).toMatchObject({ done: 2 });
     expect(ctx.data().pushSubscriptions.map((p) => p.lastSuccessAt)).toEqual([ctx.clock.now, ctx.clock.now]);
+    // TTL は期限(テストは1時間)までの残り
+    expect(ctx.webPush.sent.map((s) => s.options.ttlSeconds)).toEqual([3600, 3600]);
   });
 
   it('410 Gone(購読がもう無い)の購読は消し、他の端末には送る', async () => {
-    ctx.webPush.setOutcome(ENDPOINT_A, 'expired');
+    ctx.webPush.setOutcome(ENDPOINT_A, { status: 'expired', statusCode: 410 });
     await sendTestPush(ctx.deps, taro);
-    expect(await processNextOutboxMessage(ctx.deps)).toBe('done');
+    expect(await ctx.drain()).toMatchObject({ done: 2 });
     expect(ctx.data().pushSubscriptions.map((p) => p.endpoint)).toEqual([ENDPOINT_B]);
     expect(ctx.webPush.sent.map((s) => s.endpoint)).toEqual([ENDPOINT_B]);
     expect(ctx.appLog.byAction('push.subscription.expired')).toHaveLength(1);
   });
 
-  it('それ以外の失敗は失敗の回数を数え、outbox の再試行に任せる', async () => {
+  it('再試行すれば直りうる失敗(5xx・429・通信)は、その端末にだけ送り直す(届いた端末には送り直さない)', async () => {
     ctx.webPush.setOutcome(ENDPOINT_B, new Error('プッシュサービスが 503 を返しました'));
     await sendTestPush(ctx.deps, taro);
-    expect(await processNextOutboxMessage(ctx.deps)).toBe('retried');
-    const [a, b] = ctx.data().pushSubscriptions;
-    expect(a).toMatchObject({ failureCount: 0, lastSuccessAt: ctx.clock.now });
-    expect(b).toMatchObject({ failureCount: 1, lastSuccessAt: null });
-    expect(ctx.data().outbox[0]).toMatchObject({ status: 'pending' });
-    expect(ctx.data().outbox[0]?.lastError).toContain('1/2件');
+    expect(await ctx.drain()).toMatchObject({ done: 1, retried: 1 });
+    expect(messageFor(ENDPOINT_A)).toMatchObject({ status: 'done' });
+    expect(messageFor(ENDPOINT_B)).toMatchObject({
+      status: 'pending',
+      lastError: expect.stringContaining('503'),
+    });
+    expect(ctx.data().pushSubscriptions.map((p) => p.failureCount)).toEqual([0, 0]);
+
+    // 再試行の時刻まで進めて、直ったら B にだけ送る
+    ctx.webPush.setOutcome(ENDPOINT_B, { status: 'delivered' });
+    ctx.clock.now = new Date(ctx.clock.now.getTime() + 60_000);
+    expect(await ctx.drain()).toMatchObject({ done: 1 });
+    expect(ctx.webPush.attempts).toEqual([ENDPOINT_A, ENDPOINT_B, ENDPOINT_B]);
+  });
+
+  it('それ以外の 4xx は再試行せず断られた回数を数え、3回続いたら購読を消す', async () => {
+    ctx.webPush.setOutcome(ENDPOINT_B, { status: 'rejected', statusCode: 403 });
+    for (let i = 1; i <= PUSH_REJECTION_LIMIT; i++) {
+      await sendTestPush(ctx.deps, taro);
+      expect(await ctx.drain()).toMatchObject({ retried: 0, failed: 0 });
+      const b = ctx.data().pushSubscriptions.find((p) => p.endpoint === ENDPOINT_B);
+      if (i < PUSH_REJECTION_LIMIT) expect(b?.failureCount).toBe(i);
+      else expect(b).toBeUndefined();
+    }
+    expect(ctx.appLog.byAction('push.subscription.rejected').at(-1)?.details).toMatchObject({
+      statusCode: 403,
+      deleted: true,
+    });
+    // 受け付けられている端末は数えない
+    expect(ctx.data().pushSubscriptions.map((p) => p.failureCount)).toEqual([0]);
+  });
+
+  it('期限を過ぎたら送らずに完了にする(当日に「明日の予定」を出さない)', async () => {
+    await sendTestPush(ctx.deps, taro);
+    ctx.clock.now = new Date(ctx.clock.now.getTime() + 2 * 60 * 60 * 1000);
+    expect(await ctx.drain()).toMatchObject({ done: 2 });
+    expect(ctx.webPush.attempts).toEqual([]);
+    expect(ctx.appLog.byAction('push.notice.expired')).toHaveLength(2);
+  });
+
+  it('積んだ後に別のスタッフへ付け替わった端末には、前の人の通知を送らない', async () => {
+    const hanako = (await ctx.addStaff('佐藤 花子', 'hanako@example.com')).actor;
+    await sendTestPush(ctx.deps, taro);
+    await subscribePush(ctx.deps, hanako, { endpoint: ENDPOINT_A, ...keys });
+    expect(await ctx.drain()).toMatchObject({ done: 2 });
+    expect(ctx.webPush.attempts).toEqual([ENDPOINT_B]);
   });
 
   it('VAPID の設定が無いワーカーは送らずに完了にする', async () => {
@@ -178,14 +251,16 @@ describe('翌日の予定のお知らせ(夜間ジョブ)', () => {
   let ctx: TestContext;
   let taro: Actor;
   let hanako: Actor;
-  let jiro: Actor;
+
+  const subscriptionIdOf = (endpoint: string) =>
+    ctx.data().pushSubscriptions.find((p) => p.endpoint === endpoint)?.id;
 
   beforeEach(async () => {
     // 2026-09-26 19:00 JST
     ctx = createTestContext({ now: '2026-09-26T10:00:00Z' });
     taro = (await ctx.addStaff('山田 太郎', 'taro@example.com')).actor;
     hanako = (await ctx.addStaff('佐藤 花子', 'hanako@example.com')).actor;
-    jiro = (await ctx.addStaff('鈴木 次郎', 'jiro@example.com')).actor;
+    await ctx.addStaff('鈴木 次郎', 'jiro@example.com');
     await subscribePush(ctx.deps, taro, { endpoint: ENDPOINT_A, ...keys });
     await subscribePush(ctx.deps, hanako, { endpoint: ENDPOINT_B, ...keys });
     ctx.schedule.setAppointments('山田 太郎', '2026-09-27', [
@@ -197,18 +272,20 @@ describe('翌日の予定のお知らせ(夜間ジョブ)', () => {
 
   it('購読を持ち、明日の予定があるスタッフにだけ積む(予定の無い人・購読の無い人には送らない)', async () => {
     const summary = await runRouteNoticeJob(ctx.deps);
-    expect(summary).toMatchObject({ queued: 1, failed: 0, interrupted: false });
+    expect(summary).toMatchObject({ queued: 1, alreadyQueued: 0, failed: 0, interrupted: false });
     expect(summary.tenants[0]).toMatchObject({ date: '2026-09-27', targetCount: 2, queued: 1, noEvents: 1 });
-    // 軽量版の予定だけを読む(ルート・地図は使わない)。購読の無い鈴木さんの予定は読まない
-    expect(ctx.schedule.calls.map((c) => [c.staffName, c.date])).toEqual([
-      ['山田 太郎', '2026-09-27'],
-      ['佐藤 花子', '2026-09-27'],
+    // 軽量版の予定を strict で読む(ルート・地図は使わない)。購読の無い鈴木さんの予定は読まない
+    expect(ctx.schedule.calls.map((c) => [c.staffName, c.date, c.options?.strict])).toEqual([
+      ['山田 太郎', '2026-09-27', true],
+      ['佐藤 花子', '2026-09-27', true],
     ]);
+    const subscriptionId = subscriptionIdOf(ENDPOINT_A);
     const [message] = ctx.data().outbox;
     expect(message).toMatchObject({
       topic: 'push.route_notice',
-      aggregateId: taro.staffId,
-      dedupeKey: `push.route_notice:${taro.staffId}:2026-09-27`,
+      aggregateId: subscriptionId,
+      dedupeKey: `push.route_notice:${subscriptionId}:${taro.staffId}:2026-09-27`,
+      payload: { staffId: taro.staffId, subscriptionId, expiresAt: '2026-09-26T15:00:00.000Z' },
     });
     expect(JSON.stringify(message?.payload)).not.toContain('渋谷区');
 
@@ -222,16 +299,22 @@ describe('翌日の予定のお知らせ(夜間ジョブ)', () => {
           url: '/?schedule=2026-09-27',
           tag: 'route-notice-2026-09-27',
         },
-        options: { ttlSeconds: 24 * 60 * 60, topic: 'route-20260927' },
+        // 期限(9/27 0:00 JST)までの5時間
+        options: { ttlSeconds: 5 * 60 * 60, topic: 'route-20260927' },
       },
     ]);
-    expect(jiro.staffId).toBeTruthy();
   });
 
-  it('流し直しても同じスタッフ・同じ日には二重に積まない', async () => {
+  it('流し直しても二重に積まず「積み済み」と数える。後からオンにした端末にだけ積む', async () => {
     await runRouteNoticeJob(ctx.deps);
-    await runRouteNoticeJob(ctx.deps);
+    expect(await runRouteNoticeJob(ctx.deps)).toMatchObject({ queued: 0, alreadyQueued: 1 });
     expect(ctx.data().outbox).toHaveLength(1);
+    await subscribePush(ctx.deps, taro, { endpoint: `${ENDPOINT_A}-tablet`, ...keys });
+    expect(await runRouteNoticeJob(ctx.deps)).toMatchObject({ queued: 1, alreadyQueued: 0 });
+    expect(ctx.data().outbox.map((m) => m.aggregateId)).toEqual([
+      subscriptionIdOf(ENDPOINT_A),
+      subscriptionIdOf(`${ENDPOINT_A}-tablet`),
+    ]);
   });
 
   it('明日に退職しているスタッフには送らない', async () => {
@@ -240,17 +323,25 @@ describe('翌日の予定のお知らせ(夜間ジョブ)', () => {
     expect(ctx.data().outbox).toEqual([]);
   });
 
-  it('予定を読めなかったスタッフは失敗として数え、他のスタッフは続ける', async () => {
-    ctx.schedule.setError('佐藤 花子', '2026-09-27', 'calendar down');
+  it('予定を読めなかったスタッフは積まずに失敗とし(ジョブは失敗で終わる)、流し直すと積む', async () => {
+    ctx.schedule.setError('佐藤 花子', '2026-09-27', 'カレンダーを読み込めませんでした');
     ctx.schedule.setAppointments('佐藤 花子', '2026-09-27', [appointment('田中 一郎', '09:00', '10:00')]);
     const summary = await runRouteNoticeJob(ctx.deps);
     expect(summary).toMatchObject({ queued: 1, failed: 1 });
     expect(summary.tenants[0]?.failures).toEqual([{ staffId: hanako.staffId, error: expect.any(String) }]);
     expect(ctx.appLog.byAction('push.route_notice.staff_failed')).toHaveLength(1);
+
+    ctx.schedule.clearError('佐藤 花子', '2026-09-27');
+    expect(await runRouteNoticeJob(ctx.deps)).toMatchObject({ queued: 1, alreadyQueued: 1, failed: 0 });
   });
 
-  it('日付を指定して流し直せる・停止の合図で止まる', async () => {
-    expect(await runRouteNoticeJob(ctx.deps, { date: '2026-09-28' })).toMatchObject({ queued: 0 });
+  it('明日でない日を指定して流し直したら、タイトルは日付で、期限はその日の終わり', async () => {
+    ctx.schedule.setAppointments('山田 太郎', '2026-09-28', [appointment('田中 一郎', '09:00', '11:00')]);
+    expect(await runRouteNoticeJob(ctx.deps, { date: '2026-09-28' })).toMatchObject({ queued: 1 });
+    expect(ctx.data().outbox[0]?.payload).toMatchObject({
+      notice: { title: '9/28(月)の予定 1件' },
+      expiresAt: '2026-09-28T15:00:00.000Z',
+    });
     expect(await runRouteNoticeJob(ctx.deps, { shouldStop: () => true })).toMatchObject({
       interrupted: true,
     });

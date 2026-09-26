@@ -25,10 +25,17 @@ export function createPushRoutes(container: Container) {
     jsonOk(c, pushConfigResponseSchema, pushConfigOf(container)),
   );
 
-  /** この端末の購読を本人の購読として登録する(同じ端末の購読があれば書き直す・付け替える)。 */
+  /** この端末の購読を本人の購読として登録する(同じ端末の購読があれば書き直す・付け替える。1人10件まで)。 */
   app.post('/subscriptions', requireSession(container, 'push.subscription.save'), async (c) => {
     const body = await parseJsonBody(c, pushSubscribeRequestSchema);
     if (!body.ok) return body.response;
+    const limited = await enforceStaffQuota(
+      c,
+      container,
+      container.rateLimits.pushSubscribeStaff,
+      '通知の登録の回数が上限に達しました。しばらく待ってから再度お試しください。',
+    );
+    if (limited) return limited;
     await subscribePush(container, actorOf(c), {
       endpoint: body.data.endpoint,
       p256dh: body.data.keys.p256dh,

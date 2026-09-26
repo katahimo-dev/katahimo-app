@@ -69,6 +69,7 @@ import type { CareRecordRow, ReceiptRow, ReceiptUploadRow, StoredFileRow } from 
 import type {
   ScheduleLightResult,
   SchedulePort,
+  ScheduleRequestOptions,
   ScheduleTarget,
   ScheduleWithRouteOptions,
   ScheduleWithRouteResult,
@@ -187,6 +188,10 @@ function emptyTenantData(): TenantData {
     appLogs: [],
   };
 }
+
+/** 購読の updated_at(テストでは並びだけが要るため、触るたびに1ミリ秒ずつ進む時刻)。 */
+let pushTouch = 0;
+const touchedAt = () => new Date(Date.UTC(2026, 0, 1) + ++pushTouch);
 
 const sameBytes = (a: Uint8Array | null, b: Uint8Array | null) =>
   a !== null && b !== null && Buffer.from(a).equals(Buffer.from(b));
@@ -919,6 +924,9 @@ export function fakeRepositories(
       },
     },
     pushSubscriptions: {
+      async findById(id) {
+        return structuredClone(d().pushSubscriptions.find((p) => p.id === id) ?? null);
+      },
       async findByEndpoint(endpoint) {
         return structuredClone(d().pushSubscriptions.find((p) => p.endpoint === endpoint) ?? null);
       },
@@ -932,17 +940,28 @@ export function fakeRepositories(
             auth: input.auth,
             userAgent: input.userAgent,
             failureCount: 0,
+            updatedAt: touchedAt(),
           });
           return structuredClone(existing);
         }
         const created: PushSubscriptionRecord = {
           ...input,
           createdAt: new Date(),
+          updatedAt: touchedAt(),
           lastSuccessAt: null,
           failureCount: 0,
         };
         data.pushSubscriptions.push(created);
         return structuredClone(created);
+      },
+      async trimForStaff(staffId, keep) {
+        const data = d();
+        const own = data.pushSubscriptions
+          .filter((p) => p.staffId === staffId)
+          .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+        const removed = new Set(own.slice(keep));
+        data.pushSubscriptions = data.pushSubscriptions.filter((p) => !removed.has(p));
+        return removed.size;
       },
       async deleteForStaff(staffId, endpoint) {
         const data = d();
@@ -950,6 +969,11 @@ export function fakeRepositories(
         if (!found) return null;
         data.pushSubscriptions = data.pushSubscriptions.filter((p) => p !== found);
         return found.id;
+      },
+      async deleteAllForStaff(staffId) {
+        const before = d().pushSubscriptions.length;
+        d().pushSubscriptions = d().pushSubscriptions.filter((p) => p.staffId !== staffId);
+        return before - d().pushSubscriptions.length;
       },
       async listForStaff(staffId) {
         return structuredClone(d().pushSubscriptions.filter((p) => p.staffId === staffId));
@@ -959,11 +983,18 @@ export function fakeRepositories(
       },
       async recordSuccess(id, at) {
         const found = d().pushSubscriptions.find((p) => p.id === id);
-        if (found) Object.assign(found, { lastSuccessAt: at, failureCount: 0 });
+        if (found) Object.assign(found, { lastSuccessAt: at, failureCount: 0, updatedAt: touchedAt() });
       },
-      async recordFailure(id) {
+      async recordRetryableFailure(id) {
         const found = d().pushSubscriptions.find((p) => p.id === id);
-        if (found) found.failureCount++;
+        if (found) found.updatedAt = touchedAt();
+      },
+      async recordRejection(id) {
+        const found = d().pushSubscriptions.find((p) => p.id === id);
+        if (!found) return 0;
+        found.failureCount++;
+        found.updatedAt = touchedAt();
+        return found.failureCount;
       },
       async delete(id) {
         d().pushSubscriptions = d().pushSubscriptions.filter((p) => p.id !== id);
@@ -971,8 +1002,8 @@ export function fakeRepositories(
     },
     outbox: {
       async enqueue(message) {
-        if (db.skipOutboxTopics.has(message.topic)) return;
-        if (d().outbox.some((m) => m.dedupeKey === message.dedupeKey)) return;
+        if (db.skipOutboxTopics.has(message.topic)) return false;
+        if (d().outbox.some((m) => m.dedupeKey === message.dedupeKey)) return false;
         d().outbox.push({
           ...structuredClone(message),
           id: `msg-${d().outbox.length + 1}`,
@@ -986,6 +1017,7 @@ export function fakeRepositories(
           lastError: null,
           completedAt: null,
         });
+        return true;
       },
       async latestPayload(topic, aggregateId) {
         const last = d()
@@ -1332,12 +1364,19 @@ export class FakeSchedulePort implements SchedulePort {
     this.results.set(`${staffName}|${date}`, { success: false, message });
   }
   /** 例外(外部サービスの失敗)を投げさせる。 */
+  clearError(staffName: string, date: string): void {
+    this.errors.delete(`${staffName}|${date}`);
+  }
   setError(staffName: string, date: string, message: string): void {
     this.errors.set(`${staffName}|${date}`, message);
   }
 
-  async getSchedule(target: ScheduleTarget, dateString: string): Promise<ScheduleLightResult> {
-    const result = await this.getScheduleWithRoute(target, dateString, false);
+  async getSchedule(
+    target: ScheduleTarget,
+    dateString: string,
+    options?: ScheduleRequestOptions,
+  ): Promise<ScheduleLightResult> {
+    const result = await this.getScheduleWithRoute(target, dateString, false, options);
     return {
       success: result.success,
       appointments: (result.appointments ?? []).map((a) => ({
@@ -1367,6 +1406,8 @@ export class FakeSchedulePort implements SchedulePort {
 export class FakeWebPushSender implements WebPushSenderPort {
   /** 受け付けられた(delivered)送信。 */
   readonly sent: { endpoint: string; notice: PushNotice; options: WebPushSendOptions }[] = [];
+  /** 送ろうとした全ての endpoint(結果を問わない。順に)。 */
+  readonly attempts: string[] = [];
   private readonly outcomes = new Map<string, WebPushSendResult | Error>();
 
   /** endpoint への送信の結果(既定は delivered)。Error を渡すとその例外を投げる。 */
@@ -1379,9 +1420,10 @@ export class FakeWebPushSender implements WebPushSenderPort {
     notice: PushNotice,
     options: WebPushSendOptions,
   ): Promise<WebPushSendResult> {
-    const outcome = this.outcomes.get(target.endpoint) ?? 'delivered';
+    this.attempts.push(target.endpoint);
+    const outcome = this.outcomes.get(target.endpoint) ?? { status: 'delivered' };
     if (outcome instanceof Error) throw outcome;
-    if (outcome === 'delivered') {
+    if (outcome.status === 'delivered') {
       this.sent.push({ endpoint: target.endpoint, notice: structuredClone(notice), options });
     }
     return outcome;

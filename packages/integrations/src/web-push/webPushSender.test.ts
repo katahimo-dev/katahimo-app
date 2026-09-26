@@ -29,7 +29,7 @@ describe('WebPushSender', () => {
     const send = vi
       .spyOn(webpush, 'sendNotification')
       .mockResolvedValue({ statusCode: 201, body: '', headers: {} });
-    expect(await new WebPushSender(vapid).send(target, notice, options)).toBe('delivered');
+    expect(await new WebPushSender(vapid).send(target, notice, options)).toEqual({ status: 'delivered' });
     expect(send).toHaveBeenCalledWith(
       { endpoint: target.endpoint, keys: { p256dh: target.p256dh, auth: target.auth } },
       JSON.stringify(notice),
@@ -45,9 +45,19 @@ describe('WebPushSender', () => {
   it('404・410 は購読がもう無い(expired)', async () => {
     const sender = new WebPushSender(vapid);
     vi.spyOn(webpush, 'sendNotification').mockRejectedValueOnce(pushError(410));
-    expect(await sender.send(target, notice, options)).toBe('expired');
+    expect(await sender.send(target, notice, options)).toEqual({ status: 'expired', statusCode: 410 });
     vi.spyOn(webpush, 'sendNotification').mockRejectedValueOnce(pushError(404));
-    expect(await sender.send(target, notice, options)).toBe('expired');
+    expect(await sender.send(target, notice, options)).toEqual({ status: 'expired', statusCode: 404 });
+  });
+
+  it('それ以外の 4xx(400・401・403・413)は送り直しても直らない(rejected)。429 は再試行する', async () => {
+    const sender = new WebPushSender(vapid);
+    for (const statusCode of [400, 401, 403, 413]) {
+      vi.spyOn(webpush, 'sendNotification').mockRejectedValueOnce(pushError(statusCode));
+      expect(await sender.send(target, notice, options)).toEqual({ status: 'rejected', statusCode });
+    }
+    vi.spyOn(webpush, 'sendNotification').mockRejectedValueOnce(pushError(429));
+    await expect(sender.send(target, notice, options)).rejects.toThrow('プッシュサービスが 429 を返しました');
   });
 
   it('それ以外の失敗は例外にする(文言に endpoint を入れない)', async () => {

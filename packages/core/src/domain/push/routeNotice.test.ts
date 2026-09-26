@@ -5,12 +5,17 @@ import {
   buildRouteNotice,
   buildTestNotice,
   formatNoticeDate,
+  MAX_PUSH_TTL_SECONDS,
+  pushTtlSeconds,
   ROUTE_NOTICE_MAX_LINES,
+  routeNoticeExpiresAt,
   routeNoticeLine,
   routeNoticeTopic,
   selectRouteNoticeTargets,
   tomorrowInTimeZone,
 } from './routeNotice';
+
+const TOMORROW = { tomorrow: true };
 
 const visit = (title: string, start = '10:00', end = '12:00'): ScheduleAppointmentLight => ({
   title,
@@ -22,11 +27,15 @@ const visit = (title: string, start = '10:00', end = '12:00'): ScheduleAppointme
 
 describe('翌日の予定のお知らせの文面', () => {
   it('タイトルは「明日の予定 9/27(日) 3件」、本文は時刻と「様」付きの名前、URL は予定タブの翌日', () => {
-    const notice = buildRouteNotice('2026-09-27', [
-      visit('山田 花子', '09:00', '11:00'),
-      { ...visit('事務作業', '13:00', '14:00'), eventType: 'OFFICE WORK' },
-      visit('佐藤 一郎', '15:30', '18:00'),
-    ]);
+    const notice = buildRouteNotice(
+      '2026-09-27',
+      [
+        visit('山田 花子', '09:00', '11:00'),
+        { ...visit('事務作業', '13:00', '14:00'), eventType: 'OFFICE WORK' },
+        visit('佐藤 一郎', '15:30', '18:00'),
+      ],
+      TOMORROW,
+    );
     expect(notice).toEqual({
       title: '明日の予定 9/27(日) 3件',
       body: '09:00〜11:00 山田 花子様\n13:00〜14:00 事務作業\n15:30〜18:00 佐藤 一郎様',
@@ -36,18 +45,46 @@ describe('翌日の予定のお知らせの文面', () => {
     expect(pushNoticeSchema.safeParse(notice).success).toBe(true);
   });
 
+  it('日付を指定して流し直した(明日でない)日は「9/27(日)の予定 N件」', () => {
+    expect(buildRouteNotice('2026-09-27', [visit('山田 花子')], { tomorrow: false }).title).toBe(
+      '9/27(日)の予定 1件',
+    );
+  });
+
+  it('期限: 「明日の予定」はその日の0時(テナントの時刻帯)まで、日付のタイトルはその日の終わりまで', () => {
+    expect(routeNoticeExpiresAt('2026-09-27', 'Asia/Tokyo', true).toISOString()).toBe(
+      '2026-09-26T15:00:00.000Z',
+    );
+    expect(routeNoticeExpiresAt('2026-09-27', 'Asia/Tokyo', false).toISOString()).toBe(
+      '2026-09-27T15:00:00.000Z',
+    );
+    expect(routeNoticeExpiresAt('2026-09-27', 'UTC', true).toISOString()).toBe('2026-09-27T00:00:00.000Z');
+  });
+
+  it('TTL は期限までの残り(0以上・1日まで)', () => {
+    const expiresAt = new Date('2026-09-26T15:00:00Z');
+    expect(pushTtlSeconds(expiresAt, new Date('2026-09-26T10:00:00Z'))).toBe(5 * 60 * 60);
+    expect(pushTtlSeconds(expiresAt, new Date('2026-09-26T15:00:00Z'))).toBe(0);
+    expect(pushTtlSeconds(expiresAt, new Date('2026-09-27T00:00:00Z'))).toBe(0);
+    expect(pushTtlSeconds(expiresAt, new Date('2026-09-20T00:00:00Z'))).toBe(MAX_PUSH_TTL_SECONDS);
+  });
+
   it('住所は本文に入れない', () => {
-    expect(buildRouteNotice('2026-09-27', [visit('山田 花子')]).body).not.toContain('渋谷区');
+    expect(buildRouteNotice('2026-09-27', [visit('山田 花子')], TOMORROW).body).not.toContain('渋谷区');
   });
 
   it(`${ROUTE_NOTICE_MAX_LINES}件を超える分は最後の行を「ほか N件」にまとめる`, () => {
     const appointments = Array.from({ length: 8 }, (_, i) => visit(`顧客${i + 1}`));
-    const lines = buildRouteNotice('2026-09-27', appointments).body.split('\n');
+    const lines = buildRouteNotice('2026-09-27', appointments, TOMORROW).body.split('\n');
     expect(lines).toHaveLength(ROUTE_NOTICE_MAX_LINES);
     expect(lines.at(-1)).toBe('ほか4件');
     expect(lines[0]).toBe('10:00〜12:00 顧客1様');
     // ちょうど上限なら全て並べる
-    const exact = buildRouteNotice('2026-09-27', appointments.slice(0, ROUTE_NOTICE_MAX_LINES)).body;
+    const exact = buildRouteNotice(
+      '2026-09-27',
+      appointments.slice(0, ROUTE_NOTICE_MAX_LINES),
+      TOMORROW,
+    ).body;
     expect(exact.split('\n').at(-1)).toBe(`10:00〜12:00 顧客${ROUTE_NOTICE_MAX_LINES}様`);
   });
 

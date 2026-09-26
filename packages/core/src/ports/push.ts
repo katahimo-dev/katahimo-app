@@ -14,7 +14,10 @@ export interface PushSubscriptionRecord {
   auth: string;
   userAgent: string | null;
   createdAt: Date;
+  /** 最後に登録し直した・送った・失敗した時刻(1人あたりの上限を超えたときに古いものから消す順)。 */
+  updatedAt: Date;
   lastSuccessAt: Date | null;
+  /** プッシュサービスに断られた(404 / 410 / 429 以外の 4xx)回数の続き。成功・登録し直しで0に戻す。 */
   failureCount: number;
 }
 
@@ -29,17 +32,24 @@ export interface PushSubscriptionUpsert {
 }
 
 export interface PushSubscriptionRepository {
+  findById(id: string): Promise<PushSubscriptionRecord | null>;
   findByEndpoint(endpoint: string): Promise<PushSubscriptionRecord | null>;
   /** endpoint で登録し直す(あれば持ち主・鍵を書き換え、失敗の回数を0に戻す)。 */
   upsert(input: PushSubscriptionUpsert): Promise<PushSubscriptionRecord>;
+  /** そのスタッフの購読のうち、新しい(updated_at の遅い)keep 件を残して消す。消した数。 */
+  trimForStaff(staffId: string, keep: number): Promise<number>;
   /** そのスタッフの endpoint の購読を消す(他のスタッフの購読は消さない)。消した購読の ID(無ければ null)。 */
   deleteForStaff(staffId: string, endpoint: string): Promise<string | null>;
+  /** そのスタッフの購読を全て消す(退職)。消した数。 */
+  deleteAllForStaff(staffId: string): Promise<number>;
   listForStaff(staffId: string): Promise<PushSubscriptionRecord[]>;
   /** 購読を1つ以上持つスタッフの ID。 */
   listSubscribedStaffIds(): Promise<string[]>;
   recordSuccess(id: string, at: Date): Promise<void>;
-  recordFailure(id: string, at: Date): Promise<void>;
-  /** プッシュサービスが「もう無い」(404 / 410)と答えた購読を消す。 */
+  /** 再試行すれば直りうる失敗(5xx・429・通信)。時刻だけを残す(回数は数えない)。 */
+  recordRetryableFailure(id: string, at: Date): Promise<void>;
+  /** プッシュサービスに断られた(再試行しない)。続いた回数を1増やし、増やした後の回数を返す。 */
+  recordRejection(id: string, at: Date): Promise<number>;
   delete(id: string): Promise<void>;
 }
 
@@ -58,10 +68,14 @@ export interface WebPushSendOptions {
 }
 
 /**
- * 送った結果。delivered = プッシュサービスが受け付けた / expired = 購読がもう無い(404 / 410。消してよい)。
- * それ以外の失敗(5xx・429・通信の失敗等)は例外を投げる(outbox の再試行に任せる)。
+ * 送った結果。delivered = プッシュサービスが受け付けた / expired = 購読がもう無い(404 / 410。消してよい) /
+ * rejected = それ以外の 4xx(429 を除く。鍵・中身・購読の不整合で、送り直しても直らない)。
+ * 再試行すれば直りうる失敗(5xx・429・通信の失敗・タイムアウト)は例外を投げる(outbox の再試行に任せる)。
  */
-export type WebPushSendResult = 'delivered' | 'expired';
+export type WebPushSendResult =
+  | { status: 'delivered' }
+  | { status: 'expired'; statusCode: number }
+  | { status: 'rejected'; statusCode: number };
 
 /**
  * Web Push の送信(VAPID で署名し、RFC 8291 で暗号化して endpoint へ POST する)。実装は @katahimo/integrations の

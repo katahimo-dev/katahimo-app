@@ -335,7 +335,11 @@ export async function updateStaffByAdmin(
             await r.staffCalendars.setScheduleCalendar(staffId, input.scheduleCalendarId, newId());
           }
         }
-        if (patch.retiredOn) await r.sessions.revokeAllForStaff(staffId, currentTime(deps));
+        if (patch.retiredOn) {
+          // 退職: セッションを失効し、端末の通知の購読も消す(退職者の端末にお客様のお名前を送らない)
+          await r.sessions.revokeAllForStaff(staffId, currentTime(deps));
+          await r.pushSubscriptions.deleteAllForStaff(staffId);
+        }
         return loadView(deps, r, staffId);
       },
       { actorId: actor.staffId },

@@ -248,9 +248,9 @@ export class DrizzleOutboxWriter extends TenantBound implements OutboxWriter {
     super(tx, tenantId);
   }
 
-  async enqueue(message: OutboxMessageInput): Promise<void> {
-    if (this.skipTopics.has(message.topic)) return;
-    await this.tx
+  async enqueue(message: OutboxMessageInput): Promise<boolean> {
+    if (this.skipTopics.has(message.topic)) return false;
+    const inserted = await this.tx
       .insert(outboxMessages)
       .values({
         tenantId: this.tenantId,
@@ -262,7 +262,9 @@ export class DrizzleOutboxWriter extends TenantBound implements OutboxWriter {
         dedupeKey: message.dedupeKey,
         payload: message.payload ?? {},
       })
-      .onConflictDoNothing({ target: [outboxMessages.tenantId, outboxMessages.dedupeKey] });
+      .onConflictDoNothing({ target: [outboxMessages.tenantId, outboxMessages.dedupeKey] })
+      .returning({ id: outboxMessages.id });
+    return inserted.length > 0;
   }
 
   async latestPayload(topic: OutboxTopic, aggregateId: string): Promise<Record<string, unknown> | null> {

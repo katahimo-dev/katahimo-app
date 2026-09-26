@@ -36,7 +36,9 @@ describe('Web Push の購読(push_subscriptions)', () => {
     const endpoint = endpointOf('shared');
     await subscribePush(deps, { ...taro, meta: { userAgent: 'Android' } }, { endpoint, ...keys });
     const first = await uow.run(tenantId, (r) => r.pushSubscriptions.findByEndpoint(endpoint));
-    await uow.run(tenantId, (r) => r.pushSubscriptions.recordFailure(first?.id ?? '', new Date()));
+    expect(
+      await uow.run(tenantId, (r) => r.pushSubscriptions.recordRejection(first?.id ?? '', new Date())),
+    ).toBe(1);
 
     await subscribePush(deps, hanako, { endpoint, p256dh: 'q'.repeat(87), auth: keys.auth });
     const after = await uow.run(tenantId, (r) => r.pushSubscriptions.findByEndpoint(endpoint));
@@ -104,8 +106,37 @@ describe('Web Push の購読(push_subscriptions)', () => {
   });
 });
 
+describe('購読の上限と退職', () => {
+  it('1人の購読は新しい(updated_at の遅い)ものから keep 件だけ残し、退職で全て消せる', async () => {
+    const { tenantId, actors } = await tenantWithStaff(['山田 太郎', '佐藤 花子']);
+    const [taro, hanako] = actors as [(typeof actors)[number], (typeof actors)[number]];
+    const endpoints = [endpointOf('a'), endpointOf('b'), endpointOf('c')];
+    for (const endpoint of endpoints) {
+      await uow.run(tenantId, (r) =>
+        r.pushSubscriptions.upsert({
+          id: newId(),
+          staffId: taro.staffId,
+          endpoint,
+          userAgent: null,
+          ...keys,
+        }),
+      );
+    }
+    await subscribePush(deps, hanako, { endpoint: endpointOf('h'), ...keys });
+    // 別のトランザクションで最初の端末を使う(updated_at が新しくなる)
+    const first = await uow.run(tenantId, (r) => r.pushSubscriptions.findByEndpoint(endpoints[0] ?? ''));
+    await uow.run(tenantId, (r) => r.pushSubscriptions.recordSuccess(first?.id ?? '', new Date()));
+    expect(await uow.run(tenantId, (r) => r.pushSubscriptions.trimForStaff(taro.staffId, 2))).toBe(1);
+    const left = await uow.run(tenantId, (r) => r.pushSubscriptions.listForStaff(taro.staffId));
+    expect(left.map((p) => p.endpoint).sort()).toEqual([endpoints[0], endpoints[2]].sort());
+
+    expect(await uow.run(tenantId, (r) => r.pushSubscriptions.deleteAllForStaff(taro.staffId))).toBe(2);
+    expect(await count(tenantId, sql`select count(*) as n from push_subscriptions`)).toBe(1);
+  });
+});
+
 describe('お知らせの積み込み(outbox)', () => {
-  it('夜間ジョブを流し直しても、スタッフ × 日付で1件だけ積む。テスト通知は押すたびに積む', async () => {
+  it('夜間ジョブを流し直しても、端末 × スタッフ × 日付で1件だけ積む(積み済みと数える)。テスト通知は押すたびに積む', async () => {
     const { tenantId, actors } = await tenantWithStaff(['山田 太郎']);
     const [taro] = actors as [(typeof actors)[number]];
     await subscribePush(deps, taro, { endpoint: endpointOf('dedupe'), ...keys });
@@ -144,8 +175,8 @@ describe('お知らせの積み込み(outbox)', () => {
       },
       now: () => new Date('2026-09-26T10:00:00Z'),
     };
-    expect(await runRouteNoticeJob(jobDeps)).toMatchObject({ queued: 1, failed: 0 });
-    expect(await runRouteNoticeJob(jobDeps)).toMatchObject({ queued: 1, failed: 0 });
+    expect(await runRouteNoticeJob(jobDeps)).toMatchObject({ queued: 1, alreadyQueued: 0, failed: 0 });
+    expect(await runRouteNoticeJob(jobDeps)).toMatchObject({ queued: 0, alreadyQueued: 1, failed: 0 });
     expect(
       await count(tenantId, sql`select count(*) as n from outbox_messages where topic = 'push.route_notice'`),
     ).toBe(1);

@@ -66,7 +66,9 @@ export class GoogleSchedulePort implements SchedulePort {
     options?: ScheduleRequestOptions,
   ): Promise<ScheduleLightResult> {
     const query = parseQuery(target, dateString, options);
-    const { staff, appointments } = await this.loadStaffAppointments(query, { strict: false });
+    const { staff, appointments } = await this.loadStaffAppointments(query, {
+      strict: options?.strict === true,
+    });
     return {
       success: true,
       date: query.date,

@@ -1,4 +1,4 @@
-import { newId, outboxDedupeKey } from '@katahimo/core/domain';
+import { formatNoticeDate, newId, outboxDedupeKey, tomorrowInTimeZone } from '@katahimo/core/domain';
 import type { TenantDirectoryPort } from '@katahimo/core/ports';
 import {
   FakeAppLogPort,
@@ -181,11 +181,30 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
     await subscribePush(pushDeps, actor, { endpoint: okEndpoint, ...keys });
     await subscribePush(pushDeps, actor, { endpoint: goneEndpoint, ...keys });
     const webPush = new FakeWebPushSender();
-    webPush.setOutcome(goneEndpoint, 'expired');
-    const notices = await runRouteNoticeJob(
-      { uow: workerUow, appLog, schedule, tenants: onlyThisTenant },
-      { date: '2026-09-24' },
-    );
+    webPush.setOutcome(goneEndpoint, { status: 'expired', statusCode: 410 });
+    // 期限(明日の0時)があるため、実際の明日のお知らせで確かめる
+    const tomorrow = tomorrowInTimeZone(new Date(), tenant.timezone);
+    schedule.setAppointments('山田 太郎', tomorrow, [
+      {
+        eventType: 'CUSTOMER APPOINTMENT',
+        customerName: '佐藤 花子',
+        startTime: '09:00',
+        endTime: '12:00',
+        reservaUrl: '',
+        moveUrl: '',
+        moveMin: '',
+        moveKm: '',
+        attendanceUrl: '',
+        attendanceMin: '',
+        attendanceKm: '',
+        leavingUrl: '',
+        leavingMin: '',
+        leavingKm: '',
+        customerId: '',
+        address: '',
+      },
+    ]);
+    const notices = await runRouteNoticeJob({ uow: workerUow, appLog, schedule, tenants: onlyThisTenant });
     expect(notices).toMatchObject({ queued: 1, failed: 0, interrupted: false });
 
     // ── outbox(ミラー4種・再設定メール) ──
@@ -216,7 +235,7 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
     expect(mailer.sent.some((m) => m.to === 'taro@example.com')).toBe(true);
     expect(
       webPush.sent.filter((p) => p.endpoint.endsWith(tenantId)).map((p) => [p.endpoint, p.notice.title]),
-    ).toEqual([[okEndpoint, '明日の予定 9/24(木) 1件']]);
+    ).toEqual([[okEndpoint, `明日の予定 ${formatNoticeDate(tomorrow)} 1件`]]);
     // もう無い購読(410)はワーカーが消し、届いた購読には成功の時刻が残る
     const subscriptions = await appUow.run(tenantId, (r) => r.pushSubscriptions.listForStaff(staffId));
     expect(subscriptions).toEqual([expect.objectContaining({ endpoint: okEndpoint, failureCount: 0 })]);

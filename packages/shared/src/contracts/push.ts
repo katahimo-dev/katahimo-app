@@ -81,7 +81,8 @@ export type PushTestResponse = z.infer<typeof pushTestResponseSchema>;
 export const pushNoticeSchema = z.object({
   title: z.string().min(1).max(100),
   body: z.string().max(1000),
-  url: z.string().startsWith('/'),
+  // 同じオリジンのパスだけ(`//host` のようなオリジンをまたぐ URL にしない)
+  url: z.string().regex(/^\/(?!\/)/),
   tag: z.string().min(1).max(64),
 });
 export type PushNotice = z.infer<typeof pushNoticeSchema>;
