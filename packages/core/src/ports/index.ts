@@ -8,6 +8,7 @@ export * from './customers';
 export * from './googleCalendar';
 export * from './imports';
 export * from './integrations';
+export * from './legacyImport';
 export * from './mailer';
 export * from './maintenance';
 export * from './maps';

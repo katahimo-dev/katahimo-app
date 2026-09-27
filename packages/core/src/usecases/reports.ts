@@ -318,7 +318,8 @@ async function enqueuePsiAlerts(
 /** 管理者への PSI の知らせを端末に届けるまで待つ時間(過ぎたら送らない)。 */
 const PSI_ALERT_VALID_MS = 24 * 60 * 60 * 1000;
 
-function servicePeriodOf(date: string | undefined, start: string, end: string, timeZone: string) {
+/** 日報の訪問の時間帯(訪問日の開始〜終了。終了が開始以前なら翌日の終了。日付・時刻が無ければ null)。 */
+export function servicePeriodOf(date: string | undefined, start: string, end: string, timeZone: string) {
   const s = parseTimeToMinutes(start);
   const e = parseTimeToMinutes(end);
   if (!date || s === null || e === null) return null;

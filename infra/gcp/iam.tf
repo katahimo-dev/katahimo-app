@@ -4,6 +4,9 @@
 #   - 各スタッフのカレンダー(とテナントの共有カレンダー。pnpm tenant:calendars)を katahimo-api / katahimo-worker の
 #     メールアドレスに「予定の表示(すべての予定の詳細)」で共有する
 #   - 顧客CSVの Drive フォルダ(テナントごと。pnpm tenant:customer-source)を同じ2つに「閲覧者」で共有する
+#   - GAS版からの移行の取込(pnpm import:legacy-reports / import:legacy-receipts)をサービスアカウントで流す場合は、GAS版の
+#     スプレッドシート2つと領収書の画像のフォルダを katahimo-api に「閲覧者」で共有する(領収書の画像を書く GCS の権限を
+#     持つのは api だけ。運用担当者が一時的に成り代わる。doc/09_移行計画.md 2.4)
 # (ドメイン全体の委任 GOOGLE_CALENDAR_IMPERSONATE は SA キーが必要になるため使わない。doc/07_インフラ・運用.md 3.4)
 
 resource "google_service_account" "api" {

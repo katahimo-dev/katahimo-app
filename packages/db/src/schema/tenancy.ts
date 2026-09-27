@@ -91,8 +91,9 @@ export const tenantSecrets = pgTable(
 ).enableRLS();
 
 /**
- * 取込の実行記録(顧客CSV・スタッフ台帳)。最後に適用した顧客CSVの版は、source='reserva_csv' で
- * status='applied' の最新行の file_version。
+ * 取込の実行記録(顧客CSV・スタッフ台帳・日報AIのマスター・GAS版のスプレッドシートからの移行)。最後に適用した
+ * 顧客CSVの版は、source='reserva_csv' で status='applied' の最新行の file_version。GAS版からの移行の取込は
+ * file_name に読んだスプレッドシートの ID を入れる。
  */
 export const importRuns = pgTable(
   'import_runs',

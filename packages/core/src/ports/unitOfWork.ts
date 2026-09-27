@@ -12,6 +12,7 @@ import type {
 } from './customers';
 import type { ImportRunRepository } from './imports';
 import type { IntegrationApiKeyRepository } from './integrations';
+import type { LegacyImportRepository } from './legacyImport';
 import type { TenantRetentionRepository } from './maintenance';
 import type { EntityChangeWriter, OutboxWriter } from './outbox';
 import type { PushSubscriptionRepository } from './push';
@@ -57,6 +58,8 @@ export interface TenantRepositories {
   customerReportProfiles: CustomerReportProfileRepository;
   reportAiGenerations: ReportAiGenerationRepository;
   importRuns: ImportRunRepository;
+  /** GAS版のスプレッドシートから取り込んだ行と記録の対応(移行の取込だけが使う)。 */
+  legacyImports: LegacyImportRepository;
   integrationApiKeys: IntegrationApiKeyRepository;
   staffCalendars: StaffCalendarRepository;
   busyBlocks: StaffBusyBlockRepository;

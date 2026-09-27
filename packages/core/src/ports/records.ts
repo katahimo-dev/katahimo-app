@@ -205,6 +205,8 @@ export interface ReceiptRepository {
    * (同時の登録を含め)何もせず false(INSERT … ON CONFLICT DO NOTHING)。代表でない行はそのまま登録する。
    */
   insertIfNew(input: NewReceiptInput): Promise<boolean>;
+  /** 同じ dedupe_hash の取消していない代表の領収書の ID(無ければ null)。 */
+  findActivePrimaryByDedupeHash(dedupeHash: Uint8Array): Promise<string | null>;
   findById(id: string): Promise<ReceiptRow | null>;
   /** その束で最初に登録した領収書か(申し送りを送る行を決める)。 */
   isFirstOfUpload(receipt: Pick<ReceiptRow, 'id' | 'uploadId'>): Promise<boolean>;

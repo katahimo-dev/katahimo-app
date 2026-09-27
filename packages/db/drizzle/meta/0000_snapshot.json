@@ -6374,6 +6374,191 @@
       },
       "isRLSEnabled": true
     },
+    "public.legacy_imported_rows": {
+      "name": "legacy_imported_rows",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_key": {
+          "name": "source_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "care_record_id": {
+          "name": "care_record_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "receipt_id": {
+          "name": "receipt_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_digest": {
+          "name": "source_digest",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "synced_row_version": {
+          "name": "synced_row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "import_run_id": {
+          "name": "import_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "legacy_imported_rows_tenant_id_fkey": {
+          "name": "legacy_imported_rows_tenant_id_fkey",
+          "tableFrom": "legacy_imported_rows",
+          "tableTo": "tenants",
+          "schemaTo": "platform",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "legacy_imported_rows_tenant_id_care_record_id_fkey": {
+          "name": "legacy_imported_rows_tenant_id_care_record_id_fkey",
+          "tableFrom": "legacy_imported_rows",
+          "tableTo": "care_records",
+          "columnsFrom": [
+            "tenant_id",
+            "care_record_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "legacy_imported_rows_tenant_id_receipt_id_fkey": {
+          "name": "legacy_imported_rows_tenant_id_receipt_id_fkey",
+          "tableFrom": "legacy_imported_rows",
+          "tableTo": "receipts",
+          "columnsFrom": [
+            "tenant_id",
+            "receipt_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "legacy_imported_rows_tenant_id_import_run_id_fkey": {
+          "name": "legacy_imported_rows_tenant_id_import_run_id_fkey",
+          "tableFrom": "legacy_imported_rows",
+          "tableTo": "import_runs",
+          "columnsFrom": [
+            "tenant_id",
+            "import_run_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "legacy_imported_rows_pkey": {
+          "name": "legacy_imported_rows_pkey",
+          "columns": [
+            "tenant_id",
+            "source",
+            "source_key"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "legacy_imported_rows_tenant_id_care_record_id_key": {
+          "name": "legacy_imported_rows_tenant_id_care_record_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "care_record_id"
+          ]
+        },
+        "legacy_imported_rows_tenant_id_receipt_id_key": {
+          "name": "legacy_imported_rows_tenant_id_receipt_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "receipt_id"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "tenant_id = app_current_tenant()",
+          "withCheck": "tenant_id = app_current_tenant()"
+        }
+      },
+      "checkConstraints": {
+        "legacy_imported_rows_source_check": {
+          "name": "legacy_imported_rows_source_check",
+          "value": "\"legacy_imported_rows\".\"source\" in ('gas_daily_report', 'gas_accident_report', 'gas_receipt')"
+        },
+        "legacy_imported_rows_target_check": {
+          "name": "legacy_imported_rows_target_check",
+          "value": "case when \"legacy_imported_rows\".\"source\" = 'gas_receipt' then \"legacy_imported_rows\".\"receipt_id\" is not null and \"legacy_imported_rows\".\"care_record_id\" is null else \"legacy_imported_rows\".\"care_record_id\" is not null and \"legacy_imported_rows\".\"receipt_id\" is null end"
+        },
+        "legacy_imported_rows_source_key_check": {
+          "name": "legacy_imported_rows_source_key_check",
+          "value": "\"legacy_imported_rows\".\"source_key\" <> ''"
+        }
+      },
+      "isRLSEnabled": true
+    },
     "public.receipt_uploads": {
       "name": "receipt_uploads",
       "schema": "",
@@ -10647,7 +10832,7 @@
       "checkConstraints": {
         "import_runs_source_check": {
           "name": "import_runs_source_check",
-          "value": "\"import_runs\".\"source\" in ('reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx')"
+          "value": "\"import_runs\".\"source\" in ('reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx', 'legacy_reports_sheet', 'legacy_receipts_sheet')"
         },
         "import_runs_status_check": {
           "name": "import_runs_status_check",
