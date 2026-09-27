@@ -70,20 +70,11 @@ function assertHeader(sheet: LegacySheet, label: string): void {
 }
 
 /**
- * 行を指すキー(日時・担当・顧客ID(・開始時刻))。GAS版の上書き保存(同じ行の書き換え)で変わらない列だけから作り、
- * 行番号・本文は入れない。同じキーの行が複数ある(同じ訪問の日報を2回新しく保存した)ときは、上から2つ目以降に
- * '#2' '#3' … を付ける(GAS版は行を消さず末尾に足すだけのため、順番は変わらない)。
+ * 行の内容のキー(日時・担当・顧客ID(・開始時刻))。行はシートの行番号で指し(GAS版は行を末尾に足すか行番号で上書き
+ * するだけ)、このキーは行が動いた(シートの行を消した・並べ替えた)ことを見つけるために使う。同じ訪問の日報を2回
+ * 新しく保存した行は同じキーになる。
  */
-class SourceKeys {
-  private readonly seen = new Map<string, number>();
-
-  next(parts: readonly string[]): string {
-    const base = JSON.stringify(parts);
-    const n = (this.seen.get(base) ?? 0) + 1;
-    this.seen.set(base, n);
-    return n === 1 ? base : `${base}#${n}`;
-  }
-}
+const sourceKeyOf = (parts: readonly string[]) => JSON.stringify(parts);
 
 interface CommonCells {
   rowNumber: number;
@@ -130,7 +121,6 @@ function readRows<T>(
 /** GAS版の「日報」シートを読む。 */
 export function parseDailyReportSheet(sheet: LegacySheet): LegacySheetRows<LegacyDailyReportRow> {
   assertHeader(sheet, '日報');
-  const keys = new SourceKeys();
   const source = 'gas_daily_report';
   return readRows(sheet, source, DAILY_COLUMNS, (cells, common, issues) => {
     const time = (index: number) => {
@@ -149,7 +139,7 @@ export function parseDailyReportSheet(sheet: LegacySheet): LegacySheetRows<Legac
     return {
       source,
       ...common,
-      sourceKey: keys.next([
+      sourceKey: sourceKeyOf([
         common.timestamp,
         normalizeStaffName(common.staffName),
         common.customerExternalId,
@@ -171,15 +161,14 @@ export function parseDailyReportSheet(sheet: LegacySheet): LegacySheetRows<Legac
 /** GAS版の「事故報告」シート(事故報告・ヒヤリハット)を読む。 */
 export function parseAccidentReportSheet(sheet: LegacySheet): LegacySheetRows<LegacyAccidentReportRow> {
   assertHeader(sheet, '事故報告');
-  const keys = new SourceKeys();
   const source = 'gas_accident_report';
   return readRows(sheet, source, ACCIDENT_COLUMNS, (cells, common) => {
     const text = (index: number) => cellText(cellAt(cells, index));
     return {
       source,
       ...common,
-      // 事故報告の日時は GAS版の保存の時刻(上書き保存でも変わる)。開始時刻の列は無い
-      sourceKey: keys.next([
+      // 事故報告の日時は GAS版の保存の時刻(上書き保存でも変わる。行は行番号で指すため、同じ記録を直す)。開始時刻の列は無い
+      sourceKey: sourceKeyOf([
         common.timestamp,
         normalizeStaffName(common.staffName),
         common.customerExternalId,

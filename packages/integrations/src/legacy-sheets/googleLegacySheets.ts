@@ -106,13 +106,59 @@ export class GoogleLegacySpreadsheetReader implements LegacySpreadsheetPort {
   }
 }
 
-/** 領収書の画像を Drive API で読む(移行の取込)。 */
+/** Drive API の一時的な失敗を読み直す回数と間隔(1回目の待ち。2回目からは倍にする)。 */
+export interface LegacyDriveRetryOptions {
+  attempts: number;
+  baseDelayMs: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** 5回まで(1・2・4・8秒待つ)。 */
+export const LEGACY_DRIVE_RETRY: LegacyDriveRetryOptions = { attempts: 5, baseDelayMs: 1000 };
+
+/** 回数の上限の 403(Drive API は 429 のほかに 403 userRateLimitExceeded・rateLimitExceeded も返す)。 */
+const RATE_LIMIT_REASONS = new Set(['userRateLimitExceeded', 'rateLimitExceeded']);
+
+function reasonsOf(error: unknown): string[] {
+  const e = error as {
+    errors?: { reason?: unknown }[];
+    response?: { data?: { error?: { errors?: { reason?: unknown }[] } } };
+  } | null;
+  const errors = e?.errors ?? e?.response?.data?.error?.errors ?? [];
+  return Array.isArray(errors) ? errors.map((x) => String(x?.reason ?? '')) : [];
+}
+
+/** 待って読み直せば読めるかもしれない失敗(429・5xx・回数の上限の 403)。 */
+export function isTransientDriveError(error: unknown): boolean {
+  const status = statusOf(error);
+  if (status === 429 || (status !== null && status >= 500)) return true;
+  return status === 403 && reasonsOf(error).some((reason) => RATE_LIMIT_REASONS.has(reason));
+}
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** 領収書の画像を Drive API で読む(移行の取込)。一時的な失敗は間隔を倍にしながら読み直す。 */
 export class GoogleLegacyDriveFiles implements LegacyDriveFilePort {
-  constructor(private readonly api: LegacyDriveApi) {}
+  constructor(
+    private readonly api: LegacyDriveApi,
+    private readonly retry: LegacyDriveRetryOptions = LEGACY_DRIVE_RETRY,
+  ) {}
+
+  private async withRetry<T>(call: () => Promise<T>): Promise<T> {
+    const sleep = this.retry.sleep ?? defaultSleep;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await call();
+      } catch (error) {
+        if (attempt >= this.retry.attempts || !isTransientDriveError(error)) throw error;
+        await sleep(this.retry.baseDelayMs * 2 ** (attempt - 1));
+      }
+    }
+  }
 
   async getFile(fileId: string): Promise<LegacyDriveFile | null> {
     try {
-      const file = await this.api.getFile(fileId);
+      const file = await this.withRetry(() => this.api.getFile(fileId));
       const size = file.size === undefined || file.size === null ? null : Number(file.size);
       return {
         id: file.id ?? fileId,
@@ -129,7 +175,7 @@ export class GoogleLegacyDriveFiles implements LegacyDriveFilePort {
   }
 
   async download(fileId: string): Promise<Uint8Array> {
-    return new Uint8Array(await this.api.download(fileId));
+    return new Uint8Array(await this.withRetry(() => this.api.download(fileId)));
   }
 }
 

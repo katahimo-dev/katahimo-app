@@ -6390,6 +6390,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "row_number": {
+          "name": "row_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
         "source_key": {
           "name": "source_key",
           "type": "text",
@@ -6441,7 +6447,57 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "legacy_imported_rows_tenant_id_source_source_key_idx": {
+          "name": "legacy_imported_rows_tenant_id_source_source_key_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "legacy_imported_rows_tenant_id_receipt_source_key_key": {
+          "name": "legacy_imported_rows_tenant_id_receipt_source_key_key",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "source = 'gas_receipt'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "legacy_imported_rows_tenant_id_fkey": {
           "name": "legacy_imported_rows_tenant_id_fkey",
@@ -6509,7 +6565,7 @@
           "columns": [
             "tenant_id",
             "source",
-            "source_key"
+            "row_number"
           ]
         }
       },
@@ -6555,6 +6611,10 @@
         "legacy_imported_rows_source_key_check": {
           "name": "legacy_imported_rows_source_key_check",
           "value": "\"legacy_imported_rows\".\"source_key\" <> ''"
+        },
+        "legacy_imported_rows_row_number_check": {
+          "name": "legacy_imported_rows_row_number_check",
+          "value": "\"legacy_imported_rows\".\"row_number\" >= 2"
         }
       },
       "isRLSEnabled": true

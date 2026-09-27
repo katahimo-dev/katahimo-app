@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import {
   addIsoDays,
   CARE_RECORD_BODY_SCHEMA_VERSION,
@@ -55,7 +56,7 @@ export interface LegacyReportImportResult {
   counts: Record<'gas_daily_report' | 'gas_accident_report', LegacyImportCounts>;
   /** 行ごとの結果(出どころ・行番号の順)。 */
   issues: LegacyRowIssue[];
-  /** 取込済みの記録のうち、今回のシートに行が無かったもの。 */
+  /** 取込済みの記録のうち、今回のシートでその行番号が空・シートの外だったもの(シートで行を消した)。 */
   missingFromSheet: { source: LegacyImportRowSource; careRecordId: string }[];
 }
 
@@ -73,7 +74,7 @@ interface ImportContext {
   log: IssueLog;
 }
 
-/** 行から作る記録の値(担当・顧客は行のキーの一部なので、上書きでは変えない)。 */
+/** 行から作る記録の値(担当・顧客は上書きでは変えない。違えば別の行として row_conflict)。 */
 interface PlannedRecord {
   recordType: CareRecordType;
   occurredAt: Date;
@@ -112,13 +113,14 @@ function plannedRecordOf(row: LegacyReportRow, timeZone: string): PlannedRecord 
 
 const sameInstant = (a: Date | null | undefined, b: Date | null | undefined) => a?.getTime() === b?.getTime();
 
-/** 記録が行から作る値と同じか(本文・評価・種類・訪問の時間帯)。 */
+/** 記録が行から作る値と同じか(本文・評価・種類・日時・訪問の時間帯。本文は jsonb のためキーの順番は見ない)。 */
 function sameAsPlanned(record: CareRecordRow, planned: PlannedRecord): boolean {
   return (
     record.recordType === planned.recordType &&
     record.riskRating === planned.riskRating &&
     record.esRating === planned.esRating &&
-    JSON.stringify(record.body) === JSON.stringify(planned.body) &&
+    isDeepStrictEqual(record.body, planned.body) &&
+    sameInstant(record.occurredAt, planned.occurredAt) &&
     sameInstant(record.servicePeriod?.start, planned.servicePeriod?.start) &&
     sameInstant(record.servicePeriod?.end, planned.servicePeriod?.end)
   );
@@ -128,11 +130,14 @@ function sameAsPlanned(record: CareRecordRow, planned: PlannedRecord): boolean {
  * GAS版の「日報」「事故報告」シートの行を care_records に取り込む(移行の取込。`pnpm import:legacy-reports`)。
  *
  * - 全ての行を取り込む。本アプリからのミラーの行(KatahimoReportId のある行)は読む側(ingestion)が除いている。
- * - 行を指すキー(シート・日時・担当・顧客ID・開始時刻)で legacy_imported_rows と突き合わせ、同じ行は2回作らない
- *   (何度流してもよい)。取込済みの行は、行の内容の SHA-256 が変わっていなければ何もしない。変わっていれば
- *   (GAS版で上書き保存された)記録の本文・評価を直す(提出済みの記録なので、変更前の本文はトリガーが
- *   care_record_revisions に残す)。確定済み(locked)の記録と、取込の後に本アプリで直された記録(版が取込の書いた版と
- *   違う)は直さずに skipped にする。
+ * - 行はシートの行番号で legacy_imported_rows と突き合わせ、同じ行は2回作らない(何度流してもよい)。GAS版は行を
+ *   末尾に足すか行番号で上書きするだけで、行を消さない・並べ替えないため、上書き保存で日時(事故報告は保存の時刻)・
+ *   開始時刻が変わっても同じ記録を指す。取込済みの行は、行の内容のキーと SHA-256 が変わっていなければ何もしない。
+ *   変わっていれば(GAS版で上書き保存された)、担当・顧客が同じなら記録の本文・評価・日時を直す(提出済みの記録なので、
+ *   変更前の本文はトリガーが care_record_revisions に残す)。担当・顧客が違えば別の行に置き換わっている(row_conflict)。
+ *   確定済み(locked)の記録と、取込の後に本アプリで直された記録(版が取込の書いた版と違う)は直さずに skipped にする。
+ * - 行の内容のキー(日時・担当・顧客ID・開始時刻)は念のための確かめに使う: 取込済みの行の内容が別の行番号に
+ *   動いている(シートの行を消した・並べ替えた)行は、動いた先・元の両方を取り込まない(row_moved)。
  * - 担当はスタッフの氏名(空白の違いは無視。退職したスタッフも含む)、顧客は RESERVA の顧客ID で探す。見つからない行は
  *   取り込まない(error)。記録には顧客が要る。
  * - 記録は提出済み(submitted)。日報の対象のお子様は、世帯のお子様が1人ならその子(画面で保存したときと同じ)。
@@ -186,24 +191,32 @@ export async function importLegacyReportRows(
       ['gas_accident_report', input.accident],
     ] as const) {
       const rows: LegacyReportRow[] = sheet.rows;
+      const imported = await deps.uow.run(tenantId, (r) => r.legacyImports.listBySource(source));
+      const moved = movedRowNumbersOf(rows, imported);
       for (const batch of chunksOf(rows, LEGACY_REPORT_BATCH_SIZE)) {
         await deps.uow.run(tenantId, async (r) => {
           if (!dryRun) await r.legacyImports.lockTenantLegacyImports();
           const links = new Map(
             (
-              await r.legacyImports.findBySourceKeys(
+              await r.legacyImports.findByRowNumbers(
                 source,
-                batch.map((row) => row.sourceKey),
+                batch.map((row) => row.rowNumber),
               )
-            ).map((link) => [link.sourceKey, link]),
+            ).map((link) => [link.rowNumber, link]),
           );
-          for (const row of batch) await importRow(r, ctx, row, links.get(row.sourceKey) ?? null);
+          for (const row of batch) {
+            if (moved.has(row.rowNumber)) log.add(row.source, row.rowNumber, 'row_moved');
+            else await importRow(r, ctx, row, links.get(row.rowNumber) ?? null);
+          }
         });
       }
-      const seen = new Set(sheet.rows.map((row) => row.sourceKey));
-      const imported = await deps.uow.run(tenantId, (r) => r.legacyImports.listBySource(source));
+      // 取込済みの行番号が今のシートで空の行・シートの外(行を消した)
+      const present = new Set([
+        ...rows.map((row) => row.rowNumber),
+        ...sheet.issues.filter((issue) => issue.source === source).map((issue) => issue.rowNumber),
+      ]);
       for (const link of imported) {
-        if (seen.has(link.sourceKey) || !link.careRecordId) continue;
+        if (present.has(link.rowNumber) || !link.careRecordId) continue;
         missingFromSheet.push({ source, careRecordId: link.careRecordId });
         counts[source].missingFromSheet++;
       }
@@ -222,15 +235,15 @@ export async function importLegacyReportRows(
     await deps.uow.run(tenantId, (r) =>
       r.importRuns.finish(runId, { status: 'applied', counts: flattenCounts(counts), message: null }),
     );
+    const hasProblems = Object.values(counts).some((c) => c.errors > 0 || c.missingFromSheet > 0);
+    await deps.appLog.write({
+      tenantId,
+      level: hasProblems ? 'WARN' : 'INFO',
+      action: 'legacy_import.reports.done',
+      actorType: 'system',
+      details: { runId, counts: flattenCounts(counts) },
+    });
   }
-  const hasProblems = Object.values(counts).some((c) => c.errors > 0 || c.missingFromSheet > 0);
-  await deps.appLog.write({
-    tenantId,
-    level: hasProblems ? 'WARN' : 'INFO',
-    action: 'legacy_import.reports.done',
-    actorType: 'system',
-    details: { runId: dryRun ? null : runId, dryRun, counts: flattenCounts(counts) },
-  });
   return {
     dryRun,
     runId: dryRun ? null : runId,
@@ -238,6 +251,33 @@ export async function importLegacyReportRows(
     issues: sortIssues(log.issues),
     missingFromSheet,
   };
+}
+
+/**
+ * 取込済みの行の内容が別の行番号に動いたと見られる行番号(動いた先と元の両方)。取込済みの行番号の今の行の内容のキーが
+ * 取り込んだときと違い、取り込んだときのキーが別の行(その行番号で同じキーを取り込んでいない行)にあれば、行が動いた
+ * (シートの行を消した・並べ替えた)とみる。キーが変わっただけ(日時・開始時刻を直した)なら、その行番号の記録を直す。
+ */
+export function movedRowNumbersOf(
+  rows: readonly { rowNumber: number; sourceKey: string }[],
+  imported: readonly { rowNumber: number; sourceKey: string }[],
+): Set<number> {
+  const keyAt = new Map(rows.map((row) => [row.rowNumber, row.sourceKey]));
+  const importedKeyAt = new Map(imported.map((link) => [link.rowNumber, link.sourceKey]));
+  const rowsByKey = new Map<string, number[]>();
+  for (const row of rows)
+    rowsByKey.set(row.sourceKey, [...(rowsByKey.get(row.sourceKey) ?? []), row.rowNumber]);
+  const moved = new Set<number>();
+  for (const link of imported) {
+    if (keyAt.get(link.rowNumber) === link.sourceKey) continue;
+    const elsewhere = (rowsByKey.get(link.sourceKey) ?? []).filter(
+      (n) => n !== link.rowNumber && importedKeyAt.get(n) !== link.sourceKey,
+    );
+    if (elsewhere.length === 0) continue;
+    moved.add(link.rowNumber);
+    for (const n of elsewhere) moved.add(n);
+  }
+  return moved;
 }
 
 async function importRow(
@@ -280,6 +320,7 @@ async function importRow(
       });
       await r.legacyImports.save({
         source: row.source,
+        rowNumber: row.rowNumber,
         sourceKey: row.sourceKey,
         careRecordId: saved.id,
         receiptId: null,
@@ -292,12 +333,16 @@ async function importRow(
     return;
   }
 
-  if (sameDigest(link.sourceDigest, digest)) {
+  if (link.sourceKey === row.sourceKey && sameDigest(link.sourceDigest, digest)) {
     counts.unchanged++;
     return;
   }
   const record = link.careRecordId ? await r.careRecords.findById(link.careRecordId) : null;
   if (!record) return ctx.log.add(row.source, row.rowNumber, 'record_missing');
+  // 同じ行番号に別の担当・顧客の行がある(行を消した・並べ替えた・書き換えた。GAS版はしない)
+  if (record.authorStaffId !== staff.staffId || record.customerId !== customer.customerId) {
+    return ctx.log.add(row.source, row.rowNumber, 'row_conflict');
+  }
   if (record.status === 'locked') return ctx.log.add(row.source, row.rowNumber, 'locked');
   if (record.rowVersion !== link.syncedRowVersion) {
     return ctx.log.add(row.source, row.rowNumber, 'edited_in_app');
@@ -305,7 +350,12 @@ async function importRow(
   if (sameAsPlanned(record, planned)) {
     // 行の読み方だけが変わった(記録は同じ)。次から比べる内容を今の行にする
     if (!ctx.dryRun) {
-      await r.legacyImports.save({ ...link, sourceDigest: digest, importRunId: ctx.runId });
+      await r.legacyImports.save({
+        ...link,
+        sourceKey: row.sourceKey,
+        sourceDigest: digest,
+        importRunId: ctx.runId,
+      });
     }
     counts.unchanged++;
     return;
@@ -317,6 +367,7 @@ async function importRow(
         record.id,
         {
           recordType: planned.recordType,
+          occurredAt: planned.occurredAt,
           servicePeriod: planned.servicePeriod,
           riskRating: planned.riskRating,
           esRating: planned.esRating,
@@ -334,6 +385,7 @@ async function importRow(
     }
     await r.legacyImports.save({
       ...link,
+      sourceKey: row.sourceKey,
       sourceDigest: digest,
       syncedRowVersion: saved.rowVersion,
       importRunId: ctx.runId,

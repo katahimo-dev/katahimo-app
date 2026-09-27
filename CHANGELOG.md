@@ -94,10 +94,13 @@
 - GAS版のスプレッドシートからの移行の取込(運用担当者のコマンド): `pnpm import:legacy-reports`(「日報」「事故報告」シートの全ての行 →
   日報・事故報告・ヒヤリハット)と `pnpm import:legacy-receipts`(「領収書一覧」の指定の月の行 → 領収書と画像)。Google Sheets API・Drive API
   で直接読み(読むだけ。運用担当者本人の ADC か、GAS版 Ver. 1.1.39 の `MigrationShare.js` で共有した `katahimo-api` のサービスアカウント)、
-  スプレッドシートの ID は引数で渡す(GAS版の `Config.js`)。何度流してもよく(取り込んだ行と記録の対応の表 `legacy_imported_rows`)、
-  2回目以降はシートで直された報告だけを直す(確定済み・取込の後に新版で直された記録は直さない。領収書は直さない)。本アプリからの
-  ミラーの行(`KatahimoReportId` / `KatahimoReceiptId`)と、本アプリで登録済みの同じ内容の領収書は取り込まない。ミラー・通知は積まない。
-  `--dry-run` で件数と行ごとの結果(行番号と理由のコードだけ)を確かめられる。`import_runs` の `legacy_reports_sheet` /
+  スプレッドシートの ID は引数で渡す(GAS版の `Config.js`)。何度流してもよく(取り込んだ行と記録の対応の表 `legacy_imported_rows`。
+  報告の行はシートの行番号で、領収書は画像のファイル ID で覚えるため、最後の取込までシートの行を並べ替え・消さない。行が動いた・
+  置き換わった行は `row_moved` / `row_conflict` として取り込まない)、2回目以降はシートで直された報告だけを直す(日時が変わった上書き保存も
+  同じ記録を直す。確定済み・取込の後に新版で直された記録は直さない。領収書は直さない)。本アプリからのミラーの行(`KatahimoReportId` /
+  `KatahimoReceiptId`)と、本アプリで登録済みの同じ内容の領収書(日時は画面の登録と同じ分までの形で突き合わせる)は取り込まない。
+  ミラー・通知は積まない。`--dry-run` で件数と行ごとの結果(行番号と理由のコードだけ)を確かめられる(何も書かない。操作ログも)。
+  領収書の画像は `STORAGE_PROVIDER=gcs` でなければ取り込まない(開発は `--allow-local-storage`)。Drive API の一時的な失敗は読み直す。`import_runs` の `legacy_reports_sheet` /
   `legacy_receipts_sheet`、操作ログ `legacy_import.*`。Terraform で Sheets API(`sheets.googleapis.com`)を有効にする
   (`doc/05_バッチ・外部連携.md` 12章・`doc/09_移行計画.md` 2.4)。
 

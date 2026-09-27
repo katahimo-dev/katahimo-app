@@ -267,15 +267,89 @@ describe('importLegacyReports(GAS版の日報・事故報告の取込)', () => {
     ]);
   });
 
-  it('取込済みの行が今のシートに無ければ、記録の ID を知らせる(記録は消さない)', async () => {
+  it('行は行番号で指す: 日時・開始時刻を直した日報、保存し直して日時の変わった事故報告は同じ記録を直す', async () => {
+    const s = await setup();
+    setReportSheets(s, [dailyRow()], [accidentRow('事故報告')]);
+    await runReports(s);
+    const [daily, accident] = s.ctx.data().careRecords;
+    setReportSheets(
+      s,
+      [dailyRow({ ts: serial('2026/09/06 09:00:00') })],
+      [accidentRow('事故報告', '2026/09/08 18:00:00')],
+    );
+    const result = await runReports(s);
+    expect(result.counts.gas_daily_report).toMatchObject({ created: 0, updated: 1, missingFromSheet: 0 });
+    expect(result.counts.gas_accident_report).toMatchObject({ created: 0, updated: 1, missingFromSheet: 0 });
+    expect(s.ctx.data().careRecords).toHaveLength(2);
+    expect(s.ctx.data().careRecords[0]).toMatchObject({
+      id: daily?.id,
+      occurredAt: new Date('2026-09-06T00:00:00Z'),
+      servicePeriod: { start: new Date('2026-09-06T00:00:00Z'), end: new Date('2026-09-06T03:00:00Z') },
+    });
+    expect(s.ctx.data().careRecords[1]).toMatchObject({
+      id: accident?.id,
+      occurredAt: new Date('2026-09-08T09:00:00Z'),
+    });
+    // 次の取込では変更なし(行の内容のキーも今の行にした)
+    const again = await runReports(s);
+    expect(again.counts.gas_daily_report).toMatchObject({ updated: 0, unchanged: 1 });
+    expect(again.counts.gas_accident_report).toMatchObject({ updated: 0, unchanged: 1 });
+  });
+
+  it('同じ訪問の日報を2回新しく保存した行は、行ごとに記録にする', async () => {
+    const s = await setup();
+    setReportSheets(s, [dailyRow({ input: '1回目' }), dailyRow({ input: '2回目' })]);
+    expect((await runReports(s)).counts.gas_daily_report).toMatchObject({ created: 2 });
+    expect((await runReports(s)).counts.gas_daily_report).toMatchObject({ created: 0, unchanged: 2 });
+    expect(s.ctx.data().careRecords).toHaveLength(2);
+  });
+
+  it('同じ行番号に担当・顧客の違う行があれば直さない(row_conflict)', async () => {
     const s = await setup();
     setReportSheets(s, [dailyRow()]);
     await runReports(s);
-    setReportSheets(s, [dailyRow({ ts: serial('2026/09/05 10:00:00') })]);
+    setReportSheets(s, [dailyRow({ staff: '鈴木 一郎' })]);
     const result = await runReports(s);
-    expect(result.counts.gas_daily_report).toMatchObject({ created: 1, missingFromSheet: 1 });
+    expect(result.counts.gas_daily_report).toMatchObject({ created: 0, updated: 0, errors: 1 });
+    expect(result.issues).toEqual([{ source: 'gas_daily_report', rowNumber: 2, reason: 'row_conflict' }]);
+    expect(s.ctx.data().careRecords[0]).toMatchObject({ authorStaffId: s.staffId, rowVersion: 1 });
+  });
+
+  it('取込済みの行が別の行番号に動いた(並べ替えた・行を消した)ら、動いた先・元の行を取り込まない(row_moved)', async () => {
+    const s = await setup();
+    const first = dailyRow();
+    const second = dailyRow({ ts: serial('2026/09/06 09:00:00') });
+    const third = dailyRow({ ts: serial('2026/09/07 09:00:00') });
+    setReportSheets(s, [first, second, third]);
+    await runReports(s);
+    // 2行目と3行目を入れ替えた
+    setReportSheets(s, [first, third, second]);
+    const swapped = await runReports(s);
+    expect(swapped.counts.gas_daily_report).toMatchObject({ unchanged: 1, updated: 0, errors: 2 });
+    expect(swapped.issues.map((i) => [i.rowNumber, i.reason])).toEqual([
+      [3, 'row_moved'],
+      [4, 'row_moved'],
+    ]);
+    // 2行目を消した(下の行が上に詰まった)
+    setReportSheets(s, [second, third]);
+    const deleted = await runReports(s);
+    expect(deleted.counts.gas_daily_report).toMatchObject({ updated: 0, created: 0, missingFromSheet: 1 });
+    expect(deleted.issues.map((i) => [i.rowNumber, i.reason])).toEqual([
+      [2, 'row_moved'],
+      [3, 'row_moved'],
+    ]);
+    expect(s.ctx.data().careRecords.map((r) => r.rowVersion)).toEqual([1, 1, 1]);
+  });
+
+  it('取込済みの行番号がシートで空・シートの外なら、記録の ID を知らせる(記録は消さない)', async () => {
+    const s = await setup();
+    setReportSheets(s, [dailyRow(), dailyRow({ ts: serial('2026/09/06 09:00:00') })]);
+    await runReports(s);
+    setReportSheets(s, [dailyRow()]);
+    const result = await runReports(s);
+    expect(result.counts.gas_daily_report).toMatchObject({ unchanged: 1, missingFromSheet: 1 });
     expect(result.missingFromSheet).toEqual([
-      { source: 'gas_daily_report', careRecordId: s.ctx.data().careRecords[0]?.id },
+      { source: 'gas_daily_report', careRecordId: s.ctx.data().careRecords[1]?.id },
     ]);
     expect(s.ctx.data().careRecords).toHaveLength(2);
   });
@@ -290,6 +364,22 @@ describe('importLegacyReports(GAS版の日報・事故報告の取込)', () => {
     expect(s.ctx.data().careRecords).toEqual([]);
     expect(s.ctx.data().importRuns).toEqual([]);
     expect(s.ctx.data().legacyImportedRows).toEqual([]);
+    expect(s.ctx.data().appLogs).toEqual([]);
+  });
+
+  it('本文の jsonb のキーの順番が違うだけなら、記録は同じとみる', async () => {
+    const s = await setup();
+    setReportSheets(s, [dailyRow()]);
+    await runReports(s);
+    const record = s.ctx.data().careRecords[0];
+    const link = s.ctx.data().legacyImportedRows[0];
+    if (!record || !link) throw new Error('記録がありません');
+    // DB の jsonb はキーの順番を保たない。行の読み方が変わった(内容の SHA-256 だけが違う)ときも直さない
+    record.body = Object.fromEntries(Object.entries(record.body as object).reverse()) as typeof record.body;
+    link.sourceDigest = new Uint8Array(32);
+    const result = await runReports(s);
+    expect(result.counts.gas_daily_report).toMatchObject({ unchanged: 1, updated: 0 });
+    expect(s.ctx.data().careRecords[0]?.rowVersion).toBe(1);
   });
 
   it('シートを読めなければ何も書かずに失敗する', async () => {
@@ -333,6 +423,52 @@ const runReceipts = (s: Setup, months: string[], dryRun = false) =>
     months,
     dryRun,
   });
+
+/** 本アプリで登録した領収書(重複の判定のキーの日時は timestamp の形のまま)。 */
+async function addAppReceipt(s: Setup, timestamp: string, amount: number, storeName: string) {
+  await s.ctx.uow.run(s.ctx.tenantId, async (r) => {
+    const uploadId = newId();
+    const storedId = newId();
+    await r.receipts.createUpload({
+      id: uploadId,
+      staffId: s.staffId,
+      customerId: s.customerId,
+      customerNameText: null,
+      handoffText: null,
+      createdBy: s.staffId,
+    });
+    await r.storedFiles.insert({
+      id: storedId,
+      storageKey: `app-${storedId}.jpg`,
+      contentType: 'image/jpeg',
+      byteSize: 1,
+      sha256: new Uint8Array(32),
+      purpose: 'receipt_image',
+      createdBy: s.staffId,
+    });
+    const key = buildReceiptDedupeKey({
+      timestamp,
+      staffId: s.staffId,
+      customerId: s.customerId,
+      amount,
+      storeName,
+    });
+    await r.receipts.insertIfNew({
+      id: newId(),
+      uploadId,
+      fileId: storedId,
+      staffId: s.staffId,
+      customerId: s.customerId,
+      customerNameText: null,
+      receiptedAt: new Date('2026-09-05T03:30:00Z'),
+      amountYen: amount,
+      storeName,
+      companyPaid: false,
+      dedupeHash: receiptDedupeHash(key),
+      dedupePrimary: true,
+    });
+  });
+}
 
 describe('importLegacyReceipts(GAS版の領収書一覧の取込)', () => {
   it('指定の月の行だけを、画像ごと1行1回の登録として取り込む(申し送りはその行の分)', async () => {
@@ -396,7 +532,8 @@ describe('importLegacyReceipts(GAS版の領収書一覧の取込)', () => {
     expect(again.counts).toMatchObject({ created: 0, unchanged: 1, warnings: 0 });
     setReceiptSheet(s, [receiptRow(fileId(1), { amount: 9999 })]);
     const changed = await runReceipts(s, ['2026-09']);
-    expect(changed.counts).toMatchObject({ created: 0, unchanged: 1, warnings: 1 });
+    // 変わった行は注意にだけ数える(変更なしには数えない)
+    expect(changed.counts).toMatchObject({ created: 0, unchanged: 0, warnings: 1 });
     expect(changed.issues).toEqual([{ source: 'gas_receipt', rowNumber: 2, reason: 'changed_in_sheet' }]);
     expect(s.ctx.data().receipts).toHaveLength(1);
     expect(s.ctx.data().receipts[0]?.amountYen).toBe(1200);
@@ -404,52 +541,36 @@ describe('importLegacyReceipts(GAS版の領収書一覧の取込)', () => {
     expect(s.drive.downloaded).toEqual([fileId(1)]);
   });
 
+  it('顧客ID に合うお客様が後からできても、取込済みの領収書は直さず、注意も出し続けない', async () => {
+    const s = await setup();
+    s.drive.files.set(fileId(1), { mimeType: 'image/jpeg', bytes: jpeg() });
+    setReceiptSheet(s, [receiptRow(fileId(1), { customer: 7777 })]);
+    const first = await runReceipts(s, ['2026-09']);
+    expect(first.issues).toEqual([{ source: 'gas_receipt', rowNumber: 2, reason: 'customer_unlinked' }]);
+    await s.ctx.addCustomer('田中 次郎', '7777');
+    const again = await runReceipts(s, ['2026-09']);
+    expect(again.counts).toMatchObject({ unchanged: 1, warnings: 0 });
+    expect(again.issues).toEqual([]);
+    expect(s.ctx.data().receipts[0]).toMatchObject({ customerId: null, customerNameText: '佐藤様' });
+  });
+
+  it('まだ取り込んでいない画像の行の行番号で別の画像を取り込んでいれば、取り込まない(row_conflict)', async () => {
+    const s = await setup();
+    for (const n of [1, 2]) s.drive.files.set(fileId(n), { mimeType: 'image/jpeg', bytes: jpeg(n) });
+    setReceiptSheet(s, [receiptRow(fileId(1))]);
+    await runReceipts(s, ['2026-09']);
+    setReceiptSheet(s, [receiptRow(fileId(2), { store: '別の店' })]);
+    const result = await runReceipts(s, ['2026-09']);
+    expect(result.counts).toMatchObject({ created: 0, errors: 1 });
+    expect(result.issues).toEqual([{ source: 'gas_receipt', rowNumber: 2, reason: 'row_conflict' }]);
+    expect(s.ctx.data().receipts).toHaveLength(1);
+  });
+
   it('本アプリで登録した同じ内容の領収書があれば取り込まない。GAS版の同じ内容の行(往復の運賃)は全て取り込む', async () => {
     const s = await setup();
     for (const n of [1, 2, 3, 4]) s.drive.files.set(fileId(n), { mimeType: 'image/jpeg', bytes: jpeg(n) });
-    // 本アプリで登録済み: 12:30 の 1200円 コンビニ
-    await s.ctx.uow.run(s.ctx.tenantId, async (r) => {
-      const uploadId = newId();
-      const storedId = newId();
-      await r.receipts.createUpload({
-        id: uploadId,
-        staffId: s.staffId,
-        customerId: s.customerId,
-        customerNameText: null,
-        handoffText: null,
-        createdBy: s.staffId,
-      });
-      await r.storedFiles.insert({
-        id: storedId,
-        storageKey: 'app.jpg',
-        contentType: 'image/jpeg',
-        byteSize: 1,
-        sha256: new Uint8Array(32),
-        purpose: 'receipt_image',
-        createdBy: s.staffId,
-      });
-      const key = buildReceiptDedupeKey({
-        timestamp: RECEIPT_TS,
-        staffId: s.staffId,
-        customerId: s.customerId,
-        amount: 1200,
-        storeName: 'コンビニ',
-      });
-      await r.receipts.insertIfNew({
-        id: newId(),
-        uploadId,
-        fileId: storedId,
-        staffId: s.staffId,
-        customerId: s.customerId,
-        customerNameText: null,
-        receiptedAt: new Date('2026-09-05T03:30:00Z'),
-        amountYen: 1200,
-        storeName: 'コンビニ',
-        companyPaid: false,
-        dedupeHash: receiptDedupeHash(key),
-        dedupePrimary: true,
-      });
-    });
+    // 本アプリで登録済み: 12:30 の 1200円 コンビニ(画面の日時の欄の形 'yyyy/MM/dd HH:mm' のキー)
+    await addAppReceipt(s, '2026/09/05 12:30', 1200, 'コンビニ');
     setReceiptSheet(s, [
       receiptRow(fileId(1)),
       receiptRow(fileId(2), { amount: 300, store: 'バス' }),
@@ -470,6 +591,46 @@ describe('importLegacyReceipts(GAS版の領収書一覧の取込)', () => {
       unchanged: 3,
       skipped: 1,
     });
+  });
+
+  it('取り込む領収書のキーは本アプリと同じ分までの形。秒つきのキーで登録した本アプリの領収書とも突き合わせる', async () => {
+    const s = await setup();
+    for (const n of [1, 2]) s.drive.files.set(fileId(n), { mimeType: 'image/jpeg', bytes: jpeg(n) });
+    // 日時の欄が空の登録(登録の時刻の秒つきのキー)
+    await addAppReceipt(s, '2026/09/05 12:31:45', 500, 'パン屋');
+    setReceiptSheet(s, [
+      receiptRow(fileId(1), { ts: serial('2026/09/05 12:31:45'), amount: 500, store: 'パン屋' }),
+      receiptRow(fileId(2), { ts: serial('2026/09/05 12:30:00'), amount: 700, store: '本屋' }),
+    ]);
+    const result = await runReceipts(s, ['2026-09']);
+    expect(result.counts).toMatchObject({ created: 1, skipped: 1 });
+    expect(result.issues).toEqual([{ source: 'gas_receipt', rowNumber: 2, reason: 'duplicate' }]);
+    const imported = s.ctx.data().receipts.find((r) => r.storeName === '本屋');
+    expect(Buffer.from(imported?.dedupeHash ?? []).toString('hex')).toBe(
+      Buffer.from(
+        receiptDedupeHash(
+          buildReceiptDedupeKey({
+            timestamp: '2026/09/05 12:30',
+            staffId: s.staffId,
+            customerId: s.customerId,
+            amount: '700',
+            storeName: '本屋',
+          }),
+        ),
+      ).toString('hex'),
+    );
+  });
+
+  it('dry-run は何も書かない(取込の実行・操作ログも)', async () => {
+    const s = await setup();
+    s.drive.files.set(fileId(1), { mimeType: 'image/jpeg', bytes: jpeg() });
+    setReceiptSheet(s, [receiptRow(fileId(1))]);
+    const result = await runReceipts(s, ['2026-09'], true);
+    expect(result.counts).toMatchObject({ created: 1 });
+    expect(s.ctx.data().receipts).toEqual([]);
+    expect(s.ctx.data().importRuns).toEqual([]);
+    expect(s.ctx.data().appLogs).toEqual([]);
+    expect(s.ctx.storage.files.size).toBe(0);
   });
 
   it('担当が見つからない行・取り込めない画像(HEIC・大きすぎる・中身が画像でない・無い)は取り込まない', async () => {
@@ -523,6 +684,22 @@ describe('importLegacyReceipts(GAS版の領収書一覧の取込)', () => {
     expect(s.ctx.data().receipts).toEqual([]);
     expect(s.ctx.data().importRuns[0]).toMatchObject({ status: 'failed' });
     expect(s.ctx.data().appLogs.map((l) => l.action)).toContain('legacy_import.receipts.failed');
+  });
+
+  it('画像を読む途中で失敗しても、このまとまりで保存した画像を消す', async () => {
+    const s = await setup();
+    s.drive.files.set(fileId(1), { mimeType: 'image/jpeg', bytes: jpeg() });
+    s.drive.files.set(fileId(2), { mimeType: 'image/jpeg', bytes: jpeg(2) });
+    setReceiptSheet(s, [receiptRow(fileId(1)), receiptRow(fileId(2), { store: '別の店' })]);
+    const getFile = s.drive.getFile.bind(s.drive);
+    s.drive.getFile = async (id) => {
+      if (id === fileId(2)) throw new Error('Drive API の失敗(テスト)');
+      return getFile(id);
+    };
+    await expect(runReceipts(s, ['2026-09'])).rejects.toThrow('Drive API の失敗');
+    expect(s.drive.downloaded).toEqual([fileId(1)]);
+    expect(s.ctx.storage.files.size).toBe(0);
+    expect(s.ctx.data().importRuns[0]).toMatchObject({ status: 'failed' });
   });
 });
 

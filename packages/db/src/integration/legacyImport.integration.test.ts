@@ -52,12 +52,12 @@ async function setup() {
   return { tenantId, staffId, deps: { uow, appLog } };
 }
 
-function dailyRow(inputText: string): LegacyDailyReportRow {
+function dailyRow(inputText: string, timestamp = '2026/09/05 09:00:00'): LegacyDailyReportRow {
   return {
     source: 'gas_daily_report',
     rowNumber: 2,
-    sourceKey: JSON.stringify(['2026/09/05 09:00:00', '山田太郎', '1001', '09:00']),
-    timestamp: '2026/09/05 09:00:00',
+    sourceKey: JSON.stringify([timestamp, '山田太郎', '1001', '09:00']),
+    timestamp,
     staffName: '山田 太郎',
     customerExternalId: '1001',
     content: { startTime: '09:00', endTime: '12:00', inputText, internalText: '', customerText: '' },
@@ -107,6 +107,31 @@ describe('GAS版の日報・事故報告の取込(実際の DB)', () => {
       tx.execute(sql`select count(*)::int as n from outbox_messages`),
     )) as unknown as { n: number }[];
     expect(outbox[0]?.n).toBe(0);
+  });
+
+  it('行は行番号で指す: 日時を直した行は同じ記録を直し、行の内容のキーを今の行にする', async () => {
+    const { tenantId, deps } = await setup();
+    await importLegacyReportRows(deps, tenantId, reportInput([dailyRow('メモ')]));
+    const moved = dailyRow('メモ', '2026/09/06 09:00:00');
+    const result = await importLegacyReportRows(deps, tenantId, reportInput([moved]));
+    expect(result.counts.gas_daily_report).toMatchObject({ created: 0, updated: 1, missingFromSheet: 0 });
+    expect(await count(tenantId, 'care_records')).toBe(1);
+    const [link] = await uow.run(tenantId, (r) => r.legacyImports.listBySource('gas_daily_report'));
+    expect(link).toMatchObject({ rowNumber: 2, sourceKey: moved.sourceKey, syncedRowVersion: 2 });
+  });
+
+  it('dry-run は取込の実行も書かない', async () => {
+    const { tenantId, deps } = await setup();
+    const result = await importLegacyReportRows(deps, tenantId, reportInput([dailyRow('メモ')]), {
+      dryRun: true,
+    });
+    expect(result.counts.gas_daily_report).toMatchObject({ created: 1 });
+    const runs = (await withTenant(app, tenantId, (tx) =>
+      tx.execute(sql`select count(*)::int as n from import_runs`),
+    )) as unknown as { n: number }[];
+    expect(runs[0]?.n).toBe(0);
+    expect(await count(tenantId, 'care_records')).toBe(0);
+    expect(deps.appLog.entries).toEqual([]);
   });
 
   it('確定済みの記録はシートが変わっても直さない(KH002 を踏まずに skipped)', async () => {
@@ -176,20 +201,20 @@ describe('取り込んだ行と記録の対応(legacy_imported_rows)', () => {
     return { link: link as LegacyImportedRow, runId: result.runId as string };
   }
 
-  it('同じ出どころ・キーは1行だけ(主キー)。別のテナントの同じキーは別の行で、互いに見えない', async () => {
+  it('同じ出どころ・行番号は1行だけ(主キー)。別のテナントの同じ行番号は別の行で、互いに見えない', async () => {
     const a = await setup();
     const b = await setup();
     const { link, runId } = await seed(a.tenantId);
     const insert = (tenantId: string, careRecordId: string, importRunId: string) =>
       withTenant(app, tenantId, (tx) =>
         tx.execute(sql`insert into legacy_imported_rows
-          (tenant_id, source, source_key, care_record_id, source_digest, synced_row_version, import_run_id)
-          values (${tenantId}, 'gas_daily_report', ${link.sourceKey}, ${careRecordId}, '\\x00', 1, ${importRunId})`),
+          (tenant_id, source, row_number, source_key, care_record_id, source_digest, synced_row_version, import_run_id)
+          values (${tenantId}, 'gas_daily_report', ${link.rowNumber}, 'other-key', ${careRecordId}, '\\x00', 1, ${importRunId})`),
       );
     // 23505 unique_violation(主キー)
     expect(await sqlState(insert(a.tenantId, link.careRecordId as string, runId))).toBe('23505');
     const other = await seed(b.tenantId);
-    expect(other.link.sourceKey).toBe(link.sourceKey);
+    expect(other.link).toMatchObject({ rowNumber: link.rowNumber, sourceKey: link.sourceKey });
     const visible = (await withTenant(app, b.tenantId, (tx) =>
       tx.execute(sql`select care_record_id from legacy_imported_rows`),
     )) as unknown as { care_record_id: string }[];
@@ -198,7 +223,7 @@ describe('取り込んだ行と記録の対応(legacy_imported_rows)', () => {
     expect(await sqlState(insert(b.tenantId, link.careRecordId as string, other.runId))).not.toBeNull();
   });
 
-  it('報告の行は記録だけを、領収書の行は領収書だけを指す(CHECK)', async () => {
+  it('報告の行は記録だけを、領収書の行は領収書だけを指す。行番号は見出しの次の行から(CHECK)', async () => {
     const a = await setup();
     const { link, runId } = await seed(a.tenantId);
     // 23514 check_violation
@@ -206,11 +231,46 @@ describe('取り込んだ行と記録の対応(legacy_imported_rows)', () => {
       await sqlState(
         withTenant(app, a.tenantId, (tx) =>
           tx.execute(sql`insert into legacy_imported_rows
-            (tenant_id, source, source_key, care_record_id, source_digest, synced_row_version, import_run_id)
-            values (${a.tenantId}, 'gas_receipt', 'file', ${link.careRecordId}, '\\x00', 1, ${runId})`),
+            (tenant_id, source, row_number, source_key, care_record_id, source_digest, synced_row_version, import_run_id)
+            values (${a.tenantId}, 'gas_receipt', 3, 'file', ${link.careRecordId}, '\\x00', 1, ${runId})`),
         ),
       ),
     ).toBe('23514');
+    expect(
+      await sqlState(
+        uow.run(a.tenantId, (r) => r.legacyImports.save({ ...link, rowNumber: 1, importRunId: runId })),
+      ),
+    ).toBe('23514');
+  });
+
+  it('報告は同じ内容のキーの行が2つあってよい。領収書の同じ画像は1行だけ(一意の索引)', async () => {
+    const { tenantId, deps } = await setup();
+    const second = { ...dailyRow('2回目'), rowNumber: 3 };
+    const reports = await importLegacyReportRows(deps, tenantId, reportInput([dailyRow('1回目'), second]));
+    expect(reports.counts.gas_daily_report).toMatchObject({ created: 2 });
+
+    const receiptDeps = { ...deps, storage: new FakeStoragePort(), drive: new OneImageDrive() };
+    const rows = [
+      receiptRow('1FileForIntegrationTest0002'),
+      { ...receiptRow('1FileForIntegrationTest0003'), rowNumber: 3, storeName: '別の店' },
+    ];
+    const input = {
+      spreadsheetId: '1ReceiptSpreadsheetForIntegration000',
+      sheet: { rows, issues: [], blankRowCount: 0 },
+      months: ['2026-09'],
+    };
+    expect((await importLegacyReceiptRows(receiptDeps, tenantId, input)).counts).toMatchObject({
+      created: 2,
+    });
+    // 23505 unique_violation(同じ画像を2つ目の行にする)
+    expect(
+      await sqlState(
+        withTenant(app, tenantId, (tx) =>
+          tx.execute(sql`update legacy_imported_rows set source_key = '1FileForIntegrationTest0002'
+            where source = 'gas_receipt' and row_number = 3`),
+        ),
+      ),
+    ).toBe('23505');
   });
 
   it('アプリは対応を消せない(SELECT・INSERT・UPDATE だけ)。ワーカーは触れない', async () => {

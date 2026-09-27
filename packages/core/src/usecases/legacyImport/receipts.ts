@@ -4,6 +4,7 @@ import {
   buildReceiptDedupeKey,
   canCheckReceiptDuplicate,
   detectReceiptImageType,
+  legacyReceiptKeyTimestamps,
   legacyWallClockToInstant,
   newId,
   normalizeText,
@@ -70,9 +71,14 @@ interface PlannedReceipt {
   amountYen: number | null;
   storeName: string | null;
   handoffText: string | null;
-  /** 重複の判定のキー(金額か店名が無ければ null)。 */
+  /** 重複の判定のキー(金額か店名が無ければ null)。取り込む領収書の dedupe_hash はこのキー。 */
   dedupeKey: string | null;
+  /** 本アプリの登録と突き合わせるときにだけ見る、日時の形の違うキー(legacyReceiptKeyTimestamps)。 */
+  alternativeDedupeKeys: string[];
+  /** シートの行の値(読んだままの値。担当・顧客の探した結果は入れない)の SHA-256。 */
   digest: Uint8Array;
+  /** 取り込むときの注意(取込済みの行には毎回は出さない)。 */
+  warnings: LegacyRowIssueReason[];
 }
 
 /** 画像を読んで保存したもの。 */
@@ -89,8 +95,10 @@ interface StoredImage {
  * - 領収書日時(テナントのタイムゾーン)が months の月の行だけを取り込む(他の月は outOfRange に数えるだけ)。
  *   本アプリからのミラーの行(KatahimoReceiptId のある行)は読む側(ingestion)が除いている。
  * - 行を指すキーは画像の Drive のファイル ID(1枚ごとに違う)。legacy_imported_rows と突き合わせ、同じ画像は2回
- *   取り込まない(何度流してもよい)。領収書は会計の記録で直さないため、取込済みの行がシートで変わっていても
- *   直さずに changed_in_sheet(warning)にする。
+ *   取り込まない(何度流してもよい)。領収書は会計の記録で直さないため、取込済みの行のシートの値が変わっていても
+ *   直さずに changed_in_sheet(warning。変わっていない行と別に数える)にする。比べるのはシートの値だけで、後から顧客CSVを
+ *   取り込んで顧客ID に合うお客様ができても、取込済みの領収書は結び付け直さず注意も出さない。まだ取り込んでいない
+ *   画像の行の行番号で別の画像を取り込んでいれば(行を消した・並べ替えた)、取り込まない(row_conflict)。
  * - 画像は Drive から読み、画面からの登録と同じく中身のバイト列で JPEG・PNG・WebP か、1枚
  *   RECEIPT_IMAGE_MAX_BYTES までかを確かめてからファイル置き場に保存する(HEIC 等は取り込まない)。dry-run は Drive の
  *   メタデータ(種類・大きさ)だけを見る。
@@ -99,7 +107,8 @@ interface StoredImage {
  * - 1行を1回の登録(receipt_uploads)にし、申し送りはその行の申し送り(GAS版は登録の最初の1枚の行にだけ書いた)。
  *   会社負担ではない・取消していない領収書として作る。
  * - 画面の登録と同じ重複の判定(buildReceiptDedupeKey: 日時・担当・顧客・金額・店名)を掛ける: 本アプリで登録した
- *   取消していない同じ内容の領収書があれば取り込まない(duplicate)。GAS版の同じ登録の中の同じ内容(往復の運賃等)は
+ *   取消していない同じ内容の領収書があれば取り込まない(duplicate)。日時は本アプリの登録と同じ分までの形でキーにし、
+ *   秒つきの形の登録とも突き合わせる(legacyReceiptKeyTimestamps)。GAS版の同じ登録の中の同じ内容(往復の運賃等)は
  *   シートに全て残っているため、取り込んだ領収書と同じ内容の行は全て取り込む(代表でない行として)。
  * - スプレッドシートへのミラー・Google Chat の通知は積まない。
  */
@@ -151,10 +160,20 @@ export async function importLegacyReceiptRows(
       const customerId = row.customerExternalId
         ? (context.customerByExternalId.get(row.customerExternalId)?.customerId ?? null)
         : null;
-      if (row.customerExternalId && !customerId) log.add(row.source, row.rowNumber, 'customer_unlinked');
+      const warnings: LegacyRowIssueReason[] = [];
+      if (row.customerExternalId && !customerId) warnings.push('customer_unlinked');
       const amountYen = parseAmountYen(row.amount);
-      if (row.amount && amountYen === null) log.add(row.source, row.rowNumber, 'amount_invalid');
-      const values = {
+      if (row.amount && amountYen === null) warnings.push('amount_invalid');
+      const keyInput = {
+        staffId: staff.staffId,
+        customerId: customerId ?? '',
+        amount: row.amount,
+        storeName: row.storeName,
+      };
+      const checkable = canCheckReceiptDuplicate({ amount: row.amount, storeName: row.storeName });
+      const timestamps = legacyReceiptKeyTimestamps(row.timestamp);
+      planned.push({
+        row,
         staffId: staff.staffId,
         customerId,
         customerNameText: customerId ? null : normalizeText(row.customerName) || null,
@@ -162,20 +181,20 @@ export async function importLegacyReceiptRows(
         amountYen,
         storeName: normalizeText(row.storeName) || null,
         handoffText: normalizeText(row.handoffText) || null,
-      };
-      planned.push({
-        row,
-        ...values,
-        dedupeKey: canCheckReceiptDuplicate({ amount: row.amount, storeName: row.storeName })
-          ? buildReceiptDedupeKey({
-              timestamp: row.timestamp,
-              staffId: staff.staffId,
-              customerId: customerId ?? '',
-              amount: row.amount,
-              storeName: row.storeName,
-            })
-          : null,
-        digest: sourceDigestOf({ ...values, receiptedAt: receiptedAt.toISOString() }),
+        dedupeKey: checkable ? buildReceiptDedupeKey({ ...keyInput, timestamp: timestamps.canonical }) : null,
+        alternativeDedupeKeys: checkable
+          ? timestamps.alternatives.map((timestamp) => buildReceiptDedupeKey({ ...keyInput, timestamp }))
+          : [],
+        digest: sourceDigestOf({
+          timestamp: row.timestamp,
+          staffName: row.staffName,
+          customerExternalId: row.customerExternalId,
+          customerName: row.customerName,
+          amount: row.amount,
+          storeName: row.storeName,
+          handoffText: row.handoffText,
+        }),
+        warnings,
       });
     }
 
@@ -185,13 +204,15 @@ export async function importLegacyReceiptRows(
       const links = await deps.uow.run(tenantId, (r) => findLinks(r, batch));
       const fresh: PlannedReceipt[] = [];
       for (const p of batch) {
-        const link = links.get(p.row.sourceKey);
-        if (!link) fresh.push(p);
-        else if (sameDigest(link.sourceDigest, p.digest)) counts.unchanged++;
-        else {
-          counts.unchanged++;
-          log.add(p.row.source, p.row.rowNumber, 'changed_in_sheet');
+        const link = links.byFile.get(p.row.sourceKey);
+        if (link) {
+          if (sameDigest(link.sourceDigest, p.digest)) counts.unchanged++;
+          else log.add(p.row.source, p.row.rowNumber, 'changed_in_sheet');
+          continue;
         }
+        for (const reason of p.warnings) log.add(p.row.source, p.row.rowNumber, reason);
+        if (links.byRow.has(p.row.rowNumber)) log.add(p.row.source, p.row.rowNumber, 'row_conflict');
+        else fresh.push(p);
       }
       if (dryRun) {
         // Drive のメタデータはトランザクションの外で読む
@@ -235,31 +256,36 @@ export async function importLegacyReceiptRows(
         message: `対象の月: ${[...months].sort().join(', ')}`,
       }),
     );
+    await deps.appLog.write({
+      tenantId,
+      level: counts.errors > 0 ? 'WARN' : 'INFO',
+      action: 'legacy_import.receipts.done',
+      actorType: 'system',
+      details: { runId, months: [...months].sort(), counts: flattenCounts(bySource) },
+    });
   }
-  await deps.appLog.write({
-    tenantId,
-    level: counts.errors > 0 ? 'WARN' : 'INFO',
-    action: 'legacy_import.receipts.done',
-    actorType: 'system',
-    details: {
-      runId: dryRun ? null : runId,
-      dryRun,
-      months: [...months].sort(),
-      counts: flattenCounts(bySource),
-    },
-  });
   return { dryRun, runId: dryRun ? null : runId, counts, issues: sortIssues(log.issues) };
 }
 
-async function findLinks(
-  r: TenantRepositories,
-  batch: readonly PlannedReceipt[],
-): Promise<Map<string, LegacyImportedRow>> {
-  const links = await r.legacyImports.findBySourceKeys(
+/** 画像の Drive のファイル ID・行番号で探した対応。 */
+interface ReceiptLinks {
+  byFile: Map<string, LegacyImportedRow>;
+  byRow: Map<number, LegacyImportedRow>;
+}
+
+async function findLinks(r: TenantRepositories, batch: readonly PlannedReceipt[]): Promise<ReceiptLinks> {
+  const byFile = await r.legacyImports.findBySourceKeys(
     'gas_receipt',
     batch.map((p) => p.row.sourceKey),
   );
-  return new Map(links.map((link) => [link.sourceKey, link]));
+  const byRow = await r.legacyImports.findByRowNumbers(
+    'gas_receipt',
+    batch.map((p) => p.row.rowNumber),
+  );
+  return {
+    byFile: new Map(byFile.map((link) => [link.sourceKey, link])),
+    byRow: new Map(byRow.map((link) => [link.rowNumber, link])),
+  };
 }
 
 /** Drive のメタデータで取り込めない画像か(取り込めれば null)。 */
@@ -286,9 +312,13 @@ async function dedupeDecision(
   const group = groups.get(p.dedupeKey);
   if (group === 'duplicate') return 'duplicate';
   if (group === 'imported') return 'twin';
-  const activeId = await r.receipts.findActivePrimaryByDedupeHash(receiptDedupeHash(p.dedupeKey));
-  if (!activeId) return 'primary';
-  return (await r.legacyImports.isImportedReceipt(activeId)) ? 'twin' : 'duplicate';
+  for (const key of [p.dedupeKey, ...p.alternativeDedupeKeys]) {
+    const activeId = await r.receipts.findActivePrimaryByDedupeHash(receiptDedupeHash(key));
+    if (!activeId) continue;
+    // 取込で作る領収書のキーは代表の形だけのため、他の形で見つかるのは本アプリの登録
+    return key === p.dedupeKey && (await r.legacyImports.isImportedReceipt(activeId)) ? 'twin' : 'duplicate';
+  }
+  return 'primary';
 }
 
 /** 画像を読んで確かめ、ファイル置き場に保存する(取り込めない画像はその理由)。 */
@@ -314,6 +344,8 @@ async function fetchImage(
   return { fileId, storageKey, contentType, bytes };
 }
 
+type BatchIssue = { p: PlannedReceipt; reason: LegacyRowIssueReason };
+
 async function importBatch(
   deps: LegacyReceiptImportDeps,
   tenantId: string,
@@ -323,90 +355,23 @@ async function importBatch(
   log: IssueLog,
   counts: LegacyImportCounts,
 ): Promise<void> {
-  // 画像はトランザクションの外で読んで保存する(失敗したら保存した画像を消す)
+  // 画像はトランザクションの外で読んで保存する(途中で失敗したら、このまとまりで保存した画像を全て消す)
   const ready: { p: PlannedReceipt; image: StoredImage }[] = [];
-  for (const p of fresh) {
-    const image = await fetchImage(deps, tenantId, p);
-    if (typeof image === 'string') log.add(p.row.source, p.row.rowNumber, image);
-    else ready.push({ p, image });
-  }
-  if (ready.length === 0) return;
+  const issues: BatchIssue[] = [];
   const unused: StoredImage[] = [];
   const nextGroups = new Map(groups);
-  let outcome: { created: number; issues: { p: PlannedReceipt; reason: LegacyRowIssueReason }[] };
+  let created = 0;
   try {
-    outcome = await deps.uow.run(tenantId, async (r) => {
-      await r.legacyImports.lockTenantLegacyImports();
-      // 読んでから書くまでの間に別の取込が同じ行を取り込んでいたら、今回は作らない
-      const links = await findLinks(
-        r,
-        ready.map(({ p }) => p),
-      );
-      const result: typeof outcome = { created: 0, issues: [] };
-      for (const { p, image } of ready) {
-        if (links.has(p.row.sourceKey)) {
-          unused.push(image);
-          continue;
-        }
-        const decision = await dedupeDecision(r, p, nextGroups);
-        if (decision === 'duplicate') {
-          if (p.dedupeKey !== null) nextGroups.set(p.dedupeKey, 'duplicate');
-          unused.push(image);
-          result.issues.push({ p, reason: 'duplicate' });
-          continue;
-        }
-        const receiptId = newId();
-        const uploadId = newId();
-        await r.receipts.createUpload({
-          id: uploadId,
-          staffId: p.staffId,
-          customerId: p.customerId,
-          customerNameText: p.customerNameText,
-          handoffText: p.handoffText,
-          createdBy: p.staffId,
-        });
-        await r.storedFiles.insert({
-          id: image.fileId,
-          storageKey: image.storageKey,
-          contentType: image.contentType,
-          byteSize: image.bytes.length,
-          sha256: createHash('sha256').update(image.bytes).digest(),
-          purpose: 'receipt_image',
-          createdBy: p.staffId,
-        });
-        const inserted = await r.receipts.insertIfNew({
-          id: receiptId,
-          uploadId,
-          fileId: image.fileId,
-          staffId: p.staffId,
-          customerId: p.customerId,
-          customerNameText: p.customerNameText,
-          receiptedAt: p.receiptedAt,
-          amountYen: p.amountYen,
-          storeName: p.storeName,
-          companyPaid: false,
-          dedupeHash: p.dedupeKey === null ? null : receiptDedupeHash(p.dedupeKey),
-          dedupePrimary: decision === 'primary',
-        });
-        if (!inserted) {
-          // 判定の後に本アプリで同じ内容が登録された(登録の束は画像の無いまま残さない)
-          throw new Error('領収書の重複の判定の後に同じ内容が登録されました。流し直してください');
-        }
-        if (p.dedupeKey !== null) nextGroups.set(p.dedupeKey, 'imported');
-        await r.legacyImports.save({
-          source: 'gas_receipt',
-          sourceKey: p.row.sourceKey,
-          careRecordId: null,
-          receiptId,
-          sourceDigest: p.digest,
-          // 領収書の版は登録したときの 1(領収書は取消のほかに変わらない)
-          syncedRowVersion: 1,
-          importRunId: runId,
-        });
-        result.created++;
-      }
-      return result;
-    });
+    for (const p of fresh) {
+      const image = await fetchImage(deps, tenantId, p);
+      if (typeof image === 'string') issues.push({ p, reason: image });
+      else ready.push({ p, image });
+    }
+    if (ready.length > 0) {
+      const written = await deps.uow.run(tenantId, (r) => writeBatch(r, runId, ready, nextGroups, unused));
+      created = written.created;
+      issues.push(...written.issues);
+    }
   } catch (error) {
     await Promise.all(ready.map(({ image }) => deps.storage.delete(image.storageKey).catch(() => undefined)));
     throw error;
@@ -414,6 +379,92 @@ async function importBatch(
   await Promise.all(unused.map((image) => deps.storage.delete(image.storageKey).catch(() => undefined)));
   // トランザクションが確定してから、この取込での扱いを次のまとまりへ引き継ぐ
   for (const [key, value] of nextGroups) groups.set(key, value);
-  for (const { p, reason } of outcome.issues) log.add(p.row.source, p.row.rowNumber, reason);
-  counts.created += outcome.created;
+  for (const { p, reason } of issues) log.add(p.row.source, p.row.rowNumber, reason);
+  counts.created += created;
+}
+
+/** 読んで保存した画像の領収書を1つのトランザクションで書く(使わなかった画像は unused に入れる)。 */
+async function writeBatch(
+  r: TenantRepositories,
+  runId: string,
+  ready: readonly { p: PlannedReceipt; image: StoredImage }[],
+  groups: Map<string, 'imported' | 'duplicate'>,
+  unused: StoredImage[],
+): Promise<{ created: number; issues: BatchIssue[] }> {
+  await r.legacyImports.lockTenantLegacyImports();
+  // 読んでから書くまでの間に別の取込が同じ画像・行番号を取り込んでいたら、今回は作らない
+  const links = await findLinks(
+    r,
+    ready.map(({ p }) => p),
+  );
+  const result: { created: number; issues: BatchIssue[] } = { created: 0, issues: [] };
+  for (const { p, image } of ready) {
+    if (links.byFile.has(p.row.sourceKey)) {
+      unused.push(image);
+      continue;
+    }
+    if (links.byRow.has(p.row.rowNumber)) {
+      unused.push(image);
+      result.issues.push({ p, reason: 'row_conflict' });
+      continue;
+    }
+    const decision = await dedupeDecision(r, p, groups);
+    if (decision === 'duplicate') {
+      if (p.dedupeKey !== null) groups.set(p.dedupeKey, 'duplicate');
+      unused.push(image);
+      result.issues.push({ p, reason: 'duplicate' });
+      continue;
+    }
+    const receiptId = newId();
+    const uploadId = newId();
+    await r.receipts.createUpload({
+      id: uploadId,
+      staffId: p.staffId,
+      customerId: p.customerId,
+      customerNameText: p.customerNameText,
+      handoffText: p.handoffText,
+      createdBy: p.staffId,
+    });
+    await r.storedFiles.insert({
+      id: image.fileId,
+      storageKey: image.storageKey,
+      contentType: image.contentType,
+      byteSize: image.bytes.length,
+      sha256: createHash('sha256').update(image.bytes).digest(),
+      purpose: 'receipt_image',
+      createdBy: p.staffId,
+    });
+    const inserted = await r.receipts.insertIfNew({
+      id: receiptId,
+      uploadId,
+      fileId: image.fileId,
+      staffId: p.staffId,
+      customerId: p.customerId,
+      customerNameText: p.customerNameText,
+      receiptedAt: p.receiptedAt,
+      amountYen: p.amountYen,
+      storeName: p.storeName,
+      companyPaid: false,
+      dedupeHash: p.dedupeKey === null ? null : receiptDedupeHash(p.dedupeKey),
+      dedupePrimary: decision === 'primary',
+    });
+    if (!inserted) {
+      // 判定の後に本アプリで同じ内容が登録された(登録の束は画像の無いまま残さない)
+      throw new Error('領収書の重複の判定の後に同じ内容が登録されました。流し直してください');
+    }
+    if (p.dedupeKey !== null) groups.set(p.dedupeKey, 'imported');
+    await r.legacyImports.save({
+      source: 'gas_receipt',
+      rowNumber: p.row.rowNumber,
+      sourceKey: p.row.sourceKey,
+      careRecordId: null,
+      receiptId,
+      sourceDigest: p.digest,
+      // 領収書の版は登録したときの 1(領収書は取消のほかに変わらない)
+      syncedRowVersion: 1,
+      importRunId: runId,
+    });
+    result.created++;
+  }
+  return result;
 }

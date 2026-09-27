@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  legacyReceiptsStorageProblem,
   MAX_LEGACY_RECEIPT_MONTHS,
   parseLegacyReceiptsArgs,
   parseLegacyReportsArgs,
@@ -56,6 +57,7 @@ describe('import:legacy-receipts の引数', () => {
         slug: 'cutest',
         spreadsheetId: ID,
         dryRun: false,
+        allowLocalStorage: false,
         sheetName: undefined,
         months: ['2026-08', '2026-09'],
       },
@@ -84,5 +86,17 @@ describe('import:legacy-receipts の引数', () => {
       ok: false,
       message: expect.stringContaining(`${MAX_LEGACY_RECEIPT_MONTHS}か月`),
     });
+  });
+
+  it('画像はファイル置き場が GCS のときだけ取り込む(dry-run・--allow-local-storage は除く)', () => {
+    const parsed = parseLegacyReceiptsArgs(
+      argv('cutest', '--allow-local-storage', '--spreadsheet', ID, '--month', '2026-09'),
+    );
+    expect(parsed).toMatchObject({ ok: true, value: { allowLocalStorage: true } });
+    const write = { dryRun: false, allowLocalStorage: false };
+    expect(legacyReceiptsStorageProblem(write, 'local')).toContain('STORAGE_PROVIDER=gcs');
+    expect(legacyReceiptsStorageProblem(write, 'gcs')).toBeNull();
+    expect(legacyReceiptsStorageProblem({ ...write, dryRun: true }, 'local')).toBeNull();
+    expect(legacyReceiptsStorageProblem({ ...write, allowLocalStorage: true }, 'local')).toBeNull();
   });
 });

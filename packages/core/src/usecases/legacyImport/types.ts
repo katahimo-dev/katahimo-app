@@ -20,6 +20,8 @@ export type LegacyRowIssueReason =
   | 'image_unsupported_type'
   | 'image_too_large'
   | 'record_missing'
+  | 'row_conflict'
+  | 'row_moved'
   // 取り込まない(正しい扱い)
   | 'from_app'
   | 'locked'
@@ -46,6 +48,8 @@ const ISSUE_LEVELS: Record<LegacyRowIssueReason, LegacyRowIssueLevel> = {
   image_unsupported_type: 'error',
   image_too_large: 'error',
   record_missing: 'error',
+  row_conflict: 'error',
+  row_moved: 'error',
   from_app: 'skipped',
   locked: 'skipped',
   edited_in_app: 'skipped',
@@ -70,6 +74,10 @@ export const LEGACY_ROW_ISSUE_LABELS: Record<LegacyRowIssueReason, string> = {
   image_unsupported_type: '画像が JPEG・PNG・WebP ではありません(HEIC 等は変換してから登録し直します)',
   image_too_large: '画像が大きすぎます(1枚1.5MBまで)',
   record_missing: '取込済みの記録が見つかりません',
+  row_conflict:
+    'この行番号で取り込んだ行と担当・顧客(領収書は画像)が違います(シートの行を消した・並べ替えた・書き換えた。元に戻してから流し直します)',
+  row_moved:
+    '取込済みの行が別の行番号に動いています(シートの行を消した・並べ替えた。元に戻してから流し直します)',
   from_app: '本アプリからのミラーの行です(取り込みません)',
   locked: '記録が確定済みのため直しません',
   edited_in_app: '取込の後に本アプリで直された記録のため、シートの内容で上書きしません',
@@ -103,7 +111,10 @@ export interface LegacySheetRows<T> {
 
 interface LegacyReportRowBase {
   rowNumber: number;
-  /** 行を指すキー(シート・日時・担当・顧客ID(・開始時刻)。同じキーの2行目以降は '#2' 等を付ける)。 */
+  /**
+   * 行の内容のキー(日時・担当・顧客ID(・開始時刻))。行は rowNumber で指し、このキーは行が動いた(シートの行を
+   * 消した・並べ替えた)ことを見つけるために使う。同じ訪問の日報を2回新しく保存した行は同じキーになる。
+   */
   sourceKey: string;
   /** 'yyyy/MM/dd HH:mm:ss'(壁時計時刻)。 */
   timestamp: string;
@@ -135,7 +146,7 @@ export type LegacyReportRow = LegacyDailyReportRow | LegacyAccidentReportRow;
 export interface LegacyReceiptRow {
   source: 'gas_receipt';
   rowNumber: number;
-  /** 画像の Drive のファイル ID(行を指すキー)。 */
+  /** 画像の Drive のファイル ID(行を指すキー。同じ画像は1回だけ取り込む)。 */
   sourceKey: string;
   /** 日時の列('yyyy/MM/dd HH:mm:ss'。GAS版は OCR の領収書日時、無ければ報告の日時を書いた)。 */
   timestamp: string;

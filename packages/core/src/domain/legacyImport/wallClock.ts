@@ -102,3 +102,16 @@ export function legacyWallClockToInstant(wallClock: string, timeZone: string): D
 export function legacyWallClockDate(wallClock: string): string {
   return wallClock.slice(0, 10).replaceAll('/', '-');
 }
+
+/**
+ * GAS版の領収書の日時('yyyy/MM/dd HH:mm:ss')を、領収書の重複の判定のキー(buildReceiptDedupeKey の timestamp)に
+ * する形。キーは日時の文字列をそのまま比べるため、本アプリの登録と同じ形にしないと同じ領収書を見逃す。本アプリの登録は
+ * 画面の日時の欄('yyyy/MM/dd HH:mm'。web の fromDatetimeLocal・OCR の receiptDate)をキーにするため、取り込む領収書の
+ * キーもこの分までの形(canonical)にする(取込で作る領収書の dedupe_hash は必ずこの形)。alternatives は本アプリの
+ * 登録と突き合わせるときにだけ見る形: 日時の欄が空の登録は、報告の日付+開始時刻('HH:mm:00')か登録の時刻(秒つき)を
+ * キーにしたため、秒つきの形も見る。
+ */
+export function legacyReceiptKeyTimestamps(wallClock: string): { canonical: string; alternatives: string[] } {
+  const canonical = wallClock.slice(0, 16);
+  return { canonical, alternatives: wallClock.length > 16 ? [wallClock] : [] };
+}

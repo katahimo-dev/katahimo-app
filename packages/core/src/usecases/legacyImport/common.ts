@@ -11,7 +11,7 @@ export interface LegacyImportDeps {
 }
 
 export interface LegacyImportOptions {
-  /** true なら何も書かない(件数と行ごとの結果だけを返す)。 */
+  /** true なら何も書かない(import_runs・操作ログも。件数と行ごとの結果だけを返す)。 */
   dryRun?: boolean;
 }
 
@@ -21,7 +21,7 @@ export interface LegacyImportCounts {
   created: number;
   /** シートで直された行を記録に写した。 */
   updated: number;
-  /** 取込済みで変わっていない。 */
+  /** 取込済みで変わっていない(領収書でシートの行が変わった行は warnings の changed_in_sheet にだけ数える)。 */
   unchanged: number;
   /** 本アプリからのミラーの行(KatahimoReportId / KatahimoReceiptId のある行)。取り込まない。 */
   fromApp: number;
@@ -33,7 +33,7 @@ export interface LegacyImportCounts {
   warnings: number;
   /** 全てのセルが空の行。 */
   blank: number;
-  /** 取込済みの記録のうち、今回のシートに行が無かったもの(シートで行を消した・日時等を直した)。 */
+  /** 取込済みの記録のうち、今回のシートでその行番号が空・シートの外だったもの(シートで行を消した)。 */
   missingFromSheet: number;
   /** 取込の対象の月の外の行(領収書だけ)。 */
   outOfRange: number;
@@ -88,7 +88,7 @@ export function sortIssues(issues: readonly LegacyRowIssue[]): LegacyRowIssue[] 
   );
 }
 
-/** 取込の実行を失敗で閉じ、ERROR のログを残す(行の値は残さない)。 */
+/** 取込の実行を失敗で閉じ、ERROR のログを残す(行の値は残さない)。dry-run は何も書かない(例外を投げ直すだけ)。 */
 export async function finishFailed(
   deps: LegacyImportDeps,
   tenantId: string,
@@ -100,29 +100,23 @@ export async function finishFailed(
   },
   error: unknown,
 ): Promise<void> {
+  if (run.dryRun) return;
   const reason = isDomainError(error) ? (error.reason ?? error.code) : 'unexpected';
-  if (!run.dryRun) {
-    await deps.uow
-      .run(tenantId, (r) =>
-        r.importRuns.finish(run.id, {
-          status: 'failed',
-          counts: flattenCounts(run.counts),
-          message: '取込の途中で失敗しました。原因を直してから流し直してください(書き終えた分は残ります)。',
-        }),
-      )
-      .catch(() => undefined);
-  }
+  await deps.uow
+    .run(tenantId, (r) =>
+      r.importRuns.finish(run.id, {
+        status: 'failed',
+        counts: flattenCounts(run.counts),
+        message: '取込の途中で失敗しました。原因を直してから流し直してください(書き終えた分は残ります)。',
+      }),
+    )
+    .catch(() => undefined);
   await deps.appLog.write({
     tenantId,
     level: 'ERROR',
     action: run.action,
     actorType: 'system',
-    details: {
-      runId: run.dryRun ? null : run.id,
-      dryRun: run.dryRun,
-      error: reason,
-      counts: flattenCounts(run.counts),
-    },
+    details: { runId: run.id, error: reason, counts: flattenCounts(run.counts) },
   });
 }
 

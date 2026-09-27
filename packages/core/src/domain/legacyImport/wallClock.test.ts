@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatLegacyWallClock,
+  legacyReceiptKeyTimestamps,
   legacyTimeOfDay,
   legacyWallClockDate,
   legacyWallClockFromSerial,
@@ -60,6 +61,19 @@ describe('GAS版のシートの日時・時刻の読み方', () => {
     );
     expect(legacyWallClockDate('2026/09/05 09:00:00')).toBe('2026-09-05');
     expect(() => legacyWallClockToInstant('2026/9/5 9:00', 'Asia/Tokyo')).toThrow();
+  });
+});
+
+describe('legacyReceiptKeyTimestamps(領収書の重複の判定のキーの日時)', () => {
+  it('本アプリの登録と同じ分までの形を代表にし、秒つきの形(日時の欄が空の登録のキー)も突き合わせる', () => {
+    expect(legacyReceiptKeyTimestamps('2026/09/05 12:30:00')).toEqual({
+      canonical: '2026/09/05 12:30',
+      alternatives: ['2026/09/05 12:30:00'],
+    });
+    expect(legacyReceiptKeyTimestamps('2026/09/05 12:30:45')).toEqual({
+      canonical: '2026/09/05 12:30',
+      alternatives: ['2026/09/05 12:30:45'],
+    });
   });
 });
 

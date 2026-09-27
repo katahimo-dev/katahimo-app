@@ -97,13 +97,17 @@ describe('parseDailyReportSheet(GAS版の「日報」シート)', () => {
     ]);
   });
 
-  it('同じキーの2行目以降は #2・#3 を付ける(同じ訪問の日報を2回新しく保存した)', () => {
+  it('同じ訪問の日報を2回新しく保存した行は同じ内容のキーで、行番号で分ける', () => {
     const row = [serial('2026/09/05 09:00:00'), '09:00', '12:00', '山田 太郎', 1, '', '1回目'];
     const parsed = parseDailyReportSheet(
       testSheet('日報', [DAILY_HEADER, row, [...row.slice(0, 6), '2回目'], [...row.slice(0, 6), '3回目']]),
     );
     const base = JSON.stringify(['2026/09/05 09:00:00', '山田太郎', '1', '09:00']);
-    expect(parsed.rows.map((r) => r.sourceKey)).toEqual([base, `${base}#2`, `${base}#3`]);
+    expect(parsed.rows.map((r) => [r.rowNumber, r.sourceKey])).toEqual([
+      [2, base],
+      [3, base],
+      [4, base],
+    ]);
   });
 
   it('見出しが GAS版の日報でないシートは読まない。空のシートは0行', () => {

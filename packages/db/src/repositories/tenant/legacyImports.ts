@@ -8,6 +8,7 @@ import { TenantBound } from './base';
 
 const columns = {
   source: legacyImportedRows.source,
+  rowNumber: legacyImportedRows.rowNumber,
   sourceKey: legacyImportedRows.sourceKey,
   careRecordId: legacyImportedRows.careRecordId,
   receiptId: legacyImportedRows.receiptId,
@@ -15,7 +16,7 @@ const columns = {
   syncedRowVersion: legacyImportedRows.syncedRowVersion,
 };
 
-/** IN の中に並べるキーの数の上限(文の大きさを抑える)。 */
+/** IN の中に並べるキー・行番号の数の上限(文の大きさを抑える)。 */
 const KEYS_PER_QUERY = 1000;
 
 export class DrizzleLegacyImportRepository extends TenantBound implements LegacyImportRepository {
@@ -33,13 +34,28 @@ export class DrizzleLegacyImportRepository extends TenantBound implements Legacy
     }
   }
 
-  async findBySourceKeys(
+  findByRowNumbers(
+    source: LegacyImportRowSource,
+    rowNumbers: readonly number[],
+  ): Promise<LegacyImportedRow[]> {
+    return this.findIn(source, legacyImportedRows.rowNumber, rowNumbers);
+  }
+
+  findBySourceKeys(
     source: LegacyImportRowSource,
     sourceKeys: readonly string[],
   ): Promise<LegacyImportedRow[]> {
+    return this.findIn(source, legacyImportedRows.sourceKey, sourceKeys);
+  }
+
+  private async findIn<T extends string | number>(
+    source: LegacyImportRowSource,
+    column: typeof legacyImportedRows.rowNumber | typeof legacyImportedRows.sourceKey,
+    values: readonly T[],
+  ): Promise<LegacyImportedRow[]> {
     const found: LegacyImportedRow[] = [];
-    for (let i = 0; i < sourceKeys.length; i += KEYS_PER_QUERY) {
-      const chunk = sourceKeys.slice(i, i + KEYS_PER_QUERY);
+    for (let i = 0; i < values.length; i += KEYS_PER_QUERY) {
+      const chunk = values.slice(i, i + KEYS_PER_QUERY);
       found.push(
         ...(await this.tx
           .select(columns)
@@ -48,7 +64,7 @@ export class DrizzleLegacyImportRepository extends TenantBound implements Legacy
             and(
               eq(legacyImportedRows.tenantId, this.tenantId),
               eq(legacyImportedRows.source, source),
-              inArray(legacyImportedRows.sourceKey, chunk),
+              inArray(column, chunk),
             ),
           )),
       );
@@ -68,8 +84,9 @@ export class DrizzleLegacyImportRepository extends TenantBound implements Legacy
       .insert(legacyImportedRows)
       .values({ tenantId: this.tenantId, ...row })
       .onConflictDoUpdate({
-        target: [legacyImportedRows.tenantId, legacyImportedRows.source, legacyImportedRows.sourceKey],
+        target: [legacyImportedRows.tenantId, legacyImportedRows.source, legacyImportedRows.rowNumber],
         set: {
+          sourceKey: row.sourceKey,
           sourceDigest: row.sourceDigest,
           syncedRowVersion: row.syncedRowVersion,
           importRunId: row.importRunId,

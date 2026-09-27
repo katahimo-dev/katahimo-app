@@ -11,8 +11,9 @@ export const LEGACY_REPORTS_USAGE = [
 ].join('\n');
 
 export const LEGACY_RECEIPTS_USAGE = [
-  '使い方: pnpm import:legacy-receipts -- <slug> --spreadsheet <スプレッドシートID> (--month YYYY-MM ... | --from YYYY-MM --to YYYY-MM) [--sheet <シート名>] [--dry-run]',
+  '使い方: pnpm import:legacy-receipts -- <slug> --spreadsheet <スプレッドシートID> (--month YYYY-MM ... | --from YYYY-MM --to YYYY-MM) [--sheet <シート名>] [--dry-run] [--allow-local-storage]',
   '  スプレッドシートID は GAS版の Config.js の IMAGE_LOG_SS_ID(「領収書一覧」)。シートの既定は先頭のシート。--month は何回でも指定できる',
+  '  画像は STORAGE_PROVIDER=gcs のファイル置き場にだけ取り込む(開発のローカルのファイル置き場は --allow-local-storage)',
 ].join('\n');
 
 export interface LegacyReportsArgs {
@@ -30,6 +31,8 @@ export interface LegacyReceiptsArgs {
   /** 取り込む月('YYYY-MM'。古い順・重複なし)。 */
   months: string[];
   dryRun: boolean;
+  /** STORAGE_PROVIDER が gcs でなくても画像を取り込む(開発だけ)。 */
+  allowLocalStorage: boolean;
 }
 
 /** 1回に指定できる月の数の上限(誤って何年分も読まないように)。 */
@@ -95,7 +98,9 @@ function monthIndexOf(value: string | undefined): number | null {
 const yearMonthOfIndex = (i: number) => `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}`;
 
 export function parseLegacyReceiptsArgs(argv: readonly string[] = process.argv): Parsed<LegacyReceiptsArgs> {
-  const common = parseCommon(cliArgs(argv));
+  const all = cliArgs(argv);
+  const allowLocalStorage = all.includes('--allow-local-storage');
+  const common = parseCommon(all.filter((a) => a !== '--allow-local-storage'));
   if (!common.ok) return common;
   const months = takeRepeatedOption(common.value.rest, '--month');
   const from = takeOption(months.rest, '--from');
@@ -136,8 +141,21 @@ export function parseLegacyReceiptsArgs(argv: readonly string[] = process.argv):
       slug,
       spreadsheetId,
       dryRun,
+      allowLocalStorage,
       sheetName: sheet.value,
       months: [...indexes].sort((a, b) => a - b).map(yearMonthOfIndex),
     },
   };
+}
+
+/**
+ * 領収書の画像の保存先の確かめ(書き込む取込だけ)。ローカルのファイル置き場(STORAGE_PROVIDER=local)は CLI を流した
+ * 端末のディスクで、本番の API からは読めないため、--allow-local-storage(開発)が無ければ断る。
+ */
+export function legacyReceiptsStorageProblem(
+  args: Pick<LegacyReceiptsArgs, 'dryRun' | 'allowLocalStorage'>,
+  storageProvider: string,
+): string | null {
+  if (args.dryRun || storageProvider === 'gcs' || args.allowLocalStorage) return null;
+  return `画像の保存先が STORAGE_PROVIDER=${storageProvider} です。本番の取込は STORAGE_PROVIDER=gcs(GCS_BUCKET)で流してください(開発でローカルのファイル置き場に取り込むときは --allow-local-storage)`;
 }

@@ -50,7 +50,15 @@ export interface LegacyDriveFilePort {
 /** 取り込んだ行と、取り込んだ先の記録(日報・事故報告は care_records、領収書は receipts)の対応。 */
 export interface LegacyImportedRow {
   source: LegacyImportRowSource;
-  /** 出どころの行を指すキー(ingestion の legacySheets が作る。行番号・本文は入れない)。 */
+  /**
+   * シートの行番号(報告の行はこれで指す。GAS版は行を末尾に足すか行番号で上書きするだけで、行を消さない・並べ替えない)。
+   * 同じ出どころの同じ行番号は1つだけ。
+   */
+  rowNumber: number;
+  /**
+   * 行の内容のキー(ingestion の legacySheets が作る)。報告は日時・担当・顧客ID(・開始時刻)で、行が動いたことを見つける
+   * ために使う(同じキーの行が2つ以上あってよい)。領収書は画像の Drive のファイル ID で、行を指す(1つだけ)。
+   */
   sourceKey: string;
   careRecordId: string | null;
   receiptId: string | null;
@@ -66,14 +74,22 @@ export interface LegacyImportRepository {
    * 同時に2つ流しても、キーで突き合わせてから作る間に同じ行を2回作らない。取込の書き込みの最初に呼ぶ。
    */
   lockTenantLegacyImports(): Promise<void>;
-  /** キーで対応を探す(見つかったものだけ)。 */
+  /** 行番号で対応を探す(見つかったものだけ)。 */
+  findByRowNumbers(
+    source: LegacyImportRowSource,
+    rowNumbers: readonly number[],
+  ): Promise<LegacyImportedRow[]>;
+  /** 行の内容のキーで対応を探す(見つかったものだけ)。 */
   findBySourceKeys(
     source: LegacyImportRowSource,
     sourceKeys: readonly string[],
   ): Promise<LegacyImportedRow[]>;
   /** その出どころから取り込んだ全ての対応(シートから消えた行を見つける)。 */
   listBySource(source: LegacyImportRowSource): Promise<LegacyImportedRow[]>;
-  /** 対応を書く(同じキーがあれば内容の SHA-256・版・取込の実行を置き換える)。 */
+  /**
+   * 対応を書く(同じ行番号があれば行の内容のキー・内容の SHA-256・版・取込の実行を置き換える。取り込んだ先の記録は
+   * 変えない)。
+   */
   save(row: LegacyImportedRow & { importRunId: string }): Promise<void>;
   /** その領収書が GAS版から取り込んだものか。 */
   isImportedReceipt(receiptId: string): Promise<boolean>;

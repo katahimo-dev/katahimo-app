@@ -109,6 +109,7 @@ describe('GoogleLegacySpreadsheetReader(Sheets API でシートを読む)', () =
 });
 
 describe('GoogleLegacyDriveFiles(Drive API で画像を読む)', () => {
+  const noWait = { attempts: 3, baseDelayMs: 0, sleep: async () => undefined };
   const api = (overrides: Partial<LegacyDriveApi>): LegacyDriveApi => ({
     getFile: async () => ({ id: 'f', mimeType: 'image/jpeg', size: '123', trashed: false }),
     download: async () => new Uint8Array([1, 2]).buffer,
@@ -138,8 +139,59 @@ describe('GoogleLegacyDriveFiles(Drive API で画像を読む)', () => {
           throw httpError(500);
         },
       }),
+      noWait,
     );
     await expect(failing.getFile('f')).rejects.toThrow('HTTP 500');
     expect(await new GoogleLegacyDriveFiles(api({})).download('f')).toEqual(new Uint8Array([1, 2]));
+  });
+
+  it('429・5xx・回数の上限の 403 は間隔を倍にしながら読み直し、他の失敗・上限の回数の後は読み直さない', async () => {
+    const waits: number[] = [];
+    const retry = { attempts: 3, baseDelayMs: 100, sleep: async (ms: number) => void waits.push(ms) };
+    const rateLimited403 = Object.assign(httpError(403), { errors: [{ reason: 'userRateLimitExceeded' }] });
+    const failures = [httpError(429), rateLimited403];
+    let calls = 0;
+    const flaky = new GoogleLegacyDriveFiles(
+      api({
+        download: async () => {
+          calls++;
+          const failure = failures.shift();
+          if (failure) throw failure;
+          return new Uint8Array([7]).buffer;
+        },
+      }),
+      retry,
+    );
+    expect(await flaky.download('f')).toEqual(new Uint8Array([7]));
+    expect(calls).toBe(3);
+    expect(waits).toEqual([100, 200]);
+
+    waits.length = 0;
+    let serverCalls = 0;
+    const down = new GoogleLegacyDriveFiles(
+      api({
+        getFile: async () => {
+          serverCalls++;
+          throw httpError(503);
+        },
+      }),
+      retry,
+    );
+    await expect(down.getFile('f')).rejects.toThrow('HTTP 503');
+    expect(serverCalls).toBe(3);
+    expect(waits).toEqual([100, 200]);
+
+    // 共有されていない 403 は待たずに null
+    waits.length = 0;
+    const denied = new GoogleLegacyDriveFiles(
+      api({
+        getFile: async () => {
+          throw httpError(403);
+        },
+      }),
+      retry,
+    );
+    expect(await denied.getFile('f')).toBeNull();
+    expect(waits).toEqual([]);
   });
 });

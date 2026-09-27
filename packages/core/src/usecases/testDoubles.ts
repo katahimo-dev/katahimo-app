@@ -1144,6 +1144,14 @@ export function fakeRepositories(
       async lockTenantLegacyImports() {
         db.legacyImportLocks.push(tenantId);
       },
+      async findByRowNumbers(source, rowNumbers) {
+        const numbers = new Set(rowNumbers);
+        return structuredClone(
+          d()
+            .legacyImportedRows.filter((x) => x.source === source && numbers.has(x.rowNumber))
+            .map(({ importRunId: _run, ...row }) => row),
+        );
+      },
       async findBySourceKeys(source, sourceKeys) {
         const keys = new Set(sourceKeys);
         return structuredClone(
@@ -1161,17 +1169,25 @@ export function fakeRepositories(
       },
       async save(row) {
         const existing = d().legacyImportedRows.find(
-          (x) => x.source === row.source && x.sourceKey === row.sourceKey,
+          (x) => x.source === row.source && x.rowNumber === row.rowNumber,
         );
         if (existing) {
           Object.assign(existing, {
+            sourceKey: row.sourceKey,
             sourceDigest: row.sourceDigest,
             syncedRowVersion: row.syncedRowVersion,
             importRunId: row.importRunId,
           });
-        } else {
-          d().legacyImportedRows.push(structuredClone(row));
+          return;
         }
+        // 実際の DB の一意の索引と同じく、領収書の同じ画像は1行だけ
+        if (
+          row.source === 'gas_receipt' &&
+          d().legacyImportedRows.some((x) => x.source === 'gas_receipt' && x.sourceKey === row.sourceKey)
+        ) {
+          throw new Error('legacy_imported_rows_tenant_id_receipt_source_key_key');
+        }
+        d().legacyImportedRows.push(structuredClone(row));
       },
       async isImportedReceipt(receiptId) {
         return d().legacyImportedRows.some((x) => x.receiptId === receiptId);

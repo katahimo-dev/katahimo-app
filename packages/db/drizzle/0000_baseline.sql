@@ -732,6 +732,7 @@ ALTER TABLE "care_records" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "legacy_imported_rows" (
 	"tenant_id" uuid NOT NULL,
 	"source" text NOT NULL,
+	"row_number" integer NOT NULL,
 	"source_key" text NOT NULL,
 	"care_record_id" uuid,
 	"receipt_id" uuid,
@@ -740,12 +741,13 @@ CREATE TABLE "legacy_imported_rows" (
 	"import_run_id" uuid NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "legacy_imported_rows_pkey" PRIMARY KEY("tenant_id","source","source_key"),
+	CONSTRAINT "legacy_imported_rows_pkey" PRIMARY KEY("tenant_id","source","row_number"),
 	CONSTRAINT "legacy_imported_rows_tenant_id_care_record_id_key" UNIQUE("tenant_id","care_record_id"),
 	CONSTRAINT "legacy_imported_rows_tenant_id_receipt_id_key" UNIQUE("tenant_id","receipt_id"),
 	CONSTRAINT "legacy_imported_rows_source_check" CHECK ("legacy_imported_rows"."source" in ('gas_daily_report', 'gas_accident_report', 'gas_receipt')),
 	CONSTRAINT "legacy_imported_rows_target_check" CHECK (case when "legacy_imported_rows"."source" = 'gas_receipt' then "legacy_imported_rows"."receipt_id" is not null and "legacy_imported_rows"."care_record_id" is null else "legacy_imported_rows"."care_record_id" is not null and "legacy_imported_rows"."receipt_id" is null end),
-	CONSTRAINT "legacy_imported_rows_source_key_check" CHECK ("legacy_imported_rows"."source_key" <> '')
+	CONSTRAINT "legacy_imported_rows_source_key_check" CHECK ("legacy_imported_rows"."source_key" <> ''),
+	CONSTRAINT "legacy_imported_rows_row_number_check" CHECK ("legacy_imported_rows"."row_number" >= 2)
 );
 --> statement-breakpoint
 ALTER TABLE "legacy_imported_rows" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -1455,6 +1457,8 @@ CREATE INDEX "care_records_tenant_id_customer_id_occurred_at_id_idx" ON "care_re
 CREATE INDEX "care_records_tenant_id_occurred_at_id_idx" ON "care_records" USING btree ("tenant_id","occurred_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_author_staff_id_occurred_at_idx" ON "care_records" USING btree ("tenant_id","author_staff_id","occurred_at" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_visit_id_idx" ON "care_records" USING btree ("tenant_id","visit_id");--> statement-breakpoint
+CREATE INDEX "legacy_imported_rows_tenant_id_source_source_key_idx" ON "legacy_imported_rows" USING btree ("tenant_id","source","source_key");--> statement-breakpoint
+CREATE UNIQUE INDEX "legacy_imported_rows_tenant_id_receipt_source_key_key" ON "legacy_imported_rows" USING btree ("tenant_id","source_key") WHERE source = 'gas_receipt';--> statement-breakpoint
 CREATE UNIQUE INDEX "receipts_tenant_id_dedupe_hash_key" ON "receipts" USING btree ("tenant_id","dedupe_hash") WHERE dedupe_primary and cancelled_at is null;--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_dedupe_hash_idx" ON "receipts" USING btree ("tenant_id","dedupe_hash") WHERE dedupe_hash is not null and cancelled_at is null;--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_staff_id_receipted_at_idx" ON "receipts" USING btree ("tenant_id","staff_id","receipted_at");--> statement-breakpoint

@@ -7,16 +7,21 @@ import { importLegacyReceipts } from '@katahimo/ingestion';
 import { createLegacySheetsReaders } from '@katahimo/integrations';
 import { createContainer } from '../container';
 import { loadEnv } from '../env';
-import { LEGACY_RECEIPTS_USAGE, parseLegacyReceiptsArgs } from './legacyImportArgs';
+import {
+  LEGACY_RECEIPTS_USAGE,
+  legacyReceiptsStorageProblem,
+  parseLegacyReceiptsArgs,
+} from './legacyImportArgs';
 import { formatCounts, printIssues } from './legacyImportOutput';
 
 /**
  * GAS版の「領収書一覧」を Google Sheets API で読み、指定の月の領収書を画像(Drive API)ごと取り込む(移行の取込。
  * doc/09_移行計画.md)。何度流してもよい(取込済みの画像は取り込まない)。本アプリからのミラーの行
  * (KatahimoReceiptId のある行)と、本アプリで登録済みの同じ内容の領収書は取り込まない。ミラー・通知は積まない。
- * 画像はファイル置き場(STORAGE_PROVIDER。本番は GCS)に保存する。
+ * 画像はファイル置き場に保存する。STORAGE_PROVIDER=gcs でなければ(dry-run と --allow-local-storage の開発を除いて)断る
+ * (ローカルのファイル置き場は CLI を流した端末のディスクで、本番の API からは読めない)。
  *
- * 使い方: pnpm import:legacy-receipts -- <slug> --spreadsheet <ID> (--month YYYY-MM ... | --from YYYY-MM --to YYYY-MM) [--sheet <名前>] [--dry-run]
+ * 使い方: pnpm import:legacy-receipts -- <slug> --spreadsheet <ID> (--month YYYY-MM ... | --from YYYY-MM --to YYYY-MM) [--sheet <名前>] [--dry-run] [--allow-local-storage]
  */
 async function main() {
   const parsed = parseLegacyReceiptsArgs();
@@ -26,6 +31,11 @@ async function main() {
   }
   const args = parsed.value;
   const env = loadEnv();
+  const storageProblem = legacyReceiptsStorageProblem(args, env.STORAGE_PROVIDER);
+  if (storageProblem) {
+    console.error(storageProblem);
+    process.exit(1);
+  }
   const db = createDatabase(env.DATABASE_URL, { max: 2 });
   try {
     const container = createContainer(env, db);
