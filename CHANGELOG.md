@@ -91,9 +91,20 @@
   取消すと残りの1枚が引き継ぐ。全て取消せば同じ内容を登録し直せる。`doc/03_データベース設計.md` 8.4)。スプレッドシートのミラーには
   会社負担・取消を写さず、ミラーが送る前に取消された領収書は送らない(`doc/05_バッチ・外部連携.md` 9章)。画面は、取消を断られた(409・400)
   ときも一覧と今月のまとめを読み直し、端末の「送った領収書の印」は本人の領収書の取消でだけ消す。
+- GAS版のスプレッドシートからの移行の取込(運用担当者のコマンド): `pnpm import:legacy-reports`(「日報」「事故報告」シートの全ての行 →
+  日報・事故報告・ヒヤリハット)と `pnpm import:legacy-receipts`(「領収書一覧」の指定の月の行 → 領収書と画像)。Google Sheets API・Drive API
+  で直接読み(読むだけ。運用担当者本人の ADC か、GAS版 Ver. 1.1.39 の `MigrationShare.js` で共有した `katahimo-api` のサービスアカウント)、
+  スプレッドシートの ID は引数で渡す(GAS版の `Config.js`)。何度流してもよく(取り込んだ行と記録の対応の表 `legacy_imported_rows`)、
+  2回目以降はシートで直された報告だけを直す(確定済み・取込の後に新版で直された記録は直さない。領収書は直さない)。本アプリからの
+  ミラーの行(`KatahimoReportId` / `KatahimoReceiptId`)と、本アプリで登録済みの同じ内容の領収書は取り込まない。ミラー・通知は積まない。
+  `--dry-run` で件数と行ごとの結果(行番号と理由のコードだけ)を確かめられる。`import_runs` の `legacy_reports_sheet` /
+  `legacy_receipts_sheet`、操作ログ `legacy_import.*`。Terraform で Sheets API(`sheets.googleapis.com`)を有効にする
+  (`doc/05_バッチ・外部連携.md` 12章・`doc/09_移行計画.md` 2.4)。
 
 ### 変更
 
+- GAS版のサブモジュール(`legacy/gas-childcare-visit-app`)を a5d0c4a(Ver. 1.1.39。移行の取込のためにスプレッドシート・領収書の画像の
+  フォルダをサービスアカウントに閲覧共有する `MigrationShare.js`)に上げる。
 - 領収書は会計の記録として消せないようにする: アプリの DB ロールから `receipts`・`receipt_uploads` の DELETE・UPDATE を外し、
   `receipts` の取消の列・版・重複の判定の代表だけを UPDATE できるようにする。
 - `pnpm db:doc`: 付録のテーブル定義の「権限」に列ごとの権限(`UPDATE(cancelled_at, …)` 等)も出す。
