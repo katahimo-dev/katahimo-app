@@ -8,7 +8,7 @@
 locals {
   notification_channels = [for c in google_monitoring_notification_channel.email : c.id]
 
-  # 失敗を見張る Cloud Run Jobs(run.tf の local.jobs。migrate / route-notice / nightly-calendar-sync / csv-import / maintenance / sync-busy-blocks)
+  # 失敗を見張る Cloud Run Jobs(run.tf の local.jobs。migrate / outbox-drain / route-notice / nightly-calendar-sync / csv-import / maintenance / sync-busy-blocks)
   monitored_job_names = [for name in keys(local.jobs) : "katahimo-${name}"]
 
   sql_database_id = "${var.project_id}:${var.sql_instance_name}"
@@ -123,6 +123,113 @@ resource "google_monitoring_alert_policy" "job_failed" {
       (`resource.type="cloud_run_job" AND resource.labels.job_name="<ジョブ名>"`)で原因を確認する。
       夜間ジョブは冪等なので、原因を取り除いたら `gcloud run jobs execute <ジョブ名>` で流し直してよい。
       katahimo-migrate の失敗ではデプロイが止まっている(cloudbuild.yaml)。
+    EOT
+  }
+
+  depends_on = [google_project_service.enabled]
+}
+
+# ── outbox: 見回りの停止・起動の依頼の失敗 ────────────────────────
+# outbox-drain は見回り(var.outbox_sweep_schedule、既定10分ごと)で必ず動くため、成功した実行が30分無ければ
+# Scheduler の停止・ジョブの起動の失敗・実行の失敗の続きのどれか(再設定メール・Web Push・ミラーが届かない)。
+resource "google_monitoring_alert_policy" "outbox_drain_stalled" {
+  display_name          = "katahimo-outbox-drain: 成功した実行が無い"
+  combiner              = "OR"
+  severity              = "ERROR"
+  notification_channels = local.notification_channels
+
+  conditions {
+    display_name = "outbox-drain の成功した実行が 30 分間無い"
+    condition_absent {
+      filter   = <<-EOT
+        resource.type = "cloud_run_job"
+        AND resource.labels.job_name = "${local.outbox_drain_job_name}"
+        AND metric.type = "run.googleapis.com/job/completed_execution_count"
+        AND metric.labels.result = "succeeded"
+      EOT
+      duration = "1800s"
+      aggregations {
+        alignment_period     = "600s"
+        per_series_aligner   = "ALIGN_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+        group_by_fields      = ["resource.labels.job_name"]
+      }
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  alert_strategy {
+    auto_close = "3600s"
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      outbox(パスワード再設定メール・Web Push・スプレッドシートへのミラー)が処理されていない。Cloud Scheduler の
+      katahimo-outbox-drain が有効か、`gcloud run jobs executions list --job=${local.outbox_drain_job_name} --region=${var.region}`
+      で実行が失敗していないかを確かめる。直したら `gcloud run jobs execute ${local.outbox_drain_job_name}` で流す(doc/07_インフラ・運用.md 8.1)。
+    EOT
+  }
+
+  depends_on = [google_project_service.enabled]
+}
+
+# API が outbox-drain の起動を頼めなかった(WARN outbox.drain_trigger_failed)。見回りが拾うため届くが、最大10分遅れる。
+# 続くなら権限(roles/run.invoker)や OUTBOX_DRAIN_JOB の設定の誤り。
+resource "google_logging_metric" "outbox_drain_trigger_failed" {
+  name   = "katahimo/outbox_drain_trigger_failed"
+  filter = <<-EOT
+    resource.type = "cloud_run_revision"
+    AND resource.labels.service_name = "katahimo-api"
+    AND jsonPayload.action = "outbox.drain_trigger_failed"
+  EOT
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+  }
+
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_monitoring_alert_policy" "outbox_drain_trigger_failed" {
+  display_name          = "katahimo-api: outbox-drain の起動の依頼の失敗"
+  combiner              = "OR"
+  severity              = "WARNING"
+  notification_channels = local.notification_channels
+
+  conditions {
+    display_name = "1 時間に ${var.alert_outbox_trigger_failures_threshold} 回を超えて起動を頼めなかった"
+    condition_threshold {
+      filter          = <<-EOT
+        resource.type = "cloud_run_revision"
+        AND metric.type = "logging.googleapis.com/user/${google_logging_metric.outbox_drain_trigger_failed.name}"
+      EOT
+      comparison      = "COMPARISON_GT"
+      threshold_value = var.alert_outbox_trigger_failures_threshold
+      duration        = "0s"
+      aggregations {
+        alignment_period     = "3600s"
+        per_series_aligner   = "ALIGN_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  alert_strategy {
+    auto_close = "7200s"
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      API が outbox-drain の実行を頼めていない(outbox は10分ごとの見回りで処理されるため、送信が最大10分遅れる)。
+      Cloud Logging の `jsonPayload.action="outbox.drain_trigger_failed"` の error(HTTP 403 なら katahimo-api に
+      ジョブの roles/run.invoker が無い、404 なら OUTBOX_DRAIN_JOB の誤り)を確かめる(doc/07_インフラ・運用.md 6章)。
     EOT
   }
 

@@ -9,8 +9,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsup",
-    "dev": "tsx watch src/main.ts",
-    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/localWorker.ts",
+    "start": "tsx src/localWorker.ts",
     "outbox:once": "tsx src/entrypoints/outboxOnce.ts",
     "job:nightly-calendar-sync": "tsx src/entrypoints/nightlyCalendarSync.ts",
     "job:route-notice": "tsx src/entrypoints/routeNotice.ts",

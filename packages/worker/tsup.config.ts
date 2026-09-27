@@ -1,11 +1,10 @@
 import { defineConfig } from 'tsup';
 
-// 本番用ビルド(Dockerfile の worker イメージ)。常駐ポーラー(main)と Cloud Run Jobs 用のジョブ
-// (entrypoints/*)を別々のファイルに出力し、同じイメージの起動コマンドで切り替える。
+// 本番用ビルド(Dockerfile の worker イメージ)。Cloud Run Jobs 用のジョブ(entrypoints/*)を別々のファイルに出力し、
+// 同じイメージの起動コマンドで切り替える。ローカル開発専用の pnpm worker(src/localWorker.ts)は入れない。
 // @katahimo/* の取り込み方針は packages/api/tsup.config.ts と同じ。
 export default defineConfig({
   entry: {
-    main: 'src/main.ts',
     'outbox-once': 'src/entrypoints/outboxOnce.ts',
     'nightly-calendar-sync': 'src/entrypoints/nightlyCalendarSync.ts',
     'route-notice': 'src/entrypoints/routeNotice.ts',

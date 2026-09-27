@@ -16,7 +16,9 @@ import type { PasswordHasherPort, RateLimitPolicy } from '@katahimo/core/usecase
 import {
   createScheduleDirectory,
   DEFAULT_RATE_LIMIT_POLICY,
+  OutboxDrainNotifier,
   readTenantSecret,
+  withOutboxDrainTrigger,
   withRateLimitCounts,
 } from '@katahimo/core/usecases';
 import type { Database } from '@katahimo/db';
@@ -28,6 +30,7 @@ import {
 } from '@katahimo/db/repositories';
 import {
   createCustomerCsvSource,
+  createOutboxDrainTrigger,
   createScheduleServices,
   createSecretBox,
   createStoragePort,
@@ -42,6 +45,7 @@ import {
 import { sql } from 'drizzle-orm';
 import { argon2PasswordHasher } from './authAdapters';
 import type { Env } from './env';
+import { writeStructuredLog } from './http/requestLog';
 import { deriveSecret } from './secrets';
 
 /**
@@ -50,6 +54,8 @@ import { deriveSecret } from './secrets';
  */
 export interface Container {
   uow: UnitOfWorkPort;
+  /** outbox-drain の起動の依頼(積んだ操作の後は uow が頼む。再設定コードの要求は積まなくても頼み、応答時間を揃える)。 */
+  outboxDrain: { notify(): Promise<void> };
   tenants: TenantDirectoryPort;
   appLog: AppLogPort;
   /** テナントの秘密値(tenant_secrets)の封と開封(本番は Cloud KMS)。 */
@@ -100,8 +106,24 @@ function rateLimitPolicyOf(env: Env): RateLimitPolicy {
   });
 }
 
-export function createContainer(env: Env, db: Database): Container {
+/**
+ * API の Unit of Work と outbox-drain の起動の依頼。OUTBOX_DRAIN_JOB があれば、outbox に積んだトランザクションの
+ * コミットの後に outbox-drain の実行を頼む(インスタンスごとに10秒に1回まで。失敗は WARN にして見回りに任せる)。
+ * 無ければ頼まない(ローカル開発)。
+ */
+function createUnitOfWork(env: Env, db: Database): Pick<Container, 'uow' | 'outboxDrain'> {
   const uow = new DrizzleUnitOfWork(db, { outboxPolicy: outboxTopicPolicyOf(env) });
+  const trigger = createOutboxDrainTrigger(env);
+  if (!trigger) return { uow, outboxDrain: { notify: async () => {} } };
+  const notifier = new OutboxDrainNotifier({
+    trigger,
+    warn: (failure) => writeStructuredLog({ severity: 'WARNING', ...failure }),
+  });
+  return { uow: withOutboxDrainTrigger(uow, notifier), outboxDrain: notifier };
+}
+
+export function createContainer(env: Env, db: Database): Container {
+  const { uow, outboxDrain } = createUnitOfWork(env, db);
   const secretBox = createSecretBox(env);
   const appLog = new DrizzleAppLogRepository(db);
   const tenants = new DrizzleTenantDirectory(db);
@@ -121,6 +143,7 @@ export function createContainer(env: Env, db: Database): Container {
   const webhookFallback = { report: env.GCHAT_REPORT_WEBHOOK_URL, receipt: env.GCHAT_RECEIPT_WEBHOOK_URL };
   return {
     uow,
+    outboxDrain,
     tenants,
     appLog,
     secretBox,

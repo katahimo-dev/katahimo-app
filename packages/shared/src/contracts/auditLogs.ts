@@ -224,6 +224,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'outbox.message_failed': '外部への送信の失敗',
   'outbox.lease_lost': '外部への送信の処理が途中で切れた',
   'outbox.mirror_other_tenant_skipped': 'ミラーの対象でない法人のスプレッドシートへの反映を止めた',
+  'outbox.drain_trigger_failed': '外部への送信の処理の起動を頼めなかった',
   'ai.settings.read_failed': 'AIの設定を読めなかった',
   'attendance.aggregate.refresh_denied': '勤怠集計の書き直しを断った',
   'attendance.aggregate.refresh_failed': '勤怠集計の書き直しの失敗',

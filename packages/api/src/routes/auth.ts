@@ -127,7 +127,7 @@ export function createAuthRoutes(container: Container) {
 
   /**
    * GAS版Auth.js requestPasswordReset。成否・アカウントの有無にかかわらず同じ応答を返す(メールは
-   * ワーカーが送る)。送信元IP単位の上限を超えた場合だけ 429(アカウントの有無とは関係しないため)。
+   * outbox-drain が送る)。送信元IP単位の上限を超えた場合だけ 429(アカウントの有無とは関係しないため)。
    */
   app.post('/password-reset/request', async (c) => {
     const body = await parseJsonBody(c, passwordResetRequestSchema);

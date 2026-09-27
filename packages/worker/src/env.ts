@@ -1,5 +1,4 @@
 import {
-  booleanFlag,
   emptyToUndefined,
   parseEnvOrThrow,
   sharedEnvProblems,
@@ -10,7 +9,8 @@ import {
 import { z } from 'zod';
 
 /**
- * ワーカー(outbox の常駐ポーラー・夜間のカレンダー反映・翌日の予定のお知らせ・顧客CSV取込・保守)の環境変数。
+ * ワーカー(Cloud Run Jobs: outbox-drain・夜間のカレンダー反映・翌日の予定のお知らせ・顧客CSV取込・保守。
+ * ローカル開発の pnpm worker も同じ)の環境変数。
  * API と同じでなければならない変数は sharedEnvShape(@katahimo/integrations)。
  */
 const envSchema = z.object({
@@ -18,9 +18,6 @@ const envSchema = z.object({
   // ワーカー専用の DB ユーザー(katahimo_worker。テナントを横断して outbox を取るポリシーがある)。
   // API の DATABASE_URL(katahimo_app)とは別のユーザー・パスワード(Secret Manager の別の secret)。
   WORKER_DATABASE_URL: z.string().min(1, 'WORKER_DATABASE_URL が必要です(katahimo_worker の接続)'),
-
-  // Cloud Run サービスとして常駐させる場合のヘルスチェック用ポート。未設定なら待ち受けない(ローカル・Cloud Run Jobs)。
-  WORKER_HEALTH_PORT: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
 
   // パスワード再設定メール(outbox の mail.password_reset)の送信。未設定の開発環境では内容を標準出力に出す。
   SMTP_HOST: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -43,10 +40,10 @@ const envSchema = z.object({
   BUSY_BLOCK_SYNC_DAYS: z.coerce.number().int().positive().default(28),
 
   // ── outbox ──
-  // 空になった後、次に見に行くまでの間隔。
+  // 1回の実行(outbox-drain・バッチのジョブの最後)で続けて処理する最大件数(1件ずつ取り出す)。残りは次の実行が処理する。
+  OUTBOX_DRAIN_MAX: z.coerce.number().int().positive().default(500),
+  // ローカル開発の pnpm worker だけ: 空になった後、次に見に行くまでの間隔。
   OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
-  // 1回の見回りで続けて処理する最大件数(1件ずつ取り出す)。
-  OUTBOX_DRAIN_MAX: z.coerce.number().int().positive().default(100),
   // 取り出したメッセージのリース。1件の処理(GAS Bridge の呼び出し等)の最長時間より長くする。
   OUTBOX_LEASE_MS: z.coerce
     .number()
@@ -57,7 +54,7 @@ const envSchema = z.object({
   OUTBOX_RETRY_BASE_DELAY_MS: z.coerce.number().int().positive().default(30_000),
   OUTBOX_RETRY_MAX_DELAY_MS: z.coerce.number().int().positive().default(3_600_000),
 
-  // 停止の合図(SIGTERM)から、処理中のものを諦めて終えるまでの時間(Cloud Run は約10秒で強制終了する)。
+  // 停止の合図(SIGTERM)から、処理中のものを諦めて終えるまでの時間(Cloud Run Jobs は約10秒で強制終了する)。
   WORKER_SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(8_000),
   // 1回だけ実行するジョブ(Cloud Run Jobs)の上限時間。超えたら失敗として終える。
   JOB_TIMEOUT_MS: z.coerce
@@ -68,9 +65,6 @@ const envSchema = z.object({
 
   // 操作ログ(app_logs)を残す月数(月のパーティションごと消す)。
   APP_LOG_RETENTION_MONTHS: z.coerce.number().int().min(1).default(13),
-
-  // ローカル開発用: 常駐ワーカーの中で夜間ジョブも時刻どおりに動かす(本番は Cloud Scheduler → Cloud Run Jobs)。
-  WORKER_IN_PROCESS_CRON: booleanFlag,
 });
 
 export type WorkerEnv = z.infer<typeof envSchema>;

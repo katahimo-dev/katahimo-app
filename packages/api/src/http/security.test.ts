@@ -157,6 +157,7 @@ describe('本番の設定', () => {
     SECRET_BOX_KMS_KEY: 'projects/p/locations/asia-northeast1/keyRings/katahimo/cryptoKeys/tenant-secrets',
     STORAGE_PROVIDER: 'gcs',
     GCS_BUCKET: 'p-katahimo-receipts',
+    OUTBOX_DRAIN_JOB: 'projects/p/locations/asia-northeast1/jobs/katahimo-outbox-drain',
   };
 
   it('HSTS を付ける', async () => {

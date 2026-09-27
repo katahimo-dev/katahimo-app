@@ -79,3 +79,12 @@ export interface EntityChangeInput {
 export interface EntityChangeWriter {
   append(change: EntityChangeInput): Promise<void>;
 }
+
+/**
+ * outbox を処理するジョブ(本番は Cloud Run Jobs の outbox-drain)の1回の実行を頼む。依頼が受け付けられたら
+ * 戻り、ジョブの完了は待たない。依頼できなかったら例外を投げる(呼ぶ側は利用者の操作を失敗させず、
+ * 定期実行の見回りに任せる。usecases/outboxDrainTrigger.ts)。
+ */
+export interface OutboxDrainTriggerPort {
+  requestDrain(): Promise<void>;
+}

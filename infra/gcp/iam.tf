@@ -16,7 +16,7 @@ resource "google_service_account" "api" {
 
 resource "google_service_account" "worker" {
   account_id   = "katahimo-worker"
-  display_name = "katahimo ワーカー(outbox ポーラー・夜間ジョブ)"
+  display_name = "katahimo ワーカー(outbox-drain・夜間ジョブ)"
 }
 
 resource "google_service_account" "migrate" {

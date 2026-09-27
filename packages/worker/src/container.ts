@@ -40,7 +40,7 @@ import {
 import type { WorkerEnv } from './env';
 
 /**
- * ワーカーの全ジョブ(outbox・夜間のカレンダー反映・翌日の予定のお知らせ・顧客CSV取込・保守・free/busy 同期)が使う依存一式
+ * ワーカーの全ジョブ(outbox-drain・夜間のカレンダー反映・翌日の予定のお知らせ・顧客CSV取込・保守・free/busy 同期)が使う依存一式
  * (ポートの型だけで持つ)。usecase の Deps を構造的に満たす。
  */
 export interface WorkerContainer {
@@ -67,6 +67,8 @@ export interface WorkerContainer {
   webPush: WebPushSenderPort | null;
   workerId: string;
   leaseMs: number;
+  /** 1回の実行で続けて処理する outbox の最大件数(OUTBOX_DRAIN_MAX)。 */
+  outboxDrainMax: number;
   retryPolicy: { baseDelayMs: number; maxDelayMs: number };
   appLogRetentionMonths: number;
   /** job:sync-busy-blocks 用(Google Calendar freeBusy を使うため、実行時に初めて組み立てる)。 */
@@ -119,6 +121,7 @@ export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerConta
     webPush: vapid ? new WebPushSender(vapid) : null,
     workerId: `${hostname()}:${process.pid}`,
     leaseMs: env.OUTBOX_LEASE_MS,
+    outboxDrainMax: env.OUTBOX_DRAIN_MAX,
     retryPolicy: { baseDelayMs: env.OUTBOX_RETRY_BASE_DELAY_MS, maxDelayMs: env.OUTBOX_RETRY_MAX_DELAY_MS },
     appLogRetentionMonths: env.APP_LOG_RETENTION_MONTHS,
     busyBlockSync: () => ({ uow, calendar: createGoogleCalendarPort(env), appLog }),

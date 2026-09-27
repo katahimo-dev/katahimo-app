@@ -205,9 +205,10 @@ export async function requestPasswordReset(
       details: { reason: 'rate_limited', scope: limits.scope, loginId: maskedLoginId },
       ...input.meta,
     });
-    return limits.scope === 'ip'
-      ? { status: 'ip_rate_limited', retryAfterMs: limits.retryAfterMs }
-      : { status: 'rate_limited' };
+    if (limits.scope === 'ip') return { status: 'ip_rate_limited', retryAfterMs: limits.retryAfterMs };
+    // 受け付けたときと同じ応答にするため、起動の依頼も同じだけ行う(deps.outboxDrain)
+    await deps.outboxDrain?.notify();
+    return { status: 'rate_limited' };
   }
 
   const found = await findAccount(deps, input.tenantSlug, input.email, now);
@@ -219,6 +220,7 @@ export async function requestPasswordReset(
       details: { reason: found.reason, loginId: maskedLoginId },
       ...input.meta,
     });
+    await deps.outboxDrain?.notify();
     return { status: 'rejected' };
   }
   const { tenant, staff, loginId } = found;

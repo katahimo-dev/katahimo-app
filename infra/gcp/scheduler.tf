@@ -1,6 +1,7 @@
 # Cloud Scheduler → Cloud Run Jobs(Admin API の jobs.run を OAuth トークン付きで呼ぶ)。
 # 時刻は JST。夜間反映 22:00 / 顧客CSV取込 03:00 は GAS版 Triggers.js と同じ、翌日の予定のお知らせは
 # var.route_notice_schedule(既定 19:00。GAS版 gas-root-serach の夜間 main() の置き換え)、保守 04:00。
+# outbox の見回り(outbox-drain)は var.outbox_sweep_schedule(既定 10 分ごと)で、scheduler_paused でも止めない。
 locals {
   scheduled_jobs = { for name, job in local.jobs : name => job if job.schedule != null && var.deploy_workloads }
 }
@@ -11,7 +12,7 @@ resource "google_cloud_scheduler_job" "jobs" {
   region    = var.region
   schedule  = each.value.schedule
   time_zone = "Asia/Tokyo"
-  paused    = var.scheduler_paused
+  paused    = each.value.pause_until_cutover && var.scheduler_paused
   # jobs.run は実行の開始を受け付けた時点で応答する(ジョブの完了は待たない)
   attempt_deadline = "60s"
 
@@ -39,4 +40,14 @@ resource "google_cloud_run_v2_job_iam_member" "scheduler_invoker" {
   location = var.region
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.scheduler.email}"
+}
+
+# API は outbox に積んだ操作の後に outbox-drain の実行を頼む(OUTBOX_DRAIN_JOB)。そのジョブにだけ run.jobs.run を付ける。
+# 上書き(overrides)付きの実行は使わないため roles/run.jobsExecutorWithOverrides は付けない。
+resource "google_cloud_run_v2_job_iam_member" "api_outbox_drain" {
+  count    = var.deploy_workloads ? 1 : 0
+  name     = google_cloud_run_v2_job.jobs["outbox-drain"].name
+  location = var.region
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.api.email}"
 }

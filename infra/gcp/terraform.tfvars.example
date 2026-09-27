@@ -11,6 +11,10 @@ sql_high_availability = false
 
 schedule_provider = "google"
 
+# outbox の見回り(outbox-drain。操作の後の起動は API が頼む)と、翌日の予定のお知らせの時刻(cron、JST)
+outbox_sweep_schedule = "*/10 * * * *"
+route_notice_schedule = "0 19 * * *"
+
 # GAS Bridge(移行期のミラー)。URL・持ち主のテナント・シークレット(gas-bridge-secret)は揃えて設定する
 gas_bridge_url          = ""
 gas_bridge_tenant       = ""

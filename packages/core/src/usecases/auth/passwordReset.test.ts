@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { withOutboxDrainTrigger } from '../outboxDrainTrigger';
 import { DEFAULT_RATE_LIMIT_POLICY } from '../rateLimits';
 import { login } from './login';
 import {
@@ -191,6 +192,27 @@ describe('パスワード再設定', () => {
     const limit = DEFAULT_RATE_LIMIT_POLICY.passwordResetRequestAccount.limit;
     for (let i = 0; i < limit; i++) expect(await request('nobody@example.com')).toBe('rejected');
     expect(await request('nobody@example.com')).toBe('rate_limited');
+  });
+
+  it('outbox の処理の起動の依頼は、受け付け・アカウントが無い・アカウント単位の上限のどれでも1回(応答時間を揃える)', async () => {
+    const notified: string[] = [];
+    let current = '';
+    const outboxDrain = { notify: async () => void notified.push(current) };
+    const deps = {
+      ...ctx.deps,
+      outboxDrain,
+      uow: withOutboxDrainTrigger(ctx.deps.uow, outboxDrain),
+    };
+    const requestAs = (email: string) => {
+      current = email;
+      return requestPasswordReset(deps, { tenantSlug: 'test-tenant', email, meta: { ip: '203.0.113.9' } });
+    };
+    expect((await requestAs('hanako@gmail.com')).status).toBe('queued');
+    expect((await requestAs('nobody@example.com')).status).toBe('rejected');
+    const limit = DEFAULT_RATE_LIMIT_POLICY.passwordResetRequestAccount.limit;
+    for (let i = 1; i < limit; i++) await requestAs('nobody@example.com');
+    expect((await requestAs('nobody@example.com')).status).toBe('rate_limited');
+    expect(notified).toEqual(['hanako@gmail.com', ...Array(limit + 1).fill('nobody@example.com')]);
   });
 
   it('発行要求は送信元IP単位でも上限を設け、超えたら ip_rate_limited(APIは429)', async () => {
