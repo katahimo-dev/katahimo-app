@@ -1,4 +1,5 @@
 import {
+  CLOUD_RUN_JOB_NAME_PATTERN,
   emptyToUndefined,
   optionalPositiveInt,
   parseEnvOrThrow,
@@ -48,6 +49,20 @@ const envSchema = z.object({
   GCHAT_REPORT_WEBHOOK_URL: z.preprocess(emptyToUndefined, z.string().optional()),
   GCHAT_RECEIPT_WEBHOOK_URL: z.preprocess(emptyToUndefined, z.string().optional()),
 
+  // outbox を処理する Cloud Run のジョブ(projects/<p>/locations/<r>/jobs/katahimo-outbox-drain)。outbox に積んだ操作の
+  // コミットの後に Cloud Run Admin API の jobs.run で1回の実行を頼む(doc/05_バッチ・外部連携.md 2章)。本番は必須。
+  // 未設定(ローカル開発)なら頼まず、outbox は pnpm worker(ローカル専用の見回り)か pnpm outbox:once で処理する。
+  OUTBOX_DRAIN_JOB: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(
+        CLOUD_RUN_JOB_NAME_PATTERN,
+        'OUTBOX_DRAIN_JOB は projects/<プロジェクト>/locations/<リージョン>/jobs/<ジョブ> の形式で指定してください',
+      )
+      .optional(),
+  ),
+
   // X-Forwarded-For の右から何番目を送信元IPとみなすか(信頼できるプロキシの段数)。Cloud Run 直は1、
   // 外部ロードバランサを前に置く場合は2、0なら接続元のアドレス。未指定は本番1・それ以外0。
   TRUSTED_PROXY_HOPS: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(5).optional()),
@@ -76,6 +91,11 @@ function checkCombinations(env: Env): string[] {
     (env.SESSION_SECRET.length < 32 || env.SESSION_SECRET === 'change-me-in-production')
   ) {
     problems.push('  - SESSION_SECRET: 本番は32文字以上のランダムな値にしてください(openssl rand -hex 32)');
+  }
+  if (env.NODE_ENV === 'production' && !env.OUTBOX_DRAIN_JOB) {
+    problems.push(
+      '  - OUTBOX_DRAIN_JOB: 本番では outbox(再設定メール・Web Push・ミラー)をすぐに送るため、outbox-drain のジョブ名が必要です',
+    );
   }
   return problems;
 }

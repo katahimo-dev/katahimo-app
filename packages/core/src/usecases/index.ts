@@ -8,6 +8,7 @@ export * from './integrationApiKeys';
 export * from './legacyImport';
 export * from './maintenance';
 export * from './notify';
+export * from './outboxDrainTrigger';
 export * from './outboxWorker';
 export * from './pushNotifications';
 export * from './rateLimits';

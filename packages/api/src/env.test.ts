@@ -21,6 +21,7 @@ const production = {
   GCS_BUCKET: 'p-katahimo-receipts',
   SCHEDULE_PROVIDER: 'google',
   WEB_DIST_DIR: '/app/web',
+  OUTBOX_DRAIN_JOB: 'projects/p/locations/asia-northeast1/jobs/katahimo-outbox-drain',
 };
 
 describe('loadEnv', () => {
@@ -45,7 +46,7 @@ describe('loadEnv', () => {
   });
 
   it('本番で足りない・開発用のままの設定をまとめて起動前に落とす', () => {
-    const missing = ['SECRET_BOX_PROVIDER', 'STORAGE_PROVIDER', 'SCHEDULE_PROVIDER'];
+    const missing = ['SECRET_BOX_PROVIDER', 'STORAGE_PROVIDER', 'SCHEDULE_PROVIDER', 'OUTBOX_DRAIN_JOB'];
     const source = Object.fromEntries(
       Object.entries({ ...production, SESSION_SECRET: 'change-me-in-production' }).filter(
         ([key]) => !missing.includes(key),
@@ -73,6 +74,13 @@ describe('loadEnv', () => {
     expect(
       loadEnv({ ...development, ...bridge, GAS_BRIDGE_TENANT: 'Cutest', MIRROR_TO_GOOGLE_SHEETS: 'true' }),
     ).toMatchObject({ GAS_BRIDGE_TENANT: 'cutest', MIRROR_TO_GOOGLE_SHEETS: true });
+  });
+
+  it('OUTBOX_DRAIN_JOB はジョブの完全な名前だけを受け付ける(開発では省略できる)', () => {
+    expect(loadEnv(development).OUTBOX_DRAIN_JOB).toBeUndefined();
+    expect(() => loadEnv({ ...production, OUTBOX_DRAIN_JOB: 'katahimo-outbox-drain' })).toThrow(
+      /OUTBOX_DRAIN_JOB/,
+    );
   });
 
   it('SECRET_BOX_LOCAL_KEY の無いローカル設定は起動できない', () => {

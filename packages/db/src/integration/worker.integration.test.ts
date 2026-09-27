@@ -23,11 +23,12 @@ import {
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { withTenant } from '../client';
+import { DrizzleAppLogRepository } from '../repositories/platform/appLog';
 import { DrizzlePlatformMaintenance } from '../repositories/platform/maintenance';
 import { DrizzleOutboxQueue } from '../repositories/platform/outboxQueue';
 import { DrizzleTenantCalendarSettingsStore, DrizzleTenantDirectory } from '../repositories/platform/tenants';
 import { DrizzleUnitOfWork } from '../uow';
-import { connect } from './testDb';
+import { connect, open } from './testDb';
 
 /**
  * ワーカーのジョブを katahimo_worker の権限で実際の DB に対して動かす(ワーカーの GRANT を絞ったため、ジョブが使う
@@ -212,19 +213,29 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
     const notices = await runRouteNoticeJob({ uow: workerUow, appLog, schedule, tenants: onlyThisTenant });
     expect(notices).toMatchObject({ queued: 1, failed: 0, interrupted: false });
 
-    // ── outbox(ミラー4種・再設定メール) ──
+    // ── outbox(ミラー4種・再設定メール・Web Push) ──
+    // 本番の outbox-drain と同じく接続1本のプール(DB_POOL_MAX=1)で送る。2本の接続を同時に要る処理があれば
+    // ここで止まる(トランザクションの中の Promise.all はそのトランザクションの接続に並ぶだけ)
+    const drainDb = open('WORKER_DATABASE_URL', 1);
+    // 操作ログも本番と同じく同じプールに書く(ここでの確かめのために偽物にも写す)
+    const drainAppLog = new DrizzleAppLogRepository(drainDb);
     const sender = new FakeMirrorSenderPort();
     const mailer = new FakeMailerPort();
     const drained = await drainOutbox(
       {
-        queue: new DrizzleOutboxQueue(workerDb),
-        uow: workerUow,
+        queue: new DrizzleOutboxQueue(drainDb),
+        uow: new DrizzleUnitOfWork(drainDb),
         storage,
         sender,
         mailer,
-        appLog,
+        appLog: {
+          async write(entry) {
+            await appLog.write(entry);
+            await drainAppLog.write(entry);
+          },
+        },
         mirrorTenantSlug: tenant.slug,
-        tenants,
+        tenants: new DrizzleTenantDirectory(drainDb),
         webPush,
         workerId: 'worker-it',
         leaseMs: 60_000,

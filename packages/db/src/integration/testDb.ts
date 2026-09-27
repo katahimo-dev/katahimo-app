@@ -20,7 +20,8 @@ function url(name: 'DATABASE_URL' | 'MIGRATION_DATABASE_URL' | 'WORKER_DATABASE_
 }
 
 const opened: Database[] = [];
-function open(name: Parameters<typeof url>[0], max = 5): Database {
+/** 接続のプールを開く(テストファイルの終わりに閉じる)。 */
+export function open(name: Parameters<typeof url>[0], max = 5): Database {
   const db = createDatabase(url(name), { max, onnotice: () => {} });
   opened.push(db);
   return db;

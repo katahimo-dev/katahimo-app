@@ -1,6 +1,6 @@
 import { newId, outboxDedupeKey, receiptDedupeHash } from '@katahimo/core/domain';
 import type { TenantRepositories, VisitRow } from '@katahimo/core/ports';
-import { applyCustomerSnapshot } from '@katahimo/core/usecases';
+import { applyCustomerSnapshot, withOutboxDrainTrigger } from '@katahimo/core/usecases';
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { withTenant } from '../client';
@@ -119,6 +119,33 @@ describe('Unit of Work', () => {
     expect(
       await withTenant(app, a, (tx) => count(tx as never, sql`select count(*) as n from outbox_messages`)),
     ).toBe(1);
+  });
+
+  it('outbox-drain の起動の依頼は、積んだトランザクションのコミットの後にだけ行う(重複・ロールバックでは行わない)', async () => {
+    const a = await createTenant();
+    const notified: number[] = [];
+    const outboxCount = () =>
+      withTenant(app, a, (tx) => count(tx as never, sql`select count(*) as n from outbox_messages`));
+    const triggering = withOutboxDrainTrigger(uow, {
+      // 依頼の時点でコミット済み(別の接続から見える)であること
+      notify: async () => void notified.push(await outboxCount()),
+    });
+    const message = {
+      topic: 'mirror.care_record' as const,
+      aggregateType: 'care_record',
+      aggregateId: newId(),
+      dedupeKey: `mirror.care_record:${newId()}:1`,
+    };
+    await triggering.run(a, (r) => r.outbox.enqueue(message));
+    await triggering.run(a, (r) => r.outbox.enqueue(message));
+    await expect(
+      triggering.run(a, async (r) => {
+        await r.outbox.enqueue({ ...message, dedupeKey: `mirror.care_record:${newId()}:2` });
+        throw new Error('途中で失敗');
+      }),
+    ).rejects.toThrow('途中で失敗');
+    expect(notified).toEqual([1]);
+    expect(await outboxCount()).toBe(1);
   });
 
   it('row_version が食い違う更新は 409 conflict', async () => {

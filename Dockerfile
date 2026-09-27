@@ -1,9 +1,9 @@
 # katahimo-app の本番イメージ(Cloud Run)。ターゲットは2つ:
 #   api    … API サーバー + ビルド済みWeb画面(同一オリジンで配信)
 #            docker build --target api -t katahimo-api .
-#   worker … outbox ポーラー(既定のコマンド)と Cloud Run Jobs 用のジョブ(migrate / 夜間バッチ)
+#   worker … Cloud Run Jobs 用のジョブ(outbox-drain(既定のコマンド) / migrate / 夜間バッチ)
 #            docker build --target worker -t katahimo-worker .
-#            docker run katahimo-worker                      # 常駐ポーラー
+#            docker run katahimo-worker                      # outbox を空になるまで処理して終わる
 #            docker run katahimo-worker db/dist/migrate.js   # マイグレーション
 #            docker run katahimo-worker dist/nightly-calendar-sync.js [YYYY-MM-DD]
 # 手順と構成は doc/07_インフラ・運用.md。
@@ -14,12 +14,12 @@
 # ビルド・実行とも同じイメージを使い、ここ1か所だけを書き換えればよいようにする。
 #
 # PID 1 について: tini 等の init は入れない。api / worker とも SIGTERM を自分で処理して終了し
-# (packages/api/src/server.ts・packages/worker/src/main.ts)、子プロセスも作らないため、ゾンビの回収も要らない。
+# (packages/api/src/server.ts・packages/worker/src/jobs/runOneShot.ts)、子プロセスも作らないため、ゾンビの回収も要らない。
 # Cloud Run は停止時にコンテナの PID 1 へ SIGTERM を送る。手元の docker run で Ctrl+C(SIGINT)を効かせたい
 # ときは `docker run --init` を使う(PID 1 の node は SIGINT の既定動作を行わないため)。
 #
 # HEALTHCHECK も書かない: Cloud Run は Dockerfile の HEALTHCHECK を使わず、infra/gcp/run.tf の
-# startup_probe / liveness_probe(api は /api/health、worker は TCP)で確認する。
+# startup_probe / liveness_probe(api の /api/health)で確認する。worker のジョブは終了コードで成否を返す。
 FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS base
 
 # ── pnpm の入ったビルド用ベース ──────────────────────────────────
@@ -87,4 +87,4 @@ COPY --from=build /repo/packages/db/dist ./db/dist
 COPY --from=build /repo/packages/db/drizzle ./db/drizzle
 USER node
 ENTRYPOINT ["node"]
-CMD ["dist/main.js"]
+CMD ["dist/outbox-once.js"]

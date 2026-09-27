@@ -43,4 +43,9 @@ export interface PasswordResetDeps extends LoginDeps {
    * 6桁のコードは総当たりが容易なため、DBが漏れてもこの値が無ければハッシュからコードを逆算できない。
    */
   resetCodeSecret: string;
+  /**
+   * outbox の処理の起動の依頼(API の OutboxDrainNotifier)。再設定コードを積んだ要求は UoW のコミットの後に起動を頼むため、
+   * 積まなかった要求(アカウントが無い・アカウント単位の上限)でも同じだけ頼み、応答時間からアカウントの有無を分からなくする。
+   */
+  outboxDrain?: { notify(): Promise<void> };
 }

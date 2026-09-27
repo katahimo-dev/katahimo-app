@@ -117,6 +117,15 @@ variable "web_push" {
   default = { public_key = "", subject = "" }
 }
 
+variable "outbox_sweep_schedule" {
+  description = <<-EOT
+    outbox の見回り(outbox-drain)を起動する間隔(cron、JST)。操作の後の起動は API が頼むため、ここで拾うのは
+    再試行の待ち(available_at を過ぎたもの)と、起動を頼めなかった分。scheduler_paused でも止めない。
+  EOT
+  type        = string
+  default     = "*/10 * * * *"
+}
+
 variable "route_notice_schedule" {
   description = "翌日の予定のお知らせ(job:route-notice)を積む時刻(cron、JST)。GAS版 gas-root-serach の夜間 main() の置き換え"
   type        = string
@@ -134,12 +143,6 @@ variable "api_db_pool_max" {
   description = "API 1インスタンスあたりの DB 接続数(DB_POOL_MAX)"
   type        = number
   default     = 4
-}
-
-variable "worker_cpu" {
-  description = "常駐ワーカーの vCPU(CPU 常時割り当て・最小1インスタンスのため、ここが固定費になる)"
-  type        = string
-  default     = "1"
 }
 
 variable "optional_secrets" {
@@ -160,19 +163,11 @@ variable "optional_secrets" {
   }
 }
 
-variable "outbox_poller_enabled" {
-  description = <<-EOT
-    outbox ポーラー(常駐の katahimo-worker サービス)を動かすか。パスワード再設定メールも outbox 経由で
-    ワーカーが送るため、本番では true のままにすること(false にすると再設定メールが届かない)。
-  EOT
-  type        = bool
-  default     = true
-}
-
 variable "scheduler_paused" {
   description = <<-EOT
     夜間ジョブの Cloud Scheduler を一時停止状態で作るか。GAS版の同じ時限トリガー(Triggers.js)を止める
-    切替日まで true にしておき、二重反映・二重取込を防ぐ(doc/09_移行計画.md)。
+    切替日まで true にしておき、二重反映・二重取込を防ぐ(doc/09_移行計画.md)。outbox の見回り
+    (outbox_sweep_schedule)は対象外で、常に動かす。
   EOT
   type        = bool
   default     = true
@@ -202,6 +197,12 @@ variable "alert_sql_connections_threshold" {
   default     = 20
 }
 
+variable "alert_outbox_trigger_failures_threshold" {
+  description = "API が outbox-drain の起動を頼めなかった回数(1時間)がこれを超えたらアラート(一時的な失敗は見回りが拾うため、続くときだけ知らせる)"
+  type        = number
+  default     = 3
+}
+
 variable "uptime_check_host" {
   description = "外形監視(/api/health)の対象ホスト。空なら Cloud Run の既定 URL(*.run.app)。独自ドメインにしたらそのホスト名"
   type        = string
@@ -217,7 +218,7 @@ variable "billing_account_id" {
 variable "budget_amount" {
   description = "月の予算額(budget_currency_code の単位)。50% / 90% / 100%(実績)と 100%(予測)で通知する"
   type        = number
-  default     = 30000
+  default     = 10000
 }
 
 variable "budget_currency_code" {

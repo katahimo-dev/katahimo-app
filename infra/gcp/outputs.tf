@@ -36,6 +36,11 @@ output "service_accounts" {
   }
 }
 
+output "outbox_drain_job" {
+  description = "outbox を処理するジョブ(API の OUTBOX_DRAIN_JOB)。手で流すときは gcloud run jobs execute katahimo-outbox-drain"
+  value       = local.outbox_drain_job_id
+}
+
 output "api_url" {
   value = var.deploy_workloads ? google_cloud_run_v2_service.api[0].uri : null
 }

@@ -8,8 +8,9 @@ locals {
     "cloudscheduler.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com", # GCS 署名付きURL(signBlob)
+    "logging.googleapis.com",        # ログに基づく指標(monitoring.tf)
     "monitoring.googleapis.com",     # アラート・外形監視(monitoring.tf)
-    "run.googleapis.com",
+    "run.googleapis.com",            # API が outbox-drain の起動を頼む(jobs.run)のもこの API
     "secretmanager.googleapis.com",
     "sqladmin.googleapis.com", # Cloud Run の Cloud SQL 接続(Auth Proxy)が使う
     "storage.googleapis.com",
