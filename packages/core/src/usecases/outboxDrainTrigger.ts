@@ -1,8 +1,11 @@
 import type { OutboxDrainTriggerPort } from '../ports/outbox';
 import type { TenantRepositories, UnitOfWorkOptions, UnitOfWorkPort } from '../ports/unitOfWork';
 
-/** 1つの API インスタンスが outbox-drain の実行を頼む最短の間隔の既定。 */
-export const DEFAULT_OUTBOX_DRAIN_TRIGGER_COOLDOWN_MS = 10_000;
+/**
+ * 1つの API インスタンスが outbox-drain の実行を頼む最短の間隔の既定。ジョブの起動(依頼から DB を読み始めるまで10〜30秒)
+ * より短くしておくと、間隔の中でコミットされたメッセージは、直前に頼んだ実行(起動中か処理中)が空になるまで取り出す中で拾う。
+ */
+export const DEFAULT_OUTBOX_DRAIN_TRIGGER_COOLDOWN_MS = 5_000;
 
 /** 起動の依頼に失敗したときのログ(プロセスの構造化ログ。テナントの操作ログではない)。 */
 export interface OutboxDrainTriggerFailure {
@@ -23,10 +26,10 @@ export interface OutboxDrainNotifierOptions {
  * outbox に積んだことを受けて outbox-drain の実行を頼む(API インスタンスごとに1つ)。
  *
  * - 前回の依頼から cooldownMs 以上経っていれば、すぐに頼む(依頼が受け付けられるまで待つ)。
- * - 間隔の中で積まれたら、間隔が明けたときに1回だけ頼む(タイマー)。続けて保存されても実行は間隔ごとに1回で、
- *   間隔の中に積まれたものも取りこぼさない。Cloud Run の API はリクエストの処理中しか CPU が割り当てられないため、
- *   このタイマーは次のリクエストまで遅れることがある。遅れた分・インスタンスの停止で失われた分は、定期実行の見回り
- *   (Cloud Scheduler → outbox-drain、10分ごと)が拾う。
+ * - 間隔の中では頼まない。間隔は実行の起動より短いため、間隔の中でコミットされたメッセージは直前に頼んだ実行が
+ *   空になるまで取り出す中で拾う。間隔が明けた後に積まれれば、そのリクエストの中でまた頼む。タイマーは使わない
+ *   (Cloud Run の API はリクエストの処理中しか CPU が割り当てられず、リクエストの外で動く処理は遅れたり失敗したりする)。
+ *   直前の実行が先に終わっていて拾えなかった分は、定期実行の見回り(Cloud Scheduler → outbox-drain、10分ごと)が拾う。
  * - 依頼の失敗は例外にせず WARN `outbox.drain_trigger_failed` を書くだけにする(利用者の操作は成功のまま。
  *   積んだメッセージは見回りが処理する)。
  *
@@ -35,29 +38,17 @@ export interface OutboxDrainNotifierOptions {
 export class OutboxDrainNotifier {
   private readonly cooldownMs: number;
   private lastRequestedAt = Number.NEGATIVE_INFINITY;
-  private trailing: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly options: OutboxDrainNotifierOptions) {
     this.cooldownMs = options.cooldownMs ?? DEFAULT_OUTBOX_DRAIN_TRIGGER_COOLDOWN_MS;
   }
 
-  /** outbox に積んだトランザクションがコミットされた後に呼ぶ。例外は投げない。 */
+  /** outbox に積んだトランザクションがコミットされた後に、リクエストの処理の中で呼ぶ。例外は投げない。 */
   async notify(): Promise<void> {
     const now = Date.now();
-    const waitMs = this.lastRequestedAt + this.cooldownMs - now;
-    if (waitMs <= 0) {
-      this.lastRequestedAt = now;
-      await this.request();
-      return;
-    }
-    if (this.trailing) return;
-    this.trailing = setTimeout(() => {
-      this.trailing = null;
-      this.lastRequestedAt = Date.now();
-      void this.request();
-    }, waitMs);
-    // 待っている依頼があってもプロセスの終了は妨げない(残りは見回りが拾う)
-    this.trailing.unref?.();
+    if (now - this.lastRequestedAt < this.cooldownMs) return;
+    this.lastRequestedAt = now;
+    await this.request();
   }
 
   private async request(): Promise<void> {

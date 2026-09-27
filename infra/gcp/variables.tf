@@ -218,7 +218,7 @@ variable "billing_account_id" {
 variable "budget_amount" {
   description = "月の予算額(budget_currency_code の単位)。50% / 90% / 100%(実績)と 100%(予測)で通知する"
   type        = number
-  default     = 30000
+  default     = 10000
 }
 
 variable "budget_currency_code" {

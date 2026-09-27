@@ -1,9 +1,10 @@
 # Cloud Monitoring のアラート・外形監視と、請求の予算アラート(doc/07_インフラ・運用.md 6章)。
 # 通知先は var.alert_emails(メール)。空でもアラート自体は作り、コンソールのインシデント一覧で見える。
 #
-# アラートの条件は指標(メトリクス)の名前とラベルで書くため、Cloud Run・Cloud SQL が無い段階
-# (deploy_workloads = false)で作っても害はない。外形監視だけは対象の URL が必要なため、
-# deploy_workloads = true か uptime_check_host を指定したときに作る。
+# 閾値のアラートの条件は指標(メトリクス)の名前とラベルで書くため、Cloud Run・Cloud SQL が無い段階
+# (deploy_workloads = false)で作っても害はない(データが無ければ発報しない)。データが無いこと自体で発報する
+# アラート(outbox-drain の成功した実行が無い)は、ジョブを作るとき(deploy_workloads = true)だけ作る。
+# 外形監視は対象の URL が必要なため、deploy_workloads = true か uptime_check_host を指定したときに作る。
 
 locals {
   notification_channels = [for c in google_monitoring_notification_channel.email : c.id]
@@ -132,7 +133,9 @@ resource "google_monitoring_alert_policy" "job_failed" {
 # ── outbox: 見回りの停止・起動の依頼の失敗 ────────────────────────
 # outbox-drain は見回り(var.outbox_sweep_schedule、既定10分ごと)で必ず動くため、成功した実行が30分無ければ
 # Scheduler の停止・ジョブの起動の失敗・実行の失敗の続きのどれか(再設定メール・Web Push・ミラーが届かない)。
+# ジョブが無い間(deploy_workloads = false)は常に「無い」ため作らない。
 resource "google_monitoring_alert_policy" "outbox_drain_stalled" {
+  count                 = var.deploy_workloads ? 1 : 0
   display_name          = "katahimo-outbox-drain: 成功した実行が無い"
   combiner              = "OR"
   severity              = "ERROR"

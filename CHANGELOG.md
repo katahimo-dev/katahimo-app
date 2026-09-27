@@ -32,12 +32,12 @@
   `doc/04_API仕様.md` 2.7)。他の人の分の閲覧・CSV は操作ログに残る。
 - outbox(スプレッドシートへのミラー・パスワード再設定メール・Web Push)は Cloud Run Jobs の `katahimo-outbox-drain`
   (`dist/outbox-once.js`、空になるまで処理して終わる)が送る。outbox に積んだ操作のコミットの後に API が Cloud Run Admin API の
-  jobs.run で1回の実行を頼み(`OUTBOX_DRAIN_JOB`。API のインスタンスごとに10秒に1回までにまとめる。頼めなくても操作は成功のままで
+  jobs.run で1回の実行を頼み(`OUTBOX_DRAIN_JOB`。API のインスタンスごとに5秒に1回までにまとめる。頼めなくても操作は成功のままで
   WARN `outbox.drain_trigger_failed`)、Cloud Scheduler が10分ごとに見回りとして起動する(terraform の `outbox_sweep_schedule`。
   再試行の待ちと頼めなかった分を拾う。`scheduler_paused` の対象外)。通常は操作の10〜30秒後に届き、再試行は次の見回りで送る。
   翌日の予定のお知らせ・夜間のカレンダー反映は、積んだ outbox をそのジョブの中で送る。API の実行SAは outbox-drain のジョブだけを
   起動できる(`roles/run.invoker`)。アラート「成功した実行が30分無い」「起動の依頼の失敗」。常時動くインスタンスは無く、費用の目安は
-  月 約 $14〜31(約 2,100〜4,700円、Gemini を含む。`doc/07_インフラ・運用.md` 10章)。`pnpm worker` はローカル開発専用の見回り
+  月 約 $14〜31(約 2,100〜4,700円、Gemini を含む。`doc/07_インフラ・運用.md` 10章)。予算のアラートの既定は月 10,000円(terraform の `budget_amount`)。`pnpm worker` はローカル開発専用の見回り
   (`doc/05_バッチ・外部連携.md` 2.3)。
 - ワーカーの環境変数 `APP_PUBLIC_URL`: パスワード設定の案内のメールに法人IDつきのログイン画面の URL を書く(terraform の `app_public_url`)。
 - 外部システムからの顧客の受け取り `POST /api/integrations/customers`(RESERVA 等との連携の受け口): テナントごとの API キー

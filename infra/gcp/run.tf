@@ -91,9 +91,10 @@ locals {
     outbox-drain = {
       args            = ["dist/outbox-once.js"]
       service_account = google_service_account.worker.email
-      # 1件ずつ順に処理するため接続は2本で足りる(実行が重なる分を DB の接続数に残す。doc/07_インフラ・運用.md 2.1)。
+      # 1件ずつ順に処理し、2本の接続を同時に要る処理が無いため接続は1本(トランザクションの中の複数の問い合わせは
+      # そのトランザクションの接続に並ぶ)。実行が重なる分を DB の接続数に残す(doc/07_インフラ・運用.md 2.1)。
       # 上限時間(timeout)より前に区切りで止めて終える(JOB_TIMEOUT_MS)
-      env                 = merge(local.worker_env, { DB_POOL_MAX = "2", JOB_TIMEOUT_MS = "540000" })
+      env                 = merge(local.worker_env, { DB_POOL_MAX = "1", JOB_TIMEOUT_MS = "540000" })
       secret_env          = local.worker_secret_env
       max_retries         = 0 # 送れなかったメッセージは outbox の再試行(available_at)で次の実行が取る
       timeout             = "600s"

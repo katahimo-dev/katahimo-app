@@ -44,4 +44,4 @@ optional_secrets = ["smtp-pass", "google-maps-api-key", "gemini-api-key", "legac
 # 監視・予算(monitoring.tf)。通知先のメールと、予算を作る請求先アカウント(空なら予算は作らない)
 alert_emails       = ["ops@example.com"]
 billing_account_id = ""
-budget_amount      = 30000
+budget_amount      = 10000

@@ -108,7 +108,7 @@ function rateLimitPolicyOf(env: Env): RateLimitPolicy {
 
 /**
  * API の Unit of Work と outbox-drain の起動の依頼。OUTBOX_DRAIN_JOB があれば、outbox に積んだトランザクションの
- * コミットの後に outbox-drain の実行を頼む(インスタンスごとに10秒に1回まで。失敗は WARN にして見回りに任せる)。
+ * コミットの後に outbox-drain の実行を頼む(インスタンスごとに5秒に1回まで。失敗は WARN にして見回りに任せる)。
  * 無ければ頼まない(ローカル開発)。
  */
 function createUnitOfWork(env: Env, db: Database): Pick<Container, 'uow' | 'outboxDrain'> {

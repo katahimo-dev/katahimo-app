@@ -34,7 +34,7 @@ describe('outbox-drain の起動の依頼', () => {
     vi.setSystemTime(new Date('2026-09-25T03:00:00Z'));
     trigger = new FakeDrainTrigger();
     warnings = [];
-    notifier = new OutboxDrainNotifier({ trigger, warn: (w) => warnings.push(w), cooldownMs: 10_000 });
+    notifier = new OutboxDrainNotifier({ trigger, warn: (w) => warnings.push(w), cooldownMs: 5_000 });
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -107,34 +107,47 @@ describe('outbox-drain の起動の依頼', () => {
     ]);
   });
 
-  it('間隔の中の依頼は1回にまとめ、間隔が明けたときに1回だけ頼む', async () => {
+  it('間隔の中では頼まず、タイマーも残さない。間隔が明けた後の依頼はそのリクエストの中で頼む', async () => {
     await notifier.notify();
     expect(trigger.requests).toBe(1);
 
-    vi.advanceTimersByTime(3_000);
+    vi.advanceTimersByTime(2_000);
     await notifier.notify();
-    vi.advanceTimersByTime(3_000);
+    vi.advanceTimersByTime(2_000);
     await notifier.notify();
-    // 間隔の中ではまだ頼まない
+    // 間隔の中の分は直前に頼んだ実行が拾う(頼まない)。リクエストの外で動くタイマーも作らない
     expect(trigger.requests).toBe(1);
-
-    // 最初の依頼から10秒で、まとめた1回を頼む
-    await vi.advanceTimersByTimeAsync(4_000);
-    expect(trigger.requests).toBe(2);
+    expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(trigger.requests).toBe(2);
+    expect(trigger.requests).toBe(1);
 
-    // 間隔の外ならすぐに頼む
+    // 間隔が明けた後に積まれたら、その notify の中で頼む(戻る前に依頼を終える)
+    await notifier.notify();
+    expect(trigger.requests).toBe(2);
+    vi.advanceTimersByTime(4_999);
+    await notifier.notify();
+    expect(trigger.requests).toBe(2);
+    vi.advanceTimersByTime(1);
     await notifier.notify();
     expect(trigger.requests).toBe(3);
   });
 
-  it('まとめた1回の依頼の失敗も WARN にする', async () => {
-    await notifier.notify();
+  it('既定の間隔は5秒', async () => {
+    const byDefault = new OutboxDrainNotifier({ trigger, warn: (w) => warnings.push(w) });
+    await byDefault.notify();
+    vi.advanceTimersByTime(4_999);
+    await byDefault.notify();
+    expect(trigger.requests).toBe(1);
+    vi.advanceTimersByTime(1);
+    await byDefault.notify();
+    expect(trigger.requests).toBe(2);
+  });
+
+  it('失敗した依頼の後も間隔は数える(失敗し続ける間に依頼を繰り返さない)', async () => {
     trigger.failWith = new Error('timeout');
     await notifier.notify();
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(trigger.requests).toBe(2);
+    await notifier.notify();
+    expect(trigger.requests).toBe(1);
     expect(warnings).toEqual([
       expect.objectContaining({ action: 'outbox.drain_trigger_failed', error: 'timeout' }),
     ]);

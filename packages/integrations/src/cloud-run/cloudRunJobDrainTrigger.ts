@@ -12,8 +12,18 @@ export interface CloudRunJobDrainTriggerOptions {
   /** アクセストークン(省略時は Application Default Credentials = Cloud Run の実行SAのメタデータのトークン)。 */
   getAccessToken?: () => Promise<string>;
   fetch?: typeof fetch;
-  /** 1回の依頼の上限時間(利用者の操作の応答を長く待たせない)。 */
+  /** 1回の依頼の上限時間。トークンの取得と POST の全体に掛ける(利用者の操作の応答を長く待たせない)。 */
   timeoutMs?: number;
+}
+
+/** promise が signal の中断より先に終わればその結果、中断が先なら中断の理由で失敗する(promise 自体は止めない)。 */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
 }
 
 /** ADC のアクセストークン(google-auth-library はトークンを期限まで使い回す)。読み込みは最初の依頼まで遅らせる。 */
@@ -53,12 +63,25 @@ export class CloudRunJobDrainTrigger implements OutboxDrainTriggerPort {
   }
 
   async requestDrain(): Promise<void> {
-    const token = await this.getAccessToken();
+    // 期限は1つ: トークンの取得(メタデータサーバー)と POST・応答の本文の読み込みを合わせて timeoutMs まで
+    const deadline = AbortSignal.timeout(this.timeoutMs);
+    try {
+      await this.run(deadline);
+    } catch (error) {
+      if (deadline.aborted && error === deadline.reason) {
+        throw new Error(`Cloud Run の jobs.run の依頼が ${this.timeoutMs}ms で終わりませんでした`);
+      }
+      throw error;
+    }
+  }
+
+  private async run(signal: AbortSignal): Promise<void> {
+    const token = await untilAborted(this.getAccessToken(), signal);
     const res = await this.fetchImpl(this.url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: '{}',
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal,
     });
     if (!res.ok) {
       // Google API のエラーの status(PERMISSION_DENIED 等)だけを残す(本文は長いことがある)

@@ -69,6 +69,42 @@ describe('CloudRunJobDrainTrigger', () => {
     expect(fetch.calls).toHaveLength(0);
   });
 
+  it('期限はトークンの取得と POST を合わせて1つ(トークンに時間が掛かった分、POST に使える時間が減る)', async () => {
+    const timeoutMs = 200;
+    // トークンの取得だけで期限を過ぎる → POST せずに期限切れ
+    const neverPosted = fakeFetch(new Response('{}'));
+    const slowToken = new CloudRunJobDrainTrigger({
+      jobName: JOB,
+      getAccessToken: () => new Promise(() => {}),
+      fetch: neverPosted.impl,
+      timeoutMs,
+    });
+    await expect(slowToken.requestDrain()).rejects.toThrow(
+      `Cloud Run の jobs.run の依頼が ${timeoutMs}ms で終わりませんでした`,
+    );
+    expect(neverPosted.calls).toHaveLength(0);
+
+    // トークンに期限の大半を使うと、POST は残りの時間で打ち切られる(POST に改めて timeoutMs を与えない)
+    const started = Date.now();
+    let postAbortedAfterMs = -1;
+    const hangingFetch = ((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          postAbortedAfterMs = Date.now() - started;
+          reject(init.signal?.reason);
+        });
+      })) as typeof fetch;
+    const slowPost = new CloudRunJobDrainTrigger({
+      jobName: JOB,
+      getAccessToken: () => new Promise((resolve) => setTimeout(() => resolve('t'), 150)),
+      fetch: hangingFetch,
+      timeoutMs,
+    });
+    await expect(slowPost.requestDrain()).rejects.toThrow(`${timeoutMs}ms で終わりませんでした`);
+    expect(postAbortedAfterMs).toBeGreaterThanOrEqual(timeoutMs - 5);
+    expect(postAbortedAfterMs).toBeLessThan(timeoutMs + 100);
+  });
+
   it('ジョブの名前の形式が違えば作れない。OUTBOX_DRAIN_JOB が無ければ null(ローカル開発)', () => {
     expect(() => new CloudRunJobDrainTrigger({ jobName: 'katahimo-outbox-drain' })).toThrow(
       /OUTBOX_DRAIN_JOB/,

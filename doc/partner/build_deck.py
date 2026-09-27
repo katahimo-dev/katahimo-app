@@ -664,7 +664,7 @@ for i, (k, v) in enumerate(cost_rows):
     card(s, 5.9, y, 6.83, 0.68, fill=TINT if i % 2 == 0 else WHITE, line=None if i % 2 == 0 else LINE)
     text(s, 6.1, y, 4.2, 0.68, k, size=16, anchor=MSO_ANCHOR.MIDDLE)
     text(s, 10.2, y, 2.4, 0.68, v, size=16, color=DEEP, bold=True, anchor=MSO_ANCHOR.MIDDLE, align=PP_ALIGN.RIGHT)
-text(s, 5.9, 5.55, 6.83, 0.6, "使いすぎを防ぐため、月3万円の予算に近づくとメールで知らせる設定も用意しています。", size=15,
+text(s, 5.9, 5.55, 6.83, 0.6, "使いすぎを防ぐため、月1万円の予算に近づくとメールで知らせる設定も用意しています。", size=15,
      color=MUTED, line=1.2)
 text(s, 0.6, 6.35, 12.1, 0.5, "※ 2026年9月27日時点の料金表からの見込み(目安)です。料金は変わることがあるため、本番の環境を作る前に確かめ直します。",
      size=14, color=MUTED)
