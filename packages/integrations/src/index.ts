@@ -4,6 +4,7 @@
 // gas-bridge(GAS版Web Appに委ねる移行期の実装)を schedule-provider で切り替える。
 // ファイル保存(local-storage / gcs-storage)も同様に storage-provider で開発用と本番(GCS)の実装を切り替える。
 // テナントの秘密値の封(secret-box)は開発用のローカル鍵と本番の Cloud KMS を切り替える。
+// legacy-sheets は GAS版のスプレッドシート・Drive からの移行の取込(読むだけ)。
 export * from './cache';
 export * from './customer-csv';
 export * from './gas-bridge';
@@ -13,6 +14,7 @@ export * from './google-calendar';
 export * from './google-chat';
 export * from './google-maps';
 export * from './google-schedule';
+export * from './legacy-sheets';
 export * from './local-storage';
 export * from './mail';
 export * from './noop';

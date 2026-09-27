@@ -53,6 +53,11 @@ export const CUSTOMER_IMPORT_BUSY_MESSAGE =
 /** そのときの DomainError の reason(ログ用)。 */
 export const CUSTOMER_IMPORT_BUSY_REASON = 'customer_import_in_progress';
 
+/** 同じテナントの GAS版からの移行の取込が実行中で、取込のロックを待ちきれなかった(409 conflict)。 */
+export const LEGACY_IMPORT_BUSY_MESSAGE =
+  '別の GAS版からの取込が実行中です。終わってからもう一度流してください。';
+export const LEGACY_IMPORT_BUSY_REASON = 'legacy_import_in_progress';
+
 export function isDomainError(error: unknown): error is DomainError {
   return error instanceof DomainError;
 }

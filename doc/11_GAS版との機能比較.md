@@ -199,6 +199,7 @@
 | 秘密値(APIキー・Webhook・salt) | Script Properties | Secret Manager と、テナントの秘密値は Cloud KMS で封をして DB に | 改善 |
 | 保存データの暗号化 | Google の既定の暗号化 | Cloud SQL・バックアップ・領収書のバケットを、このアプリ専用の鍵(CMEK)で暗号化 | 改善 |
 | バックアップ・戻し | シート・Drive の版の履歴 | 自動バックアップ14世代・過去7日の好きな時点に戻せる(07) | 改善 |
+| 切替の前の日報・事故報告・領収書 | 各シート・Drive にある | 運用担当者のコマンド(`pnpm import:legacy-reports` / `import:legacy-receipts`)が Sheets API・Drive API で読んで取り込む(読むだけ。何度流してもよく、本アプリからのミラーの行は読まない。05 12章) | 改善(切替の前の記録も報告一覧・これまでの記録・領収書の一覧で見られる) |
 | GAS版への書き写しの受け口 | — | GAS版の `Bridge.js`(Ver. 1.1.38 以降)。ミラーを続ける間は GAS版の Web App を公開したままにする。書き写すのは Bridge の持ち主のテナント(`GAS_BRIDGE_TENANT`)の記録だけ | 変更(09 2.2) |
 
 ## 11. 夜間処理
@@ -238,10 +239,10 @@
 | 判定 | 数 |
 | --- | --- |
 | 同等 | 48 |
-| 改善 | 72 |
+| 改善 | 73 |
 | 変更 | 17 |
 | GAS版のみ | 8 |
-| 合計 | 145 |
+| 合計 | 146 |
 
 ### 13.2 上位互換の状況
 
@@ -275,6 +276,8 @@
 | 準備 | Web Push の鍵(`pnpm push:vapid-keys` → VAPID の設定)とテスト通知の確認 | 運用者 | 2.1 |
 | 準備(ミラーを続けるなら) | GAS版に `Bridge.js` Ver. 1.1.38 以降をデプロイし、`gas_bridge_url`・`gas-bridge-secret`・`gas_bridge_tenant`・`mirror_to_google_sheets` を設定。GAS版の Web App を公開したままにする | GAS のアカウントを持つ人・運用者 | 2.2 |
 | 切替の直前 | 当月の個別出勤簿を CSV にして取り込む(`pnpm import:attendance`) | 運用者 | 2.3・4 |
+| 切替の直前・切替日 | 日報・事故報告(全ての行)と領収書(切替の月)の取込(`pnpm import:legacy-reports` / `import:legacy-receipts`。運用者本人の ADC か、GAS版の `MigrationShare.js` でサービスアカウントに共有)。スタッフが GAS版を使わなくなった後にもう一度流す | 運用者・スプレッドシートの持ち主 | 2.4・4 |
+| 取込が終わった後 | サービスアカウントの共有(`unshareMigrationSourcesFromServiceAccount()`)と成り代わりの権限を外す | スプレッドシートの持ち主・運用者 | 5.3 |
 | 切替日 | GAS版の `autoSyncTodayScheduleForAllStaff`・`checkAndImportLatestCsv` を止め、同じ日に新アプリの Scheduler を動かす | GAS のアカウントを持つ人・運用者 | 4 |
 | 切替日 | スタッフに新しい URL(ホーム画面に追加)を案内し、GAS版の画面を使わないよう伝える | 管理者 | 4 |
 | 切替日から | **スタッフ一人ひとりが端末で通知をオンにする**(設定 →「通知」→「翌日の予定を通知する」。iPhone・iPad はホーム画面に追加したアプリから) | スタッフ(管理者が案内) | 4 |

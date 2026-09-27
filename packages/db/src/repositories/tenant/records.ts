@@ -304,6 +304,15 @@ export class DrizzleReceiptRepository extends TenantBound implements ReceiptRepo
     return rows.length > 0;
   }
 
+  async findActivePrimaryByDedupeHash(dedupeHash: Uint8Array): Promise<string | null> {
+    const rows = await this.tx
+      .select({ id: receipts.id })
+      .from(receipts)
+      .where(and(this.activeTwinsOf(dedupeHash), eq(receipts.dedupePrimary, true)))
+      .limit(1);
+    return rows[0]?.id ?? null;
+  }
+
   async findById(id: string): Promise<ReceiptRow | null> {
     const rows = await this.tx
       .select(receiptColumns)

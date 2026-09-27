@@ -46,6 +46,7 @@ import type {
 } from '../ports/customers';
 import type { ImportRunRecord } from '../ports/imports';
 import type { IntegrationApiKeyRecord } from '../ports/integrations';
+import type { LegacyImportedRow } from '../ports/legacyImport';
 import type { MailerPort, MailMessage } from '../ports/mailer';
 import type {
   AccidentReportMirrorPayload,
@@ -165,6 +166,7 @@ export interface TenantData extends ReportAiFakeData {
   /** ai_prompt_revisions.created_by(保存・既定に戻したスタッフ)。 */
   aiPromptRevisionAuthors: string[];
   importRuns: (ImportRunRecord & { message: string | null })[];
+  legacyImportedRows: (LegacyImportedRow & { importRunId: string })[];
   integrationApiKeys: (IntegrationApiKeyRecord & { tokenHash: Uint8Array })[];
   calendars: StaffCalendarRecord[];
   busyBlocks: { staffId: string; start: Date; end: Date }[];
@@ -205,6 +207,7 @@ function emptyTenantData(): TenantData {
     aiPromptRevisions: {},
     aiPromptRevisionAuthors: [],
     importRuns: [],
+    legacyImportedRows: [],
     integrationApiKeys: [],
     calendars: [],
     busyBlocks: [],
@@ -280,6 +283,8 @@ export class MemoryDatabase {
   outboxPolicy: OutboxTopicPolicy | null = null;
   /** 顧客の取込のロック(importRuns.lockTenantCustomerImports)を取ったテナント(呼んだ順)。 */
   readonly customerImportLocks: string[] = [];
+  /** GAS版からの取込のロック(legacyImports.lockTenantLegacyImports)を取ったテナント(呼んだ順)。 */
+  readonly legacyImportLocks: string[] = [];
   private seq = 0;
 
   addTenant(input: Partial<TenantRecord> & { slug: string }): TenantRecord {
@@ -936,6 +941,13 @@ export function fakeRepositories(
         });
         return true;
       },
+      async findActivePrimaryByDedupeHash(dedupeHash) {
+        return (
+          d().receipts.find(
+            (r) => r.dedupePrimary && r.cancelledAt === null && sameBytes(r.dedupeHash, dedupeHash),
+          )?.id ?? null
+        );
+      },
       async findById(id) {
         const r = d().receipts.find((x) => x.id === id);
         return r ? structuredClone(r) : null;
@@ -1126,6 +1138,59 @@ export function fakeRepositories(
           .importRuns.filter((x) => x.source === source && x.status === 'applied')
           .at(-1);
         return run ? structuredClone(run) : null;
+      },
+    },
+    legacyImports: {
+      async lockTenantLegacyImports() {
+        db.legacyImportLocks.push(tenantId);
+      },
+      async findByRowNumbers(source, rowNumbers) {
+        const numbers = new Set(rowNumbers);
+        return structuredClone(
+          d()
+            .legacyImportedRows.filter((x) => x.source === source && numbers.has(x.rowNumber))
+            .map(({ importRunId: _run, ...row }) => row),
+        );
+      },
+      async findBySourceKeys(source, sourceKeys) {
+        const keys = new Set(sourceKeys);
+        return structuredClone(
+          d()
+            .legacyImportedRows.filter((x) => x.source === source && keys.has(x.sourceKey))
+            .map(({ importRunId: _run, ...row }) => row),
+        );
+      },
+      async listBySource(source) {
+        return structuredClone(
+          d()
+            .legacyImportedRows.filter((x) => x.source === source)
+            .map(({ importRunId: _run, ...row }) => row),
+        );
+      },
+      async save(row) {
+        const existing = d().legacyImportedRows.find(
+          (x) => x.source === row.source && x.rowNumber === row.rowNumber,
+        );
+        if (existing) {
+          Object.assign(existing, {
+            sourceKey: row.sourceKey,
+            sourceDigest: row.sourceDigest,
+            syncedRowVersion: row.syncedRowVersion,
+            importRunId: row.importRunId,
+          });
+          return;
+        }
+        // 実際の DB の一意の索引と同じく、領収書の同じ画像は1行だけ
+        if (
+          row.source === 'gas_receipt' &&
+          d().legacyImportedRows.some((x) => x.source === 'gas_receipt' && x.sourceKey === row.sourceKey)
+        ) {
+          throw new Error('legacy_imported_rows_tenant_id_receipt_source_key_key');
+        }
+        d().legacyImportedRows.push(structuredClone(row));
+      },
+      async isImportedReceipt(receiptId) {
+        return d().legacyImportedRows.some((x) => x.receiptId === receiptId);
       },
     },
     integrationApiKeys: {

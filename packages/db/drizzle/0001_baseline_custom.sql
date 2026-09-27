@@ -62,6 +62,8 @@ CREATE TRIGGER "data_export_requests_set_updated_at" BEFORE UPDATE ON "data_expo
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "data_subject_requests_set_updated_at" BEFORE UPDATE ON "data_subject_requests"
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
+CREATE TRIGGER "legacy_imported_rows_set_updated_at" BEFORE UPDATE ON "legacy_imported_rows"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "matching_runs_set_updated_at" BEFORE UPDATE ON "matching_runs"
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();--> statement-breakpoint
 CREATE TRIGGER "push_subscriptions_set_updated_at" BEFORE UPDATE ON "push_subscriptions"
@@ -485,6 +487,7 @@ ALTER TABLE "data_subject_requests" FORCE ROW LEVEL SECURITY;--> statement-break
 ALTER TABLE "entity_changes" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "import_runs" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "integration_api_keys" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "legacy_imported_rows" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "matching_run_candidates" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "matching_runs" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "outbox_messages" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -554,6 +557,8 @@ GRANT SELECT, INSERT ON "app_logs", "ai_prompt_revisions", "care_record_revision
 GRANT SELECT, INSERT ON "outbox_messages" TO katahimo_app;--> statement-breakpoint
 GRANT SELECT, UPDATE ON "tenant_settings" TO katahimo_app;--> statement-breakpoint
 GRANT SELECT, INSERT, UPDATE ON "import_runs", "staff_credentials" TO katahimo_app;--> statement-breakpoint
+-- GAS版のスプレッドシートからの移行の取込(運用担当者の CLI がアプリの DB ユーザーで動く)。取り込んだ行と記録の対応は消さない
+GRANT SELECT, INSERT, UPDATE ON "legacy_imported_rows" TO katahimo_app;--> statement-breakpoint
 -- 外部システム連携の API キーは確かめて最終利用の時刻を書くだけ(発行・失効は運用担当者の CLI が所有者の接続で行う)
 GRANT SELECT, UPDATE ("last_used_at") ON "integration_api_keys" TO katahimo_app;--> statement-breakpoint
 -- 月の締めは締めるだけ(解除・削除は所有者の platform.unlock_attendance_period / テナントの消去。トリガーでも守る)

@@ -729,6 +729,28 @@ CREATE TABLE "care_records" (
 );
 --> statement-breakpoint
 ALTER TABLE "care_records" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+CREATE TABLE "legacy_imported_rows" (
+	"tenant_id" uuid NOT NULL,
+	"source" text NOT NULL,
+	"row_number" integer NOT NULL,
+	"source_key" text NOT NULL,
+	"care_record_id" uuid,
+	"receipt_id" uuid,
+	"source_digest" "bytea" NOT NULL,
+	"synced_row_version" integer NOT NULL,
+	"import_run_id" uuid NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "legacy_imported_rows_pkey" PRIMARY KEY("tenant_id","source","row_number"),
+	CONSTRAINT "legacy_imported_rows_tenant_id_care_record_id_key" UNIQUE("tenant_id","care_record_id"),
+	CONSTRAINT "legacy_imported_rows_tenant_id_receipt_id_key" UNIQUE("tenant_id","receipt_id"),
+	CONSTRAINT "legacy_imported_rows_source_check" CHECK ("legacy_imported_rows"."source" in ('gas_daily_report', 'gas_accident_report', 'gas_receipt')),
+	CONSTRAINT "legacy_imported_rows_target_check" CHECK (case when "legacy_imported_rows"."source" = 'gas_receipt' then "legacy_imported_rows"."receipt_id" is not null and "legacy_imported_rows"."care_record_id" is null else "legacy_imported_rows"."care_record_id" is not null and "legacy_imported_rows"."receipt_id" is null end),
+	CONSTRAINT "legacy_imported_rows_source_key_check" CHECK ("legacy_imported_rows"."source_key" <> ''),
+	CONSTRAINT "legacy_imported_rows_row_number_check" CHECK ("legacy_imported_rows"."row_number" >= 2)
+);
+--> statement-breakpoint
+ALTER TABLE "legacy_imported_rows" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "receipt_uploads" (
 	"tenant_id" uuid NOT NULL,
 	"id" uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -1195,7 +1217,7 @@ CREATE TABLE "import_runs" (
 	"started_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"finished_at" timestamp with time zone,
 	CONSTRAINT "import_runs_pkey" PRIMARY KEY("tenant_id","id"),
-	CONSTRAINT "import_runs_source_check" CHECK ("import_runs"."source" in ('reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx')),
+	CONSTRAINT "import_runs_source_check" CHECK ("import_runs"."source" in ('reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx', 'legacy_reports_sheet', 'legacy_receipts_sheet')),
 	CONSTRAINT "import_runs_status_check" CHECK ("import_runs"."status" in ('running', 'applied', 'review_required', 'failed', 'skipped')),
 	CONSTRAINT "import_runs_finished_at_check" CHECK (("import_runs"."status" = 'running') = ("import_runs"."finished_at" is null))
 );
@@ -1337,6 +1359,10 @@ ALTER TABLE "care_records" ADD CONSTRAINT "care_records_tenant_id_visit_id_fkey"
 ALTER TABLE "care_records" ADD CONSTRAINT "care_records_tenant_id_customer_id_fkey" FOREIGN KEY ("tenant_id","customer_id") REFERENCES "public"."customers"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "care_records" ADD CONSTRAINT "care_records_tenant_id_care_recipient_id_fkey" FOREIGN KEY ("tenant_id","care_recipient_id") REFERENCES "public"."care_recipients"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "care_records" ADD CONSTRAINT "care_records_tenant_id_author_staff_id_fkey" FOREIGN KEY ("tenant_id","author_staff_id") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "legacy_imported_rows" ADD CONSTRAINT "legacy_imported_rows_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "legacy_imported_rows" ADD CONSTRAINT "legacy_imported_rows_tenant_id_care_record_id_fkey" FOREIGN KEY ("tenant_id","care_record_id") REFERENCES "public"."care_records"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "legacy_imported_rows" ADD CONSTRAINT "legacy_imported_rows_tenant_id_receipt_id_fkey" FOREIGN KEY ("tenant_id","receipt_id") REFERENCES "public"."receipts"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "legacy_imported_rows" ADD CONSTRAINT "legacy_imported_rows_tenant_id_import_run_id_fkey" FOREIGN KEY ("tenant_id","import_run_id") REFERENCES "public"."import_runs"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "receipt_uploads" ADD CONSTRAINT "receipt_uploads_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "platform"."tenants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "receipt_uploads" ADD CONSTRAINT "receipt_uploads_tenant_id_staff_id_fkey" FOREIGN KEY ("tenant_id","staff_id") REFERENCES "public"."staff"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "receipt_uploads" ADD CONSTRAINT "receipt_uploads_tenant_id_customer_id_fkey" FOREIGN KEY ("tenant_id","customer_id") REFERENCES "public"."customers"("tenant_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -1431,6 +1457,8 @@ CREATE INDEX "care_records_tenant_id_customer_id_occurred_at_id_idx" ON "care_re
 CREATE INDEX "care_records_tenant_id_occurred_at_id_idx" ON "care_records" USING btree ("tenant_id","occurred_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_author_staff_id_occurred_at_idx" ON "care_records" USING btree ("tenant_id","author_staff_id","occurred_at" DESC NULLS FIRST);--> statement-breakpoint
 CREATE INDEX "care_records_tenant_id_visit_id_idx" ON "care_records" USING btree ("tenant_id","visit_id");--> statement-breakpoint
+CREATE INDEX "legacy_imported_rows_tenant_id_source_source_key_idx" ON "legacy_imported_rows" USING btree ("tenant_id","source","source_key");--> statement-breakpoint
+CREATE UNIQUE INDEX "legacy_imported_rows_tenant_id_receipt_source_key_key" ON "legacy_imported_rows" USING btree ("tenant_id","source_key") WHERE source = 'gas_receipt';--> statement-breakpoint
 CREATE UNIQUE INDEX "receipts_tenant_id_dedupe_hash_key" ON "receipts" USING btree ("tenant_id","dedupe_hash") WHERE dedupe_primary and cancelled_at is null;--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_dedupe_hash_idx" ON "receipts" USING btree ("tenant_id","dedupe_hash") WHERE dedupe_hash is not null and cancelled_at is null;--> statement-breakpoint
 CREATE INDEX "receipts_tenant_id_staff_id_receipted_at_idx" ON "receipts" USING btree ("tenant_id","staff_id","receipted_at");--> statement-breakpoint
@@ -1487,6 +1515,7 @@ CREATE POLICY "tenant_isolation" ON "ai_prompt_revisions" AS PERMISSIVE FOR ALL 
 CREATE POLICY "tenant_isolation" ON "ai_prompts" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "care_record_revisions" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "care_records" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
+CREATE POLICY "tenant_isolation" ON "legacy_imported_rows" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "receipt_uploads" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "receipts" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "stored_files" AS PERMISSIVE FOR ALL TO public USING (tenant_id = app_current_tenant()) WITH CHECK (tenant_id = app_current_tenant());--> statement-breakpoint

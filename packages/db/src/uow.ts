@@ -27,6 +27,7 @@ import {
   DrizzleCustomerSourceRecordRepository,
 } from './repositories/tenant/customers';
 import { DrizzleIntegrationApiKeyRepository } from './repositories/tenant/integrations';
+import { DrizzleLegacyImportRepository } from './repositories/tenant/legacyImports';
 import { DrizzlePushSubscriptionRepository } from './repositories/tenant/push';
 import {
   DrizzleCareRecordRepository,
@@ -99,6 +100,7 @@ export function bindRepositories(
     customerReportProfiles: new DrizzleCustomerReportProfileRepository(tx, tenantId),
     reportAiGenerations: new DrizzleReportAiGenerationRepository(tx, tenantId),
     importRuns: new DrizzleImportRunRepository(tx, tenantId),
+    legacyImports: new DrizzleLegacyImportRepository(tx, tenantId),
     integrationApiKeys: new DrizzleIntegrationApiKeyRepository(tx, tenantId),
     staffCalendars: new DrizzleStaffCalendarRepository(tx, tenantId),
     busyBlocks: new DrizzleStaffBusyBlockRepository(tx, tenantId),

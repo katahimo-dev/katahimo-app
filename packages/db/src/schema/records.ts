@@ -3,6 +3,7 @@ import {
   CARE_RECORD_STATUSES,
   CARE_RECORD_TYPES,
   type CareRecordContent,
+  LEGACY_IMPORT_ROW_SOURCES,
   STORED_FILE_PURPOSES,
 } from '@katahimo/core/domain';
 import { sql } from 'drizzle-orm';
@@ -36,6 +37,7 @@ import { bytea, tstzrange } from './_types';
 import { visits } from './attendance';
 import { careRecipients, customers } from './customers';
 import { staff } from './staff';
+import { importRuns } from './tenancy';
 
 /**
  * 記録(保育日報・事故報告・ヒヤリハット)。本文 body は record_type ごとの型つき JSON(body_schema_ver で版を
@@ -261,6 +263,63 @@ export const receipts = pgTable(
       'receipts_cancel_reason_check',
       sql`char_length(${t.cancelReason}) <= 100 and ${t.cancelReason} !~ '[[:cntrl:]]'`,
     ),
+  ],
+).enableRLS();
+
+/**
+ * GAS版のスプレッドシートから取り込んだ行と、取り込んだ先の記録の対応(移行の取込 `pnpm import:legacy-reports` /
+ * `pnpm import:legacy-receipts` だけが書く)。同じ行を2回取り込まないための表で、記録の表(care_records・receipts)
+ * には GAS版の事情を持ち込まない。行はシートの行番号 row_number で指す(主キー。GAS版は行を末尾に足すか行番号で
+ * 上書きするだけで、行を消さない・並べ替えないため)。source_key は行の内容のキー(日報: 日時+担当+顧客ID+開始時刻、
+ * 事故報告: 日時+担当+顧客ID、領収書: 画像の Drive のファイル ID)で、報告では行が動いた(シートを並べ替えた・行を
+ * 消した)ことを見つけるため、領収書では行を指すため(同じ画像は1回だけ)に使う。source_digest(取り込んだ行の内容の
+ * SHA-256)と synced_row_version(取込が書いた後の記録の版)で、次の取込のときに「シートで直された行」と「取込の後に
+ * 本アプリで直された記録」を見分ける。移行が終わったら行を残したまま使わなくなる。
+ */
+export const legacyImportedRows = pgTable(
+  'legacy_imported_rows',
+  {
+    tenantId: tenantIdColumn(),
+    source: text({ enum: LEGACY_IMPORT_ROW_SOURCES }).notNull(),
+    /** シートの行番号(1始まり。1行目は見出しのため 2 から)。 */
+    rowNumber: integer().notNull(),
+    sourceKey: text().notNull(),
+    /** 取り込んだ先の日報・事故報告(source が gas_daily_report / gas_accident_report のとき)。 */
+    careRecordId: uuid(),
+    /** 取り込んだ先の領収書(source が gas_receipt のとき)。 */
+    receiptId: uuid(),
+    /** 取り込んだときの行の内容(記録にした値)の SHA-256。 */
+    sourceDigest: bytea().notNull(),
+    /** 取込が書いた後の記録の row_version。記録の版がこれと違えば、取込の後に本アプリで直された。 */
+    syncedRowVersion: integer().notNull(),
+    /** この行を最後に書いた取込の実行。 */
+    importRunId: uuid().notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ name: 'legacy_imported_rows_pkey', columns: [t.tenantId, t.source, t.rowNumber] }),
+    tenantFk('legacy_imported_rows', t),
+    tenantIsolation(),
+    tenantRef('legacy_imported_rows', 'care_record_id', t, t.careRecordId, careRecords),
+    tenantRef('legacy_imported_rows', 'receipt_id', t, t.receiptId, receipts),
+    tenantRef('legacy_imported_rows', 'import_run_id', t, t.importRunId, importRuns),
+    unique('legacy_imported_rows_tenant_id_care_record_id_key').on(t.tenantId, t.careRecordId),
+    unique('legacy_imported_rows_tenant_id_receipt_id_key').on(t.tenantId, t.receiptId),
+    check('legacy_imported_rows_source_check', oneOf(t.source, LEGACY_IMPORT_ROW_SOURCES)),
+    // 領収書の行は領収書だけを、報告の行は記録だけを指す
+    check(
+      'legacy_imported_rows_target_check',
+      sql`case when ${t.source} = 'gas_receipt' then ${t.receiptId} is not null and ${t.careRecordId} is null else ${t.careRecordId} is not null and ${t.receiptId} is null end`,
+    ),
+    // 行の内容のキーで探す(報告は同じキーの行が2つ以上あってよい。同じ訪問の日報を2回新しく保存した)
+    index('legacy_imported_rows_tenant_id_source_source_key_idx').on(t.tenantId, t.source, t.sourceKey),
+    // 領収書は同じ画像を1回だけ取り込む
+    uniqueIndex('legacy_imported_rows_tenant_id_receipt_source_key_key')
+      .on(t.tenantId, t.sourceKey)
+      .where(sql`source = 'gas_receipt'`),
+    check('legacy_imported_rows_source_key_check', sql`${t.sourceKey} <> ''`),
+    check('legacy_imported_rows_row_number_check', sql`${t.rowNumber} >= 2`),
   ],
 ).enableRLS();
 

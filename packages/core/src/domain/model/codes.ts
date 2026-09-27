@@ -28,9 +28,19 @@ export const TENANT_SECRET_NAMES = [
 ] as const;
 export type TenantSecretName = (typeof TENANT_SECRET_NAMES)[number];
 
-/** 取込の経路(import_runs.source)。external_api は外部システムからの顧客の受け取り(POST /api/integrations/customers)。 */
-/** report_ai_xlsx は管理画面「日報AIの調整」の日報キーワード表現マスター(xlsx)の取込。 */
-export const IMPORT_SOURCES = ['reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx'] as const;
+/**
+ * 取込の経路(import_runs.source)。external_api は外部システムからの顧客の受け取り(POST /api/integrations/customers)、
+ * report_ai_xlsx は管理画面「日報AIの調整」の日報キーワード表現マスター(xlsx)の取込、legacy_reports_sheet /
+ * legacy_receipts_sheet は GAS版のスプレッドシート(日報・事故報告 / 領収書一覧)からの移行の取込(運用担当者の CLI)。
+ */
+export const IMPORT_SOURCES = [
+  'reserva_csv',
+  'staff_master_csv',
+  'external_api',
+  'report_ai_xlsx',
+  'legacy_reports_sheet',
+  'legacy_receipts_sheet',
+] as const;
 export type ImportSource = (typeof IMPORT_SOURCES)[number];
 export const IMPORT_RUN_STATUSES = ['running', 'applied', 'review_required', 'failed', 'skipped'] as const;
 export type ImportRunStatus = (typeof IMPORT_RUN_STATUSES)[number];
@@ -87,6 +97,13 @@ export const CARE_RECORD_TYPES = ['daily_report', 'accident', 'near_miss'] as co
 export type CareRecordType = (typeof CARE_RECORD_TYPES)[number];
 export const CARE_RECORD_STATUSES = ['draft', 'submitted', 'locked'] as const;
 export type CareRecordStatus = (typeof CARE_RECORD_STATUSES)[number];
+
+/**
+ * GAS版のスプレッドシートから取り込んだ行の出どころ(legacy_imported_rows.source)。gas_daily_report: 「日報」シート /
+ * gas_accident_report: 「事故報告」シート(事故報告・ヒヤリハット)/ gas_receipt: 「領収書一覧」。
+ */
+export const LEGACY_IMPORT_ROW_SOURCES = ['gas_daily_report', 'gas_accident_report', 'gas_receipt'] as const;
+export type LegacyImportRowSource = (typeof LEGACY_IMPORT_ROW_SOURCES)[number];
 
 export const STORED_FILE_PURPOSES = ['receipt_image', 'evidence', 'export'] as const;
 export type StoredFilePurpose = (typeof STORED_FILE_PURPOSES)[number];

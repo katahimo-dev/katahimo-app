@@ -5,6 +5,7 @@ export * from './auth';
 export * from './customerReportProfiles';
 export * from './customers';
 export * from './integrationApiKeys';
+export * from './legacyImport';
 export * from './maintenance';
 export * from './notify';
 export * from './outboxWorker';

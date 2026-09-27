@@ -16,6 +16,7 @@ locals {
     # アプリが直接呼ぶ Google API(実行サービスアカウントの ADC で認証する)
     "calendar-json.googleapis.com",
     "drive.googleapis.com",
+    "sheets.googleapis.com", # GAS版のスプレッドシートからの移行の取込(pnpm import:legacy-reports / import:legacy-receipts)
     # Google Maps Platform(API キーで呼ぶ。キーは Secret Manager の google-maps-api-key)
     "geocoding-backend.googleapis.com",
     "routes.googleapis.com",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cliArgs, resolveInputPath, takeOption } from './cliArgs';
+import { cliArgs, resolveInputPath, takeOption, takeRepeatedOption } from './cliArgs';
 
 describe('運用スクリプトの引数', () => {
   it('pnpm が渡す `--` を取り除く', () => {
@@ -16,6 +16,15 @@ describe('運用スクリプトの引数', () => {
       value: '2026',
     });
     expect(takeOption(['demo'], '--year')).toEqual({ rest: ['demo'], value: undefined });
+  });
+
+  it('`--name 値` を何回でも取り出す(値の無い最後の --name は undefined)', () => {
+    expect(
+      takeRepeatedOption(['demo', '--month', '2026-09', 'x', '--month', '2026-10', '--month'], '--month'),
+    ).toEqual({
+      rest: ['demo', 'x'],
+      values: ['2026-09', '2026-10', undefined],
+    });
   });
 
   it('相対パスはコマンドを打ったフォルダから、絶対パスはそのまま', () => {

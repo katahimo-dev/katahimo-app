@@ -16,6 +16,24 @@ export function takeOption(args: string[], name: string): { rest: string[]; valu
   return { rest: args.filter((_, i) => i !== index && i !== index + 1), value: args[index + 1] };
 }
 
+/** `--name 値` を何回でも取り出す(残りの引数と、見つかった値の並び)。値の無い最後の `--name` は値 undefined。 */
+export function takeRepeatedOption(
+  args: string[],
+  name: string,
+): { rest: string[]; values: (string | undefined)[] } {
+  const rest: string[] = [];
+  const values: (string | undefined)[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === name) {
+      values.push(args[i + 1]);
+      i++;
+    } else {
+      rest.push(args[i] as string);
+    }
+  }
+  return { rest, values };
+}
+
 /**
  * 入力ファイルのパス。`pnpm --filter @katahimo/api <script>` はパッケージのフォルダで動くため、相対パスは
  * コマンドを打ったフォルダ(pnpm が INIT_CWD に入れる)から解決する。

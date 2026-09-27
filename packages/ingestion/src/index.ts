@@ -3,5 +3,6 @@
 export * from './attendanceSheetCsv';
 export * from './customerCsvImport';
 export * from './integrationCustomers';
+export * from './legacySheets';
 export * from './reservaCsv';
 export * from './staffMasterCsv';

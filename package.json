@@ -28,6 +28,8 @@
     "import:reserva": "pnpm --filter @katahimo/api import:reserva",
     "import:staff-master": "pnpm --filter @katahimo/api import:staff-master",
     "import:attendance": "pnpm --filter @katahimo/api import:attendance",
+    "import:legacy-reports": "pnpm --filter @katahimo/api import:legacy-reports",
+    "import:legacy-receipts": "pnpm --filter @katahimo/api import:legacy-receipts",
     "worker": "pnpm --filter @katahimo/worker start",
     "outbox:once": "pnpm --filter @katahimo/worker outbox:once",
     "job:nightly-calendar-sync": "pnpm --filter @katahimo/worker job:nightly-calendar-sync",

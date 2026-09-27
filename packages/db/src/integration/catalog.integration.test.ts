@@ -148,6 +148,7 @@ describe('スキーマの約束事(カタログ)', () => {
       'report_phrases',
       'report_stance_rules',
       'customer_report_profiles',
+      'legacy_imported_rows',
     ];
     expect(none.filter((t) => of(`public.${t}`).length > 0)).toEqual([]);
     // 読むだけ・消すだけの表

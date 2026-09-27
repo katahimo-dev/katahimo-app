@@ -18,7 +18,9 @@
     "tenant:api-keys": "tsx src/scripts/tenantApiKeys.ts",
     "import:reserva": "tsx src/scripts/importReservaCsv.ts",
     "import:staff-master": "tsx src/scripts/importStaffMasterCsv.ts",
-    "import:attendance": "tsx src/scripts/importAttendanceCsv.ts"
+    "import:attendance": "tsx src/scripts/importAttendanceCsv.ts",
+    "import:legacy-reports": "tsx src/scripts/importLegacyReports.ts",
+    "import:legacy-receipts": "tsx src/scripts/importLegacyReceipts.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
