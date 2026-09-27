@@ -27,7 +27,7 @@ katahimo-app は GAS版 `gas-childcare-visit-app` の後継のアプリで、画
 
 ## ほかの資料
 
-- [`partner/`](partner/README.md): **キューテスト様(現在の運用会社)向けの切替のご説明資料**(スライド pptx・PDF。技術者でない方向け)。
+- [`partner/`](partner/README.md): **キューテスト様(現在の運用会社)向けのご説明資料**(切替のご説明・システム概要のご説明。スライド pptx・PDF。技術者でない方向け)。
 - [`README.md`](../README.md): このリポジトリの紹介とすぐに動かす手順。
 - [`CLAUDE.md`](../CLAUDE.md): コーディングエージェント向けの要約(英語)。
 - [`packages/web/README.md`](../packages/web/README.md): 画面の作り方の決まり(クラス名・ダイアログ・localStorage のキー・z-index)。
