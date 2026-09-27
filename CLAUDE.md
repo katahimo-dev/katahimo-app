@@ -188,6 +188,6 @@ GAS is the spec for business logic and calculation results only; screens are ver
 ## References
 
 - `doc/README.md`: index of the baseline design docs (01 overview/ADRs, 02 functional spec per screen, 03 DB design + generated table reference, 04 API, 05 batch/integrations/GAS Bridge, 06 security, 07 infra/ops runbooks + CI/GitHub settings, 08 dev guide, 09 GAS→new cut-over plan, 10 matching extension (未実装), 11 feature-by-feature comparison with GAS + remaining cut-over operations). The pre-rebuild proposals (SQLite/Firebase/Neon era) and `doc/api/*` are only in git history; their current content is part of this set.
-- `doc/partner/`: the non-technical cut-over deck for キューテスト様 (`build_deck.py` → pptx, PDF via LibreOffice; see its README).
+- `doc/partner/`: the non-technical decks for キューテスト様 — cut-over (`build_deck.py`) and system overview (`build_overview_deck.py`, a plain-language version of doc/01 incl. §5 design decisions, with a glossary); shared parts in `deck_lib.py`; pptx, PDF via LibreOffice (see its README).
 - The earlier prototype (`katahimo-dev/C001-cutest-internal`, `01_GAS/katahimo-app`) was imported as this repo's base; its UI was discarded and rebuilt from the GAS app.
 - `ohru131/katahimo-app` (public): demo version, UI/design reference only.

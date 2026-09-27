@@ -15,12 +15,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from PIL import Image
-from pptx import Presentation
-from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
-from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
-from pptx.oxml.ns import qn
-from pptx.util import Emu, Inches, Pt
+
+from deck_lib import *  # noqa: F403(デザインの決まり・部品)
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -28,170 +24,12 @@ SHOTS = HERE / ".build" / "source"
 BUILD = HERE / ".build"
 OUT = HERE / "新アプリ切替のご説明_キューテスト様.pptx"
 
-# ---- デザインの決まり ---------------------------------------------------------
-FONT = "IPAPGothic"  # PDF に埋め込む日本語フォント(MS Pゴシックと同じ字幅)
-DEEP = RGBColor(0x0E, 0x4F, 0x5C)  # 濃いティール(表紙・見出し)
-TEAL = RGBColor(0x1F, 0x8A, 0x8A)  # ティール(アイコン・強調)
-MID = RGBColor(0x7C, 0xC4, 0xC0)  # 中間のティール(線・矢印)
-TINT = RGBColor(0xE8, 0xF5, 0xF4)  # 薄いティール(カードの地)
-TINT2 = RGBColor(0xD3, 0xEC, 0xEA)  # 少し濃い地
-INK = RGBColor(0x1F, 0x2D, 0x33)  # 本文
-MUTED = RGBColor(0x5B, 0x6B, 0x70)  # 補足
-WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-LINE = RGBColor(0xC9, 0xDE, 0xDC)
-
-SW, SH = 13.333, 7.5
 TOTAL = 23
 FOOTER = "新しい訪問業務アプリへの切り替えについて|株式会社キューテスト様"
 
-prs = Presentation()
-prs.slide_width = Inches(SW)
-prs.slide_height = Inches(SH)
-BLANK = prs.slide_layouts[6]
-page = 0
-# 後のスライドのページ番号(先のスライドから「(nページ)」で参照する。作り終えてから埋める)
-page_of = {}
-
-
-def _font(run, size, color=INK, bold=False):
-    f = run.font
-    f.size = Pt(size)
-    f.bold = bold
-    f.color.rgb = color
-    f.name = FONT
-    rpr = run._r.get_or_add_rPr()
-    for tag in ("a:ea", "a:cs"):
-        el = rpr.find(qn(tag))
-        if el is None:
-            el = rpr.makeelement(qn(tag), {})
-            rpr.append(el)
-        el.set("typeface", FONT)
-
-
-def jp_text(t):
-    """
-    スライドに出す文字。括弧は中の文字に合わせて全角・半角を選ぶ(開き括弧は次の文字、閉じ括弧は前の文字が日本語なら全角)。
-    LibreOffice の PDF は日本語と半角の文字の間に空きを入れるため、括弧と中の文字の間に空きが入らないようにする。
-    """
-    out = []
-    for i, c in enumerate(t):
-        if c == "(" and i + 1 < len(t) and not t[i + 1].isascii():
-            c = "（"
-        elif c == ")" and i > 0 and not t[i - 1].isascii():
-            c = "）"
-        out.append(c)
-    return "".join(out)
-
-
-def page_ref(key):
-    """後のスライドのページ番号の埋め込み先(fill_page_refs で埋める)。"""
-    return "{page:" + key + "}"
-
-
-def fill_page_refs():
-    for slide in prs.slides:
-        for shp in slide.shapes:
-            if not shp.has_text_frame:
-                continue
-            for para in shp.text_frame.paragraphs:
-                for r in para.runs:
-                    for key, n in page_of.items():
-                        r.text = r.text.replace(page_ref(key), str(n))
-                    assert "{page:" not in r.text, f"ページ番号を埋められません: {r.text}"
-
-
-def text(slide, x, y, w, h, paras, size=18, color=INK, bold=False, align=PP_ALIGN.LEFT,
-         anchor=MSO_ANCHOR.TOP, space_after=6, line=1.15, margin=0.0):
-    """paras: 文字列、または段落のリスト。段落は文字列か [(文字, {size,color,bold}), ...]。"""
-    tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
-    tf = tb.text_frame
-    tf.word_wrap = True
-    tf.auto_size = None
-    tf.vertical_anchor = anchor
-    m = Inches(margin)
-    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = m
-    if isinstance(paras, str):
-        paras = [paras]
-    for i, p in enumerate(paras):
-        para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        para.alignment = align
-        para.line_spacing = line
-        para.space_after = Pt(space_after)
-        runs = [(p, {})] if isinstance(p, str) else p
-        for t, opt in runs:
-            r = para.add_run()
-            r.text = jp_text(t)
-            _font(r, opt.get("size", size), opt.get("color", color), opt.get("bold", bold))
-    return tb
-
-
-def shape(slide, kind, x, y, w, h, fill=TINT, line=None, radius=0.12):
-    s = slide.shapes.add_shape(kind, Inches(x), Inches(y), Inches(w), Inches(h))
-    s.shadow.inherit = False
-    if fill is None:
-        s.fill.background()
-    else:
-        s.fill.solid()
-        s.fill.fore_color.rgb = fill
-    if line is None:
-        s.line.fill.background()
-    else:
-        s.line.color.rgb = line
-        s.line.width = Pt(1.25)
-    if kind == MSO_SHAPE.ROUNDED_RECTANGLE:
-        s.adjustments[0] = radius
-    s.text_frame.text = ""
-    return s
-
-
-def card(slide, x, y, w, h, fill=TINT, line=None, radius=0.08):
-    return shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, h, fill, line, radius)
-
-
-def badge(slide, x, y, d, label, fill=TEAL, color=WHITE, size=None):
-    s = shape(slide, MSO_SHAPE.OVAL, x, y, d, d, fill)
-    tf = s.text_frame
-    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
-    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-    p = tf.paragraphs[0]
-    p.alignment = PP_ALIGN.CENTER
-    r = p.add_run()
-    r.text = label
-    _font(r, size or d * 30, color, True)
-    return s
-
-
-def arrow(slide, x1, y1, x2, y2, color=MID, width=2.5):
-    c = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x1), Inches(y1), Inches(x2), Inches(y2))
-    c.line.color.rgb = color
-    c.line.width = Pt(width)
-    ln = c.line._get_or_add_ln()
-    tail = ln.makeelement(qn("a:tailEnd"), {"type": "triangle", "w": "med", "len": "med"})
-    ln.append(tail)
-    return c
-
-
-def new_slide(title=None, dark=False, kicker=None):
-    global page
-    page += 1
-    s = prs.slides.add_slide(BLANK)
-    bg = s.background.fill
-    bg.solid()
-    bg.fore_color.rgb = DEEP if dark else WHITE
-    if title:
-        if kicker:
-            text(s, 0.6, 0.38, 12, 0.4, kicker, size=16, color=TEAL, bold=True)
-        text(s, 0.6, 0.62 if kicker else 0.5, 12.1, 0.8, title, size=34, color=WHITE if dark else DEEP,
-             bold=True, anchor=MSO_ANCHOR.TOP)
-    if page > 1:
-        col = RGBColor(0xB5, 0xD8, 0xD6) if dark else MUTED
-        text(s, 0.6, 7.0, 9, 0.3, FOOTER, size=11, color=col)
-        text(s, 11.2, 7.0, 1.53, 0.3, f"{page} / {TOTAL}", size=11, color=col, align=PP_ALIGN.RIGHT)
-    return s
-
-
-def notes(slide, t):
-    slide.notes_slide.notes_text_frame.text = t
+deck = Deck(TOTAL, FOOTER)
+new_slide = deck.new_slide
+page_ref = deck.page_ref
 
 
 CROP_TOP = {"login": 260}  # ログインは画面の中ほどにあるため、上を少し切る
@@ -224,11 +62,6 @@ def screen_pair(slide, x, y, h, name, caption):
     total_w = 2 * w + gap
     text(slide, x, y + h + 0.55, total_w, 0.4, caption, size=18, color=INK, bold=True, align=PP_ALIGN.CENTER)
     return total_w
-
-
-def bullets(slide, x, y, w, h, items, size=18, gap=10, mark="●", mark_color=TEAL, color=INK):
-    paras = [[(mark + " ", {"color": mark_color, "size": size - 4}), (it, {})] for it in items]
-    return text(slide, x, y, w, h, paras, size=size, color=color, space_after=gap, line=1.2)
 
 
 # =============================================================================
@@ -645,7 +478,7 @@ notes(s, "カレンダーと顧客CSVのフォルダは、新しいアプリ専�
 
 # 20. 費用
 s = new_slide("費用の目安(毎月のクラウド利用料)", kicker="費用")
-page_of["cost"] = page
+deck.page_of["cost"] = deck.page
 card(s, 0.6, 1.5, 5.0, 4.6, fill=DEEP)
 text(s, 0.9, 1.75, 4.4, 0.5, "月額の目安", size=20, color=RGBColor(0xCF, 0xEB, 0xE8), bold=True)
 text(s, 0.9, 2.35, 4.4, 1.2, [[("約", {"size": 24}), ("2,100〜4,700", {"size": 32}), ("円", {"size": 24})]], size=38, color=WHITE, bold=True)
@@ -743,7 +576,4 @@ paras = [[("お問い合わせ: ", {"bold": True}), ("ご不明な点は、開�
 text(s, 0.6, 6.45, 12.1, 0.45, paras, size=16, color=WHITE)
 notes(s, "本番の環境の設定ファイルはできていますが、実際のGoogle Cloudでの構築と確認はこれからです。切替日の前に済ませます。")
 
-assert page == TOTAL, f"TOTAL({TOTAL}) とスライド数({page})が違います"
-fill_page_refs()
-prs.save(OUT)
-print(f"保存しました: {OUT}({page}枚)")
+deck.save(OUT)
