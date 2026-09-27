@@ -38,13 +38,13 @@ variable "sql_database_version" {
 }
 
 variable "sql_tier" {
-  description = "マシンタイプ。db-g1-small は共有コア(SLA対象外)。実データ投入後に余裕を見て db-custom-1-3840 等へ"
+  description = "マシンタイプ。db-f1-micro は共有コア(0.2 vCPU 相当・メモリ 0.6GB、max_connections 25 程度で要確認。Cloud SQL の SLA の対象外)で、1テナント・スタッフ10人程度の規模向け。テナント・利用が増えて CPU・メモリ・接続数のアラートが続くようになったら、db-g1-small(1.7GB・max_connections 50 程度)か SLA のある専用コアの db-custom-1-3840(1 vCPU・3.75GB)/ db-custom-2-7680 へ上げる。変えて apply するとインスタンスが数分再起動する(データは残る)。doc/07_インフラ・運用.md 2.2"
   type        = string
-  default     = "db-g1-small"
+  default     = "db-f1-micro"
 }
 
 variable "sql_high_availability" {
-  description = "true でリージョナル(HA)構成。料金は約2倍"
+  description = "true でリージョナル(HA)構成。料金は約2倍。共有コアは HA でも SLA の対象外のため、HA にするときは専用コア(db-custom-*)にする"
   type        = bool
   default     = false
 }
@@ -125,15 +125,15 @@ variable "route_notice_schedule" {
 
 # ── Cloud Run の規模 ──────────────────────────────────────────
 variable "api_max_instances" {
-  description = "API の最大インスタンス数。DB接続数 = これ × DB_POOL_MAX(+ワーカー・ジョブ)を Cloud SQL の max_connections 未満に保つ"
+  description = "API の最大インスタンス数。DB接続数 = これ × api_db_pool_max(+ワーカー・ジョブ・運用者)を Cloud SQL の max_connections から予約分を引いた数より十分小さく保つ(doc/07_インフラ・運用.md 2.1)"
   type        = number
-  default     = 3
+  default     = 2
 }
 
 variable "api_db_pool_max" {
   description = "API 1インスタンスあたりの DB 接続数(DB_POOL_MAX)"
   type        = number
-  default     = 5
+  default     = 4
 }
 
 variable "worker_cpu" {
@@ -197,9 +197,9 @@ variable "alert_api_5xx_threshold" {
 }
 
 variable "alert_sql_connections_threshold" {
-  description = "Cloud SQL の接続数(num_backends)がこれを超えたらアラート。max_connections(db-g1-small は 50 程度、要確認)の 8 割を目安にする"
+  description = "Cloud SQL の接続数(num_backends)がこれを超えたらアラート。max_connections(db-f1-micro は 25 程度、要確認)の 8 割を目安にする。sql_tier を上げたら合わせて上げる"
   type        = number
-  default     = 40
+  default     = 20
 }
 
 variable "uptime_check_host" {

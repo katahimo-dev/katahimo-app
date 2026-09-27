@@ -5,7 +5,8 @@ region     = "asia-northeast1"
 # 初回は false。ロール作成・シークレット登録・イメージの push の後に true にして再度 apply(doc/07_インフラ・運用.md 3章)
 deploy_workloads = false
 
-sql_tier              = "db-g1-small"
+# 規模を上げるときは sql_tier・alert_sql_connections_threshold・api_max_instances・api_db_pool_max を合わせて見直す(doc/07_インフラ・運用.md 2.2)
+sql_tier              = "db-f1-micro"
 sql_high_availability = false
 
 schedule_provider = "google"

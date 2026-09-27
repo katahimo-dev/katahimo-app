@@ -15,7 +15,9 @@ resource "google_sql_database_instance" "main" {
   encryption_key_name = google_kms_crypto_key.cloudsql.id
 
   settings {
-    # PostgreSQL 16 以降の新規インスタンスは既定が Enterprise Plus になるため明示する(共有コアは Enterprise のみ)
+    # PostgreSQL 16 以降の新規インスタンスは既定が Enterprise Plus になるため明示する(共有コアは Enterprise のみ)。
+    # 共有コア(既定の db-f1-micro)でも CMEK・自動バックアップ・PITR・HA・Query Insights は使える(SLA は対象外)。
+    # database_flags は設定しない(max_connections・メモリの設定は tier ごとの Cloud SQL の既定のまま)
     edition                     = "ENTERPRISE"
     tier                        = var.sql_tier
     availability_type           = var.sql_high_availability ? "REGIONAL" : "ZONAL"
