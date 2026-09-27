@@ -129,7 +129,7 @@ resource "google_monitoring_alert_policy" "job_failed" {
   depends_on = [google_project_service.enabled]
 }
 
-# ── Cloud SQL: CPU・ディスク・接続数 ───────────────────────────
+# ── Cloud SQL: CPU・メモリ・ディスク・接続数 ──────────────────────
 resource "google_monitoring_alert_policy" "sql" {
   display_name          = "katahimo-db: 資源の逼迫"
   combiner              = "OR"
@@ -146,6 +146,28 @@ resource "google_monitoring_alert_policy" "sql" {
       EOT
       comparison      = "COMPARISON_GT"
       threshold_value = 0.8
+      duration        = "900s"
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_MEAN"
+      }
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  # 共有コア(db-f1-micro はメモリ 0.6GB)ではメモリが先に足りなくなりやすい
+  conditions {
+    display_name = "メモリ使用率が 15 分間 90% を超えた"
+    condition_threshold {
+      filter          = <<-EOT
+        resource.type = "cloudsql_database"
+        AND resource.labels.database_id = "${local.sql_database_id}"
+        AND metric.type = "cloudsql.googleapis.com/database/memory/utilization"
+      EOT
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0.9
       duration        = "900s"
       aggregations {
         alignment_period   = "300s"
@@ -208,9 +230,10 @@ resource "google_monitoring_alert_policy" "sql" {
   documentation {
     mime_type = "text/markdown"
     content   = <<-EOT
-      Cloud SQL(${var.sql_instance_name})の資源が逼迫している。CPU は Query Insights で重いクエリを確認し、
-      恒常的なら sql_tier を上げる。ディスクは自動拡張される(disk_autoresize)が、急増していれば原因を調べる。
-      接続数は doc/07_インフラ・運用.md 2.1(api_max_instances × api_db_pool_max 等)を見直す。
+      Cloud SQL(${var.sql_instance_name}、${var.sql_tier})の資源が逼迫している。CPU・メモリは Query Insights で重いクエリを
+      確認し、恒常的なら sql_tier を上げる(利用の少ない時間帯に。数分の再起動を伴う。doc/07_インフラ・運用.md 2.2)。
+      ディスクは自動拡張される(disk_autoresize)が、急増していれば原因を調べる。接続数は doc/07_インフラ・運用.md 2.1
+      (api_max_instances × api_db_pool_max 等)を見直し、sql_tier を上げたら alert_sql_connections_threshold も上げる。
     EOT
   }
 
