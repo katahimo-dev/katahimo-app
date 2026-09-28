@@ -27,10 +27,13 @@ import { apiError, jsonOk, parseJsonBody, rateLimited } from '../http/responses'
 import type { SessionEnv } from '../session';
 import { actorOf, requireAdmin } from '../session';
 
-/** パスの :id(UUID でなければ存在しないスタッフと同じ 404)。 */
+/**
+ * パスの :id(UUID でなければ存在しないスタッフと同じ 404)。小文字にそろえる(UUID の大文字・小文字は DB では同じだが、
+ * 自分自身の降格・退職・削除の判定などの文字列の比較をすり抜けさせないため)。
+ */
 function staffIdOf(c: Context): string | null {
   const parsed = idSchema.safeParse(c.req.param('id'));
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? parsed.data.toLowerCase() : null;
 }
 
 const STAFF_NOT_FOUND = 'スタッフが見つかりません';

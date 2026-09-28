@@ -31,7 +31,7 @@ import {
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import type { Container } from '../container';
-import { enforceStaffQuota } from '../http/quota';
+import { enforceAiQuota } from '../http/quota';
 import { requestIdOf } from '../http/requestLog';
 import { apiError, jsonOk, parseJsonBody, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
@@ -52,7 +52,7 @@ export function createReportRoutes(container: Container) {
   app.post('/daily/generate', requireSession(container), async (c) => {
     const body = await parseJsonBody(c, generateDailyReportRequestSchema);
     if (!body.ok) return body.response;
-    const limited = await enforceStaffQuota(
+    const limited = await enforceAiQuota(
       c,
       container,
       container.rateLimits.aiGenerateStaff,
@@ -67,7 +67,7 @@ export function createReportRoutes(container: Container) {
   app.post('/accident/generate', requireSession(container), async (c) => {
     const body = await parseJsonBody(c, generateReportRequestSchema);
     if (!body.ok) return body.response;
-    const limited = await enforceStaffQuota(
+    const limited = await enforceAiQuota(
       c,
       container,
       container.rateLimits.aiGenerateStaff,

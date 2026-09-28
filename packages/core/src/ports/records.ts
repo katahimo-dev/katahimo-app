@@ -90,6 +90,8 @@ export interface StoredFileRow {
 export interface StoredFileRepository {
   insert(input: StoredFileRow): Promise<void>;
   findById(id: string): Promise<StoredFileRow | null>;
+  /** テナントの全てのファイルを ID 順に afterId の次から limit 件(テナントを消す前に保存先の実体を消すため。公開デモの作り直し)。 */
+  listPage(afterId: string | null, limit: number): Promise<StoredFileRow[]>;
   /** どこからも参照されていない、olderThan より前のファイル(掃除ジョブ用)。 */
   listUnreferenced(olderThan: Date, limit: number): Promise<StoredFileRow[]>;
   delete(id: string): Promise<void>;

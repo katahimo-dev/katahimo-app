@@ -51,6 +51,7 @@ pnpm tenant:calendars -- <slug> [--add-shared <id[=owner]>] [--remove-shared <id
 pnpm tenant:customer-source -- <slug> [--drive-folder <id> | --clear]   # operator-only customer CSV Drive folder (platform.tenants.customer_import_settings; no options = show)
 pnpm tenant:api-keys -- <slug> [--create <name> [--source reserva|external_api]] [--revoke <id>]   # operator-only integration API keys (token shown once; no options = list)
 pnpm import:reserva -- <slug> <csv> [--force]
+pnpm demo:reset -- <slug>   # public demo tenant (DEMO_TENANT_SLUG must equal <slug>; never `demo`): purge + re-seed fictional data relative to today (nightly; api image dist/demo-reset.js; doc/07 3.9)
 pnpm import:staff-master -- <slug> <csv> [--dry-run]   # also kana/phone/home address (blank cells keep existing values; a changed address is re-geocoded)
 pnpm import:attendance -- <slug> <staff email> <csv> [--year YYYY]   # existing 出勤簿 month sheet → entities (idempotent: per-day diff)
 pnpm import:legacy-reports -- <slug> --spreadsheet <id> [--daily-sheet <name>] [--accident-sheet <name>] [--dry-run]   # GAS 日報/事故報告 sheets → care_records (all rows, idempotent)
