@@ -10892,7 +10892,7 @@
       "checkConstraints": {
         "import_runs_source_check": {
           "name": "import_runs_source_check",
-          "value": "\"import_runs\".\"source\" in ('reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx', 'legacy_reports_sheet', 'legacy_receipts_sheet')"
+          "value": "\"import_runs\".\"source\" in ('reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx', 'staff_xlsx', 'legacy_reports_sheet', 'legacy_receipts_sheet')"
         },
         "import_runs_status_check": {
           "name": "import_runs_status_check",

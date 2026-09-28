@@ -1,5 +1,5 @@
 /**
- * 設定の「保存して閉じる」で何を保存するか・保存してよいかを決める(GAS版 saveSettings の判定部分)。
+ * 管理タブの API キー・モデル・通知先の「保存する」で何を保存するか・保存してよいかを決める(GAS版 saveSettings の判定部分)。
  * 画面から切り離して、判定の順番と文言をテストできるようにしている。
  */
 export interface AdminSettingsValues {

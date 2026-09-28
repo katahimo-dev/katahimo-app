@@ -1,13 +1,10 @@
 import { isAdminRole } from '@katahimo/shared';
-import { useEffect, useState } from 'react';
 import { confirmNative } from '../../ui/confirm';
 import { FadeModal, ModalHeader } from '../../ui/modal';
 import { showToast } from '../../ui/toast';
 import { useSession } from '../auth';
 import { NotificationSettingsSection } from '../notifications';
-import { AdminSettingsSection } from './AdminSettingsSection';
 import { TextSizeOptions } from './TextSizeOptions';
-import { useAdminSettingsForm } from './useAdminSettingsForm';
 
 interface SettingsModalProps {
   open: boolean;
@@ -16,32 +13,16 @@ interface SettingsModalProps {
 }
 
 /**
- * GAS版 #settingsModal。文字の大きさ・パスワード変更・詳細設定(管理者のみ)・ログアウト・版数。
+ * GAS版 #settingsModal。文字の大きさ・通知・パスワード変更・ログアウト・版数。GAS版の「詳細設定(管理者のみ)」
+ * (Gemini の APIキー・モデル、Google Chat の通知先)は「🛠 管理」タブに移した(設定が2か所に分かれないように)。
  * 閉じても中身を残す(GAS版と同じく<details>の開き具合などが次に開いたときも残る)。
  */
 export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsModalProps) {
   const { user, logout } = useSession();
-  const adminForm = useAdminSettingsForm(open, isAdminRole(user.role));
-  const [saving, setSaving] = useState(false);
-
-  // 開くたびに保存ボタンを初期状態に戻す(GAS版 openSettings)
-  useEffect(() => {
-    if (open) setSaving(false);
-  }, [open]);
-
-  const saveSettings = async () => {
-    if (!isAdminRole(user.role)) {
-      showToast('設定を保存しました');
-      onClose();
-      return;
-    }
-    setSaving(true);
-    const ok = await adminForm.save();
-    setSaving(false);
-    if (ok) {
-      showToast('設定を保存しました');
-      onClose();
-    }
+  // 文字の大きさ・通知は選んだときに反映済み(GAS版と同じく「保存して閉じる」はお知らせを出して閉じるだけ)
+  const saveSettings = () => {
+    showToast('設定を保存しました');
+    onClose();
   };
 
   // 押し間違い防止のため一度確認する(GAS版 confirmLogout は標準の confirm を使う)
@@ -88,7 +69,12 @@ export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsM
             </button>
           </div>
 
-          {isAdminRole(user.role) ? <AdminSettingsSection form={adminForm} /> : null}
+          {isAdminRole(user.role) ? (
+            <p className="border-t pt-4 text-sm text-gray-600">
+              Gemini の APIキー・モデルは「🛠 管理」タブの「🤖 AI」、Google Chat の通知先は「🔔
+              通知先」で設定します。
+            </p>
+          ) : null}
 
           <div className="border-t pt-4">
             <button
@@ -113,10 +99,9 @@ export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsM
           <button
             type="button"
             onClick={saveSettings}
-            disabled={saving}
             className="min-h-12 px-4 py-3 bg-blue-600 text-white text-base font-bold rounded-xl"
           >
-            {saving ? '保存中...' : '保存して閉じる'}
+            保存して閉じる
           </button>
         </div>
       </div>

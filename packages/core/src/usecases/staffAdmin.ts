@@ -1,7 +1,9 @@
 import type { AdminStaffView } from '@katahimo/shared';
 import {
+  CALENDAR_NOT_ALLOWED_MESSAGE,
+  CANNOT_DEMOTE_SELF_MESSAGE,
+  CANNOT_RETIRE_SELF_MESSAGE,
   conflict,
-  forbidden,
   invalid,
   isRetiredOn,
   isStaffCalendarAllowed,
@@ -9,22 +11,28 @@ import {
   normalizeCalendarId,
   normalizeEmailForIndex,
   notFound,
+  STAFF_EMAIL_CONFLICT_MESSAGES,
   STALE_WRITE_MESSAGE,
-  splitJapaneseFullName,
-  splitJapaneseKana,
-  zonedBusinessDate,
 } from '../domain';
 import type { Gender, StaffRole, TravelModeCode } from '../domain/model';
 import type { AppLogPort } from '../ports/appLog';
 import type { MapsPort } from '../ports/maps';
 import type { RateLimiterPort } from '../ports/rateLimiter';
-import type { StaffPasswordStatus, StaffPatch, StaffRecord } from '../ports/staff';
+import type { StaffPasswordStatus, StaffRecord } from '../ports/staff';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
 import type { PasswordHasherPort } from './auth';
 import { issuePasswordResetCode } from './auth/passwordReset';
 import { accountRateLimitKey, type RateLimitPolicy } from './rateLimits';
 import type { Actor, Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
+import {
+  assertAdminsRemain,
+  normalizedAltEmail,
+  revokeRetiredStaffAccess,
+  scheduleCalendarsOf,
+  staffPatchOf,
+  todayOf,
+} from './staffAdminInternals';
 import { type HomeGeocodeStatus, type ResolvedStaffHome, resolveStaffHome } from './staffHome';
 
 export type { AdminStaffView } from '@katahimo/shared';
@@ -57,15 +65,8 @@ interface ViewContext {
   passwords: Map<string, StaffPasswordStatus>;
 }
 
-async function todayOf(deps: Clock, r: TenantRepositories): Promise<string> {
-  return zonedBusinessDate(currentTime(deps), (await r.tenant()).timezone);
-}
-
 async function viewContext(deps: Clock, r: TenantRepositories): Promise<ViewContext> {
-  const calendars = new Map<string, string>();
-  for (const c of await r.staffCalendars.listAll()) {
-    if (c.purpose === 'schedule') calendars.set(c.staffId, c.calendarId);
-  }
+  const calendars = await scheduleCalendarsOf(r);
   return { today: await todayOf(deps, r), calendars, passwords: await r.staff.listPasswordStatuses() };
 }
 
@@ -106,10 +107,7 @@ export function listStaffForAdmin(deps: StaffAdminDeps, tenantId: string): Promi
   });
 }
 
-const EMAIL_CONFLICT = {
-  email: 'このメールアドレスは他のスタッフが使用しています',
-  altEmail: 'このサブメールは他のスタッフが使用しているか、メールアドレスと同じです',
-} as const;
+const EMAIL_CONFLICT = STAFF_EMAIL_CONFLICT_MESSAGES;
 
 /** email / altEmail が他のスタッフと重なっていないか(DB の主キーでも弾かれるが、項目名つきの案内にする)。 */
 async function assertEmailsFree(
@@ -129,8 +127,6 @@ async function assertEmailsFree(
   }
 }
 
-export const CALENDAR_NOT_ALLOWED_MESSAGE = 'このカレンダーは使えません。運用担当者に登録を依頼してください';
-
 /**
  * スタッフに設定する予定のカレンダーが、テナントの許可の一覧(運用担当者が設定)に合うか。予定は全テナント共通の
  * Google の ID で読むため、合わないカレンダー(別のテナントのもの等)は設定させない。
@@ -142,28 +138,6 @@ async function assertCalendarAllowed(r: TenantRepositories, calendarId: string):
       { scheduleCalendarId: CALENDAR_NOT_ALLOWED_MESSAGE },
       'calendar_not_allowed',
     );
-  }
-}
-
-export const LAST_ADMIN_MESSAGE =
-  '管理者が1人もいなくなるため、この操作はできません。先に別の管理者を決めてください';
-
-/**
- * 在籍中の管理者の行をロックして(FOR UPDATE)確かめる: 操作する人自身がまだ在籍中の管理者か、removedAdminId
- * (管理者を外す・退職させる・削除する相手)を除いても、退職日の決まっていない管理者が1人は残るか。同時に互いを
- * 外しても管理者が残るように、管理者を減らす変更はこのロックの順に並ぶ。
- */
-async function assertAdminsRemain(
-  r: TenantRepositories,
-  actor: Actor,
-  today: string,
-  removedAdminId: string | null,
-): Promise<void> {
-  const admins = await r.staff.lockActiveAdmins(today);
-  if (!admins.some((a) => a.id === actor.staffId)) throw forbidden('権限がありません。', 'actor_not_admin');
-  if (!removedAdminId || !admins.some((a) => a.id === removedAdminId)) return;
-  if (!admins.some((a) => a.id !== removedAdminId && a.retiredOn === null)) {
-    throw conflict(LAST_ADMIN_MESSAGE, undefined, 'last_admin');
   }
 }
 
@@ -195,29 +169,6 @@ export interface UpdateStaffInput extends StaffProfileInput {
   /** 読んだときの版。渡すと、その後に他の管理者が更新していれば conflict。 */
   rowVersion?: number | undefined;
 }
-
-/** 入力のうち staff の列で持つ項目(氏名・カナ・電話・移動手段・性別)を StaffPatch にする。 */
-function profilePatch(input: StaffProfileInput & { name?: string | undefined }): StaffPatch {
-  const patch: StaffPatch = {};
-  if (input.name !== undefined) {
-    const name = input.name.trim();
-    const split = splitJapaneseFullName(name);
-    Object.assign(patch, { displayName: name, familyName: split.familyName, givenName: split.givenName });
-  }
-  if (input.kana !== undefined) {
-    Object.assign(
-      patch,
-      input.kana ? splitJapaneseKana(input.kana) : { familyNameKana: null, givenNameKana: null },
-    );
-  }
-  if (input.phone !== undefined) patch.phone = input.phone?.trim() || null;
-  if (input.travelMode !== undefined) patch.travelMode = input.travelMode;
-  if (input.gender !== undefined) patch.gender = input.gender;
-  return patch;
-}
-
-const normalizedAltEmail = (value: string | null | undefined) =>
-  value ? normalizeEmailForIndex(value) : null;
 
 /** 断った操作の WARN(理由コードのある DomainError だけ。想定外の例外は API の要求ログに残る)。 */
 async function logRejected(
@@ -257,7 +208,7 @@ export async function createStaffByAdmin(
     });
     const resolved = input.homeAddress ? await resolveStaffHome(deps.maps, input.homeAddress) : null;
     const passwordHash = input.initialPassword ? await deps.passwordHasher.hash(input.initialPassword) : null;
-    const patch = profilePatch(input);
+    const patch = staffPatchOf(input);
     const staff = await deps.uow.run(
       actor.tenantId,
       async (r) => {
@@ -338,10 +289,10 @@ export async function updateStaffByAdmin(
 ): Promise<AdminStaffWriteResult> {
   try {
     if (staffId === actor.staffId && input.role !== undefined && input.role !== 'admin') {
-      throw invalid('自分自身の管理者権限は解除できません', undefined, 'cannot_demote_self');
+      throw invalid(CANNOT_DEMOTE_SELF_MESSAGE, undefined, 'cannot_demote_self');
     }
     if (staffId === actor.staffId && input.retiredOn) {
-      throw invalid('自分自身に退職日は設定できません', undefined, 'cannot_retire_self');
+      throw invalid(CANNOT_RETIRE_SELF_MESSAGE, undefined, 'cannot_retire_self');
     }
     const resolved = await prepareUpdate(deps, actor.tenantId, staffId, input);
     const staff = await deps.uow.run(
@@ -352,11 +303,7 @@ export async function updateStaffByAdmin(
         await assertAdminsRemain(r, actor, today, removesAdmin ? staffId : null);
         const current = await r.staff.findById(staffId);
         if (!current) throw notFound('スタッフが見つかりません', 'not_found');
-        const patch = profilePatch(input);
-        if (input.email !== undefined) patch.email = normalizeEmailForIndex(input.email);
-        if (input.altEmail !== undefined) patch.altEmail = normalizedAltEmail(input.altEmail);
-        if (input.role !== undefined) patch.role = input.role;
-        if (input.retiredOn !== undefined) patch.retiredOn = input.retiredOn;
+        const patch = staffPatchOf(input);
         if (resolved) patch.home = resolved.home;
         await assertEmailsFree(
           r,
@@ -381,9 +328,7 @@ export async function updateStaffByAdmin(
         if (!updated) throw notFound('スタッフが見つかりません', 'not_found');
         if (calendarChanged) await r.staffCalendars.setScheduleCalendar(staffId, calendarId ?? null, newId());
         if (patch.retiredOn && isRetiredOn(patch.retiredOn, today)) {
-          // 退職: セッションを失効し、端末の通知の購読も消す(退職者の端末にお客様のお名前を送らない)
-          await r.sessions.revokeAllForStaff(staffId, currentTime(deps));
-          await r.pushSubscriptions.deleteAllForStaff(staffId);
+          await revokeRetiredStaffAccess(deps, r, staffId);
         }
         return loadView(deps, r, staffId);
       },

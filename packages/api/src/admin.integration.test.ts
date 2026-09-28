@@ -1,12 +1,19 @@
 import { randomBytes } from 'node:crypto';
 import { provisionTenant, registerStaff } from '@katahimo/core/usecases';
-import { closeDatabase, createDatabase } from '@katahimo/db';
+import { closeDatabase, createDatabase, withTenant } from '@katahimo/db';
 import {
   DrizzleTenantCalendarSettingsStore,
   DrizzleTenantDirectory,
   DrizzleTenantProvisioning,
 } from '@katahimo/db/repositories';
-import type { AdminStaffResponse, AuditLogListResponse } from '@katahimo/shared';
+import type {
+  AdminStaffListResponse,
+  AdminStaffResponse,
+  AuditLogListResponse,
+  StaffImportResponse,
+} from '@katahimo/shared';
+import { sql } from 'drizzle-orm';
+import ExcelJS from 'exceljs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
@@ -281,6 +288,88 @@ describe('API: スタッフ管理の守り', () => {
       await get('/api/admin/staff', a.status === 200 ? other.adminCookie : secondCookie)
     ).json()) as { staff: { role: string }[] };
     expect(list.staff.filter((s) => s.role === 'admin')).toHaveLength(1);
+  });
+});
+
+describe('API: スタッフの xlsx', () => {
+  const exportXlsx = async () => {
+    const res = await get('/api/admin/staff/export.xlsx', t.adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('spreadsheetml');
+    return Buffer.from(await res.arrayBuffer());
+  };
+  const importXlsx = async (body: Buffer, dryRun: boolean) => {
+    const res = await send('POST', '/api/admin/staff/import', t.adminCookie, {
+      fileName: 'staff.xlsx',
+      fileBase64: body.toString('base64'),
+      dryRun,
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as StaffImportResponse;
+  };
+
+  it('書き出した xlsx をそのまま確かめると変更なし。行を足して反映すると登録され、import_runs が残る', async () => {
+    const list = (await (await get('/api/admin/staff', t.adminCookie)).json()) as AdminStaffListResponse;
+    const exported = await exportXlsx();
+    const dry = await importXlsx(exported, true);
+    expect(dry).toMatchObject({
+      dryRun: true,
+      applied: false,
+      counts: { rows: list.staff.length, created: 0, updated: 0, unchanged: list.staff.length },
+      changes: [],
+      errors: [],
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(exported as unknown as ArrayBuffer);
+    const ws = workbook.getWorksheet('スタッフ') as ExcelJS.Worksheet;
+    ws.addRow([
+      null,
+      '取込 一郎',
+      null,
+      `ichiro-${t.slug}@example.com`,
+      null,
+      '080',
+      'コーディネーター',
+      null,
+      null,
+      '徒歩',
+    ]);
+    const edited = Buffer.from(await workbook.xlsx.writeBuffer());
+    const applied = await importXlsx(edited, false);
+    expect(applied).toMatchObject({
+      applied: true,
+      counts: { created: 1, updated: 0 },
+      changes: [{ kind: 'create', name: '取込 一郎' }],
+    });
+    const after = (await (await get('/api/admin/staff', t.adminCookie)).json()) as AdminStaffListResponse;
+    expect(after.staff.find((s) => s.email === `ichiro-${t.slug}@example.com`)).toMatchObject({
+      role: 'coordinator',
+      phone: '080',
+      travelMode: 'walk',
+      passwordStatus: 'unset',
+    });
+    const runs = await withTenant(appDb, t.id, (tx) =>
+      tx.execute(sql`select source, status from import_runs where source = 'staff_xlsx'`),
+    );
+    expect([...runs]).toEqual([{ source: 'staff_xlsx', status: 'applied' }]);
+  });
+
+  it('一般スタッフは書き出し・取込とも 403', async () => {
+    expect((await get('/api/admin/staff/export.xlsx', t.staffCookie)).status).toBe(403);
+    const res = await send('POST', '/api/admin/staff/import', t.staffCookie, {
+      fileBase64: 'AA==',
+      dryRun: true,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('xlsx でないファイルは 400', async () => {
+    const res = await send('POST', '/api/admin/staff/import', t.adminCookie, {
+      fileBase64: Buffer.from('not a zip').toString('base64'),
+      dryRun: true,
+    });
+    expect(res.status).toBe(400);
   });
 });
 

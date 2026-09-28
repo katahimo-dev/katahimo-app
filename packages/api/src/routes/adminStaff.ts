@@ -1,6 +1,8 @@
 import {
   createStaffByAdmin,
   deleteStaffByAdmin,
+  exportStaffSheet,
+  importStaffSheet,
   listStaffForAdmin,
   sendPasswordGuideByAdmin,
   updateStaffByAdmin,
@@ -11,11 +13,15 @@ import {
   createStaffRequestSchema,
   idSchema,
   okResponseSchema,
+  staffImportRequestSchema,
+  staffImportResponseSchema,
   updateStaffRequestSchema,
 } from '@katahimo/shared';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { Container } from '../container';
+import { buildStaffWorkbook, readStaffWorkbook } from '../export/staffWorkbook';
+import { xlsxResponse } from '../http/download';
 import { apiError, jsonOk, parseJsonBody, rateLimited } from '../http/responses';
 import type { SessionEnv } from '../session';
 import { actorOf, requireAdmin } from '../session';
@@ -31,7 +37,7 @@ const STAFF_NOT_FOUND = 'スタッフが見つかりません';
 /**
  * 管理者向けスタッフ管理(GAS版でスタッフ台帳シートを直接編集していた作業の置き換え。画面は「🛠 管理」→
  * 「スタッフ」)。メールの重複・古い版での保存・記録のあるスタッフの削除(409)、自分自身の降格/退職/削除(400)は
- * usecase の DomainError を app.onError が応答にする。
+ * usecase の DomainError を app.onError が応答にする。xlsx の書き出し(export.xlsx)・取込(import。先に確かめる)もここ。
  */
 export function createAdminStaffRoutes(container: Container) {
   const app = new Hono<SessionEnv>();
@@ -41,6 +47,23 @@ export function createAdminStaffRoutes(container: Container) {
       staff: await listStaffForAdmin(container, c.get('session').tenantId),
     }),
   );
+
+  app.get('/export.xlsx', requireAdmin(container, 'staff.export'), async (c) => {
+    const body = await buildStaffWorkbook(await exportStaffSheet(container, actorOf(c)));
+    return xlsxResponse(c, body, 'スタッフ一覧.xlsx', 'staff.xlsx');
+  });
+
+  app.post('/import', requireAdmin(container, 'staff.xlsx_import'), async (c) => {
+    const body = await parseJsonBody(c, staffImportRequestSchema);
+    if (!body.ok) return body.response;
+    const sheets = await readStaffWorkbook(Buffer.from(body.data.fileBase64, 'base64'));
+    const result = await importStaffSheet(container, actorOf(c), {
+      sheets,
+      dryRun: body.data.dryRun,
+      fileName: body.data.fileName ?? null,
+    });
+    return jsonOk(c, staffImportResponseSchema, result);
+  });
 
   app.post('/', requireAdmin(container, 'staff.admin.create'), async (c) => {
     const body = await parseJsonBody(c, createStaffRequestSchema);

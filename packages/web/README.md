@@ -75,13 +75,13 @@ src/
     admin.ts               管理画面(スタッフ管理・AIプロンプト・操作ログ・日報AIの調整)
   features/                機能ごとのフォルダ
     auth/                  ログイン・パスワード再設定・パスワード変更・セッション
-    settings/              設定ダイアログ
+    settings/              設定ダイアログ(文字の大きさ・通知・パスワード変更・ログアウト)
     notifications/         設定の「通知」(Web Push の購読・テスト通知・受け取れない端末の判定)
     schedule/              「📅 今日の予定」タブ
     customers/             「👪 お客様」タブ・お客様の情報/これまでの記録
     report/                日報・事故報告・領収書ダイアログ
     attendance/            「🕒 出勤簿」タブとその中のダイアログ(今月のまとめ・まとめて取り込む・カレンダーと違うところ・領収書の一覧/画像)
-    admin/                 「🛠 管理」タブ(管理者・コーディネーター): staff/(一覧・登録/編集ダイアログ)・reports/(報告一覧・報告の中身。コーディネーターはこれだけ)・prompts/(AIプロンプト)・reportAi/(日報AIの調整。管理者だけ)・logs/(操作ログ)
+    admin/                 「🛠 管理」タブ(管理者・コーディネーター): staff/(一覧・登録/編集ダイアログ・Excel の取込)・reports/(報告一覧・報告の中身。コーディネーターはこれだけ)・ai/(AI のまとめ・しくみの欄)・prompts/(AIプロンプト)・reportAi/(日報AIの調整)・settings/(Gemini の APIキー・モデル、通知先)・logs/(操作ログ)・components/(切り替え・入力欄・ボタン)
   lib/                     画面に依存しない小さな処理(storage / date / recentCustomers / textSize / tenant / messages / idle / saveFile・useFileDownload(ファイルの保存))
   ui/                      共通の部品(トースト・確認ダイアログ・ダイアログの外側 Modal・読み込み中・0件表示・ErrorBoundary・EducationLevelPicker(教育思考★の選択))
   test/                    テストの共通部品(providers.tsx・setup.ts)
@@ -96,7 +96,11 @@ src/
 - **予定→お客様タブへの移動**(GAS版 `jumpToCustomerFromSchedule`)は `useHomeTabs().switchTab('visitors')` を使い、
   検索欄への受け渡しは `features/customers` の中で用意する。
 - 「🛠 管理」タブは `homeTabsFor(user.role)` が管理者・コーディネーター(`canActForOthers`)にだけ出し、`AppShell` もそのときだけ置く(`React.lazy` で別のJS)。
-  中の「スタッフ」「報告一覧」「AIプロンプト」「日報AIの調整」「操作ログ」は切り替えると作り直す(コーディネーターには「報告一覧」だけを出し、タブの列は出さない)(AIプロンプトに保存していない変更があれば確かめる)。
+  中の「スタッフ」「報告一覧」「AI」(① プロンプト・② 日報の言葉の表(日報AIの調整)・APIキー/モデル)「通知先」「操作ログ」は切り替えると作り直す
+  (コーディネーターには「報告一覧」だけを出し、タブの列は出さない)。切り替えは `components/SectionTabs.tsx`、保存していない変更は
+  各画面が `useReportUnsavedChanges(dirty)` で知らせ、切り替える側が `useConfirmLeave()` で確かめる(`unsavedChanges.tsx`)。
+  管理タブは管理者・コーディネーター向けなので、スタッフの画面より小さい入力欄・ボタン(`components/FormField.tsx` の `INPUT_CLASS`・
+  `PRIMARY_BUTTON`・`SECONDARY_BUTTON`・`ICON_BUTTON`)を使い、一覧は1件1行にする(スタッフの画面の「大きく押しやすく」の決まりは当てない)。
   クエリキーは `features/admin/adminQueryKeys.ts`。スタッフを書き換えたら「表示するスタッフ」(`queryKeys.activeStaff`)と操作ログ、
   AIプロンプトを保存したら `queryKeys.uiConfig` も読み直す。日報AIの調整で行を保存・取り込んだら `adminQueryKeys.reportAi` と操作ログ、
   `queryKeys.uiConfig`(PSI の定義は日報の画面の評価の説明にも出る)を読み直す。
@@ -244,11 +248,12 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
   (署名付きURLは使わない。`doc/02_機能仕様.md` 7.1)。会社負担の領収書に印を付け、取消せる行(サーバーの `cancellable`)に「取消」を出す。
   取消した行は灰色で残す(GAS版には会社負担の区分も取消も無い)。
 - 領収書の写真ごとに「会社負担(お客様に請求しない)」のチェックを置く(既定は外れている。GAS版には無い)。
-- 管理者・コーディネーターには下タブに「🛠 管理」を出す(スタッフ台帳・AIプロンプトのシートの編集、「日報」「事故報告」シートの閲覧と
+- 管理者・コーディネーターには下タブに「🛠 管理」を出す(スタッフ台帳(Excel での書き出し・取込も)・AIプロンプトのシートの編集、「日報」「事故報告」シートの閲覧と
   Drive の CSV ログの確認の置き換え。コーディネーターは報告一覧だけ。`doc/02_機能仕様.md` 10章)。
 - パスワード再設定の画面に「番号が届いている方はこちら」を置く(管理者が送った「パスワード設定の案内」の番号を、送り直さずに
   入力する)。
-- 設定の詳細設定は1回のAPI(GET /api/settings/admin)で読むため、読み込み中に保存したときの案内は
+- GAS版の設定の詳細設定(Gemini の APIキー・モデル、Google Chat の Webhook)は管理タブの「AI → APIキー・モデル」「通知先」に移した
+  (`features/admin/settings`。設定が2か所に分かれないように)。1回のAPI(GET /api/settings/admin)で読むため、読み込み中に保存したときの案内は
   「Gemini APIキーの読み込みが完了してから保存してください」の1種類(GAS版は設定ごとに3種類)。
 - パスワード変更に成功したら入力欄を空にする(GAS版は残っていた)。
 - 設定の版数は `package.json` の version。

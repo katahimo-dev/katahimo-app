@@ -9,25 +9,8 @@ import type {
   UpdateStaffRequest,
 } from '@katahimo/shared';
 
-export const ROLE_LABELS: Record<StaffRole, string> = {
-  staff: 'スタッフ',
-  coordinator: 'コーディネーター',
-  admin: '管理者',
-};
-
-export const TRAVEL_MODE_LABELS: Record<TravelModeCode, string> = {
-  car: '車',
-  bicycle: '自転車',
-  transit: '電車・バス',
-  walk: '徒歩',
-};
-
-export const GENDER_LABELS: Record<Gender, string> = {
-  female: '女性',
-  male: '男性',
-  other: 'その他',
-  unknown: '回答しない',
-};
+/** 役割・移動手段・性別の名前(Excel の取込・書き出しと同じ)。 */
+export { GENDER_LABELS, STAFF_ROLE_LABELS as ROLE_LABELS, TRAVEL_MODE_LABELS } from '@katahimo/shared';
 
 export const PASSWORD_STATUS_LABELS: Record<PasswordStatus, string> = {
   set: 'パスワード設定済み',

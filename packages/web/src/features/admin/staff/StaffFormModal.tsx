@@ -145,7 +145,7 @@ export function StaffFormModal({ open, staff, isSelf, onClose }: StaffFormModalP
       open={open}
       labelledBy="adminStaffFormTitle"
       onClose={() => void requestClose()}
-      className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4 transition-opacity duration-300"
+      className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-3 transition-opacity duration-300"
     >
       <form
         noValidate
@@ -153,14 +153,14 @@ export function StaffFormModal({ open, staff, isSelf, onClose }: StaffFormModalP
           e.preventDefault();
           void save();
         }}
-        className="bg-white w-full max-w-md rounded-2xl border border-gray-200 flex flex-col max-h-[90vh]"
+        className="bg-white w-full max-w-md rounded-xl border border-gray-200 flex flex-col max-h-[90vh]"
       >
         <ModalHeader
           title={staff ? 'スタッフの編集' : 'スタッフの登録'}
           titleId="adminStaffFormTitle"
           onClose={() => void requestClose()}
         />
-        <div className="p-4 space-y-4 overflow-y-auto">
+        <div className="p-3 space-y-4 overflow-y-auto">
           <FormField
             id="adminStaff-name"
             label="氏名"
@@ -274,7 +274,7 @@ export function StaffFormModal({ open, staff, isSelf, onClose }: StaffFormModalP
                   <button
                     type="button"
                     onClick={() => set('retiredOn', values.retiredOn ? '' : todayJst())}
-                    className="shrink-0 min-h-11 px-3 text-sm font-bold text-gray-800 bg-gray-200 rounded-xl"
+                    className="shrink-0 min-h-9 px-3 text-sm font-bold text-gray-800 bg-white rounded-lg border border-gray-300"
                   >
                     {values.retiredOn ? '取り消す' : '今日で退職'}
                   </button>
@@ -297,7 +297,7 @@ export function StaffFormModal({ open, staff, isSelf, onClose }: StaffFormModalP
                 type="button"
                 onClick={() => void remove()}
                 disabled={saving}
-                className="w-full min-h-11 py-2 text-sm font-bold text-red-600 bg-red-50 rounded-xl"
+                className="w-full min-h-9 py-2 text-sm font-bold text-red-600 bg-red-50 rounded-lg"
               >
                 🗑 このスタッフを削除する
               </button>
@@ -308,7 +308,7 @@ export function StaffFormModal({ open, staff, isSelf, onClose }: StaffFormModalP
           ) : null}
         </div>
         {formError ? (
-          <p role="alert" className="px-4 py-3 border-t text-base text-red-600 bg-red-50">
+          <p role="alert" className="px-4 py-1.5 border-t text-sm text-red-600 bg-red-50">
             {formError}
           </p>
         ) : null}
@@ -317,14 +317,14 @@ export function StaffFormModal({ open, staff, isSelf, onClose }: StaffFormModalP
             type="button"
             onClick={() => void requestClose()}
             disabled={saving}
-            className="min-h-12 px-5 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl"
+            className="min-h-9 px-4 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg border border-gray-300"
           >
             キャンセル
           </button>
           <button
             type="submit"
             disabled={saving}
-            className="min-h-12 px-5 py-3 bg-blue-600 text-white text-base font-bold rounded-xl"
+            className="min-h-9 px-4 py-1.5 bg-blue-600 text-white text-sm font-bold rounded-lg"
           >
             {saving ? '保存中...' : staff ? '保存する' : '登録する'}
           </button>
