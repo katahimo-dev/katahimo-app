@@ -20,12 +20,16 @@ import { EmptyState, ErrorState, Loading } from '../../../ui/StatusViews';
 import { useCustomerList } from '../../customers';
 import { adminQueryKeys } from '../adminQueryKeys';
 import { INPUT_CLASS } from '../components/FormField';
+import { useFollowDefaultRange } from '../useFollowDefaultRange';
 import { ReportDetailModal } from './ReportDetailModal';
 import { csvSheetsFor, DELETED_STAFF, REPORT_KIND_BADGE, UNKNOWN_CUSTOMER } from './reportFormat';
 
+function defaultRange(today: string): { from: string; to: string } {
+  return { from: addDaysYmd(today, -(REPORT_LIST_DEFAULT_RANGE_DAYS - 1)), to: today };
+}
+
 function defaultFilters(): ReportListFilters {
-  const to = todayJst();
-  return { from: addDaysYmd(to, -(REPORT_LIST_DEFAULT_RANGE_DAYS - 1)), to };
+  return defaultRange(todayJst());
 }
 
 const CSV_LABELS: Record<ReportCsvSheet, string> = {
@@ -75,6 +79,8 @@ function ReportItem({ report, onOpen }: { report: ReportListItem; onOpen: () => 
 export function ReportListPanel() {
   const [form, setForm] = useState<ReportListFilters>(defaultFilters);
   const [applied, setApplied] = useState<ReportListFilters>(form);
+  // 開いたまま日付をまたいだら、期間を変えていなければ今日までにする
+  useFollowDefaultRange(defaultRange, setForm, setApplied);
   const [openId, setOpenId] = useState<string | null>(null);
   const csv = useFileDownload<ReportCsvSheet>();
   const staff = useQuery({

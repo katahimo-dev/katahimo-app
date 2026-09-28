@@ -2,8 +2,11 @@ import { createHash } from 'node:crypto';
 
 /**
  * 領収書の重複判定キー組み立て。GAS版Main.js processReceiptImagesの
- * normalizeAmount/normalizeText/buildKeyと完全に同一のロジック
+ * normalizeAmount/normalizeText/buildKeyと同じロジック
  * (登録時と照合時で同じキーになるよう、必ずこの関数を通した文字列を使うこと)。
+ * GAS版は Ver. 1.1.43 から日時を normalizeReceiptTimestampKey_ で 'yyyy/MM/dd HH:mm' にそろえる(シートの日時セルが
+ * Date で返り、文字列と一致しなかったため)。こちらはキーを DB(dedupe_hash)に文字列のまま持つためその問題は無く、
+ * 日時の文字列はそのまま比べる(GAS版のシートからの取込は legacyImport/receipts.ts が表記の違いを吸収する)。
  */
 export function normalizeAmount(val: string | number | null | undefined): string {
   if (val === null || val === undefined || val === '') return '';
