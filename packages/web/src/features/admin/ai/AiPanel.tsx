@@ -25,6 +25,7 @@ export function AiPanel() {
   const confirmLeave = useConfirmLeave();
   const [tab, setTab] = useState<Tab>('prompts');
   const select = async (next: Tab) => {
+    if (next === tab) return true;
     if (!(await confirmLeave())) return false;
     setTab(next);
     return true;

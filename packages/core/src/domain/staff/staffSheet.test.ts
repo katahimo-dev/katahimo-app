@@ -1,6 +1,6 @@
 import { STAFF_IMPORT_MAX_ROWS, STAFF_SHEET_COLUMNS } from '@katahimo/shared';
 import { describe, expect, it } from 'vitest';
-import type { ImportCell } from '../reports/reportAiImport';
+import { type ImportCell, UNREADABLE_CELL } from '../reports/reportAiImport';
 import {
   parseSheetDate,
   parseStaffSheet,
@@ -27,6 +27,7 @@ function current(overrides: Partial<StaffSheetCurrent> & { id: string; email: st
     travelMode: null,
     gender: null,
     scheduleCalendarId: null,
+    rowVersion: 1,
     ...overrides,
   };
 }
@@ -200,6 +201,7 @@ describe('スタッフの xlsx の読み取り', () => {
     expect(parseSheetDate(new Date(Date.UTC(2026, 8, 30)))).toBe('2026-09-30');
     expect(parseSheetDate(46295)).toBe('2026-09-30');
     expect(parseSheetDate('2026/9/3')).toBe('2026-09-03');
+    expect(parseSheetDate('2026.9.3')).toBe('2026-09-03');
     expect(parseSheetDate('２０２６－０９－３０')).toBe('2026-09-30');
     expect(parseSheetDate('')).toBeNull();
     expect(parseSheetDate('9月30日')).toBeUndefined();
@@ -334,5 +336,84 @@ describe('今のスタッフとの突き合わせ', () => {
     const ok = planStaffImport(rows('Hanako@Cutest.biz'), context(staff));
     expect(ok.errors).toEqual([]);
     expect(ok.entries[0]?.next.scheduleCalendarId).toBe('hanako@cutest.biz');
+  });
+
+  it('ファイルの中でメールアドレスを入れ替えても、取込の後の状態で重ならなければ誤りにしない', () => {
+    const plan = planStaffImport(
+      parseStaffSheet(
+        sheet([
+          ['ID', '氏名', 'メールアドレス'],
+          [ADMIN_ID, '管理 者', 'hanako@example.com'],
+          [STAFF_ID, '佐藤 花子', 'admin@example.com'],
+        ]),
+      ),
+      context(),
+    );
+    expect(plan.errors).toEqual([]);
+    expect(plan.entries.map((e) => [e.kind, e.fields])).toEqual([
+      ['update', ['email']],
+      ['update', ['email']],
+    ]);
+  });
+});
+
+describe('反映する内容の指紋(planDigest)', () => {
+  const file = (phone: string) =>
+    parseStaffSheet(
+      sheet([
+        ['ID', '氏名', 'メールアドレス', '電話'],
+        [STAFF_ID, '佐藤 花子', 'hanako@example.com', phone],
+        [null, '新人', 'new@example.com', '080'],
+      ]),
+    );
+
+  it('同じファイル・同じスタッフなら同じ指紋(SHA-256 の16進)', () => {
+    const a = planStaffImport(file('090'), context()).digest;
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(planStaffImport(file('090'), context()).digest).toBe(a);
+  });
+
+  it('ファイルの値・対象のスタッフの版(ファイルに無い列の変更でも)が変われば別の指紋。ファイルに無いスタッフの変更では変わらない', () => {
+    const base = planStaffImport(file('090'), context()).digest;
+    expect(planStaffImport(file('091'), context()).digest).not.toBe(base);
+    const bumped = baseStaff.map((s) => (s.id === STAFF_ID ? { ...s, rowVersion: 2 } : s));
+    expect(planStaffImport(file('090'), context(bumped)).digest).not.toBe(base);
+    const otherBumped = baseStaff.map((s) => (s.id === ADMIN_ID ? { ...s, rowVersion: 5 } : s));
+    expect(planStaffImport(file('090'), context(otherBumped)).digest).toBe(base);
+  });
+});
+
+describe('読めないセル', () => {
+  it('式・エラーの値のセル、文字の列の日付のセルは空欄(値の削除)にせず行の誤りにする', () => {
+    const parsed = parseStaffSheet(
+      sheet([
+        ['ID', '氏名', 'メールアドレス', '電話', '自宅住所', '役割', '退職日'],
+        [STAFF_ID, '佐藤 花子', 'hanako@example.com', UNREADABLE_CELL, null, null, null],
+        [null, '新人', 'new@example.com', null, new Date(Date.UTC(2026, 0, 2)), null, null],
+        [UNREADABLE_CELL, '別人', 'other@example.com', null, null, null, null],
+        [null, '日付', 'date@example.com', null, null, null, UNREADABLE_CELL],
+      ]),
+    );
+    expect(parsed.rows).toEqual([]);
+    expect(parsed.errors).toEqual([
+      { row: 2, message: expect.stringContaining('「電話」の列のセルを読めません(式・エラーの値)') },
+      { row: 3, message: expect.stringContaining('「自宅住所」の列が日付のセルです') },
+      { row: 4, message: expect.stringContaining('「ID」の列のセルを読めません') },
+      { row: 5, message: expect.stringContaining('「退職日」の列のセルを読めません') },
+    ]);
+  });
+
+  it('読めないセルだけの行も空の行として読み飛ばさない', () => {
+    const parsed = parseStaffSheet(
+      sheet([
+        ['氏名', 'メールアドレス'],
+        [UNREADABLE_CELL, null],
+      ]),
+    );
+    expect(parsed.rowCount).toBe(1);
+    expect(parsed.errors).toEqual([
+      { row: 2, message: expect.stringContaining('「氏名」の列のセルを読めません') },
+      { row: 2, message: 'メールアドレス: メールアドレスを入力してください' },
+    ]);
   });
 });

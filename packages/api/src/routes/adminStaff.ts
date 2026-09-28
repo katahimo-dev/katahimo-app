@@ -22,6 +22,7 @@ import { Hono } from 'hono';
 import type { Container } from '../container';
 import { buildStaffWorkbook, readStaffWorkbook } from '../export/staffWorkbook';
 import { xlsxResponse } from '../http/download';
+import { enforceStaffQuota } from '../http/quota';
 import { apiError, jsonOk, parseJsonBody, rateLimited } from '../http/responses';
 import type { SessionEnv } from '../session';
 import { actorOf, requireAdmin } from '../session';
@@ -56,11 +57,22 @@ export function createAdminStaffRoutes(container: Container) {
   app.post('/import', requireAdmin(container, 'staff.xlsx_import'), async (c) => {
     const body = await parseJsonBody(c, staffImportRequestSchema);
     if (!body.ok) return body.response;
+    if (!body.data.dryRun) {
+      // 反映だけを数える(確かめるだけは何も書かず、地図APIも呼ばない)
+      const limited = await enforceStaffQuota(
+        c,
+        container,
+        container.rateLimits.staffImportApplyStaff,
+        'スタッフの取込の反映の回数の上限に達しました。少し時間をおいてからもう一度お試しください。',
+      );
+      if (limited) return limited;
+    }
     const sheets = await readStaffWorkbook(Buffer.from(body.data.fileBase64, 'base64'));
     const result = await importStaffSheet(container, actorOf(c), {
       sheets,
       dryRun: body.data.dryRun,
       fileName: body.data.fileName ?? null,
+      planDigest: body.data.planDigest ?? null,
     });
     return jsonOk(c, staffImportResponseSchema, result);
   });

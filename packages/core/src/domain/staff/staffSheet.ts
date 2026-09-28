@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   GENDER_LABELS,
   type Gender,
@@ -20,6 +21,7 @@ import { normalizeEmailForIndex, splitJapaneseKana } from '../pii';
 import {
   cellText,
   type ImportCell,
+  isUnreadableCell,
   normalizeHeader,
   type ReportAiImportSheet,
 } from '../reports/reportAiImport';
@@ -41,7 +43,8 @@ import {
  *   知らない見出しの列は読まずに知らせる。
  * - 見出しのある列はセルの値で上書きし、空欄は値の削除(氏名・メールアドレスは必須)。見出しの無い列は今の値のまま。
  *   セルは画面の登録・更新と同じ規則(staffFieldSchemas)で確かめる。役割・移動手段・性別は日本語の名前か値の
- *   コード、退職日は日付のセルか「YYYY-MM-DD」「YYYY/MM/DD」。
+ *   コード、退職日は日付のセル・シリアル値か「YYYY-MM-DD」「YYYY/MM/DD」「YYYY.MM.DD」。値を読めないセル(式・
+ *   エラーの値)と退職日以外の列の日付のセルは、空欄にすると値が消えるため行の誤りにする。
  * - 突き合わせは ID(空欄でなければ。知らない ID は誤り)、無ければメールアドレス(主)。どちらも無ければ新しいスタッフ。
  * - 業務の規則は画面の更新と同じ: 自分自身の管理者権限の解除・退職日の設定はできない、退職日の決まっていない
  *   管理者が1人は残る(取込の後の状態で確かめる)、予定のカレンダーはテナントの許可の一覧に合うもの(変えるときだけ)、
@@ -109,7 +112,24 @@ function pickSheet(sheets: readonly StaffSheet[]): StaffSheet | null {
   return sheets.find((s) => normalizeHeader(s.name) === target) ?? sheets[0] ?? null;
 }
 
-const isBlankRow = (row: readonly ImportCell[]) => row.every((cell) => cellText(cell) === '');
+/** 空の行(読めないセルのある行は空にしない: 誤りとして知らせる)。 */
+const isBlankRow = (row: readonly ImportCell[]) =>
+  row.every((cell) => !isUnreadableCell(cell) && cellText(cell) === '');
+
+/**
+ * 空欄 = 値の削除なので、値を読めないセル(式・エラーの値)と、文字の列の日付のセル(Excel が「1-2」などを日付に
+ * 変えたもの)は空欄にせず誤りにする(黙って値を消さない)。読めれば null。
+ */
+function unreadableMessage(key: StaffSheetColumnKey, cell: ImportCell): string | null {
+  const label = staffSheetLabelOf(key);
+  if (isUnreadableCell(cell)) {
+    return `「${label}」の列のセルを読めません(式・エラーの値)。値をそのまま入力してください`;
+  }
+  if (cell instanceof Date && key !== 'retiredOn') {
+    return `「${label}」の列が日付のセルです。文字の書式にして入力し直してください`;
+  }
+  return null;
+}
 
 /** 日本語の名前(または値のコード)→ 値。 */
 function codeOf<C extends string>(labels: Record<C, string>, text: string): C | null {
@@ -134,7 +154,7 @@ function validDate(year: number, month: number, day: number): string | null {
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** 退職日のセル(日付のセル・シリアル値・「YYYY-MM-DD」「YYYY/MM/DD」)。読めなければ undefined。 */
+/** 退職日のセル(日付のセル・シリアル値・「YYYY-MM-DD」「YYYY/MM/DD」「YYYY.MM.DD」)。読めなければ undefined。 */
 export function parseSheetDate(cell: ImportCell): string | null | undefined {
   if (cell instanceof Date) {
     if (Number.isNaN(cell.getTime())) return undefined;
@@ -152,10 +172,10 @@ export function parseSheetDate(cell: ImportCell): string | null | undefined {
   return validDate(Number(m[1]), Number(m[2]), Number(m[3])) ?? undefined;
 }
 
-/** 文字の項目のセル(数のセルは文字にする)。 */
+/** 文字の項目のセル(数のセルは文字にする。日付・読めないセルは先に unreadableMessage で誤りにしてある)。 */
 function textOf(cell: ImportCell): string {
   if (typeof cell === 'number') return Number.isFinite(cell) ? String(cell) : '';
-  if (cell instanceof Date) return '';
+  if (cell instanceof Date || isUnreadableCell(cell)) return '';
   return cellText(cell);
 }
 
@@ -292,6 +312,8 @@ export function parseStaffSheet(sheets: readonly StaffSheet[]): ParsedStaffSheet
     };
     const rowErrors: string[] = [];
     let id: string | null = null;
+    const idUnreadable = columnIndex.has('id') ? unreadableMessage('id', cellOf('id')) : null;
+    if (idUnreadable) rowErrors.push(idUnreadable);
     const idText = columnIndex.has('id') ? textOf(cellOf('id')) : '';
     if (idText) {
       const parsed = idSchema.safeParse(idText.toLowerCase());
@@ -303,6 +325,11 @@ export function parseStaffSheet(sheets: readonly StaffSheet[]): ParsedStaffSheet
     }
     const values: Partial<Record<StaffSheetFieldKey, unknown>> = {};
     for (const key of columns) {
+      const unreadable = unreadableMessage(key, cellOf(key));
+      if (unreadable) {
+        rowErrors.push(unreadable);
+        continue;
+      }
       const result = readField(key, cellOf(key));
       if (result.ok) values[key] = result.value;
       else rowErrors.push(`${staffSheetLabelOf(key)}: ${result.message}`);
@@ -338,6 +365,8 @@ export interface StaffSheetCurrent {
   travelMode: TravelModeCode | null;
   gender: Gender | null;
   scheduleCalendarId: string | null;
+  /** staff.row_version(反映する内容の指紋 digest に入れ、確かめた後の変更を見つける)。 */
+  rowVersion: number;
 }
 
 /** 取込の後の値(役割は必ず決まる)。 */
@@ -357,6 +386,11 @@ export interface StaffImportPlanEntry {
 export interface StaffImportPlan {
   entries: StaffImportPlanEntry[];
   errors: StaffImportIssue[];
+  /**
+   * 反映する内容の指紋(SHA-256 の16進)。確かめた(dryRun)ときと反映するときで同じなら、確かめた内容のとおりに書く。
+   * 個人情報を含む値のハッシュなので、操作ログには残さない。
+   */
+  digest: string;
 }
 
 export interface StaffImportContext {
@@ -477,7 +511,25 @@ export function planStaffImport(parsed: ParsedStaffSheet, context: StaffImportCo
 
   errors.push(...emailConflicts(context.staff, entries));
   if (removesLastAdmin(context.staff, entries)) errors.push({ row: null, message: LAST_ADMIN_MESSAGE });
-  return { entries, errors: sortIssues(errors) };
+  return { entries, errors: sortIssues(errors), digest: planDigestOf(context.staff, entries) };
+}
+
+/**
+ * 反映する内容の指紋: 行ごとの行番号・作成/更新/変更なし・対象のスタッフ・その row_version・変わる項目と新しい値を、
+ * 決まった順の JSON にして SHA-256 にする。確かめた後に他の管理者が対象のスタッフを変えれば(ファイルに無い列でも)
+ * row_version が変わるので指紋も変わる。予定のカレンダー(staff_calendars)は row_version に出ないが、変わる項目と
+ * 値に入るので、反映する内容が変われば指紋も変わる。
+ */
+function planDigestOf(staff: readonly StaffSheetCurrent[], entries: readonly StaffImportPlanEntry[]): string {
+  const versions = new Map(staff.map((s) => [s.id, s.rowVersion]));
+  const canonical = entries.map((e) => [
+    e.row,
+    e.kind,
+    e.staffId,
+    e.staffId ? (versions.get(e.staffId) ?? null) : null,
+    e.fields.map((key) => [key, e.next[key]]),
+  ]);
+  return createHash('sha256').update(JSON.stringify(canonical), 'utf8').digest('hex');
 }
 
 /** 取込の後の状態で、メールアドレス・サブメールが重ならないか(ファイルの行の誤りにする)。 */

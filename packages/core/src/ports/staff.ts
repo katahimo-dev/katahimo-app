@@ -109,6 +109,12 @@ export interface StaffRepository {
   /** expectedVersion を渡すと row_version が一致するときだけ更新する(違えば conflict)。無ければ null。 */
   update(id: string, patch: StaffPatch, expectedVersion?: number): Promise<StaffRecord | null>;
   /**
+   * スタッフのログイン用メール(メール・サブメール)の行を消す。メールを入れ替える取込(A のメールを B に、B のメールを
+   * A に)で、1人ずつ書き直すと途中で主キーが重なるため、先に入れ替わる全員のメールを外してから update で書く。
+   * 同じトランザクションの中で、外したスタッフには必ず email と altEmail の両方を渡して update すること。
+   */
+  releaseLoginEmails(staffIds: readonly string[]): Promise<void>;
+  /**
    * 業務の記録から参照されていなければ削除する(認証情報・ログイン用メール・セッション・カレンダー設定等の
    * スタッフに従属する行も一緒に消える)。参照は外部キー(ON DELETE の無いもの)に加え、外部キーを持たない
    * 変更の履歴(entity_changes.changed_by・care_record_revisions.changed_by・ai_prompt_revisions.created_by)も数える。

@@ -546,6 +546,12 @@ export function fakeRepositories(
         }
         return staffRecordOf(row);
       },
+      async releaseLoginEmails(staffIds) {
+        for (const id of staffIds) {
+          const row = staffById(id);
+          if (row) Object.assign(row.record, { email: '', altEmail: null });
+        }
+      },
       async lockActiveAdmins(date) {
         return d()
           .staff.filter(

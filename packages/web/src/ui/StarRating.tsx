@@ -17,6 +17,7 @@ export function StarRating({
   score,
   onRate,
   disabled = false,
+  busy = false,
   zeroLabel,
   starLabel = String,
 }: {
@@ -27,6 +28,11 @@ export function StarRating({
   score: number;
   onRate: (value: number) => void;
   disabled?: boolean;
+  /**
+   * 保存中など、いまは選べない(押しても何もしない)。disabled と違ってボタンは押せる状態のまま残すので、キーボードで
+   * 選んでいる★からフォーカスが外れない。
+   */
+  busy?: boolean;
   /** 「☆0」の読み上げ名(例「未設定」)。渡さなければ「☆0」を出さない。 */
   zeroLabel?: string;
   /** ★ごとの読み上げ名(既定は数字だけ)。 */
@@ -41,7 +47,7 @@ export function StarRating({
         : e.key === 'ArrowLeft' || e.key === 'ArrowDown'
           ? -1
           : 0;
-    if (step === 0 || disabled) return;
+    if (step === 0 || disabled || busy) return;
     e.preventDefault();
     const next = Math.min(5, Math.max(min, (score || 0) + step));
     if (next === score) return;
@@ -49,6 +55,9 @@ export function StarRating({
     e.currentTarget.querySelectorAll<HTMLButtonElement>('button')[next - min]?.focus();
   };
   const focusable = score || min;
+  const rate = (value: number) => {
+    if (!busy) onRate(value);
+  };
   return (
     <div
       className="flex items-center gap-0.5"
@@ -56,6 +65,7 @@ export function StarRating({
       role="radiogroup"
       aria-label={label}
       aria-labelledby={labelledBy}
+      aria-busy={busy || undefined}
       onKeyDown={onKeyDown}
     >
       {values.map((value) =>
@@ -69,7 +79,8 @@ export function StarRating({
             aria-label={zeroLabel}
             tabIndex={focusable === 0 ? 0 : -1}
             disabled={disabled}
-            onClick={() => onRate(0)}
+            onClick={() => rate(0)}
+            aria-disabled={busy || undefined}
             className={`mr-1 min-h-10 px-2 rounded-lg border text-sm font-bold ${
               score === 0
                 ? 'bg-gray-700 text-white border-gray-700'
@@ -88,7 +99,8 @@ export function StarRating({
             aria-label={starLabel(value)}
             tabIndex={value === focusable ? 0 : -1}
             disabled={disabled}
-            onClick={() => onRate(value)}
+            onClick={() => rate(value)}
+            aria-disabled={busy || undefined}
             className={`${STAR_BASE} ${value <= score ? 'text-yellow-400' : 'text-gray-300'} ${STAR_TAIL}`}
           >
             ★

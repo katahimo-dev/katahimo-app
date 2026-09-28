@@ -28,6 +28,7 @@ export function EducationLevelPicker({
   heading?: ReactNode;
   /** 未設定は null、読み込み中は undefined(押せない) */
   educationLevel: number | null | undefined;
+  /** 保存中(押しても何もしない。キーボードのフォーカスは★に残す) */
   disabled: boolean;
   /** null は未設定に戻す。 */
   onSelect: (level: number | null) => void;
@@ -59,7 +60,8 @@ export function EducationLevelPicker({
         <StarRating
           labelledBy={labelId}
           score={educationLevel ?? 0}
-          disabled={disabled || educationLevel === undefined}
+          disabled={educationLevel === undefined}
+          busy={disabled}
           zeroLabel="☆0 未設定"
           starLabel={(value) => `★${value}`}
           onRate={(value) => {

@@ -1,4 +1,4 @@
-import { type ImportCell, invalid } from '@katahimo/core/domain';
+import { type ImportCell, invalid, UNREADABLE_CELL } from '@katahimo/core/domain';
 import ExcelJS from 'exceljs';
 
 /**
@@ -19,22 +19,36 @@ export interface XlsxReadLimits {
   maxColumns: number;
 }
 
-/** セルの値(式は計算結果、書式つきの文字は文字だけ、結合セルは左上だけ)。 */
+type RichText = { richText: { text: string }[] };
+const richTextOf = (value: RichText) => value.richText.map((r) => r.text ?? '').join('');
+
+/**
+ * セルの値(式は残っている計算結果、書式つきの文字・リンクは文字だけ、結合セルは左上だけ)。エラーの値(#N/A 等)・
+ * 計算結果の残っていない式・知らない形の値は空欄(null)にせず UNREADABLE_CELL にする(空欄 = 値の削除として読む取込で
+ * 黙って値を消さないように。どう扱うかは core の取込が決める)。
+ */
 export function cellValue(cell: ExcelJS.Cell): ImportCell {
   if (cell.isMerged && cell.master.address !== cell.address) return null;
   const value = cell.value;
   if (value === null || value === undefined) return null;
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
   if (value instanceof Date) return value;
-  if (typeof value === 'object') {
-    if ('richText' in value) return value.richText.map((r) => r.text).join('');
-    if ('result' in value) {
-      const result = value.result;
-      return result instanceof Date || typeof result !== 'object' ? (result ?? null) : null;
-    }
-    if ('text' in value && typeof value.text === 'string') return value.text;
+  if (typeof value !== 'object') return UNREADABLE_CELL;
+  if ('richText' in value) return richTextOf(value);
+  if ('error' in value) return UNREADABLE_CELL;
+  if ('formula' in value || 'sharedFormula' in value || 'result' in value) {
+    const result = (value as { result?: unknown }).result;
+    if (typeof result === 'string' || typeof result === 'boolean') return result;
+    if (typeof result === 'number') return Number.isFinite(result) ? result : UNREADABLE_CELL;
+    if (result instanceof Date) return result;
+    return UNREADABLE_CELL;
   }
-  return null;
+  if ('hyperlink' in value || 'text' in value) {
+    const text = (value as { text?: unknown }).text;
+    if (typeof text === 'string') return text;
+    if (typeof text === 'object' && text !== null && 'richText' in text) return richTextOf(text as RichText);
+  }
+  return UNREADABLE_CELL;
 }
 
 /** xlsx を読んでシートのセルの表にする。読めないファイル・上限を超えるファイルは 400。 */

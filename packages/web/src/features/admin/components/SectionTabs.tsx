@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactNode, useRef } from 'react';
+import { type KeyboardEvent, type ReactNode, useEffect, useRef } from 'react';
 
 export interface SectionTab<K extends string> {
   key: K;
@@ -27,11 +27,22 @@ export function SectionTabs<K extends string>({
   variant?: 'underline' | 'pill';
 }) {
   const refs = useRef<Partial<Record<K, HTMLButtonElement | null>>>({});
+  /** 移った後にフォーカスするタブ。確かめるダイアログを出したときは、閉じて後ろの inert が外れてから動かす。 */
+  const pendingFocus = useRef<K | null>(null);
+
+  useEffect(() => {
+    if (pendingFocus.current !== selected) return;
+    pendingFocus.current = null;
+    // 確かめるダイアログが閉じるときに開く前の場所(前のタブ)へフォーカスを戻すため、その後に動かす
+    const timer = setTimeout(() => refs.current[selected]?.focus(), 0);
+    return () => clearTimeout(timer);
+  }, [selected]);
 
   const select = async (key: K) => {
     if (key === selected) return;
+    pendingFocus.current = key;
     const moved = await onSelect(key);
-    if (moved !== false) refs.current[key]?.focus();
+    if (moved === false) pendingFocus.current = null;
   };
 
   const onKeyDown = (event: KeyboardEvent, index: number) => {

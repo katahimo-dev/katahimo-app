@@ -43,6 +43,18 @@ describe('EducationLevelPicker', () => {
     expect(onSelect).toHaveBeenLastCalledWith(1);
   });
 
+  it('保存中は押しても送らず、フォーカスは★に残す(disabled にしない)', () => {
+    const onSelect = vi.fn();
+    render(<EducationLevelPicker labelId="l" educationLevel={2} disabled onSelect={onSelect} />);
+    const star = screen.getByRole('radio', { name: '★2' }) as HTMLButtonElement;
+    star.focus();
+    fireEvent.keyDown(screen.getByRole('radiogroup'), { key: 'ArrowRight' });
+    fireEvent.click(screen.getByRole('radio', { name: '★4' }));
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(star.disabled).toBe(false);
+    expect(document.activeElement).toBe(star);
+  });
+
   it('読み込み中は押せない', () => {
     renderPicker(undefined);
     expect((screen.getByRole('radio', { name: '★4' }) as HTMLButtonElement).disabled).toBe(true);

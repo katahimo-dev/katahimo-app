@@ -20,20 +20,57 @@ export function StaffImportPanel({ onClose, onImported }: { onClose: () => void;
   const [preview, setPreview] = useState<StaffImportResponse | null>(null);
   const [error, setError] = useState('');
 
+  /** 選び直したら前のファイルの結果を捨てるための番号(古い応答で新しいファイルの結果を上書きしない)。 */
+  const seq = useRef(0);
+
   const run = useMutation({
-    mutationFn: ({ chosen, dryRun }: { chosen: ChosenFile; dryRun: boolean }) =>
-      adminStaffApi.importXlsx({ fileBase64: chosen.base64, fileName: chosen.name, dryRun }),
-    onSuccess: (result) => {
-      setPreview(result);
-      if (result.applied) {
-        showToast(`取り込みました(追加 ${result.counts.created}人・変更 ${result.counts.updated}人)`);
-        onImported();
-      }
-    },
-    onError: (e) => setError(userMessageOf(e)),
+    mutationFn: ({
+      chosen,
+      dryRun,
+      planDigest,
+    }: {
+      chosen: ChosenFile;
+      dryRun: boolean;
+      planDigest?: string;
+    }) =>
+      adminStaffApi.importXlsx({
+        fileBase64: chosen.base64,
+        fileName: chosen.name,
+        dryRun,
+        ...(planDigest ? { planDigest } : {}),
+      }),
   });
 
+  const send = (chosen: ChosenFile, dryRun: boolean, planDigest?: string) => {
+    const mine = ++seq.current;
+    setError('');
+    run.mutate(
+      { chosen, dryRun, ...(planDigest ? { planDigest } : {}) },
+      {
+        onSuccess: (result) => {
+          if (mine !== seq.current) return;
+          setPreview(result);
+          if (result.applied) {
+            showToast(`取り込みました(追加 ${result.counts.created}人・変更 ${result.counts.updated}人)`);
+            onImported();
+          }
+        },
+        onError: (e) => {
+          if (mine !== seq.current) return;
+          setError(userMessageOf(e));
+          if (!dryRun) {
+            // 反映できなかった(確かめた後に他の人が変えた等)ときは、確かめ直してもらう(同じファイルを選び直せるように空にする)
+            setPreview(null);
+            setFile(null);
+            if (fileRef.current) fileRef.current.value = '';
+          }
+        },
+      },
+    );
+  };
+
   const choose = async (selected: File | undefined) => {
+    seq.current++;
     setPreview(null);
     setError('');
     setFile(null);
@@ -42,9 +79,15 @@ export function StaffImportPanel({ onClose, onImported }: { onClose: () => void;
       setError('ファイルが大きすぎます(2MBまで)');
       return;
     }
-    const chosen = { name: selected.name, base64: await readAsBase64(selected) };
+    let chosen: ChosenFile;
+    try {
+      chosen = { name: selected.name, base64: await readAsBase64(selected) };
+    } catch {
+      setError('ファイルを読めませんでした。もう一度選んでください');
+      return;
+    }
     setFile(chosen);
-    run.mutate({ chosen, dryRun: true });
+    send(chosen, true);
   };
 
   const nothingToApply = preview !== null && preview.counts.created + preview.counts.updated === 0;
@@ -85,6 +128,7 @@ export function StaffImportPanel({ onClose, onImported }: { onClose: () => void;
           <button
             type="button"
             onClick={() => {
+              seq.current++;
               setPreview(null);
               setFile(null);
               if (fileRef.current) fileRef.current.value = '';
@@ -95,7 +139,7 @@ export function StaffImportPanel({ onClose, onImported }: { onClose: () => void;
           </button>
           <button
             type="button"
-            onClick={() => file && run.mutate({ chosen: file, dryRun: false })}
+            onClick={() => file && send(file, false, preview.planDigest)}
             disabled={preview.errors.length > 0 || nothingToApply || run.isPending || !file}
             className={PRIMARY_BUTTON}
           >

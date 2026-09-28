@@ -552,6 +552,7 @@ describe('管理タブ: スタッフの Excel', () => {
       ],
       errors: [],
       warnings: [{ row: 3, message: '自宅住所がありません' }],
+      planDigest: 'digest-1',
     };
     staffApi.importXlsx.mockResolvedValueOnce(preview);
     staffApi.importXlsx.mockResolvedValueOnce({ ...preview, dryRun: false, applied: true });
@@ -569,7 +570,9 @@ describe('管理タブ: スタッフの Excel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '反映する' }));
     await waitFor(() =>
-      expect(staffApi.importXlsx).toHaveBeenLastCalledWith(expect.objectContaining({ dryRun: false })),
+      expect(staffApi.importXlsx).toHaveBeenLastCalledWith(
+        expect.objectContaining({ dryRun: false, planDigest: 'digest-1' }),
+      ),
     );
     expect(showToast).toHaveBeenCalledWith('取り込みました(追加 1人・変更 1人)');
     await waitFor(() => expect(staffApi.list).toHaveBeenCalledTimes(2));
@@ -583,6 +586,7 @@ describe('管理タブ: スタッフの Excel', () => {
       changes: [],
       errors: [{ row: 2, message: 'メールアドレスの形式が正しくありません' }],
       warnings: [],
+      planDigest: 'digest-2',
     });
     renderAdmin();
     await screen.findByRole('list', { name: 'スタッフの一覧' });
@@ -592,6 +596,63 @@ describe('管理タブ: スタッフの Excel', () => {
     });
     expect(await screen.findByText('2行目: メールアドレスの形式が正しくありません')).toBeTruthy();
     expect((screen.getByRole('button', { name: '反映する' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('取込: 反映が断られた(確かめた後に変わった)ら理由を出し、確かめ直してもらう', async () => {
+    staffApi.importXlsx.mockResolvedValueOnce({
+      dryRun: true,
+      applied: false,
+      counts: { rows: 1, created: 0, updated: 1, unchanged: 0 },
+      changes: [{ row: 2, kind: 'update', name: hanako.name, email: hanako.email, fields: ['電話'] }],
+      errors: [],
+      warnings: [],
+      planDigest: 'digest-old',
+    });
+    staffApi.importXlsx.mockRejectedValueOnce(
+      new ApiRequestError(409, { code: 'conflict', message: '確かめた後に他の人がスタッフを変えました' }),
+    );
+    renderAdmin();
+    await screen.findByRole('list', { name: 'スタッフの一覧' });
+    fireEvent.click(screen.getByRole('button', { name: '⬆ Excel取込' }));
+    fireEvent.change(screen.getByLabelText('スタッフのExcelファイル(.xlsx)'), {
+      target: { files: [new File(['x'], 'a.xlsx')] },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: '反映する' }));
+    expect(await screen.findByText('確かめた後に他の人がスタッフを変えました')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '反映する' })).toBeNull();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('取込: 選び直したら、前のファイルの遅れて届いた結果は出さない', async () => {
+    const first = deferred<Awaited<ReturnType<typeof adminStaffApi.importXlsx>>>();
+    const base = {
+      dryRun: true,
+      applied: false,
+      counts: { rows: 1, created: 1, updated: 0, unchanged: 0 },
+      errors: [],
+      warnings: [],
+    };
+    staffApi.importXlsx.mockReturnValueOnce(first.promise);
+    staffApi.importXlsx.mockResolvedValueOnce({
+      ...base,
+      changes: [{ row: 2, kind: 'create', name: '新しい方', email: 'b@example.com', fields: [] }],
+      planDigest: 'digest-b',
+    });
+    renderAdmin();
+    await screen.findByRole('list', { name: 'スタッフの一覧' });
+    fireEvent.click(screen.getByRole('button', { name: '⬆ Excel取込' }));
+    const input = screen.getByLabelText('スタッフのExcelファイル(.xlsx)');
+    fireEvent.change(input, { target: { files: [new File(['a'], 'a.xlsx')] } });
+    await waitFor(() => expect(staffApi.importXlsx).toHaveBeenCalledTimes(1));
+    fireEvent.change(input, { target: { files: [new File(['b'], 'b.xlsx')] } });
+    expect(await screen.findByText('新しい方')).toBeTruthy();
+    first.resolve({
+      ...base,
+      changes: [{ row: 2, kind: 'create', name: '古い方', email: 'a@example.com', fields: [] }],
+      planDigest: 'digest-a',
+    });
+    await waitFor(() => expect(screen.queryByText('古い方')).toBeNull());
+    expect(screen.getByText('新しい方')).toBeTruthy();
   });
 
   it('書き出し: Excel をファイルとして保存する', async () => {

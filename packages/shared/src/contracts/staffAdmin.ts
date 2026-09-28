@@ -203,6 +203,11 @@ export const staffImportRequestSchema = z.object({
     .min(1, 'ファイルを選んでください')
     .max(Math.ceil((STAFF_IMPORT_MAX_BYTES * 4) / 3) + 4, 'ファイルが大きすぎます(2MBまで)'),
   dryRun: z.boolean().default(true),
+  /**
+   * 反映するとき(dryRun=false)は、確かめたときの応答の planDigest を送る。その間に他の管理者がスタッフを変えて反映する
+   * 内容が変わっていれば 409 import_stale にして何も書かない(確かめた内容と違うものを反映しない)。
+   */
+  planDigest: z.string().max(128).optional(),
 });
 export type StaffImportRequest = z.input<typeof staffImportRequestSchema>;
 
@@ -239,5 +244,7 @@ export const staffImportResponseSchema = z.object({
   errors: z.array(staffImportIssueSchema),
   /** 反映はできるが知らせること(自宅住所の位置が分からなかった など)。 */
   warnings: z.array(staffImportIssueSchema),
+  /** 反映する内容(行ごとの変更と、対象のスタッフの今の版)の指紋。反映するときにそのまま送る。 */
+  planDigest: z.string(),
 });
 export type StaffImportResponse = z.infer<typeof staffImportResponseSchema>;
