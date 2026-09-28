@@ -1,5 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { readStorage, STORAGE_KEYS, writeStorage } from '../../../lib/storage';
+import { useTodayJst } from '../../../lib/useTodayJst';
 import { addDaysYmd, todayJst, weekStartOf } from '../model/week';
 
 /**
@@ -14,11 +15,46 @@ export function readWeekViewMode(): WeekViewMode {
   return readStorage(STORAGE_KEYS.calWeekViewMode) === 'grid' ? 'grid' : 'list';
 }
 
+/** 週間予定の場所(何週目・どの日・週/1日) */
+interface CalendarNavState {
+  weekStart: string;
+  selectedDate: string;
+  viewMode: ViewMode;
+}
+
+/**
+ * 開いたまま日付をまたいだときの週間予定の場所。前の「今日」のまま週で見ていた(週・選んだ日とも動かしていない)
+ * ときだけ今日に合わせ直す。自分で別の日・週を開いていたとき、1日表示(記録を直す画面。入力の途中のことがある)の
+ * ときはそのまま(そのときは元の state を返す)。
+ */
+export function followTodayIfUnmoved(
+  state: CalendarNavState,
+  previousToday: string,
+  today: string,
+): CalendarNavState {
+  if (today === previousToday) return state;
+  const unmoved =
+    state.viewMode === 'week' &&
+    state.selectedDate === previousToday &&
+    state.weekStart === weekStartOf(previousToday);
+  if (!unmoved) return state;
+  return { weekStart: weekStartOf(today), selectedDate: today, viewMode: 'week' };
+}
+
 export function useCalendarNav() {
-  const [state, setState] = useState(() => {
+  const [state, setState] = useState<CalendarNavState>(() => {
     const today = todayJst();
-    return { weekStart: weekStartOf(today), selectedDate: today, viewMode: 'week' as ViewMode };
+    return { weekStart: weekStartOf(today), selectedDate: today, viewMode: 'week' };
   });
+  // 「今日」に合わせた日。1日表示で見送ったときは進めず、週に戻ったあとの日付の確認でもう一度確かめる
+  const [followedToday, setFollowedToday] = useState(state.selectedDate);
+  const today = useTodayJst();
+  useEffect(() => {
+    if (today === followedToday) return;
+    if (state.viewMode === 'day' && state.selectedDate === followedToday) return;
+    setState((s) => followTodayIfUnmoved(s, followedToday, today));
+    setFollowedToday(today);
+  }, [today, followedToday, state.viewMode, state.selectedDate]);
   const [weekViewMode, setWeekViewMode] = useState<WeekViewMode>(readWeekViewMode);
 
   /** 前の週・次の週(GAS版 moveCalWeek。選んでいる日・表示の種類はそのまま) */
@@ -30,6 +66,7 @@ export function useCalendarNav() {
   const jumpToToday = useCallback(() => {
     const today = todayJst();
     setState({ weekStart: weekStartOf(today), selectedDate: today, viewMode: 'week' });
+    setFollowedToday(today);
   }, []);
 
   /** その日の1日表示へ(GAS版 drillToDay。週はそのまま) */

@@ -5,6 +5,7 @@ import { userMessageOf } from '../../api/client';
 import { type ScheduleRequest, scheduleApi } from '../../api/schedule';
 import { useAdminTargetStaff } from '../../app/adminTargetStaff';
 import { NETWORK_ERROR_MESSAGE } from '../../lib/messages';
+import { useTodayJst } from '../../lib/useTodayJst';
 import { showErrorToast, showToast } from '../../ui/toast';
 import { type CachedRoute, readCachedRoute, writeCachedRoute } from './routeCache';
 import { type ScheduleDate, type ScheduleOffset, scheduleDateFor } from './scheduleDate';
@@ -63,6 +64,7 @@ class RouteUnavailableError extends Error {}
  *    今の表示を残す。
  * 日付・スタッフを切り替えたら、前の要求は取り消す(応答が届いても出さない)。StrictMode で2回描画されても、
  * 同じ要求は1回だけ送る(地図APIの呼び出しを増やさない)。
+ * 5. 開いたまま日付をまたいだら、選んでいる ☀️今日 / 🌙明日 を今の日付で読み直す(前の日の予定を出し続けない)。
  */
 export function useScheduleView(): ScheduleView {
   const queryClient = useQueryClient();
@@ -170,14 +172,31 @@ export function useScheduleView(): ScheduleView {
   // 開いている画面で通知を押したとき(Service Worker からの知らせ)は、その日を選び直す
   useEffect(() => onScheduleLink((linked) => selectDay(scheduleOffsetForDate(linked))), [selectDay]);
 
+  /** 出している日付が、選んでいる ☀️今日 / 🌙明日 の今の日付とずれていたら読み直す(ずれていたら true) */
+  const reloadIfDateChanged = useCallback((): boolean => {
+    if (scheduleDateFor(offset).dateStr === date.dateStr) return false;
+    selectDay(offset);
+    showToast('日付が変わったので、予定を読み込み直しました');
+    return true;
+  }, [offset, date.dateStr, selectDay]);
+
+  // 開いたまま日付をまたいだとき(画面に戻ってきたとき・開いている間の確認)
+  const today = useTodayJst();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 日付が変わったときだけ確かめる
+  useEffect(() => {
+    reloadIfDateChanged();
+  }, [today]);
+
   const { mutate } = refresh;
   const refreshRoute = useCallback(() => {
+    // 🔄 を押したとき、日付をまたいでいたら前の日を調べ直さず、今の日付で読み直す
+    if (reloadIfDateChanged()) return;
     mutate({
       staffKey: targetStaffId,
       request: { date: date.dateStr, staffId: requestStaffId },
       keyId: currentKey,
     });
-  }, [mutate, targetStaffId, date.dateStr, requestStaffId, currentKey]);
+  }, [reloadIfDateChanged, mutate, targetStaffId, date.dateStr, requestStaffId, currentKey]);
 
   return {
     offset,

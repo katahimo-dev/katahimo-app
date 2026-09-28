@@ -15,11 +15,12 @@ import {
   userStorageKey,
   writeStorage,
 } from '../../../lib/storage';
+import { useTodayJst } from '../../../lib/useTodayJst';
 import { confirmNative, useConfirmModal } from '../../../ui/confirm';
 import { showErrorToast, showToast } from '../../../ui/toast';
 import { useSession } from '../../auth';
 import { useCustomerReportProfile } from '../../customers/useCustomerReportProfile';
-import { buildReceiptTimestamp, type ClockTime, formatClock, shiftReportDate } from '../model/dateTime';
+import { type ClockTime, formatClock, receiptFallbackTimestamp, shiftReportDate } from '../model/dateTime';
 import {
   applyDraftToForm,
   buildDraftSnapshot,
@@ -81,6 +82,8 @@ export function useReportController(session: ReportSession | null) {
   const { user, storageScope } = useSession();
   const confirm = useConfirmModal();
   const { data: uiConfig } = useUiConfig();
+  // 開いたまま日付をまたいだら描き直す(▶ 次の日へ の押せる/押せないを今日で決め直す。書いている日付は変えない)
+  const currentToday = useTodayJst();
 
   // GAS版はページを開いたときに 09:00〜11:00・今日で始まる(お客様の指定なしの領収書はこの値を使う)
   const [initialForm] = useState(() =>
@@ -548,7 +551,7 @@ export function useReportController(session: ReportSession | null) {
       staffName: user.name,
       customerId: target?.id ?? null,
       customerName: target ? target.name : unregisteredName.trim(),
-      fallbackTimestamp: buildReceiptTimestamp(f.reportDate, f.start),
+      fallbackTimestamp: receiptFallbackTimestamp(session?.kind === 'standalone', f),
     });
   };
 
@@ -573,7 +576,7 @@ export function useReportController(session: ReportSession | null) {
     sendVisitComplete: () => void sendVisitComplete(),
     sendReceipts,
     scrollRefs,
-    today: today(),
+    today: currentToday,
     dailyAi: {
       childId: dailyChildId,
       selectChild: selectDailyChild,

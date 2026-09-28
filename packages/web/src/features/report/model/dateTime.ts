@@ -1,4 +1,4 @@
-import { addDaysYmd, WEEKDAY_LABELS, weekdayOfYmd, ymdParts } from '../../../lib/date';
+import { addDaysYmd, jstHHmm, todayJst, WEEKDAY_LABELS, weekdayOfYmd, ymdParts } from '../../../lib/date';
 
 /**
  * 日報ダイアログの日付・時刻まわりの小さな計算(GAS版 updateDateDisplay / updateDateTimeSummary_ /
@@ -103,4 +103,19 @@ export function toSlashDate(dateStr: string): string {
  */
 export function buildReceiptTimestamp(dateStr: string, start: Partial<ClockTime>): string {
   return `${toSlashDate(dateStr)} ${start.hour || '00'}:${start.minute || '00'}:00`;
+}
+
+/**
+ * レシートの日付が空の画像に使う日時。日報から送るときは日報の日付と始めた時間(GAS版と同じ)。
+ * お客様の指定なしの領収書の画面は日付・時刻の欄を隠していて、中身はページを開いた日・前の日報の値・
+ * 既定の 09:00 のまま残っているため、それを使わず送る時点の日時(日本時間)にする(GAS版の不具合を直したもの)。
+ */
+export function receiptFallbackTimestamp(
+  standalone: boolean,
+  form: { reportDate: string; start: ClockTime },
+  now: Date | number = Date.now(),
+): string {
+  if (!standalone) return buildReceiptTimestamp(form.reportDate, form.start);
+  const [hour = '00', minute = '00'] = jstHHmm(now).split(':');
+  return buildReceiptTimestamp(todayJst(now), { hour, minute });
 }
