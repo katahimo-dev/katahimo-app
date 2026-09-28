@@ -20,6 +20,7 @@ import { EmptyState, ErrorState, Loading } from '../../../ui/StatusViews';
 import { adminQueryKeys } from '../adminQueryKeys';
 import { INPUT_CLASS } from '../components/FormField';
 import { useAdminStaffList } from '../staff/useAdminStaff';
+import { useFollowDefaultRange } from '../useFollowDefaultRange';
 
 const LEVEL_BADGE: Record<AppLogLevel, string> = {
   INFO: 'bg-gray-200 text-gray-800',
@@ -30,9 +31,12 @@ const LEVEL_BADGE: Record<AppLogLevel, string> = {
 
 const DELETED_STAFF = '(削除されたスタッフ)';
 
+function defaultRange(today: string): { from: string; to: string } {
+  return { from: addDaysYmd(today, -(AUDIT_LOG_DEFAULT_RANGE_DAYS - 1)), to: today };
+}
+
 function defaultFilters(): AuditLogFilters {
-  const to = todayJst();
-  return { from: addDaysYmd(to, -(AUDIT_LOG_DEFAULT_RANGE_DAYS - 1)), to };
+  return defaultRange(todayJst());
 }
 
 function actorText(entry: AuditLogEntry): string {
@@ -75,6 +79,8 @@ export function AuditLogPanel() {
   const staff = useAdminStaffList();
   const [form, setForm] = useState<AuditLogFilters>(defaultFilters);
   const [applied, setApplied] = useState<AuditLogFilters>(form);
+  // 開いたまま日付をまたいだら、期間を変えていなければ今日までにする
+  useFollowDefaultRange(defaultRange, setForm, setApplied);
   const csv = useFileDownload<'csv'>();
 
   const logs = useInfiniteQuery({
