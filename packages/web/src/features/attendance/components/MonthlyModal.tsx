@@ -29,8 +29,10 @@ export function MonthlyModal({
   /** 「🧾 領収書の一覧・画像を見る」(その月の領収書の一覧を開く) */
   onOpenReceipts: (yearMonth: string) => void;
 }) {
-  // 月の欄・読んだ月は閉じても残す(GAS版は開き直しても前の値のまま)
+  // 月の欄・読んだ月は閉じても残す。ただし自分で選び直していない(自動で入れた今月のまま)なら、
+  // 開くたびに今月にする(開いたまま月をまたいでも前の月を出さない)
   const [monthInput, setMonthInput] = useState('');
+  const [autoMonth, setAutoMonth] = useState('');
   const [requestedMonth, setRequestedMonth] = useState<string | null>(null);
   const [wasOpen, setWasOpen] = useState(false);
   const { reloadMonth } = useAttendanceInvalidation();
@@ -42,11 +44,13 @@ export function MonthlyModal({
   const [lastTs, setLastTs] = useState<number | null>(null);
   if (monthQuery.data && monthQuery.data.ts !== lastTs) setLastTs(monthQuery.data.ts);
 
-  // 開くたびに選んでいる月(空なら今月)を読む(GAS版 openAttendanceMonthlyModal → loadAttendanceMonthly)
+  // 開くたびに選んでいる月(空・自動で入れた月のままなら今月)を読む(GAS版 openAttendanceMonthlyModal → loadAttendanceMonthly)
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
-      const ym = monthInput || todayJst().slice(0, 7);
+      const chosen = monthInput !== '' && monthInput !== autoMonth;
+      const ym = chosen ? monthInput : todayJst().slice(0, 7);
+      if (!chosen) setAutoMonth(ym);
       setMonthInput(ym);
       setRequestedMonth(ym);
     }
@@ -96,7 +100,10 @@ export function MonthlyModal({
                 type="month"
                 id="attendanceMonthlyMonth"
                 value={monthInput}
-                onChange={(e) => setMonthInput(e.target.value)}
+                onChange={(e) => {
+                  setMonthInput(e.target.value);
+                  setAutoMonth(''); // 自分で選んだ月は、開き直しても残す
+                }}
                 className="w-full p-3 border border-gray-300 rounded-xl text-base"
               />
             </div>

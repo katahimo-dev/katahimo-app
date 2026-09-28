@@ -15,11 +15,12 @@ import {
   userStorageKey,
   writeStorage,
 } from '../../../lib/storage';
+import { useTodayJst } from '../../../lib/useTodayJst';
 import { confirmNative, useConfirmModal } from '../../../ui/confirm';
 import { showErrorToast, showToast } from '../../../ui/toast';
 import { useSession } from '../../auth';
 import { useCustomerReportProfile } from '../../customers/useCustomerReportProfile';
-import { buildReceiptTimestamp, type ClockTime, formatClock, shiftReportDate } from '../model/dateTime';
+import { type ClockTime, formatClock, receiptFallbackTimestamp, shiftReportDate } from '../model/dateTime';
 import {
   applyDraftToForm,
   buildDraftSnapshot,
@@ -81,6 +82,8 @@ export function useReportController(session: ReportSession | null) {
   const { user, storageScope } = useSession();
   const confirm = useConfirmModal();
   const { data: uiConfig } = useUiConfig();
+  // 開いたまま日付をまたいだら描き直す(▶ 次の日へ の押せる/押せないを今日で決め直す。書いている日付は変えない)
+  const currentToday = useTodayJst();
 
   // GAS版はページを開いたときに 09:00〜11:00・今日で始まる(お客様の指定なしの領収書はこの値を使う)
   const [initialForm] = useState(() =>
@@ -97,6 +100,12 @@ export function useReportController(session: ReportSession | null) {
     dispatch(action);
   }, []);
   const receipts = useReceipts(storageScope);
+  /** お客様の指定なしの領収書で、いまの写真に使う既定の日時(fallbackTimestampForSend) */
+  const standaloneFallbackRef = useRef<string | null>(null);
+  const noReceiptImages = receipts.images.length === 0;
+  useEffect(() => {
+    if (noReceiptImages) standaloneFallbackRef.current = null;
+  }, [noReceiptImages]);
   const writeLastAccidentTime = (value: string) =>
     writeStorage(userStorageKey(STORAGE_KEYS.lastAccidentTime, storageScope), value);
   const [generatingSince, setGeneratingSince] = useState<number | null>(null);
@@ -163,6 +172,7 @@ export function useReportController(session: ReportSession | null) {
     if (!session) return;
     nonceRef.current = session.nonce;
     receipts.reset();
+    standaloneFallbackRef.current = null;
     setUnregisteredName('');
     if (session.kind === 'standalone') return; // GAS版は日報の入力には触らない(隠すだけ)
     generatingRef.current = null;
@@ -537,6 +547,16 @@ export function useReportController(session: ReportSession | null) {
   };
 
   // ── 領収書を送る ──
+  /**
+   * お客様の指定なしの領収書の既定の日時(送る時点)は、同じ写真を送り直す間は最初に送ろうとした時刻のまま使う
+   * (通信の失敗のあと1分以上たって送り直しても、重複の判定のキーが変わらないように)。写真が全て送れて空になった・
+   * 開き直したら決め直す。
+   */
+  const fallbackTimestampForSend = (f: { reportDate: string; start: ClockTime }): string => {
+    if (session?.kind !== 'standalone') return receiptFallbackTimestamp(false, f);
+    standaloneFallbackRef.current ??= receiptFallbackTimestamp(true, f);
+    return standaloneFallbackRef.current;
+  };
   const sendReceipts = () => {
     const f = formRef.current;
     const target = customerRef.current;
@@ -548,7 +568,7 @@ export function useReportController(session: ReportSession | null) {
       staffName: user.name,
       customerId: target?.id ?? null,
       customerName: target ? target.name : unregisteredName.trim(),
-      fallbackTimestamp: buildReceiptTimestamp(f.reportDate, f.start),
+      fallbackTimestamp: fallbackTimestampForSend(f),
     });
   };
 
@@ -573,7 +593,7 @@ export function useReportController(session: ReportSession | null) {
     sendVisitComplete: () => void sendVisitComplete(),
     sendReceipts,
     scrollRefs,
-    today: today(),
+    today: currentToday,
     dailyAi: {
       childId: dailyChildId,
       selectChild: selectDailyChild,

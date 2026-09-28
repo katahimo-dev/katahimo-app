@@ -7,6 +7,7 @@ import {
   formatDateTimeSummary,
   isNextDateDisabled,
   parseClock,
+  receiptFallbackTimestamp,
   shiftReportDate,
 } from './dateTime';
 
@@ -80,6 +81,23 @@ describe('buildReceiptTimestamp(GAS版: 日報の日付 + 始めた時間、秒�
   });
   it('時刻が無ければ 00:00', () => {
     expect(buildReceiptTimestamp('2026-09-03', {})).toBe('2026/09/03 00:00:00');
+  });
+});
+
+describe('receiptFallbackTimestamp(レシートの日付が空の画像に使う日時)', () => {
+  const form = { reportDate: '2026-09-20', start: { hour: '09', minute: '00' } };
+  // 2026-09-28 14:37(JST)
+  const now = new Date('2026-09-28T05:37:00Z');
+  it('日報から送るときは日報の日付 + 始めた時間(GAS版と同じ)', () => {
+    expect(receiptFallbackTimestamp(false, form, now)).toBe('2026/09/20 09:00:00');
+  });
+  it('お客様の指定なしの領収書は、隠れている欄の値ではなく送る時点の日時(日本時間)', () => {
+    expect(receiptFallbackTimestamp(true, form, now)).toBe('2026/09/28 14:37:00');
+  });
+  it('日本時間の日付で数える(UTC では前の日の 23 時台)', () => {
+    expect(receiptFallbackTimestamp(true, form, new Date('2026-09-27T23:30:00Z'))).toBe(
+      '2026/09/28 08:30:00',
+    );
   });
 });
 
