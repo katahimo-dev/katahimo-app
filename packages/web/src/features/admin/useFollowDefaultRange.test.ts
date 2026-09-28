@@ -50,12 +50,26 @@ describe('useFollowDefaultRange', () => {
     expect(result.current.applied).toEqual(rangeFor('2026-09-28'));
   });
 
-  it('自分で変えた期間は動かさない(一覧だけ変えて探していた場合も)', () => {
+  it('自分で変えた期間は動かさない', () => {
     const custom = { from: '2026-09-01', to: '2026-09-10' };
     const { result } = setup(custom);
     act(() => result.current.setForm(custom));
     resumeNextDay();
     expect(result.current.form).toEqual(custom);
     expect(result.current.applied).toEqual(custom);
+  });
+
+  it('一覧だけ自分で決めた期間で探していたら、入力欄(既定のまま)だけ今日までにする', () => {
+    const custom = { from: '2026-09-01', to: '2026-09-10' };
+    const { result } = setup(custom);
+    resumeNextDay();
+    expect(result.current.form).toEqual(rangeFor('2026-09-28'));
+    expect(result.current.applied).toEqual(custom);
+  });
+
+  it('期間以外の絞り込みは残す', () => {
+    const { result } = setup({ ...rangeFor('2026-09-27'), staffId: 's1' } as { from?: string; to?: string });
+    resumeNextDay();
+    expect(result.current.applied).toEqual({ ...rangeFor('2026-09-28'), staffId: 's1' });
   });
 });
