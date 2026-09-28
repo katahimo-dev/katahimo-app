@@ -57,6 +57,27 @@ describe('今月のまとめの月(開いたまま月をまたいだとき)', ()
     expect(lastRequestedMonth()).toBe('2026-10');
   });
 
+  it('自動で入れた月と同じ月を自分で選び直したら、それも残す', () => {
+    const { rerender, monthInput } = renderModal(true); // 9月(自動)
+    const input = monthInput();
+    if (!input) throw new Error('月の欄がない');
+    act(() => {
+      fireEvent.change(input, { target: { value: '2026-08' } });
+    });
+    rerender(false);
+    vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
+    rerender(true); // 8月のまま
+    const reopened = monthInput();
+    if (!reopened) throw new Error('月の欄がない');
+    expect(reopened.value).toBe('2026-08');
+    act(() => {
+      fireEvent.change(reopened, { target: { value: '2026-09' } }); // 前に自動で入れた月を自分で選ぶ
+    });
+    rerender(false);
+    rerender(true);
+    expect(monthInput()?.value).toBe('2026-09');
+  });
+
   it('自分で選び直した月は、開き直しても残す', () => {
     const { rerender, monthInput } = renderModal(true);
     const input = monthInput();

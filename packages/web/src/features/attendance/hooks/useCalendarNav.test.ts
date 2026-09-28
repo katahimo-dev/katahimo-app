@@ -21,8 +21,10 @@ describe('followTodayIfUnmoved(開いたまま日付をまたいだときの週�
       viewMode: 'week',
     });
   });
-  it('日付が同じなら何もしない', () => {
+  it('日付が同じ・前の日なら何もしない(古い「今日」へ戻さない)', () => {
     expect(followTodayIfUnmoved(onToday, '2026-09-27', '2026-09-27')).toBe(onToday);
+    const next = { weekStart: '2026-09-27', selectedDate: '2026-09-28', viewMode: 'week' as const };
+    expect(followTodayIfUnmoved(next, '2026-09-28', '2026-09-27')).toBe(next);
   });
   it('1日表示(記録を直す画面)のときはそのまま', () => {
     const day = { ...onToday, viewMode: 'day' as const };
@@ -65,6 +67,21 @@ describe('useCalendarNav(開いたまま日付をまたいだとき)', () => {
     expect(result.current.selectedDate).toBe('2026-09-27');
     expect(result.current.viewMode).toBe('day');
     act(() => result.current.backToWeek());
+    expect(result.current.selectedDate).toBe('2026-09-28');
+  });
+
+  it('0時過ぎに「今日へ」を押したら、日付の確認より先でも今日のまま(前の日へ戻らない)', () => {
+    vi.setSystemTime(new Date('2026-09-27T14:59:30Z')); // 2026-09-27 23:59:30(JST)
+    const { result } = renderHook(() => useCalendarNav());
+    act(() => result.current.moveWeek(-1));
+    vi.setSystemTime(new Date('2026-09-27T15:00:10Z')); // 2026-09-28 00:00:10(JST)。画面の「今日」はまだ 27日
+    act(() => result.current.jumpToToday());
+    expect(result.current.selectedDate).toBe('2026-09-28');
+    expect(result.current.weekStart).toBe('2026-09-27');
+    // その後の日付の確認でも動かない
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
     expect(result.current.selectedDate).toBe('2026-09-28');
   });
 

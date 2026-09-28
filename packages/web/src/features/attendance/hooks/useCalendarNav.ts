@@ -32,7 +32,9 @@ export function followTodayIfUnmoved(
   previousToday: string,
   today: string,
 ): CalendarNavState {
-  if (today === previousToday) return state;
+  // 前にだけ進める('YYYY-MM-DD' は文字列の大小で日付の前後になる)。「今日へ」を押した直後など、
+  // 1分おきの確認より先に新しい日付になっているとき、古い「今日」へ戻さない
+  if (today <= previousToday) return state;
   const unmoved =
     state.viewMode === 'week' &&
     state.selectedDate === previousToday &&
@@ -50,7 +52,7 @@ export function useCalendarNav() {
   const [followedToday, setFollowedToday] = useState(state.selectedDate);
   const today = useTodayJst();
   useEffect(() => {
-    if (today === followedToday) return;
+    if (today <= followedToday) return;
     if (state.viewMode === 'day' && state.selectedDate === followedToday) return;
     setState((s) => followTodayIfUnmoved(s, followedToday, today));
     setFollowedToday(today);

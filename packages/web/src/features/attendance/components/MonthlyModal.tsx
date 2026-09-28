@@ -100,7 +100,10 @@ export function MonthlyModal({
                 type="month"
                 id="attendanceMonthlyMonth"
                 value={monthInput}
-                onChange={(e) => setMonthInput(e.target.value)}
+                onChange={(e) => {
+                  setMonthInput(e.target.value);
+                  setAutoMonth(''); // 自分で選んだ月は、開き直しても残す
+                }}
                 className="w-full p-3 border border-gray-300 rounded-xl text-base"
               />
             </div>

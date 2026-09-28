@@ -100,6 +100,12 @@ export function useReportController(session: ReportSession | null) {
     dispatch(action);
   }, []);
   const receipts = useReceipts(storageScope);
+  /** お客様の指定なしの領収書で、いまの写真に使う既定の日時(fallbackTimestampForSend) */
+  const standaloneFallbackRef = useRef<string | null>(null);
+  const noReceiptImages = receipts.images.length === 0;
+  useEffect(() => {
+    if (noReceiptImages) standaloneFallbackRef.current = null;
+  }, [noReceiptImages]);
   const writeLastAccidentTime = (value: string) =>
     writeStorage(userStorageKey(STORAGE_KEYS.lastAccidentTime, storageScope), value);
   const [generatingSince, setGeneratingSince] = useState<number | null>(null);
@@ -166,6 +172,7 @@ export function useReportController(session: ReportSession | null) {
     if (!session) return;
     nonceRef.current = session.nonce;
     receipts.reset();
+    standaloneFallbackRef.current = null;
     setUnregisteredName('');
     if (session.kind === 'standalone') return; // GAS版は日報の入力には触らない(隠すだけ)
     generatingRef.current = null;
@@ -540,6 +547,16 @@ export function useReportController(session: ReportSession | null) {
   };
 
   // ── 領収書を送る ──
+  /**
+   * お客様の指定なしの領収書の既定の日時(送る時点)は、同じ写真を送り直す間は最初に送ろうとした時刻のまま使う
+   * (通信の失敗のあと1分以上たって送り直しても、重複の判定のキーが変わらないように)。写真が全て送れて空になった・
+   * 開き直したら決め直す。
+   */
+  const fallbackTimestampForSend = (f: { reportDate: string; start: ClockTime }): string => {
+    if (session?.kind !== 'standalone') return receiptFallbackTimestamp(false, f);
+    standaloneFallbackRef.current ??= receiptFallbackTimestamp(true, f);
+    return standaloneFallbackRef.current;
+  };
   const sendReceipts = () => {
     const f = formRef.current;
     const target = customerRef.current;
@@ -551,7 +568,7 @@ export function useReportController(session: ReportSession | null) {
       staffName: user.name,
       customerId: target?.id ?? null,
       customerName: target ? target.name : unregisteredName.trim(),
-      fallbackTimestamp: receiptFallbackTimestamp(session?.kind === 'standalone', f),
+      fallbackTimestamp: fallbackTimestampForSend(f),
     });
   };
 
