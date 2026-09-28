@@ -99,6 +99,9 @@ afterAll(async () => {
 });
 
 const refused = { code: 'forbidden', message: DEMO_REFUSED_MESSAGE };
+/** 1x1 の PNG(領収書の読み取りの本文の検証を通す最小の画像)。 */
+const TINY_PNG_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 describe('公開デモ: 断る操作', () => {
   it('パスワードの変更・再設定は 403(普通のテナントの再設定の依頼は通る)', async () => {
@@ -136,6 +139,8 @@ describe('公開デモ: 断る操作', () => {
     const toDemo = await patch(demoAdminId);
     expect(toDemo.status).toBe(403);
     expect(await toDemo.json()).toEqual(refused);
+    // UUID を大文字で書いても同じスタッフ(DB は大文字・小文字を区別しない)なので断る
+    expect((await patch(demoAdminId.toUpperCase())).status).toBe(403);
     expect((await patch(extraStaffId)).status).toBe(200);
     const del = await app.request(`/api/admin/staff/${demoAdminId}`, {
       method: 'DELETE',
@@ -163,7 +168,39 @@ describe('公開デモ: 断る操作', () => {
   });
 });
 
+describe('公開デモ: 操作ログ', () => {
+  it('他の訪問者の送信元IP等が残るため、デモ用テナントでは見られない(普通のテナントは見られる)', async () => {
+    const cookie = await cookieOf(demoSlug, admin.email, DEMO_PASSWORD);
+    const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo' }).format(new Date());
+    const query = `?from=${today}&to=${today}`;
+    const list = await app.request(`/api/admin/audit-logs${query}`, { headers: { Cookie: cookie } });
+    expect(list.status).toBe(403);
+    const csv = await app.request(`/api/admin/audit-logs.csv${query}`, { headers: { Cookie: cookie } });
+    expect(csv.status).toBe(403);
+    const plain = await app.request(`/api/admin/audit-logs${query}`, {
+      headers: { Cookie: otherAdminCookie },
+    });
+    expect(plain.status).toBe(200);
+  });
+});
+
 describe('公開デモ: ログインと AI の回数', () => {
+  it('普通のテナントでは今までどおりアカウント単位でロックする', async () => {
+    const email = `locked-${otherSlug}@example.com`;
+    const other = await container.tenants.findBySlug(otherSlug);
+    if (!other) throw new Error('普通のテナントがありません');
+    await registerStaff(container, {
+      tenantId: other.id,
+      name: 'ロック 三郎',
+      email,
+      password: OTHER_PASSWORD,
+      role: 'staff',
+    });
+    for (let i = 0; i < 10; i++)
+      expect((await loginAs(otherSlug, email, 'wrong-password-0')).status).toBe(401);
+    expect((await loginAs(otherSlug, email, OTHER_PASSWORD)).status).toBe(429);
+  });
+
   it('パスワードを間違え続けてもアカウントはロックされない', async () => {
     const staff = demoAccount('staff');
     for (let i = 0; i < 12; i++) {
@@ -188,6 +225,11 @@ describe('公開デモ: ログインと AI の回数', () => {
     const over = await generate(cookie);
     expect(over.status).toBe(429);
     expect(await over.json()).toEqual({ code: 'rate_limited', message: DEMO_AI_QUOTA_MESSAGE });
+    // 事故報告の清書・領収書の読み取りも同じ枠を使う
+    const accident = await post('/api/reports/accident/generate', { text: 'メモ' }, cookie);
+    expect(accident.status).toBe(429);
+    const ocr = await post('/api/receipts/ocr', { image: TINY_PNG_DATA_URL }, cookie);
+    expect(ocr.status).toBe(429);
 
     const again = await cookieOf(demoSlug, coordinator.email, DEMO_PASSWORD);
     expect((await generate(again)).status).not.toBe(429);

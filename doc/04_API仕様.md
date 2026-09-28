@@ -105,6 +105,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `PATCH`・`DELETE /api/admin/staff/:id`(デモ用アカウント `DEMO_ACCOUNTS` だけ。他のスタッフは編集できる)、`POST /api/admin/staff/:id/password-guide`、`POST /api/admin/staff/import` | 同上 |
 | `POST /api/admin/customers/import` | 顧客を丸ごと入れ替える |
 | `POST /api/settings/admin/gemini-key`・`/gemini-models`・`/gemini-models/available`・`/gchat-webhooks` | 訪問者の入れたキー・送り先へ外部送信が起きる。AI の設定は全員に効く |
+| `GET /api/admin/audit-logs`・`/audit-logs.csv` | 操作ログに他の訪問者の送信元IP・ブラウザが残る(共有の管理者アカウントで見られる) |
 
 - 応答は 403 `{ code: 'forbidden', message: 'デモ環境ではこの操作はできません。' }`、WARN `demo.action_refused`(`details.rule` に規則名)。
 - テナントはセッション Cookie の先頭(テナント ID)か本文の `tenantSlug` で決める(断るかどうかの判定だけ。認証は各ルートが行う)。
@@ -112,8 +113,11 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
   送信元IP単位(`login_failure_ip`)は残す。
 - AI(`POST /api/reports/daily/generate`・`/accident/generate`・`POST /api/receipts/ocr`)は1回のログイン(セッション)につき合計
   `DEMO_AI_USES_PER_SESSION`(10)回まで(規則 `demo_ai_session`、キーはセッションID)。超えると 429「デモ環境では、AIを使えるのは
-  1回のログインにつき10回までです。」。スタッフ単位の1日の上限(`ai_generate_staff`・`receipt_ocr_staff`)も併せて掛かる
-  (共有アカウントの合計。ログインし直して増やす使い方の歯止め)。
+  1回のログインにつき10回までです。」。ログインし直す・スタッフを足すと増やせるため、天井として送信元IPごとに1日30回
+  (`demo_ai_ip_day`)とデモ用テナント全体で1日300回(`demo_ai_tenant_day`)も数える(超えると 429「デモ環境の本日のAIの利用回数の上限に
+  達しました。…」)。狭い枠から数え、超えた回は広い枠を使わない。スタッフ単位の1日の上限(`ai_generate_staff`・`receipt_ocr_staff`)も掛かる。
+- パスの ID は大文字・小文字をそろえて比べる(UUID は DB では大文字・小文字を区別しないため、大文字で書いてデモ用アカウントの守りを
+  すり抜けさせない。`routes/adminStaff.ts` の自分自身の降格・退職・削除の判定も同じ)。
 
 ## 2. エンドポイント一覧
 

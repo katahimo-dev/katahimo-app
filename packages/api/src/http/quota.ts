@@ -3,7 +3,13 @@ import { consumeQuota } from '@katahimo/core/usecases';
 import type { Context } from 'hono';
 import type { Container } from '../container';
 import type { SessionEnv } from '../session';
-import { DEMO_AI_QUOTA_MESSAGE, DEMO_AI_SESSION_RULE } from './demoRestrictions';
+import {
+  DEMO_AI_DAILY_QUOTA_MESSAGE,
+  DEMO_AI_IP_DAY_RULE,
+  DEMO_AI_QUOTA_MESSAGE,
+  DEMO_AI_SESSION_RULE,
+  DEMO_AI_TENANT_DAY_RULE,
+} from './demoRestrictions';
 import { requestMeta } from './requestMeta';
 import { rateLimited } from './responses';
 
@@ -35,12 +41,17 @@ export async function enforceAiQuota(
 ): Promise<Response | null> {
   const session = c.get('session');
   if (container.demo && (await container.demo.isDemoTenant(session.tenantId))) {
-    const decision = await consumeQuota(container, DEMO_AI_SESSION_RULE, session.sessionId, {
-      tenantId: session.tenantId,
-      actorStaffId: session.staffId,
-      meta: requestMeta(c),
-    });
-    if (!decision.allowed) return rateLimited(c, decision.retryAfterMs, DEMO_AI_QUOTA_MESSAGE);
+    const meta = requestMeta(c);
+    const context = { tenantId: session.tenantId, actorStaffId: session.staffId, meta };
+    // 狭い枠から数える(超えた回で広い枠を使わない)
+    const bySession = await consumeQuota(container, DEMO_AI_SESSION_RULE, session.sessionId, context);
+    if (!bySession.allowed) return rateLimited(c, bySession.retryAfterMs, DEMO_AI_QUOTA_MESSAGE);
+    if (meta.ip) {
+      const byIp = await consumeQuota(container, DEMO_AI_IP_DAY_RULE, meta.ip, context);
+      if (!byIp.allowed) return rateLimited(c, byIp.retryAfterMs, DEMO_AI_DAILY_QUOTA_MESSAGE);
+    }
+    const byTenant = await consumeQuota(container, DEMO_AI_TENANT_DAY_RULE, session.tenantId, context);
+    if (!byTenant.allowed) return rateLimited(c, byTenant.retryAfterMs, DEMO_AI_DAILY_QUOTA_MESSAGE);
   }
   return enforceStaffQuota(c, container, rule, message);
 }

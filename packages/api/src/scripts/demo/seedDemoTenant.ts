@@ -203,17 +203,22 @@ export async function seedDemoTenant(
   }
 
   // ── 日報(過去 HISTORY_DAYS 日 + 当日、visitPlan.ts の決定論的な予定どおり) ───
-  const businessDates = [...recentBusinessDates(now, HISTORY_DAYS), toJstDateIso(now)];
+  const today = toJstDateIso(now);
+  const businessDates = [...recentBusinessDates(now, HISTORY_DAYS), today];
+  // 今日の日報は、作った時刻までに終わった訪問だけ(夜中の作り直しでは今日の日報は無く、出勤簿の予定だけになる)
+  const nowHHmm = jstTimeOf(now);
   const staffActor = actorOfStaff(tenant.id, visitingStaff);
   let dailyReportCount = 0;
   for (const date of businessDates) {
-    const visits = planVisitsForDate(date, visitingStaff.name, DEMO_FIGURES.length);
+    const visits = planVisitsForDate(date, visitingStaff.name, DEMO_FIGURES.length).filter(
+      (visit) => date !== today || visit.end <= nowHHmm,
+    );
     for (const visit of visits) {
       const customerId = customerIdByFigureIndex[visit.figureIndex];
       if (!customerId) continue;
       const templateIndex = hashString(`${date}|${visit.figureIndex}`) % DAILY_REPORT_TEMPLATES.length;
       const template = DAILY_REPORT_TEMPLATES[templateIndex] as (typeof DAILY_REPORT_TEMPLATES)[number];
-      const rating = 1 + (hashString(`rating|${date}|${visit.figureIndex}`) % 5);
+      const { riskRating, esRating } = demoRatings(`${date}|${visit.figureIndex}`);
       await saveDailyReport(container, staffActor, {
         customerId,
         reportDate: date,
@@ -222,8 +227,8 @@ export async function seedDemoTenant(
         inputText: template.inputText,
         internalText: template.internalText,
         customerText: template.customerText,
-        riskRating: rating,
-        esRating: rating,
+        riskRating,
+        esRating,
       });
       dailyReportCount++;
     }
@@ -270,24 +275,62 @@ export async function seedDemoTenant(
   }
 
   // ── 領収書(今月数枚・先月数枚、お客様請求/会社負担を混ぜる) ────────────
+  // 日付は業務日の月で決める(月の初めでも「今月」の分があり、「先月」の分が2か月前にならないように)
   const receiptSpecs: {
-    daysAgo: number;
+    date: string;
     amount: number;
     storeName: string;
     companyPaid: boolean;
     customerIndex: number | null;
   }[] = [
-    { daysAgo: 1, amount: 1200, storeName: 'コインパーキング梅田', companyPaid: true, customerIndex: null },
-    { daysAgo: 3, amount: 480, storeName: 'コンビニ堂島店', companyPaid: false, customerIndex: 0 },
-    { daysAgo: 5, amount: 2600, storeName: '文房具の丸善', companyPaid: false, customerIndex: 3 },
-    { daysAgo: 7, amount: 950, storeName: 'ガソリンスタンド北浜', companyPaid: true, customerIndex: null },
-    { daysAgo: 35, amount: 1500, storeName: 'コインパーキング京都', companyPaid: true, customerIndex: null },
-    { daysAgo: 40, amount: 720, storeName: 'スーパー生協南堀江', companyPaid: false, customerIndex: 1 },
+    {
+      date: thisMonthDate(today, 1),
+      amount: 1200,
+      storeName: 'コインパーキング梅田',
+      companyPaid: true,
+      customerIndex: null,
+    },
+    {
+      date: thisMonthDate(today, 3),
+      amount: 480,
+      storeName: 'コンビニ堂島店',
+      companyPaid: false,
+      customerIndex: 0,
+    },
+    {
+      date: thisMonthDate(today, 5),
+      amount: 2600,
+      storeName: '文房具の丸善',
+      companyPaid: false,
+      customerIndex: 3,
+    },
+    {
+      date: thisMonthDate(today, 7),
+      amount: 950,
+      storeName: 'ガソリンスタンド北浜',
+      companyPaid: true,
+      customerIndex: null,
+    },
+    {
+      date: previousMonthDate(today, 10),
+      amount: 1500,
+      storeName: 'コインパーキング京都',
+      companyPaid: true,
+      customerIndex: null,
+    },
+    {
+      date: previousMonthDate(today, 20),
+      amount: 720,
+      storeName: 'スーパー生協南堀江',
+      companyPaid: false,
+      customerIndex: 1,
+    },
   ];
   let receiptCount = 0;
   for (const [i, spec] of receiptSpecs.entries()) {
-    const day = new Date(now.getTime() - spec.daysAgo * 24 * 60 * 60 * 1000);
-    const fallbackTimestamp = `${toJstDateIso(day).replace(/-/g, '/')} 09:${String(10 + i).padStart(2, '0')}:00`;
+    // 今日の分は作った時刻より前にする(夜中の作り直しで未来の時刻にならないように)
+    const time = spec.date === today ? '00:0' : '09:1';
+    const fallbackTimestamp = `${spec.date.replace(/-/g, '/')} ${time}${i}:00`;
     const customerId =
       spec.customerIndex === null ? null : (customerIdByFigureIndex[spec.customerIndex] ?? null);
     await uploadReceipts(container, staffActor, {
@@ -317,4 +360,37 @@ export async function seedDemoTenant(
     reportProfileCount,
     generatedThrough: toJstDateIso(now),
   };
+}
+
+/** 'HH:mm'(日本時間)。 */
+function jstTimeOf(now: Date): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Tokyo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(now);
+}
+
+/**
+ * 日報の PSI(riskRating)と ES。PSI はほとんど 3〜5 にし、2(注意)を40件に1件ほど混ぜる(1 = エスカレーションは作らない。
+ * PSI 2 以下は管理者への知らせと報告一覧の印になるため、多すぎると不自然)。
+ */
+export function demoRatings(seed: string): { riskRating: number; esRating: number } {
+  const h = hashString(`rating|${seed}`);
+  return { riskRating: h % 40 === 0 ? 2 : 3 + (h % 3), esRating: 2 + (hashString(`es|${seed}`) % 4) };
+}
+
+/** 今日('YYYY-MM-DD')と同じ月の、daysBefore 日前の日付(月の1日より前にはしない)。 */
+export function thisMonthDate(today: string, daysBefore: number): string {
+  const day = Math.max(1, Number(today.slice(8, 10)) - daysBefore);
+  return `${today.slice(0, 7)}-${String(day).padStart(2, '0')}`;
+}
+
+/** 今日('YYYY-MM-DD')の前の月の day 日(1〜28)。 */
+export function previousMonthDate(today: string, day: number): string {
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7));
+  const [y, m] = month === 1 ? [year - 1, 12] : [year, month - 1];
+  return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }

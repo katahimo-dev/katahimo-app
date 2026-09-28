@@ -2,6 +2,7 @@ import { loadDotenv } from '../loadDotenv';
 
 loadDotenv();
 
+import type { StoredFileRow } from '@katahimo/core/ports';
 import { provisionTenant } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import {
@@ -16,7 +17,8 @@ import { loadEnv } from '../env';
 import { cliArgs } from './cliArgs';
 import { type DemoSeedSummary, seedDemoTenant } from './demo/seedDemoTenant';
 
-const DEMO_TENANT_NAME = 'かたひも訪問サポート(デモ)';
+/** デモ用テナントの名前。既存のテナントを消すのは、この名前(demo:reset が作った印)のときだけ。 */
+export const DEMO_TENANT_NAME = 'かたひも訪問サポート(デモ)';
 
 export interface DemoResetResult {
   tenantId: string;
@@ -26,23 +28,23 @@ export interface DemoResetResult {
 }
 
 /**
- * デモテナントの領収書画像を、DB を消す前に消しておく(ベストエフォート。バイナリはDBの外(ローカル
- * ディスク/GCS)にあり、テナントの消去(purge_tenant)では消えないため)。1件ずつ消し、失敗しても止めない。
+ * デモテナントの保存先の実体(領収書の画像等。DB の外のローカルディスク/GCS)を、DB を消す前に消しておく
+ * (テナントの消去(purge_tenant)では消えず、消した後は掃除のジョブも行を辿れないため)。stored_files を ID 順に
+ * 最後まで読み、1件ずつ消す(失敗しても止めない。ベストエフォート)。
  */
-async function deleteReceiptBlobs(container: Container, tenantId: string): Promise<number> {
-  const keys = await container.uow.run(tenantId, async (r) => {
-    const rows = await r.receipts.list(
-      { from: new Date(0), to: new Date('2999-01-01T00:00:00Z'), includeCancelled: true },
-      null,
-      2000,
+export async function deleteStoredBlobs(container: Container, tenantId: string): Promise<number> {
+  const PAGE = 500;
+  const keys: string[] = [];
+  let afterId: string | null = null;
+  for (;;) {
+    const cursor: string | null = afterId;
+    const page: StoredFileRow[] = await container.uow.run(tenantId, (r) =>
+      r.storedFiles.listPage(cursor, PAGE),
     );
-    const found: string[] = [];
-    for (const row of rows) {
-      const image = await r.receipts.findImage(row.id);
-      if (image) found.push(image.storageKey);
-    }
-    return found;
-  });
+    keys.push(...page.map((f) => f.storageKey));
+    if (page.length < PAGE) break;
+    afterId = page[page.length - 1]?.id ?? null;
+  }
   let deleted = 0;
   for (const key of keys) {
     try {
@@ -53,6 +55,24 @@ async function deleteReceiptBlobs(container: Container, tenantId: string): Promi
     }
   }
   return deleted;
+}
+
+/**
+ * CLI の引数の slug を確かめる(誤って別のテナントを消さないための歯止め)。`DEMO_TENANT_SLUG` と一致する slug だけを受け付け、
+ * 開発用シード・e2e のテナント `demo` は常に断る。問題があれば日本語の理由、無ければ null。
+ */
+export function demoResetTargetProblem(
+  slug: string | undefined,
+  demoTenantSlug: string | undefined,
+): string | null {
+  if (!slug) return '使い方: pnpm demo:reset -- <公開デモ用テナントの slug>';
+  if (slug === 'demo') {
+    return 'slug "demo" は開発用シード(pnpm db:seed)・e2e が使うテナントのため、demo:reset では扱えません';
+  }
+  if (!demoTenantSlug || slug !== demoTenantSlug) {
+    return `demo:reset は環境変数 DEMO_TENANT_SLUG(${demoTenantSlug ?? '未設定'})と一致する slug しか受け付けません(誤って別のテナントを消さないため): ${slug}`;
+  }
+  return null;
 }
 
 /**
@@ -84,9 +104,15 @@ export async function resetDemoTenant(
   const existing = await tenantDirectory.findBySlug(slug);
   // 運用担当者の設定(`pnpm tenant:calendars` の共有カレンダー等)はテナントの行にあり、消去で消えるため引き継ぐ
   const keptCalendarSettings = existing ? await calendarSettings.get(existing.id) : null;
+  if (existing && existing.name !== DEMO_TENANT_NAME) {
+    // demo:reset が作ったテナントでなければ消さない(slug の取り違えで本物のテナントを消さないための2つ目の歯止め)
+    throw new Error(
+      `slug ${slug} のテナントは demo:reset が作ったもの(名前「${DEMO_TENANT_NAME}」)ではないため、消しません: ${existing.name}`,
+    );
+  }
   if (existing) {
     console.log(`[demo:reset] 既存のテナントを消去します: ${existing.name} (id=${existing.id})`);
-    const deletedBlobs = await deleteReceiptBlobs(container, existing.id);
+    const deletedBlobs = await deleteStoredBlobs(container, existing.id);
     console.log(`[demo:reset] 領収書画像を削除しました: ${deletedBlobs}件`);
     await terminateAndPurgeTenant(ownerDb, existing.id);
     console.log('[demo:reset] テナントを消去しました');
@@ -130,17 +156,8 @@ function printSummary(summary: DemoSeedSummary) {
 async function main() {
   const env = loadEnv();
   const [slug] = cliArgs();
-  if (!slug) throw new Error('使い方: pnpm demo:reset -- <公開デモ用テナントの slug>');
-  if (slug === 'demo') {
-    throw new Error(
-      'slug "demo" は開発用シード(pnpm db:seed)・e2e が使うテナントのため、demo:reset では扱えません',
-    );
-  }
-  if (!env.DEMO_TENANT_SLUG || slug !== env.DEMO_TENANT_SLUG) {
-    throw new Error(
-      `demo:reset は環境変数 DEMO_TENANT_SLUG(${env.DEMO_TENANT_SLUG ?? '未設定'})と一致する slug しか受け付けません(誤って別のテナントを消さないため): ${slug}`,
-    );
-  }
+  const problem = demoResetTargetProblem(slug, env.DEMO_TENANT_SLUG);
+  if (problem || !slug) throw new Error(problem ?? '');
   const migrationUrl = process.env.MIGRATION_DATABASE_URL;
   if (!migrationUrl) throw new Error('demo:reset には MIGRATION_DATABASE_URL(katahimo_migrator)が必要です');
 

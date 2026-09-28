@@ -25,6 +25,21 @@ import { apiError } from './responses';
 export const DEMO_REFUSED_MESSAGE = 'デモ環境ではこの操作はできません。';
 export const DEMO_AI_QUOTA_MESSAGE = `デモ環境では、AIを使えるのは1回のログインにつき${DEMO_AI_USES_PER_SESSION}回までです。`;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * デモ用テナント全体・送信元IPごとの1日の AI の回数(ログインし直す・スタッフを足すことで1回のログインの上限を
+ * 増やせても、Gemini の費用とほかの訪問者の枠に天井を掛ける)。
+ */
+export const DEMO_AI_TENANT_DAY_RULE: RateLimitRule = {
+  name: 'demo_ai_tenant_day',
+  limit: 300,
+  windowMs: DAY_MS,
+};
+export const DEMO_AI_IP_DAY_RULE: RateLimitRule = { name: 'demo_ai_ip_day', limit: 30, windowMs: DAY_MS };
+export const DEMO_AI_DAILY_QUOTA_MESSAGE =
+  'デモ環境の本日のAIの利用回数の上限に達しました。明日以降に再度お試しください。';
+
 /** デモ用テナントでのAIの回数(セッション単位。セッションの最長の有効期間を窓にする)。 */
 export const DEMO_AI_SESSION_RULE: RateLimitRule = {
   name: 'demo_ai_session',
@@ -89,6 +104,9 @@ export const DEMO_RESTRICTION_RULES: readonly DemoRestrictionRule[] = [
     path: /^\/api\/admin\/customers\/import$/,
     tenant: 'session',
   },
+  // 操作ログには他の訪問者の送信元IP・ブラウザが残るため、共有の管理者アカウントには見せない
+  { name: 'audit_log.view', method: 'GET', path: /^\/api\/admin\/audit-logs$/, tenant: 'session' },
+  { name: 'audit_log.export', method: 'GET', path: /^\/api\/admin\/audit-logs\.csv$/, tenant: 'session' },
   {
     name: 'settings.gemini_api_key.save',
     method: 'POST',
@@ -189,7 +207,9 @@ async function isDemoAccount(uow: UnitOfWorkPort, tenantId: string, staffId: str
   const ids = await uow.run(tenantId, (r) =>
     Promise.all(DEMO_ACCOUNTS.map((a) => r.staff.findByLoginEmail(normalizeEmailForIndex(a.email)))),
   );
-  return ids.some((staff) => staff?.id === staffId);
+  // パスの ID は大文字でも DB では同じスタッフを指すため、小文字にそろえて比べる
+  const target = staffId.toLowerCase();
+  return ids.some((staff) => staff?.id.toLowerCase() === target);
 }
 
 /**

@@ -1,10 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import { normalizeEmailForIndex } from '@katahimo/core/domain';
+import { provisionTenant } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
-import { DrizzleTenantCalendarSettingsStore } from '@katahimo/db/repositories';
+import {
+  DrizzleTenantCalendarSettingsStore,
+  DrizzleTenantDirectory,
+  DrizzleTenantProvisioning,
+} from '@katahimo/db/repositories';
 import { DEMO_ACCOUNTS } from '@katahimo/shared';
 import { sql } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createContainer } from '../container';
 import { loadEnv } from '../env';
 import { toJstDateIso } from './demo/visitPlan';
@@ -78,10 +83,14 @@ describe('resetDemoTenant(実DB)', () => {
     };
     await calendars.set(first.tenantId, settings);
 
+    const deleteSpy = vi.spyOn(container.storage, 'delete');
     const later = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     const second = await resetDemoTenant(ownerDb, container, slug, later);
     lastTenantId = second.tenantId;
     expect(second.replacedExisting).toBe(true);
+    // 1回目の領収書の画像を保存先から消している
+    expect(deleteSpy).toHaveBeenCalledTimes(first.summary.receiptCount);
+    deleteSpy.mockRestore();
     expect(second.tenantId).not.toBe(first.tenantId);
     expect(second.summary.staffCount).toBe(3);
     expect(second.summary.customerCount).toBe(20);
@@ -96,4 +105,14 @@ describe('resetDemoTenant(実DB)', () => {
     );
     expect((gone as unknown as unknown[]).length).toBe(0);
   }, 120_000);
+
+  it('demo:reset が作ったものでないテナント(名前が違う)は消さない', async () => {
+    const otherSlug = `not-demo-it-${randomBytes(4).toString('hex')}`;
+    await provisionTenant(
+      { tenants: new DrizzleTenantDirectory(ownerDb), provisioning: new DrizzleTenantProvisioning(ownerDb) },
+      { slug: otherSlug, name: '本物の法人' },
+    );
+    await expect(resetDemoTenant(ownerDb, container, otherSlug)).rejects.toThrow('消しません');
+    expect(await new DrizzleTenantDirectory(ownerDb).findBySlug(otherSlug)).not.toBeNull();
+  });
 });
