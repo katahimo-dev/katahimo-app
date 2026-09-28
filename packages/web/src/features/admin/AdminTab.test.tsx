@@ -1,9 +1,10 @@
 import { AI_PROMPT_DEFINITIONS, type AiPromptView, type AuditLogListResponse } from '@katahimo/shared';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { adminStaffApi, aiPromptsApi, auditLogsApi } from '../../api/admin';
+import { adminStaffApi, aiPromptsApi, auditLogsApi, reportAiApi } from '../../api/admin';
 import { ApiRequestError } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
+import { settingsApi } from '../../api/settings';
 import { saveBlobAsFile } from '../../lib/saveFile';
 import { createTestQueryClient, createWrapper, deferred, TEST_USER } from '../../test/providers';
 import { showErrorToast, showToast } from '../../ui/toast';
@@ -17,9 +18,21 @@ vi.mock('../../api/admin', () => ({
     update: vi.fn(),
     remove: vi.fn(),
     sendPasswordGuide: vi.fn(),
+    downloadXlsx: vi.fn(),
+    importXlsx: vi.fn(),
   },
   aiPromptsApi: { list: vi.fn(), save: vi.fn() },
   auditLogsApi: { list: vi.fn(), downloadCsv: vi.fn() },
+  reportAiApi: { masters: vi.fn() },
+}));
+vi.mock('../../api/settings', () => ({
+  settingsApi: {
+    get: vi.fn(),
+    listAvailableModels: vi.fn(),
+    saveGeminiApiKey: vi.fn(),
+    saveGeminiModels: vi.fn(),
+    saveGchatWebhooks: vi.fn(),
+  },
 }));
 vi.mock('../../lib/saveFile', () => ({ saveBlobAsFile: vi.fn() }));
 vi.mock('../../ui/toast', async (importOriginal) => ({
@@ -31,6 +44,17 @@ vi.mock('../../ui/toast', async (importOriginal) => ({
 const staffApi = vi.mocked(adminStaffApi);
 const promptsApi = vi.mocked(aiPromptsApi);
 const logsApi = vi.mocked(auditLogsApi);
+const mastersApi = vi.mocked(reportAiApi);
+const adminSettingsApi = vi.mocked(settingsApi);
+
+const EMPTY_MASTERS = {
+  keywords: [],
+  ageBands: [],
+  educationLevels: [],
+  psiLevels: [],
+  phrases: [],
+  stanceRules: [],
+};
 
 const self = adminStaff({ id: TEST_USER.staffId, name: TEST_USER.name, role: 'admin', kana: null });
 const hanako = adminStaff();
@@ -84,6 +108,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   logsApi.downloadCsv.mockResolvedValue({ blob: new Blob(['x']), filename: 'audit-logs.csv' });
   staffApi.list.mockResolvedValue({ staff: [self, hanako, newcomer, retired] });
+  mastersApi.masters.mockResolvedValue(EMPTY_MASTERS);
+  promptsApi.list.mockResolvedValue({ prompts: prompts() });
 });
 
 describe('管理タブ: スタッフ', () => {
@@ -197,13 +223,13 @@ describe('管理タブ: スタッフ', () => {
   });
 });
 
-describe('管理タブ: AIプロンプト', () => {
+describe('管理タブ: AI(プロンプト)', () => {
   it('変えたものだけを版と一緒に保存し、既定に戻すと既定の本文になる。保存前に表示を移るときは確かめる', async () => {
     const list = prompts();
     promptsApi.list.mockResolvedValue({ prompts: list });
     promptsApi.save.mockResolvedValue({ prompts: list });
     renderAdmin();
-    fireEvent.click(screen.getByRole('tab', { name: '🤖 AIプロンプト' }));
+    fireEvent.click(screen.getByRole('tab', { name: '🤖 AI' }));
     const first = (await screen.findByLabelText(list[0]?.label ?? '')) as HTMLTextAreaElement;
     expect(first.value).toBe('独自の指示');
     expect(screen.getByText('変更済み')).toBeTruthy();
@@ -216,7 +242,7 @@ describe('管理タブ: AIプロンプト', () => {
     fireEvent.click(screen.getByRole('tab', { name: '📄 操作ログ' }));
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'キャンセル' }));
-    expect(screen.getByRole('tab', { name: '🤖 AIプロンプト' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: '🤖 AI' }).getAttribute('aria-selected')).toBe('true');
 
     fireEvent.click(screen.getByRole('button', { name: '保存する（1件）' }));
     await waitFor(() =>
@@ -237,7 +263,7 @@ describe('管理タブ: AIプロンプト', () => {
       }),
     );
     renderAdmin();
-    fireEvent.click(screen.getByRole('tab', { name: '🤖 AIプロンプト' }));
+    fireEvent.click(screen.getByRole('tab', { name: '🤖 AI' }));
     const first = (await screen.findByLabelText(list[0]?.label ?? '')) as HTMLTextAreaElement;
     fireEvent.change(first, { target: { value: '書きかけ' } });
     fireEvent.click(screen.getByRole('button', { name: '保存する（1件）' }));
@@ -333,7 +359,7 @@ describe('管理タブ: 指摘への対応', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '保存する' }));
     await waitFor(() => expect(staffApi.list).toHaveBeenCalledTimes(2));
     expect(within(dialog).getByRole('alert').textContent).toContain('先に更新しました');
-    fireEvent.click(screen.getByRole('button', { name: '🔄 読み込み直す' }));
+    fireEvent.click(screen.getByRole('button', { name: '読み込み直す' }));
     await waitFor(() => expect(staffApi.list).toHaveBeenCalledTimes(3));
   });
 
@@ -399,7 +425,7 @@ describe('管理タブ: 指摘への対応', () => {
       new ApiRequestError(409, { code: 'conflict', message: '先に保存されました' }),
     );
     renderAdmin();
-    fireEvent.click(screen.getByRole('tab', { name: '🤖 AIプロンプト' }));
+    fireEvent.click(screen.getByRole('tab', { name: '🤖 AI' }));
     fireEvent.change(await screen.findByLabelText(list[0]?.label ?? ''), { target: { value: 'x' } });
     fireEvent.click(screen.getByRole('button', { name: '保存する（1件）' }));
     expect(await screen.findByText('先に保存されました')).toBeTruthy();
@@ -418,9 +444,11 @@ describe('管理タブ: 指摘への対応', () => {
     expect(staffTab.getAttribute('aria-controls')).toBe('adminPanel-staff');
     expect(screen.getByRole('tab', { name: '📄 操作ログ' }).getAttribute('aria-controls')).toBeNull();
     fireEvent.keyDown(staffTab, { key: 'End' });
-    expect(screen.getByRole('tab', { name: '📄 操作ログ' }).getAttribute('aria-selected')).toBe('true');
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: '📄 操作ログ' }).getAttribute('aria-selected')).toBe('true'),
+    );
     fireEvent.keyDown(screen.getByRole('tab', { name: '📄 操作ログ' }), { key: 'Home' });
-    expect(staffTab.getAttribute('aria-selected')).toBe('true');
+    await waitFor(() => expect(staffTab.getAttribute('aria-selected')).toBe('true'));
   });
 
   it('操作ログ: 同じ条件で「絞り込む」を押すと読み直す。条件が誤っている間は CSV を保存できない', async () => {
@@ -444,5 +472,194 @@ describe('管理タブ: 指摘への対応', () => {
     expect(await screen.findByText('期間は93日以内で指定してください')).toBeTruthy();
     expect((screen.getByRole('button', { name: '⬇ CSVで保存' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/CSVは絞り込んだ条件の全件です/)).toBeTruthy();
+  });
+});
+
+describe('管理タブ: AI(しくみ・APIキー)と通知先', () => {
+  const loadedSettings = {
+    settings: {
+      geminiApiKey: '••••abcd',
+      geminiApiKeySet: true,
+      geminiReportModel: 'gemini-2.5-flash',
+      geminiOcrModel: 'gemini-2.5-flash',
+      gchatReportWebhookUrl: 'https://chat.example/report',
+      gchatReportWebhookUrlSet: true,
+      gchatReceiptWebhookUrl: 'https://chat.example/receipt',
+      gchatReceiptWebhookUrlSet: true,
+    },
+  };
+
+  it('しくみの欄にプロンプトと表を両方使うことと、表ごとの件数を出す', async () => {
+    mastersApi.masters.mockResolvedValue({ ...EMPTY_MASTERS, keywords: [{} as never, {} as never] });
+    // 既定のプロンプト(差し込みがすべてある)
+    promptsApi.list.mockResolvedValue({
+      prompts: prompts().map((p) => ({ ...p, body: p.defaultBody, customized: false })),
+    });
+    renderAdmin();
+    fireEvent.click(screen.getByRole('tab', { name: '🤖 AI' }));
+    expect(await screen.findByText(/どちらかを選ぶのではなく、いつも両方を使います/)).toBeTruthy();
+    const chips = await screen.findByRole('list', { name: '日報の言葉の表の使われ方' });
+    expect(within(chips).getByText('キーワード 2件・差し込み中')).toBeTruthy();
+    expect(within(chips).getByText('年齢帯 0件・未登録')).toBeTruthy();
+  });
+
+  it('APIキー・モデル: 変えたものだけを保存し、保存していないまま移るときは確かめる', async () => {
+    adminSettingsApi.get.mockResolvedValue(loadedSettings);
+    adminSettingsApi.saveGeminiApiKey.mockResolvedValue({ ok: true, changed: true, message: '' });
+    renderAdmin();
+    fireEvent.click(screen.getByRole('tab', { name: '🤖 AI' }));
+    fireEvent.click(await screen.findByRole('tab', { name: 'APIキー・モデル' }));
+    const key = (await screen.findByLabelText('Gemini APIキー')) as HTMLInputElement;
+    await waitFor(() => expect(key.disabled).toBe(false));
+    fireEvent.change(key, { target: { value: ' new-key ' } });
+    expect(screen.getByText('保存していない変更があります')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: '🔔 通知先' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'キャンセル' }));
+    expect(screen.getByRole('tab', { name: '🤖 AI' }).getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: '保存する' }));
+    await waitFor(() => expect(adminSettingsApi.saveGeminiApiKey).toHaveBeenCalledWith('new-key'));
+    expect(adminSettingsApi.saveGeminiModels).not.toHaveBeenCalled();
+    expect(adminSettingsApi.saveGchatWebhooks).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith('APIキー・モデルを保存しました');
+    await waitFor(() => expect(screen.queryByText('保存していない変更があります')).toBeNull());
+  });
+
+  it('通知先: Webhook URL を空にしては保存できない', async () => {
+    adminSettingsApi.get.mockResolvedValue(loadedSettings);
+    renderAdmin();
+    fireEvent.click(screen.getByRole('tab', { name: '🔔 通知先' }));
+    const report = (await screen.findByLabelText('日報・事故報告')) as HTMLInputElement;
+    await waitFor(() => expect(report.disabled).toBe(false));
+    fireEvent.change(report, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存する' }));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('Webhook URLが空です', true));
+    expect(adminSettingsApi.saveGchatWebhooks).not.toHaveBeenCalled();
+  });
+});
+
+describe('管理タブ: スタッフの Excel', () => {
+  it('取込: 先に確かめた変更を出し、「反映する」で取り込んで一覧を読み直す', async () => {
+    const preview = {
+      dryRun: true,
+      applied: false,
+      counts: { rows: 2, created: 1, updated: 1, unchanged: 0 },
+      changes: [
+        { row: 2, kind: 'update' as const, name: hanako.name, email: hanako.email, fields: ['電話'] },
+        { row: 3, kind: 'create' as const, name: '新人 四郎', email: 'shiro@example.com', fields: [] },
+      ],
+      errors: [],
+      warnings: [{ row: 3, message: '自宅住所がありません' }],
+      planDigest: 'digest-1',
+    };
+    staffApi.importXlsx.mockResolvedValueOnce(preview);
+    staffApi.importXlsx.mockResolvedValueOnce({ ...preview, dryRun: false, applied: true });
+    renderAdmin();
+    await screen.findByRole('list', { name: 'スタッフの一覧' });
+    fireEvent.click(screen.getByRole('button', { name: '⬆ Excel取込' }));
+    const file = new File(['xlsx'], 'staff.xlsx');
+    fireEvent.change(screen.getByLabelText('スタッフのExcelファイル(.xlsx)'), { target: { files: [file] } });
+    const table = await screen.findByRole('table', { name: '取り込む変更' });
+    expect(within(table).getByText('新人 四郎')).toBeTruthy();
+    expect(staffApi.importXlsx).toHaveBeenLastCalledWith(
+      expect.objectContaining({ fileName: 'staff.xlsx', dryRun: true }),
+    );
+    expect(screen.getByText('3行目: 自宅住所がありません')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '反映する' }));
+    await waitFor(() =>
+      expect(staffApi.importXlsx).toHaveBeenLastCalledWith(
+        expect.objectContaining({ dryRun: false, planDigest: 'digest-1' }),
+      ),
+    );
+    expect(showToast).toHaveBeenCalledWith('取り込みました(追加 1人・変更 1人)');
+    await waitFor(() => expect(staffApi.list).toHaveBeenCalledTimes(2));
+  });
+
+  it('取込: 誤りがあれば反映できない', async () => {
+    staffApi.importXlsx.mockResolvedValue({
+      dryRun: true,
+      applied: false,
+      counts: { rows: 1, created: 1, updated: 0, unchanged: 0 },
+      changes: [],
+      errors: [{ row: 2, message: 'メールアドレスの形式が正しくありません' }],
+      warnings: [],
+      planDigest: 'digest-2',
+    });
+    renderAdmin();
+    await screen.findByRole('list', { name: 'スタッフの一覧' });
+    fireEvent.click(screen.getByRole('button', { name: '⬆ Excel取込' }));
+    fireEvent.change(screen.getByLabelText('スタッフのExcelファイル(.xlsx)'), {
+      target: { files: [new File(['x'], 'a.xlsx')] },
+    });
+    expect(await screen.findByText('2行目: メールアドレスの形式が正しくありません')).toBeTruthy();
+    expect((screen.getByRole('button', { name: '反映する' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('取込: 反映が断られた(確かめた後に変わった)ら理由を出し、確かめ直してもらう', async () => {
+    staffApi.importXlsx.mockResolvedValueOnce({
+      dryRun: true,
+      applied: false,
+      counts: { rows: 1, created: 0, updated: 1, unchanged: 0 },
+      changes: [{ row: 2, kind: 'update', name: hanako.name, email: hanako.email, fields: ['電話'] }],
+      errors: [],
+      warnings: [],
+      planDigest: 'digest-old',
+    });
+    staffApi.importXlsx.mockRejectedValueOnce(
+      new ApiRequestError(409, { code: 'conflict', message: '確かめた後に他の人がスタッフを変えました' }),
+    );
+    renderAdmin();
+    await screen.findByRole('list', { name: 'スタッフの一覧' });
+    fireEvent.click(screen.getByRole('button', { name: '⬆ Excel取込' }));
+    fireEvent.change(screen.getByLabelText('スタッフのExcelファイル(.xlsx)'), {
+      target: { files: [new File(['x'], 'a.xlsx')] },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: '反映する' }));
+    expect(await screen.findByText('確かめた後に他の人がスタッフを変えました')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '反映する' })).toBeNull();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('取込: 選び直したら、前のファイルの遅れて届いた結果は出さない', async () => {
+    const first = deferred<Awaited<ReturnType<typeof adminStaffApi.importXlsx>>>();
+    const base = {
+      dryRun: true,
+      applied: false,
+      counts: { rows: 1, created: 1, updated: 0, unchanged: 0 },
+      errors: [],
+      warnings: [],
+    };
+    staffApi.importXlsx.mockReturnValueOnce(first.promise);
+    staffApi.importXlsx.mockResolvedValueOnce({
+      ...base,
+      changes: [{ row: 2, kind: 'create', name: '新しい方', email: 'b@example.com', fields: [] }],
+      planDigest: 'digest-b',
+    });
+    renderAdmin();
+    await screen.findByRole('list', { name: 'スタッフの一覧' });
+    fireEvent.click(screen.getByRole('button', { name: '⬆ Excel取込' }));
+    const input = screen.getByLabelText('スタッフのExcelファイル(.xlsx)');
+    fireEvent.change(input, { target: { files: [new File(['a'], 'a.xlsx')] } });
+    await waitFor(() => expect(staffApi.importXlsx).toHaveBeenCalledTimes(1));
+    fireEvent.change(input, { target: { files: [new File(['b'], 'b.xlsx')] } });
+    expect(await screen.findByText('新しい方')).toBeTruthy();
+    first.resolve({
+      ...base,
+      changes: [{ row: 2, kind: 'create', name: '古い方', email: 'a@example.com', fields: [] }],
+      planDigest: 'digest-a',
+    });
+    await waitFor(() => expect(screen.queryByText('古い方')).toBeNull());
+    expect(screen.getByText('新しい方')).toBeTruthy();
+  });
+
+  it('書き出し: Excel をファイルとして保存する', async () => {
+    staffApi.downloadXlsx.mockResolvedValue({ blob: new Blob(['x']), filename: 'スタッフ一覧.xlsx' });
+    renderAdmin();
+    await screen.findByRole('list', { name: 'スタッフの一覧' });
+    fireEvent.click(screen.getByRole('button', { name: '⬇ Excel' }));
+    await waitFor(() => expect(saveBlobAsFile).toHaveBeenCalledWith(expect.any(Blob), 'スタッフ一覧.xlsx'));
   });
 });

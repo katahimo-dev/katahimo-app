@@ -347,14 +347,30 @@ async function runJourney() {
       await childSelect.waitFor({ state: 'visible', timeout: 10_000 });
       const childId = await childSelect.inputValue();
       assert(childId !== '', 'お子様が1人なのに日報のお子様が選ばれていない');
-      await page.locator('#dailyAiSection').getByRole('radio', { name: '★4' }).waitFor({ timeout: 10_000 });
+      const levelGroup = page.locator('#dailyAiSection');
+      await levelGroup.getByRole('radio', { name: '★4' }).waitFor({ timeout: 10_000 });
+      const profilePath = new URL(`/api/customers/${await customerIdOfReport(page)}/report-profile`, WEB_URL)
+        .pathname;
+      // 前に流したときの★が残っていれば、先に ☆0(未設定)に戻す(同じ★を押しても保存しないため)
+      const zero = levelGroup.getByRole('radio', { name: '☆0 未設定' });
+      if ((await zero.getAttribute('aria-checked')) !== 'true') {
+        const cleared = await clickForResponse<{ profile: { educationLevel: number | null } }>(
+          page,
+          'PUT',
+          profilePath,
+          () => zero.click(),
+        );
+        assert(cleared.profile.educationLevel === null, `☆0 で未設定に戻らない: ${JSON.stringify(cleared)}`);
+        await levelGroup.getByText(/未設定（★2 標準として書きます）/).waitFor({ timeout: 10_000 });
+      }
       const profile = await clickForResponse<{ profile: { educationLevel: number } }>(
         page,
         'PUT',
-        new URL(`/api/customers/${await customerIdOfReport(page)}/report-profile`, WEB_URL).pathname,
-        () => page.locator('#dailyAiSection').getByRole('radio', { name: '★4' }).click(),
+        profilePath,
+        () => levelGroup.getByRole('radio', { name: '★4' }).click(),
       );
       assert(profile.profile.educationLevel === 4, `ご家庭の★が保存されない: ${JSON.stringify(profile)}`);
+      await levelGroup.getByText('★4 関心高い（先取り検討層）').waitFor({ timeout: 10_000 });
       await page.locator('#star-risk').getByRole('radio', { name: '3' }).click();
       const generateRequest = page.waitForRequest(
         (r) => new URL(r.url()).pathname === '/api/reports/daily/generate' && r.method() === 'POST',
@@ -693,10 +709,16 @@ async function runJourney() {
       return `app_text_size=${size}`;
     });
 
-    await step(page, 'settings-admin-details', async () => {
-      await page.getByText('詳細設定（管理者のみ）').filter(visible).click();
-      await page.locator('#settingGeminiApiKey').waitFor({ state: 'visible', timeout: 10_000 });
-      await wait(page, 800);
+    await step(page, 'settings-admin-note', async () => {
+      // APIキー・モデル・通知先は管理タブに移した(設定ダイアログには案内だけ)
+      await page
+        .getByText(/「🛠 管理」タブの「🤖 AI」/)
+        .filter(visible)
+        .waitFor({ timeout: 10_000 });
+      assert(
+        (await page.locator('#settingGeminiApiKey').count()) === 0,
+        '設定ダイアログに APIキーの欄が残っている',
+      );
       await page.getByText('ふつう', { exact: true }).filter(visible).click();
       return undefined;
     });
@@ -725,9 +747,10 @@ async function runJourney() {
     await step(page, 'admin-tab-visible', async () => {
       await switchTab(page, /管理$/);
       await page.getByRole('tab', { name: '👤 スタッフ' }).waitFor({ timeout: 10_000 });
+      assert(await page.getByRole('tab', { name: '🤖 AI' }).isVisible(), '管理者なのに「AI」タブが無い');
       assert(
-        await page.getByRole('tab', { name: '🤖 AIプロンプト' }).isVisible(),
-        '管理者なのに「AIプロンプト」タブが無い',
+        await page.getByRole('tab', { name: '🔔 通知先' }).isVisible(),
+        '管理者なのに「通知先」タブが無い',
       );
       assert(
         await page.getByRole('tab', { name: '📄 操作ログ' }).isVisible(),
@@ -852,8 +875,46 @@ async function runJourney() {
       return body.message;
     });
 
+    await step(page, 'admin-staff-xlsx', async () => {
+      // 書き出した xlsx をそのまま取り込むと、変わるところは無い
+      await page.getByRole('tab', { name: '👤 スタッフ' }).click();
+      // 前の手順で探す欄に入れた文字を消す
+      await page.getByRole('searchbox', { name: /スタッフを探す/ }).fill('');
+      await page.getByRole('list', { name: 'スタッフの一覧' }).waitFor({ timeout: 10_000 });
+      const download = page.waitForEvent('download');
+      await button(page, '⬇ Excel').click();
+      const saved = await download;
+      assert(/\.xlsx$/.test(saved.suggestedFilename()), `保存名が xlsx でない: ${saved.suggestedFilename()}`);
+      const exported = await page.request.get(`${WEB_URL}/api/admin/staff/export.xlsx`);
+      assert(exported.ok(), `スタッフの書き出しが ${exported.status()}`);
+      const staffXlsx = Buffer.from(await exported.body());
+      await button(page, '⬆ Excel取込').click();
+      const preview = await clickForResponse<{
+        dryRun: boolean;
+        errors: unknown[];
+        counts: { rows: number; created: number; updated: number };
+      }>(page, 'POST', '/api/admin/staff/import', () =>
+        page.getByLabel('スタッフのExcelファイル(.xlsx)').setInputFiles({
+          name: 'スタッフ一覧.xlsx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          buffer: staffXlsx,
+        }),
+      );
+      assert(
+        preview.dryRun &&
+          preview.errors.length === 0 &&
+          preview.counts.created === 0 &&
+          preview.counts.updated === 0,
+        `書き出したままの取込で変更が出た: ${JSON.stringify(preview)}`,
+      );
+      await page.getByText('変わるところはありません').waitFor({ timeout: 10_000 });
+      await button(page, 'やめる').click();
+      return `${preview.counts.rows}行`;
+    });
+
     await step(page, 'admin-prompts-edit', async () => {
-      await page.getByRole('tab', { name: '🤖 AIプロンプト' }).click();
+      await page.getByRole('tab', { name: '🤖 AI' }).click();
+      await page.getByText(/どちらかを選ぶのではなく/).waitFor({ timeout: 10_000 });
       await wait(page, 600);
       const item = page
         .locator('li')
@@ -903,8 +964,15 @@ async function runJourney() {
       return undefined;
     });
 
+    await step(page, 'admin-ai-connection', async () => {
+      await page.getByRole('tab', { name: 'APIキー・モデル' }).click();
+      await page.locator('#settingGeminiApiKey').waitFor({ state: 'visible', timeout: 10_000 });
+      await page.locator('#settingGeminiReportModel').waitFor({ timeout: 10_000 });
+      return undefined;
+    });
+
     await step(page, 'admin-report-ai-list', async () => {
-      await page.getByRole('tab', { name: '🧩 日報AIの調整' }).click();
+      await page.getByRole('tab', { name: '② 日報の言葉の表' }).click();
       await page.getByRole('heading', { name: /^キーワード\(\d+\)$/ }).waitFor({ timeout: 10_000 });
       // 表示している間に(画面の外から)行を足す・直す。何度流しても同じ ID の1行で、カテゴリだけ毎回変える。
       // 開き直した時に読み直していなければ、このカテゴリは出ない(新しい DB でも、行が残っている DB でも確かめられる)
@@ -935,7 +1003,8 @@ async function runJourney() {
       // 表示を切り替えて開き直すと読み直す
       await page.getByRole('tab', { name: '📋 報告一覧' }).click();
       await wait(page, 400);
-      await page.getByRole('tab', { name: '🧩 日報AIの調整' }).click();
+      await page.getByRole('tab', { name: '🤖 AI' }).click();
+      await page.getByRole('tab', { name: '② 日報の言葉の表' }).click();
       const list = page.getByRole('list', { name: 'キーワード' });
       await list
         .getByRole('button', { name: /E2E1 e2e の語/ })
@@ -968,6 +1037,13 @@ async function runJourney() {
       await button(page, '反映する').click();
       await expectToast(page, '取り込みました');
       return `キーワード ${preview.counts.keywords.rows}行`;
+    });
+
+    await step(page, 'admin-notify-targets', async () => {
+      await page.getByRole('tab', { name: '🔔 通知先' }).click();
+      await page.locator('#settingGChatReportWebhook').waitFor({ state: 'visible', timeout: 10_000 });
+      await page.locator('#settingGChatReceiptWebhook').waitFor({ timeout: 10_000 });
+      return undefined;
     });
 
     await step(page, 'admin-logs-list', async () => {
@@ -1094,8 +1170,11 @@ async function runJourney() {
         await button(staffPage, '⚙️ 設定').click();
         await wait(staffPage);
         assert(
-          (await staffPage.getByText('詳細設定（管理者のみ）').filter(visible).count()) === 0,
-          '一般スタッフに「詳細設定（管理者のみ）」が出ている',
+          (await staffPage
+            .getByText(/「🛠 管理」タブの「🤖 AI」/)
+            .filter(visible)
+            .count()) === 0,
+          '一般スタッフに管理者向けの設定の案内が出ている',
         );
         await button(staffPage, 'キャンセル').click();
         return undefined;

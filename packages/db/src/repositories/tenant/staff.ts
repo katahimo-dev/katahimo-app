@@ -10,7 +10,7 @@ import type {
   StaffRepository,
   StaffRouteProfile,
 } from '@katahimo/core/ports';
-import { and, asc, eq, gt, isNull, or, type SQL, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, or, type SQL, sql } from 'drizzle-orm';
 import { FOREIGN_KEY_VIOLATION, pgErrorOf } from '../../errors';
 import {
   aiPromptRevisions,
@@ -153,6 +153,15 @@ export class DrizzleStaffRepository extends TenantBound implements StaffReposito
       await this.replaceEmails(id, email ?? current.email, alt === undefined ? current.altEmail : alt);
     }
     return this.findById(id);
+  }
+
+  async releaseLoginEmails(staffIds: readonly string[]): Promise<void> {
+    if (staffIds.length === 0) return;
+    await this.tx
+      .delete(staffLoginEmails)
+      .where(
+        and(eq(staffLoginEmails.tenantId, this.tenantId), inArray(staffLoginEmails.staffId, [...staffIds])),
+      );
   }
 
   /** 外部キーを持たない変更の履歴に、このスタッフが変更者として残っているか。 */

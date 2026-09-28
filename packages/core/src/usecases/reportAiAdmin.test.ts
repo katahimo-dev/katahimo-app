@@ -312,4 +312,39 @@ describe('家庭ごとの教育思考★', () => {
       getCustomerReportProfile(ctx.deps, staff, '00000000-0000-7000-8000-00000000ffff'),
     ).rejects.toMatchObject({ code: 'not_found' });
   });
+
+  it('null で未設定に戻す(行は残して版は続く。古い版は 409)', async () => {
+    const ctx = createTestContext();
+    const staff = (await ctx.addStaff('山田 太郎', 'taro@example.com')).actor;
+    const customerId = await ctx.addCustomer('佐藤 花子');
+    await saveCustomerReportProfile(ctx.deps, staff, customerId, { educationLevel: 5 });
+    const cleared = await saveCustomerReportProfile(ctx.deps, staff, customerId, {
+      educationLevel: null,
+      rowVersion: 1,
+    });
+    expect(cleared).toMatchObject({ educationLevel: null, rowVersion: 2, updatedByName: '山田 太郎' });
+    expect(await getCustomerReportProfile(ctx.deps, staff, customerId)).toMatchObject({
+      educationLevel: null,
+      rowVersion: 2,
+    });
+    await expect(
+      saveCustomerReportProfile(ctx.deps, staff, customerId, { educationLevel: 3, rowVersion: 1 }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    const again = await saveCustomerReportProfile(ctx.deps, staff, customerId, {
+      educationLevel: 3,
+      rowVersion: 2,
+    });
+    expect(again).toMatchObject({ educationLevel: 3, rowVersion: 3 });
+    expect(ctx.appLog.byAction('customer.report_profile.updated').map((l) => l.details)).toEqual([
+      { customerId, from: null, to: 5 },
+      { customerId, from: 5, to: null },
+      { customerId, from: null, to: 3 },
+    ]);
+    // 行の無い家庭を未設定にしても、null の行を作るだけ(次からは版つきで保存する)
+    const fresh = await ctx.addCustomer('田中 一郎');
+    expect(await saveCustomerReportProfile(ctx.deps, staff, fresh, { educationLevel: null })).toMatchObject({
+      educationLevel: null,
+      rowVersion: 1,
+    });
+  });
 });

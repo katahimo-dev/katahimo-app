@@ -1,11 +1,13 @@
 import { REPORT_LEVELS, type ReportAiMastersResponse } from '@katahimo/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { type KeyboardEvent, useRef, useState } from 'react';
+import { useState } from 'react';
 import { reportAiApi } from '../../../api/admin';
 import { userMessageOf } from '../../../api/client';
 import { queryKeys } from '../../../api/queryKeys';
 import { EmptyState, ErrorState, Loading } from '../../../ui/StatusViews';
 import { adminQueryKeys } from '../adminQueryKeys';
+import { PRIMARY_BUTTON } from '../components/FormField';
+import { SectionTabPanel, SectionTabs } from '../components/SectionTabs';
 import { ImportExportTab } from './ImportExportTab';
 import { type EditorTarget, RowEditorModal } from './RowEditorModal';
 import { type EditorTable, type RowTable, summaryOf } from './reportAiModel';
@@ -39,7 +41,6 @@ export function ReportAiPanel() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>('keywords');
   const [editing, setEditing] = useState<EditorTarget | null>(null);
-  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
   const query = useQuery({
     queryKey: adminQueryKeys.reportAi,
     queryFn: ({ signal }) => reportAiApi.masters(signal),
@@ -53,52 +54,24 @@ export function ReportAiPanel() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.uiConfig });
   };
 
-  const onKeyDown = (event: KeyboardEvent, index: number) => {
-    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
-    if (step === 0) return;
-    event.preventDefault();
-    const next = TABS[(index + step + TABS.length) % TABS.length];
-    if (!next) return;
-    setTab(next.key);
-    tabRefs.current[next.key]?.focus();
-  };
-
   return (
-    <section aria-labelledby="adminReportAiHeading" className="space-y-4">
+    <section aria-labelledby="adminReportAiHeading" className="space-y-3">
       <h2 id="adminReportAiHeading" className="sr-only">
-        日報AIの調整
+        日報の言葉の表(日報AIの調整)
       </h2>
-      <p className="text-sm text-gray-600">
+      <p className="text-xs text-gray-600">
         保護者に送る日報で、AI がお子様の年齢・ご家庭の教育思考★・PSI に合わせて使う言葉の表です。PSI
         は教育思考★より優先します(PSI 2 以下は教育の言葉を使わず、温かみ表現で寄り添います)。
       </p>
-      <div role="tablist" aria-label="日報AIの調整の表" className="flex flex-wrap gap-1">
-        {TABS.map((t, index) => {
-          const selected = t.key === tab;
-          return (
-            <button
-              key={t.key}
-              ref={(el) => {
-                tabRefs.current[t.key] = el;
-              }}
-              type="button"
-              role="tab"
-              id={`reportAiTab-${t.key}`}
-              aria-selected={selected}
-              aria-controls={selected ? `reportAiPanel-${t.key}` : undefined}
-              tabIndex={selected ? 0 : -1}
-              onClick={() => setTab(t.key)}
-              onKeyDown={(e) => onKeyDown(e, index)}
-              className={`min-h-11 px-3 py-2 rounded-xl text-sm font-bold ${
-                selected ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
-              }`}
-            >
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
-      <div role="tabpanel" id={`reportAiPanel-${tab}`} aria-labelledby={`reportAiTab-${tab}`}>
+      <SectionTabs
+        tabs={TABS}
+        selected={tab}
+        onSelect={setTab}
+        label="日報AIの調整の表"
+        idPrefix="reportAi"
+        variant="pill"
+      />
+      <SectionTabPanel idPrefix="reportAi" tabKey={tab}>
         {tab === 'io' ? (
           <ImportExportTab onImported={reload} />
         ) : query.isPending ? (
@@ -108,7 +81,7 @@ export function ReportAiPanel() {
         ) : (
           <MasterTab tab={tab} masters={query.data} onEdit={setEditing} />
         )}
-      </div>
+      </SectionTabPanel>
       <RowEditorModal target={editing} onClose={() => setEditing(null)} onSaved={reload} />
     </section>
   );
@@ -128,7 +101,10 @@ function MasterTab({
     // ★は1〜5、PSI は 5〜1 の順(表と同じ)
     const levels = tab === 'psiLevels' ? [...REPORT_LEVELS].reverse() : [...REPORT_LEVELS];
     return (
-      <ul className="space-y-2" aria-label={TABLE_NAMES[tab]}>
+      <ul
+        className="divide-y divide-gray-100 bg-white rounded-lg border border-gray-200"
+        aria-label={TABLE_NAMES[tab]}
+      >
         {levels.map((level) => {
           const row = rows.find((r) => r.level === level) ?? null;
           const summary = row ? summaryOf(tab, row) : null;
@@ -153,17 +129,17 @@ function MasterTab({
   }
   const tables: RowTable[] = tab === 'phrases' ? ['phrases', 'stanceRules'] : [tab];
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {tables.map((table) => {
         const rows = masters[table] as unknown as Row[];
         return (
           <div key={table} className="space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="font-bold text-gray-800 text-base">{`${TABLE_NAMES[table]}(${rows.length})`}</h3>
+              <h3 className="font-bold text-gray-800 text-sm">{`${TABLE_NAMES[table]}(${rows.length})`}</h3>
               <button
                 type="button"
                 onClick={() => onEdit({ table, row: null, title: `${TABLE_NAMES[table]}を追加` })}
-                className="min-h-11 px-3 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl"
+                className={PRIMARY_BUTTON}
               >
                 ＋ 追加
               </button>
@@ -175,7 +151,10 @@ function MasterTab({
                 hint="「取込・書き出し」から日報キーワード表現マスターを取り込めます。"
               />
             ) : (
-              <ul className="space-y-2" aria-label={TABLE_NAMES[table]}>
+              <ul
+                className="divide-y divide-gray-100 bg-white rounded-lg border border-gray-200"
+                aria-label={TABLE_NAMES[table]}
+              >
                 {rows.map((row) => {
                   const summary = summaryOf(table, row);
                   return (
@@ -202,10 +181,15 @@ function MasterItem({ title, detail, onClick }: { title: string; detail: string;
       <button
         type="button"
         onClick={onClick}
-        className="w-full text-left bg-white p-3 rounded-2xl border border-gray-200 space-y-1 active:bg-gray-50"
+        className="w-full text-left px-3 py-2 flex items-start gap-2 hover:bg-gray-50 active:bg-gray-100"
       >
-        <span className="block font-bold text-gray-800 text-base break-all">{title}</span>
-        <span className="block text-sm text-gray-600 break-all">{detail}</span>
+        <span className="flex-1 min-w-0">
+          <span className="block font-bold text-gray-800 text-sm break-all">{title}</span>
+          <span className="block text-xs text-gray-600 break-all line-clamp-2">{detail}</span>
+        </span>
+        <span aria-hidden="true" className="text-gray-400 text-sm">
+          ✏️
+        </span>
       </button>
     </li>
   );

@@ -12,16 +12,7 @@ import { addDaysYmd, todayJst } from '../../../lib/date';
 import { useFileDownload } from '../../../lib/useFileDownload';
 import { showToast } from '../../../ui/toast';
 import { INPUT_CLASS } from '../components/FormField';
-
-/** ファイルを base64(data URL の頭を除いたもの)にする。 */
-function readAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
+import { readAsBase64 } from '../components/readAsBase64';
 
 /**
  * 「取込・書き出し」: 日報キーワード表現マスター(xlsx)を選ぶと、まず確かめて(件数・誤り・知らせ)を出し、
@@ -66,12 +57,12 @@ export function ImportExportTab({ onImported }: { onImported: () => void }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <section
         aria-labelledby="reportAiImportHeading"
-        className="bg-white p-4 rounded-2xl border border-gray-200 space-y-3"
+        className="bg-white p-3 rounded-xl border border-gray-200 space-y-3"
       >
-        <h3 id="reportAiImportHeading" className="font-bold text-gray-800 text-base">
+        <h3 id="reportAiImportHeading" className="font-bold text-gray-800 text-sm">
           日報キーワード表現マスター(Excel)を取り込む
         </h3>
         <p className="text-sm text-gray-600">
@@ -89,10 +80,10 @@ export function ImportExportTab({ onImported }: { onImported: () => void }) {
           type="file"
           accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           onChange={(e) => void choose(e.target.files?.[0])}
-          className="block w-full text-base"
+          className="block w-full text-sm"
         />
         {error ? (
-          <p role="alert" className="text-base text-red-600 bg-red-50 rounded-xl p-3">
+          <p role="alert" className="text-sm text-red-600 bg-red-50 rounded-lg p-3">
             {error}
           </p>
         ) : null}
@@ -103,7 +94,7 @@ export function ImportExportTab({ onImported }: { onImported: () => void }) {
               type="button"
               onClick={() => file && run.mutate({ chosen: file, dryRun: false })}
               disabled={preview.errors.length > 0 || run.isPending || !file}
-              className="flex-1 min-h-12 py-3 bg-blue-600 text-white text-base font-bold rounded-xl disabled:opacity-50"
+              className="flex-1 min-h-9 py-1.5 bg-blue-600 text-white text-sm font-bold rounded-lg disabled:opacity-50"
             >
               {run.isPending ? '取り込み中...' : '反映する'}
             </button>
@@ -114,7 +105,7 @@ export function ImportExportTab({ onImported }: { onImported: () => void }) {
                 setFile(null);
                 if (fileRef.current) fileRef.current.value = '';
               }}
-              className="min-h-12 px-4 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl"
+              className="min-h-9 px-4 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg border border-gray-300"
             >
               やめる
             </button>
@@ -124,9 +115,9 @@ export function ImportExportTab({ onImported }: { onImported: () => void }) {
 
       <section
         aria-labelledby="reportAiExportHeading"
-        className="bg-white p-4 rounded-2xl border border-gray-200 space-y-3"
+        className="bg-white p-3 rounded-xl border border-gray-200 space-y-3"
       >
-        <h3 id="reportAiExportHeading" className="font-bold text-gray-800 text-base">
+        <h3 id="reportAiExportHeading" className="font-bold text-gray-800 text-sm">
           書き出す
         </h3>
         <button
@@ -135,7 +126,7 @@ export function ImportExportTab({ onImported }: { onImported: () => void }) {
             void download.run('xlsx', reportAiApi.downloadXlsx, '日報キーワード表現マスターを保存しました')
           }
           disabled={download.busy !== null}
-          className="w-full min-h-12 py-3 bg-green-600 text-white text-base font-bold rounded-xl disabled:opacity-50"
+          className="w-full min-h-9 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg disabled:opacity-50 border border-gray-300"
         >
           ⬇ 今の内容をExcelで保存(そのまま取り込めます)
         </button>
@@ -169,7 +160,7 @@ export function ImportExportTab({ onImported }: { onImported: () => void }) {
             )
           }
           disabled={download.busy !== null}
-          className="w-full min-h-12 py-3 bg-gray-700 text-white text-base font-bold rounded-xl disabled:opacity-50"
+          className="w-full min-h-9 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg disabled:opacity-50 border border-gray-300"
         >
           ⬇ 教育キーワードの利用状況(CSV)
         </button>
@@ -181,7 +172,7 @@ export function ImportExportTab({ onImported }: { onImported: () => void }) {
 function ImportPreview({ result }: { result: ReportAiImportResponse }) {
   return (
     <div className="space-y-3" id="reportAiImportPreview">
-      <p className="text-base font-bold text-gray-800">
+      <p className="text-sm font-bold text-gray-800">
         {result.applied
           ? '取り込みました'
           : result.errors.length > 0
@@ -217,7 +208,7 @@ function ImportPreview({ result }: { result: ReportAiImportResponse }) {
         <ul
           role="alert"
           aria-label="取込の誤り"
-          className="text-sm text-red-700 bg-red-50 rounded-xl p-3 space-y-1"
+          className="text-sm text-red-700 bg-red-50 rounded-lg p-3 space-y-1"
         >
           {result.errors.map((issue, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: 同じシート・行の誤りが並ぶことがあるため並び順で区別する
@@ -226,7 +217,7 @@ function ImportPreview({ result }: { result: ReportAiImportResponse }) {
         </ul>
       ) : null}
       {result.warnings.length > 0 ? (
-        <ul aria-label="取込の知らせ" className="text-sm text-amber-900 bg-amber-50 rounded-xl p-3 space-y-1">
+        <ul aria-label="取込の知らせ" className="text-sm text-amber-900 bg-amber-50 rounded-lg p-3 space-y-1">
           {result.warnings.map((issue, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: 同じシートの知らせが並ぶことがあるため並び順で区別する
             <li key={i}>{`${issue.sheet}${issue.row ? ` ${issue.row}行目` : ''}: ${issue.message}`}</li>

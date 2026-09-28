@@ -251,14 +251,16 @@ export const reportStanceRules = pgTable(
 
 /**
  * 家庭ごとの教育思考★(1〜5)。customers(顧客の取込が書き換える)とは別の表にして、取込で消えないようにする。
- * 行が無い家庭は★2(DEFAULT_EDUCATION_LEVEL)。ログインしているスタッフなら誰でも変えられる。
+ * 行が無い家庭と education_level が null(画面で未設定に戻した)の家庭は★2(DEFAULT_EDUCATION_LEVEL)。
+ * 未設定に戻しても行は消さない(row_version・updated_by を続けるため)。ログインしているスタッフなら誰でも変えられる。
  */
 export const customerReportProfiles = pgTable(
   'customer_report_profiles',
   {
     tenantId: tenantIdColumn(),
     customerId: uuid().notNull(),
-    educationLevel: smallint().notNull(),
+    /** 1〜5。null は未設定(★2 として扱う)。 */
+    educationLevel: smallint(),
     updatedBy: uuid(),
     rowVersion: rowVersion(),
     createdAt: createdAt(),

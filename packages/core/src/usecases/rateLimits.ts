@@ -43,6 +43,11 @@ export interface RateLimitPolicy {
   integrationAuthFailureIp: RateLimitRule;
   /** 出勤簿の Excel の書き出し(1人分・全員分とも。スタッフ単位の1時間の上限。全員分は重いため)。 */
   attendanceExportStaff: RateLimitRule;
+  /**
+   * スタッフの xlsx の取込の反映(dryRun = false。管理者単位の10分の上限)。反映は1回で最大500人を書き、
+   * 自宅住所の変わる行ごとに地図API(従量課金)を呼ぶため。確かめる(dryRun)だけは数えない。
+   */
+  staffImportApplyStaff: RateLimitRule;
 }
 
 export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
@@ -70,6 +75,7 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
     lockMs: 15 * MINUTE_MS,
   },
   attendanceExportStaff: { name: 'attendance_export_staff', limit: 30, windowMs: HOUR_MS },
+  staffImportApplyStaff: { name: 'staff_import_apply_staff', limit: 5, windowMs: 10 * MINUTE_MS },
 };
 
 /** 回数だけを差し替えた規則一式を作る(環境変数での調整用。0以下・未指定は既定値のまま)。 */

@@ -812,7 +812,7 @@ ALTER TABLE "stored_files" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "customer_report_profiles" (
 	"tenant_id" uuid NOT NULL,
 	"customer_id" uuid NOT NULL,
-	"education_level" smallint NOT NULL,
+	"education_level" smallint,
 	"updated_by" uuid,
 	"row_version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -1217,7 +1217,7 @@ CREATE TABLE "import_runs" (
 	"started_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"finished_at" timestamp with time zone,
 	CONSTRAINT "import_runs_pkey" PRIMARY KEY("tenant_id","id"),
-	CONSTRAINT "import_runs_source_check" CHECK ("import_runs"."source" in ('reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx', 'legacy_reports_sheet', 'legacy_receipts_sheet')),
+	CONSTRAINT "import_runs_source_check" CHECK ("import_runs"."source" in ('reserva_csv', 'staff_master_csv', 'external_api', 'report_ai_xlsx', 'staff_xlsx', 'legacy_reports_sheet', 'legacy_receipts_sheet')),
 	CONSTRAINT "import_runs_status_check" CHECK ("import_runs"."status" in ('running', 'applied', 'review_required', 'failed', 'skipped')),
 	CONSTRAINT "import_runs_finished_at_check" CHECK (("import_runs"."status" = 'running') = ("import_runs"."finished_at" is null))
 );

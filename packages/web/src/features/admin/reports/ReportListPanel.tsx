@@ -43,7 +43,7 @@ function ReportItem({ report, onOpen }: { report: ReportListItem; onOpen: () => 
       <button
         type="button"
         onClick={onOpen}
-        className="w-full text-left bg-white p-3 rounded-2xl border border-gray-200 space-y-1 active:bg-gray-50"
+        className="w-full text-left bg-white p-3 rounded-xl border border-gray-200 space-y-1 active:bg-gray-50"
       >
         <span className="flex items-center gap-2 flex-wrap">
           <span
@@ -59,7 +59,7 @@ function ReportItem({ report, onOpen }: { report: ReportListItem; onOpen: () => 
             </span>
           ) : null}
         </span>
-        <span className="block font-bold text-gray-800 text-base">
+        <span className="block font-bold text-gray-800 text-sm">
           {report.customerName ?? UNKNOWN_CUSTOMER}
           <span className="ml-2 text-sm font-normal text-gray-700">{report.staffName ?? DELETED_STAFF}</span>
         </span>
@@ -119,7 +119,7 @@ export function ReportListPanel() {
           if (JSON.stringify(form) === JSON.stringify(applied)) void reports.refetch();
           else setApplied(form);
         }}
-        className="bg-gray-50 p-3 rounded-2xl space-y-3"
+        className="bg-gray-50 p-3 rounded-xl space-y-3"
       >
         <div className="grid grid-cols-2 gap-2">
           <div>
@@ -203,7 +203,7 @@ export function ReportListPanel() {
         </div>
         <button
           type="submit"
-          className="w-full min-h-12 py-3 bg-blue-600 text-white text-base font-bold rounded-xl"
+          className="w-full min-h-9 py-1.5 bg-blue-600 text-white text-sm font-bold rounded-lg"
         >
           絞り込む
         </button>
@@ -217,7 +217,7 @@ export function ReportListPanel() {
               onClick={() =>
                 void csv.run(sheet, () => reportsApi.downloadCsv(sheet, applied), 'CSVファイルを保存しました')
               }
-              className="w-full min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl disabled:opacity-50"
+              className="w-full min-h-9 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg disabled:opacity-50 border border-gray-300"
             >
               {csv.busy === sheet ? '保存しています…' : CSV_LABELS[sheet]}
             </button>
@@ -251,7 +251,7 @@ export function ReportListPanel() {
               type="button"
               onClick={() => void reports.fetchNextPage()}
               disabled={reports.isFetchingNextPage}
-              className="w-full min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl"
+              className="w-full min-h-9 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg border border-gray-300"
             >
               {reports.isFetchingNextPage ? '読み込んでいます…' : 'もっと見る'}
             </button>

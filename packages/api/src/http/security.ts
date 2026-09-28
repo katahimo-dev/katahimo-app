@@ -121,8 +121,8 @@ const KB = 1024;
 const MB = 1024 * KB;
 
 /**
- * 要求本体の大きさの上限。領収書(画像6枚まで)・領収書OCR(1枚)・外部システムからの顧客(500件まで)・日報AIの調整の
- * xlsx だけ大きくする。
+ * 要求本体の大きさの上限。領収書(画像6枚まで)・領収書OCR(1枚)・外部システムからの顧客(500件まで)・日報AIの調整と
+ * スタッフの xlsx だけ大きくする。
  */
 export const BODY_LIMITS = {
   default: 256 * KB,
@@ -131,6 +131,8 @@ export const BODY_LIMITS = {
   integrationCustomers: 2 * MB,
   /** 日報AIの調整の xlsx(2MB まで。base64 で約4/3倍)。 */
   reportAiImport: 3 * MB,
+  /** スタッフの xlsx(shared の STAFF_IMPORT_MAX_BYTES = 2MB まで。base64 で約4/3倍)。 */
+  staffImport: 3 * MB,
 } as const;
 
 /**
@@ -146,6 +148,7 @@ export function apiBodyLimits(): MiddlewareHandler {
     receiptOcr: bodyLimit({ maxSize: BODY_LIMITS.receiptOcr, onError }),
     integrationCustomers: bodyLimit({ maxSize: BODY_LIMITS.integrationCustomers, onError }),
     reportAiImport: bodyLimit({ maxSize: BODY_LIMITS.reportAiImport, onError }),
+    staffImport: bodyLimit({ maxSize: BODY_LIMITS.staffImport, onError }),
   };
   return (c, next) => {
     const path = c.req.path.replace(/\/+$/, '');
@@ -153,6 +156,7 @@ export function apiBodyLimits(): MiddlewareHandler {
     if (path === '/api/receipts/ocr') return limits.receiptOcr(c, next);
     if (path === '/api/integrations/customers') return limits.integrationCustomers(c, next);
     if (path === '/api/admin/report-ai/import') return limits.reportAiImport(c, next);
+    if (path === '/api/admin/staff/import') return limits.staffImport(c, next);
     return limits.default(c, next);
   };
 }

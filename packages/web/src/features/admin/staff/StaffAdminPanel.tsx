@@ -1,12 +1,18 @@
 import type { AdminStaffView } from '@katahimo/shared';
+import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
+import { adminStaffApi } from '../../../api/admin';
 import { userMessageOf } from '../../../api/client';
+import { queryKeys } from '../../../api/queryKeys';
+import { useFileDownload } from '../../../lib/useFileDownload';
 import { useConfirmModal } from '../../../ui/confirm';
 import { EmptyState, ErrorState, Loading } from '../../../ui/StatusViews';
 import { showErrorToast, showToast } from '../../../ui/toast';
 import { useSession } from '../../auth';
-import { INPUT_CLASS } from '../components/FormField';
+import { adminQueryKeys } from '../adminQueryKeys';
+import { ICON_BUTTON, INPUT_CLASS, PRIMARY_BUTTON, SECONDARY_BUTTON } from '../components/FormField';
 import { StaffFormModal } from './StaffFormModal';
+import { StaffImportPanel } from './StaffImportPanel';
 import { filterStaff, PASSWORD_STATUS_LABELS, ROLE_LABELS } from './staffModel';
 import { useAdminStaffList, useAdminStaffMutations } from './useAdminStaff';
 
@@ -19,13 +25,14 @@ function Badge({ tone, children }: { tone: 'blue' | 'gray' | 'amber' | 'red' | '
     green: 'bg-green-100 text-green-800',
   } as const;
   return (
-    <span className={`inline-block px-2 py-0.5 rounded-full text-sm font-bold ${tones[tone]}`}>
+    <span className={`inline-block px-1.5 py-px rounded text-xs font-bold whitespace-nowrap ${tones[tone]}`}>
       {children}
     </span>
   );
 }
 
-function StaffCard({
+/** 一覧の1行(氏名・メール・状態のバッジ、右に編集・案内メールのアイコン)。 */
+function StaffRow({
   staff,
   onEdit,
   onSendGuide,
@@ -38,50 +45,55 @@ function StaffCard({
 }) {
   const canSendGuide = !staff.isRetired && staff.passwordStatus !== 'set';
   return (
-    <li className={`p-4 rounded-2xl border border-gray-200 ${staff.isRetired ? 'bg-gray-50' : 'bg-white'}`}>
-      <div className="flex items-baseline gap-2 flex-wrap">
-        <h3 className="font-bold text-gray-800 text-lg">{staff.name}</h3>
-        {staff.kana ? <span className="text-sm text-gray-600">{staff.kana}</span> : null}
+    <li className={`flex items-center gap-2 px-3 py-2 ${staff.isRetired ? 'bg-gray-50 text-gray-500' : ''}`}>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <h3 className="font-bold text-gray-800 text-sm">{staff.name}</h3>
+          {staff.kana ? <span className="text-xs text-gray-500">{staff.kana}</span> : null}
+          <span className="text-xs text-gray-600 break-all">{staff.email}</span>
+        </div>
+        <div className="flex flex-wrap gap-1 mt-0.5">
+          {staff.role !== 'staff' ? <Badge tone="blue">{ROLE_LABELS[staff.role]}</Badge> : null}
+          {staff.isRetired ? <Badge tone="gray">{`退職（${staff.retiredOn}）`}</Badge> : null}
+          {!staff.isRetired && staff.retiredOn ? (
+            <Badge tone="amber">{`${staff.retiredOn} 退職予定`}</Badge>
+          ) : null}
+          {staff.passwordStatus !== 'set' ? (
+            <Badge tone="amber">{PASSWORD_STATUS_LABELS[staff.passwordStatus]}</Badge>
+          ) : null}
+          {!staff.homeAddress ? <Badge tone="red">自宅住所なし</Badge> : null}
+          {staff.homeAddress && !staff.hasHomeGeo ? <Badge tone="amber">自宅の位置が未確定</Badge> : null}
+        </div>
       </div>
-      <p className="text-sm text-gray-700 break-all">{staff.email}</p>
-      <div className="flex flex-wrap gap-1 mt-2">
-        {staff.role !== 'staff' ? <Badge tone="blue">{ROLE_LABELS[staff.role]}</Badge> : null}
-        {staff.isRetired ? <Badge tone="gray">{`退職（${staff.retiredOn}）`}</Badge> : null}
-        {!staff.isRetired && staff.retiredOn ? (
-          <Badge tone="amber">{`${staff.retiredOn} 退職予定`}</Badge>
-        ) : null}
-        <Badge tone={staff.passwordStatus === 'set' ? 'green' : 'amber'}>
-          {PASSWORD_STATUS_LABELS[staff.passwordStatus]}
-        </Badge>
-        {!staff.homeAddress ? <Badge tone="red">自宅住所なし</Badge> : null}
-        {staff.homeAddress && !staff.hasHomeGeo ? <Badge tone="amber">自宅の位置が未確定</Badge> : null}
-      </div>
-      <div className="flex gap-3 mt-3">
+      {canSendGuide ? (
         <button
           type="button"
-          onClick={() => onEdit(staff)}
-          aria-label={`${staff.name}さんを編集`}
-          className="flex-1 min-h-11 px-3 py-2 text-sm font-bold text-gray-800 bg-gray-200 rounded-xl"
+          onClick={() => onSendGuide(staff)}
+          disabled={sendingGuide}
+          aria-label={`${staff.name}さんにパスワード設定の案内メールを送る`}
+          title="パスワード設定の案内メールを送る"
+          className={ICON_BUTTON}
         >
-          ✏️ 編集
+          ✉️
         </button>
-        {canSendGuide ? (
-          <button
-            type="button"
-            onClick={() => onSendGuide(staff)}
-            disabled={sendingGuide}
-            aria-label={`${staff.name}さんにパスワード設定の案内メールを送る`}
-            className="flex-1 min-h-11 px-3 py-2 text-sm font-bold text-blue-700 bg-blue-50 rounded-xl"
-          >
-            ✉️ パスワード設定の案内
-          </button>
-        ) : null}
-      </div>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => onEdit(staff)}
+        aria-label={`${staff.name}さんを編集`}
+        title="編集"
+        className={ICON_BUTTON}
+      >
+        ✏️
+      </button>
     </li>
   );
 }
 
-/** 管理画面「スタッフ」(GAS版でスタッフ台帳シートを直接編集していた作業)。 */
+/**
+ * 管理画面「スタッフ」(GAS版でスタッフ台帳シートを直接編集していた作業)。1人1行の一覧(編集・案内メールはアイコン)、
+ * Excel(.xlsx)での書き出し・取込(CSV は Excel で開くと文字化けしやすいため)。
+ */
 export function StaffAdminPanel() {
   const { user } = useSession();
   const confirm = useConfirmModal();
@@ -90,6 +102,9 @@ export function StaffAdminPanel() {
   const [search, setSearch] = useState('');
   const [showRetired, setShowRetired] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const queryClient = useQueryClient();
+  const download = useFileDownload<'xlsx'>();
   /** 編集するスタッフ(null は新規登録)。閉じた後も消さない(閉じる間のフェードで表示が変わらないように)。 */
   const [formStaff, setFormStaff] = useState<AdminStaffView | null>(null);
   const openForm = (target: AdminStaffView | null) => {
@@ -116,45 +131,75 @@ export function StaffAdminPanel() {
   };
 
   return (
-    <section aria-labelledby="adminStaffHeading" className="space-y-4">
+    <section aria-labelledby="adminStaffHeading" className="space-y-3">
       <h2 id="adminStaffHeading" className="sr-only">
         スタッフ
       </h2>
-      <div className="flex gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <input
           type="search"
           aria-label="スタッフを探す(氏名・カナ・メール)"
           placeholder="氏名・カナ・メールで探す"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className={INPUT_CLASS}
+          className={`${INPUT_CLASS} flex-1 min-w-[12rem] w-auto`}
         />
-        <button
-          type="button"
-          onClick={() => openForm(null)}
-          className="shrink-0 min-h-12 px-4 bg-blue-600 text-white text-base font-bold rounded-xl"
-        >
+        <button type="button" onClick={() => openForm(null)} className={PRIMARY_BUTTON}>
           ＋ 登録
         </button>
+        <button
+          type="button"
+          onClick={() => setImportOpen((v) => !v)}
+          aria-expanded={importOpen}
+          className={SECONDARY_BUTTON}
+        >
+          ⬆ Excel取込
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void download.run('xlsx', adminStaffApi.downloadXlsx, 'スタッフ一覧をExcelで保存しました')
+          }
+          disabled={download.busy !== null}
+          className={SECONDARY_BUTTON}
+        >
+          ⬇ Excel
+        </button>
       </div>
+      {importOpen ? (
+        <StaffImportPanel
+          onClose={() => setImportOpen(false)}
+          onImported={() => {
+            void queryClient.invalidateQueries({ queryKey: adminQueryKeys.staff });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.activeStaff });
+            void queryClient.invalidateQueries({ queryKey: adminQueryKeys.auditLogsAll });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.session });
+          }}
+        />
+      ) : null}
       <div className="flex items-center justify-between gap-2">
-        <label className="flex items-center gap-2 min-h-11 text-base text-gray-800">
+        <label className="flex items-center gap-2 text-sm text-gray-800">
           <input
             type="checkbox"
             checked={showRetired}
             onChange={(e) => setShowRetired(e.target.checked)}
-            className="w-5 h-5"
+            className="w-4 h-4"
           />
           退職者も表示する{retiredCount > 0 ? `（${retiredCount}人）` : ''}
         </label>
-        <button
-          type="button"
-          onClick={() => void list.refetch()}
-          disabled={list.isFetching}
-          className="shrink-0 min-h-11 px-3 text-sm font-bold text-gray-800 bg-gray-200 rounded-xl"
-        >
-          🔄 読み込み直す
-        </button>
+        <div className="flex items-center gap-1">
+          {staff ? <span className="text-xs text-gray-600">{`${shown.length}人`}</span> : null}
+          <button
+            type="button"
+            onClick={() => void list.refetch()}
+            disabled={list.isFetching}
+            aria-label="読み込み直す"
+            title="読み込み直す"
+            className={ICON_BUTTON}
+          >
+            🔄
+          </button>
+        </div>
       </div>
 
       {list.isPending ? (
@@ -164,9 +209,12 @@ export function StaffAdminPanel() {
       ) : shown.length === 0 ? (
         <EmptyState icon="👤" title="該当するスタッフはいません" />
       ) : (
-        <ul className="space-y-3" aria-label="スタッフの一覧">
+        <ul
+          className="divide-y divide-gray-100 bg-white rounded-xl border border-gray-200"
+          aria-label="スタッフの一覧"
+        >
           {shown.map((s) => (
-            <StaffCard
+            <StaffRow
               key={s.id}
               staff={s}
               onEdit={openForm}

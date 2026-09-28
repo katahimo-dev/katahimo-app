@@ -121,7 +121,7 @@ export function RowEditorModal({
       open
       onClose={close}
       labelledBy="reportAiEditorTitle"
-      className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4 transition-opacity"
+      className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-3 transition-opacity"
     >
       <form
         noValidate
@@ -129,7 +129,7 @@ export function RowEditorModal({
           e.preventDefault();
           void submit();
         }}
-        className="bg-white w-full max-w-lg max-h-[90vh] rounded-2xl shadow-2xl flex flex-col"
+        className="bg-white w-full max-w-lg max-h-[90vh] rounded-xl shadow-2xl flex flex-col"
       >
         <ModalHeader
           title={target.title}
@@ -137,7 +137,7 @@ export function RowEditorModal({
           titleClassName="font-bold text-lg text-gray-800"
           onClose={close}
         />
-        <div className="p-4 overflow-y-auto space-y-4">
+        <div className="p-3 overflow-y-auto space-y-4">
           {EDITOR_FIELDS[target.table].map((field) => {
             const id = `reportAi-${field.key}`;
             const common = {
@@ -183,7 +183,7 @@ export function RowEditorModal({
                 type="button"
                 onClick={() => void remove()}
                 disabled={busy}
-                className="w-full min-h-11 py-2 text-sm font-bold text-red-600 bg-red-50 rounded-xl"
+                className="w-full min-h-9 py-2 text-sm font-bold text-red-600 bg-red-50 rounded-lg"
               >
                 この行を外す
               </button>
@@ -191,7 +191,7 @@ export function RowEditorModal({
           ) : null}
         </div>
         {formError ? (
-          <p role="alert" className="px-4 py-3 border-t text-base text-red-600 bg-red-50">
+          <p role="alert" className="px-4 py-1.5 border-t text-sm text-red-600 bg-red-50">
             {formError}
           </p>
         ) : null}
@@ -200,14 +200,14 @@ export function RowEditorModal({
             type="button"
             onClick={onClose}
             disabled={busy}
-            className="min-h-12 px-5 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl"
+            className="min-h-9 px-4 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg border border-gray-300"
           >
             キャンセル
           </button>
           <button
             type="submit"
             disabled={busy}
-            className="min-h-12 px-5 py-3 bg-blue-600 text-white text-base font-bold rounded-xl"
+            className="min-h-9 px-4 py-1.5 bg-blue-600 text-white text-sm font-bold rounded-lg"
           >
             {save.isPending ? '保存中...' : '保存する'}
           </button>

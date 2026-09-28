@@ -1,3 +1,4 @@
+import type { UiConfigResponse } from '@katahimo/shared';
 import { EducationLevelPicker } from '../../../ui/EducationLevelPicker';
 import { calculateAge } from '../model/age';
 import { cx } from './cx';
@@ -23,6 +24,7 @@ export function DailyAiSection({
   savingLevel,
   onSelectChild,
   onSetLevel,
+  educationLevels,
 }: {
   hidden: boolean;
   childrenOfFamily: readonly DailyAiChild[];
@@ -33,7 +35,9 @@ export function DailyAiSection({
   educationLevel: number | null | undefined;
   savingLevel: boolean;
   onSelectChild: (childId: string) => void;
-  onSetLevel: (level: number) => void;
+  /** null は未設定に戻す */
+  onSetLevel: (level: number | null) => void;
+  educationLevels?: UiConfigResponse['educationLevels'] | undefined;
 }) {
   return (
     <div
@@ -60,17 +64,14 @@ export function DailyAiSection({
           </select>
         </div>
       ) : null}
-      <div>
-        <div className="text-base font-bold text-gray-700 mb-1" id="dailyAiLevelLabel">
-          🎓 ご家庭の教育への関心（教育思考★）
-        </div>
-        <EducationLevelPicker
-          labelId="dailyAiLevelLabel"
-          educationLevel={educationLevel}
-          disabled={savingLevel}
-          onSelect={onSetLevel}
-        />
-      </div>
+      <EducationLevelPicker
+        labelId="dailyAiLevelLabel"
+        heading="🎓 ご家庭の教育への関心（教育思考★）"
+        educationLevel={educationLevel}
+        disabled={savingLevel}
+        onSelect={onSetLevel}
+        definitions={educationLevels}
+      />
     </div>
   );
 }

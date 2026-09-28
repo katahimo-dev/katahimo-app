@@ -36,7 +36,21 @@ import {
  *   別のシートにあれば後のシートの行を使って知らせる。
  */
 
-export type ImportCell = string | number | boolean | Date | null | undefined;
+/**
+ * 値を読めないセル(エラーの値「#N/A」など・計算結果の残っていない式・知らない形の値)。空欄(null)とは分ける:
+ * スタッフの取込は空欄を値の削除として扱うため、読めないセルを空欄にすると黙って値が消える(スタッフの取込は誤りにする)。
+ * 日報AIの調整の取込は空欄と同じに扱う(cellText は '')。
+ */
+export interface UnreadableCell {
+  readonly unreadable: true;
+}
+export const UNREADABLE_CELL: UnreadableCell = Object.freeze({ unreadable: true as const });
+
+export type ImportCell = string | number | boolean | Date | UnreadableCell | null | undefined;
+
+export function isUnreadableCell(cell: ImportCell): cell is UnreadableCell {
+  return typeof cell === 'object' && cell !== null && !(cell instanceof Date) && cell.unreadable === true;
+}
 
 export interface ReportAiImportSheet {
   name: string;
@@ -66,9 +80,12 @@ export function normalizeHeader(text: string): string {
     .replace(/[\s★☆◎○◯●✕×✗✘・_\-/:「」『』【】[\]〔〕]/g, '');
 }
 
-/** セルの値を文字にする(数は整数ならそのまま、真偽は ○×、日付は「月-日」= Excel が「4-5」を日付にした場合)。 */
+/**
+ * セルの値を文字にする(数は整数ならそのまま、真偽は ○×、日付は「月-日」= Excel が「4-5」を日付にした場合)。
+ * 読めないセルは空欄と同じ ''(空欄と分けたいときは先に isUnreadableCell で見る)。
+ */
 export function cellText(cell: ImportCell): string {
-  if (cell === null || cell === undefined) return '';
+  if (cell === null || cell === undefined || isUnreadableCell(cell)) return '';
   if (cell instanceof Date) return `${cell.getUTCMonth() + 1}-${cell.getUTCDate()}`;
   if (typeof cell === 'number') return Number.isInteger(cell) ? String(cell) : String(cell);
   if (typeof cell === 'boolean') return cell ? '○' : '×';

@@ -14,6 +14,8 @@ import {
   reportAiImportResponseSchema,
   reportAiMastersResponseSchema,
   reportAiRowSavedResponseSchema,
+  type StaffImportRequest,
+  staffImportResponseSchema,
   type UpdateAiPromptsRequest,
   type UpdateStaffRequest,
   XLSX_CONTENT_TYPE,
@@ -30,6 +32,12 @@ export const adminStaffApi = {
   remove: (staffId: string) => api.delete(`/api/admin/staff/${staffId}`, okResponseSchema),
   sendPasswordGuide: (staffId: string) =>
     api.post(`/api/admin/staff/${staffId}/password-guide`, okResponseSchema),
+  /** GET /api/admin/staff/export.xlsx: 退職者を含む全員(取込と同じ形の xlsx)。 */
+  downloadXlsx: () =>
+    api.download('/api/admin/staff/export.xlsx', undefined, XLSX_CONTENT_TYPE, 'スタッフ一覧.xlsx'),
+  /** POST /api/admin/staff/import: dryRun(既定)は確かめるだけ。 */
+  importXlsx: (body: StaffImportRequest) =>
+    api.post('/api/admin/staff/import', staffImportResponseSchema, body),
 };
 
 /** 管理画面「AIプロンプト」。 */

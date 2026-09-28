@@ -1,12 +1,19 @@
 import { randomBytes } from 'node:crypto';
 import { provisionTenant, registerStaff } from '@katahimo/core/usecases';
-import { closeDatabase, createDatabase } from '@katahimo/db';
+import { closeDatabase, createDatabase, withTenant } from '@katahimo/db';
 import {
   DrizzleTenantCalendarSettingsStore,
   DrizzleTenantDirectory,
   DrizzleTenantProvisioning,
 } from '@katahimo/db/repositories';
-import type { AdminStaffResponse, AuditLogListResponse } from '@katahimo/shared';
+import type {
+  AdminStaffListResponse,
+  AdminStaffResponse,
+  AuditLogListResponse,
+  StaffImportResponse,
+} from '@katahimo/shared';
+import { sql } from 'drizzle-orm';
+import ExcelJS from 'exceljs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
@@ -281,6 +288,191 @@ describe('API: スタッフ管理の守り', () => {
       await get('/api/admin/staff', a.status === 200 ? other.adminCookie : secondCookie)
     ).json()) as { staff: { role: string }[] };
     expect(list.staff.filter((s) => s.role === 'admin')).toHaveLength(1);
+  });
+});
+
+describe('API: スタッフの xlsx', () => {
+  const exportXlsx = async () => {
+    const res = await get('/api/admin/staff/export.xlsx', t.adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('spreadsheetml');
+    return Buffer.from(await res.arrayBuffer());
+  };
+  const postImport = (cookie: string, body: Buffer, dryRun: boolean, planDigest?: string) =>
+    send('POST', '/api/admin/staff/import', cookie, {
+      fileName: 'staff.xlsx',
+      fileBase64: body.toString('base64'),
+      dryRun,
+      ...(planDigest === undefined ? {} : { planDigest }),
+    });
+  /** 画面と同じ順: 確かめて(dryRun)、反映するときはその planDigest を付ける。 */
+  const importXlsx = async (body: Buffer, dryRun: boolean, cookie = t.adminCookie) => {
+    const checked = await postImport(cookie, body, true);
+    expect(checked.status).toBe(200);
+    const dry = (await checked.json()) as StaffImportResponse;
+    if (dryRun) return dry;
+    const res = await postImport(cookie, body, false, dry.planDigest);
+    expect(res.status).toBe(200);
+    return (await res.json()) as StaffImportResponse;
+  };
+  const exportOf = async (cookie: string) => {
+    const res = await get('/api/admin/staff/export.xlsx', cookie);
+    expect(res.status).toBe(200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(await res.arrayBuffer()) as unknown as ArrayBuffer);
+    return workbook;
+  };
+  const EMAIL_COLUMN = 4;
+
+  it('書き出した xlsx をそのまま確かめると変更なし。行を足して反映すると登録され、import_runs が残る', async () => {
+    const list = (await (await get('/api/admin/staff', t.adminCookie)).json()) as AdminStaffListResponse;
+    const exported = await exportXlsx();
+    const dry = await importXlsx(exported, true);
+    expect(dry).toMatchObject({
+      dryRun: true,
+      applied: false,
+      counts: { rows: list.staff.length, created: 0, updated: 0, unchanged: list.staff.length },
+      changes: [],
+      errors: [],
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(exported as unknown as ArrayBuffer);
+    const ws = workbook.getWorksheet('スタッフ') as ExcelJS.Worksheet;
+    ws.addRow([
+      null,
+      '取込 一郎',
+      null,
+      `ichiro-${t.slug}@example.com`,
+      null,
+      '080',
+      'コーディネーター',
+      null,
+      null,
+      '徒歩',
+    ]);
+    const edited = Buffer.from(await workbook.xlsx.writeBuffer());
+    const applied = await importXlsx(edited, false);
+    expect(applied).toMatchObject({
+      applied: true,
+      counts: { created: 1, updated: 0 },
+      changes: [{ kind: 'create', name: '取込 一郎' }],
+    });
+    const after = (await (await get('/api/admin/staff', t.adminCookie)).json()) as AdminStaffListResponse;
+    expect(after.staff.find((s) => s.email === `ichiro-${t.slug}@example.com`)).toMatchObject({
+      role: 'coordinator',
+      phone: '080',
+      travelMode: 'walk',
+      passwordStatus: 'unset',
+    });
+    const runs = await withTenant(appDb, t.id, (tx) =>
+      tx.execute(sql`select source, status from import_runs where source = 'staff_xlsx'`),
+    );
+    expect([...runs]).toEqual([{ source: 'staff_xlsx', status: 'applied' }]);
+  });
+
+  it('ファイルの中で2人のメールアドレスを入れ替えても反映でき、スタッフごとの SECURITY が残る(値は残さない)', async () => {
+    const other = await createTenant();
+    const workbook = await exportOf(other.adminCookie);
+    const ws = workbook.getWorksheet('スタッフ') as ExcelJS.Worksheet;
+    const adminEmail = `admin-${other.slug}@example.com`;
+    const staffEmail = `staff-${other.slug}@example.com`;
+    ws.eachRow((row, n) => {
+      if (n === 1) return;
+      const email = row.getCell(EMAIL_COLUMN).value;
+      if (email === adminEmail) row.getCell(EMAIL_COLUMN).value = staffEmail;
+      else if (email === staffEmail) row.getCell(EMAIL_COLUMN).value = adminEmail;
+    });
+    const body = Buffer.from(await workbook.xlsx.writeBuffer());
+    const applied = await importXlsx(body, false, other.adminCookie);
+    expect(applied).toMatchObject({ applied: true, counts: { updated: 2 }, errors: [] });
+    const list = (await (await get('/api/admin/staff', other.adminCookie)).json()) as AdminStaffListResponse;
+    expect(list.staff.find((s) => s.id === other.adminId)?.email).toBe(staffEmail);
+    expect(list.staff.find((s) => s.id === other.staffId)?.email).toBe(adminEmail);
+    // 入れ替えた後のアドレスでログインできる
+    expect(await login(other.slug, staffEmail)).not.toBe('');
+
+    const logs = await withTenant(appDb, other.id, (tx) =>
+      tx.execute<{ action: string; target_id: string; details: Record<string, unknown> }>(
+        sql`select action, target_id, details from app_logs
+          where action in ('staff.admin.updated', 'staff.xlsx_import.applied') order by target_id nulls last`,
+      ),
+    );
+    const perStaff = [...logs].filter((l) => l.action === 'staff.admin.updated');
+    expect(perStaff.map((l) => l.target_id).sort()).toEqual([other.adminId, other.staffId].sort());
+    const summary = [...logs].find((l) => l.action === 'staff.xlsx_import.applied');
+    for (const l of perStaff) {
+      expect(l.details).toEqual({
+        via: 'staff_xlsx',
+        importRunId: summary?.details.importRunId,
+        changedFields: ['email'],
+      });
+    }
+    expect(summary?.details).toMatchObject({ updated: 2, geocode: { geocoded: 0, notFound: 0, failed: 0 } });
+    expect(JSON.stringify([...logs])).not.toContain(other.slug);
+  });
+
+  it('反映には planDigest が要り(400)、確かめた後に対象のスタッフが変えられたら 409 import_stale で何も書かない', async () => {
+    const other = await createTenant();
+    const workbook = await exportOf(other.adminCookie);
+    const ws = workbook.getWorksheet('スタッフ') as ExcelJS.Worksheet;
+    ws.addRow([null, '取込 次郎', null, `jiro-${other.slug}@example.com`]);
+    const body = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const missing = await postImport(other.adminCookie, body, false);
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toMatchObject({ code: 'validation_failed' });
+
+    const dry = (await (await postImport(other.adminCookie, body, true)).json()) as StaffImportResponse;
+    expect(dry.planDigest).toMatch(/^[0-9a-f]{64}$/);
+    const again = (await (await postImport(other.adminCookie, body, true)).json()) as StaffImportResponse;
+    expect(again.planDigest).toBe(dry.planDigest);
+    // ファイルに無い列(電話)を画面から変える → 対象のスタッフの版が変わる
+    const patched = await send('PATCH', `/api/admin/staff/${other.staffId}`, other.adminCookie, {
+      phone: '090-1234-5678',
+    });
+    expect(patched.status).toBe(200);
+    const stale = await postImport(other.adminCookie, body, false, dry.planDigest);
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ code: 'conflict' });
+    const runs = await withTenant(appDb, other.id, (tx) =>
+      tx.execute(sql`select 1 from import_runs where source = 'staff_xlsx'`),
+    );
+    expect([...runs]).toHaveLength(0);
+    const list = (await (await get('/api/admin/staff', other.adminCookie)).json()) as AdminStaffListResponse;
+    expect(list.staff.some((s) => s.email === `jiro-${other.slug}@example.com`)).toBe(false);
+  });
+
+  it('反映は管理者ごとに回数の上限があり(429)、確かめるだけは数えない', async () => {
+    const other = await createTenant();
+    const body = Buffer.from(await (await exportOf(other.adminCookie)).xlsx.writeBuffer());
+    const limit = container.rateLimits.staffImportApplyStaff.limit;
+    for (let i = 0; i < limit + 2; i++) {
+      expect((await postImport(other.adminCookie, body, true)).status).toBe(200);
+    }
+    for (let i = 0; i < limit; i++) {
+      expect((await postImport(other.adminCookie, body, false)).status).toBe(400);
+    }
+    const limited = await postImport(other.adminCookie, body, false);
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toMatchObject({ code: 'rate_limited' });
+  });
+
+  it('一般スタッフは書き出し・取込とも 403', async () => {
+    expect((await get('/api/admin/staff/export.xlsx', t.staffCookie)).status).toBe(403);
+    const res = await send('POST', '/api/admin/staff/import', t.staffCookie, {
+      fileBase64: 'AA==',
+      dryRun: true,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('xlsx でないファイルは 400', async () => {
+    const res = await send('POST', '/api/admin/staff/import', t.adminCookie, {
+      fileBase64: Buffer.from('not a zip').toString('base64'),
+      dryRun: true,
+    });
+    expect(res.status).toBe(400);
   });
 });
 

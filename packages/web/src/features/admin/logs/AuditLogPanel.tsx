@@ -48,7 +48,7 @@ function AuditLogItem({ entry, timeZone }: { entry: AuditLogEntry; timeZone: str
   const details = formatAuditDetails(entry.details);
   const target = entry.targetStaffId ? (entry.targetName ?? DELETED_STAFF) : null;
   return (
-    <li className="bg-white p-3 rounded-2xl border border-gray-200 space-y-1">
+    <li className="bg-white p-3 rounded-xl border border-gray-200 space-y-1">
       <div className="flex items-center gap-2 flex-wrap">
         <span className={`px-2 py-0.5 rounded-full text-sm font-bold ${LEVEL_BADGE[entry.level]}`}>
           {APP_LOG_LEVEL_LABELS[entry.level]}
@@ -57,7 +57,7 @@ function AuditLogItem({ entry, timeZone }: { entry: AuditLogEntry; timeZone: str
           {formatZonedDateTime(entry.createdAt, timeZone)}
         </time>
       </div>
-      <p className="font-bold text-gray-800 text-base">{auditActionLabel(entry.action)}</p>
+      <p className="font-bold text-gray-800 text-sm">{auditActionLabel(entry.action)}</p>
       <p className="text-sm text-gray-800">
         {actorText(entry)}
         {target ? ` → ${target}` : ''}
@@ -108,7 +108,7 @@ export function AuditLogPanel() {
           if (JSON.stringify(form) === JSON.stringify(applied)) void logs.refetch();
           else setApplied(form);
         }}
-        className="bg-gray-50 p-3 rounded-2xl space-y-3"
+        className="bg-gray-50 p-3 rounded-xl space-y-3"
       >
         <div className="grid grid-cols-2 gap-2">
           <div>
@@ -193,7 +193,7 @@ export function AuditLogPanel() {
         <div className="flex gap-3">
           <button
             type="submit"
-            className="flex-1 min-h-12 py-3 bg-blue-600 text-white text-base font-bold rounded-xl"
+            className="flex-1 min-h-9 py-1.5 bg-blue-600 text-white text-sm font-bold rounded-lg"
           >
             絞り込む
           </button>
@@ -204,7 +204,7 @@ export function AuditLogPanel() {
             onClick={() =>
               void csv.run('csv', () => auditLogsApi.downloadCsv(applied), 'CSVファイルを保存しました')
             }
-            className="flex-1 min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl disabled:opacity-50"
+            className="flex-1 min-h-9 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg disabled:opacity-50 border border-gray-300"
           >
             {csv.busy ? '保存しています…' : '⬇ CSVで保存'}
           </button>
@@ -239,7 +239,7 @@ export function AuditLogPanel() {
               type="button"
               onClick={() => void logs.fetchNextPage()}
               disabled={logs.isFetchingNextPage}
-              className="w-full min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl"
+              className="w-full min-h-9 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg border border-gray-300"
             >
               {logs.isFetchingNextPage ? '読み込んでいます…' : 'もっと見る'}
             </button>

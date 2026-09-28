@@ -34,7 +34,7 @@ function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <dt className="text-sm font-bold text-gray-700">{label}</dt>
-      <dd className="text-base text-gray-800 whitespace-pre-wrap break-words">{value || '-'}</dd>
+      <dd className="text-sm text-gray-800 whitespace-pre-wrap break-words">{value || '-'}</dd>
     </div>
   );
 }
@@ -53,7 +53,7 @@ function DetailBody({ report, timeZone }: { report: ReportDetail; timeZone: stri
           <span className="text-sm font-bold text-gray-700">{report.date.replaceAll('-', '/')}</span>
           <span className="text-sm text-gray-600">{report.time}</span>
         </p>
-        <p className="font-bold text-gray-800 text-lg">{report.customerName ?? UNKNOWN_CUSTOMER}</p>
+        <p className="font-bold text-gray-800 text-base">{report.customerName ?? UNKNOWN_CUSTOMER}</p>
         <p className="text-sm text-gray-700">{`書いた人: ${report.staffName ?? DELETED_STAFF}`}</p>
         <p className="text-sm text-gray-600">
           {`最後に保存: ${updated}`}
@@ -100,11 +100,11 @@ export function ReportDetailModal({ reportId, onClose }: { reportId: string | nu
       open={reportId !== null}
       labelledBy="reportDetailTitle"
       onClose={onClose}
-      className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4 transition-opacity duration-300"
+      className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-3 transition-opacity duration-300"
     >
-      <div className="bg-white w-full max-w-md rounded-2xl border border-gray-200 flex flex-col max-h-[90vh]">
+      <div className="bg-white w-full max-w-md rounded-xl border border-gray-200 flex flex-col max-h-[90vh]">
         <ModalHeader title="報告の中身" titleId="reportDetailTitle" onClose={onClose} />
-        <div className="p-4 overflow-y-auto">
+        <div className="p-3 overflow-y-auto">
           {detail.isPending ? (
             <Loading />
           ) : detail.isError ? (
@@ -117,7 +117,7 @@ export function ReportDetailModal({ reportId, onClose }: { reportId: string | nu
           <button
             type="button"
             onClick={onClose}
-            className="min-h-12 px-6 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl"
+            className="min-h-9 px-4 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg border border-gray-300"
           >
             閉じる
           </button>

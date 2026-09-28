@@ -1,4 +1,4 @@
-import { AI_PROMPT_KEYS, findAiPromptDefinition } from '@katahimo/shared';
+import { AI_PROMPT_KEYS, EDUCATION_LEVEL_DEFINITIONS, findAiPromptDefinition } from '@katahimo/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getUiConfig, listAiPromptsForAdmin, updateAiPrompts } from './aiPrompts';
 import type { TestContext } from './testContext';
@@ -27,6 +27,44 @@ describe('AIプロンプト・UI設定', () => {
     expect(config.accidentHint.startsWith('事故報告書 記載項目と記載要領')).toBe(true);
     expect(config.assessments.risk.title).toBe('PSI');
     expect(config.assessments.es.levels).toHaveLength(5);
+  });
+
+  it('教育思考★の説明は「日報AIの調整」の教育思考★の文言(段階ごと・項目ごと。空の項目は既定の文言)', async () => {
+    expect((await getUiConfig({ uow }, tenantId)).educationLevels).toEqual(EDUCATION_LEVEL_DEFINITIONS);
+    await uow.run(tenantId, (r) =>
+      r.reportAi.upsertLevel(
+        'educationLevels',
+        '00000000-0000-7000-8000-0000000000e3',
+        {
+          level: 3,
+          label: 'テナントの呼称',
+          customerProfile: '  ',
+          usage: 'テナントの使い方',
+          wordScope: null,
+          termNameRule: null,
+          termNamePolicy: 'allow',
+          keywordsMin: 1,
+          keywordsMax: 1,
+          toneFocus: null,
+          exampleDirection: null,
+        },
+        ADMIN,
+      ),
+    );
+    const { educationLevels } = await getUiConfig({ uow }, tenantId);
+    const defaults = EDUCATION_LEVEL_DEFINITIONS.levels;
+    expect(educationLevels.title).toBe(EDUCATION_LEVEL_DEFINITIONS.title);
+    expect(educationLevels.levels[2]).toEqual({
+      score: 3,
+      label: 'テナントの呼称',
+      customerProfile: defaults[2]?.customerProfile,
+      usage: 'テナントの使い方',
+    });
+    expect(educationLevels.levels.filter((l) => l.score !== 3)).toEqual(
+      defaults.filter((l) => l.score !== 3),
+    );
+    // 他のテナントは既定のまま
+    expect((await getUiConfig({ uow }, otherTenantId)).educationLevels).toEqual(EDUCATION_LEVEL_DEFINITIONS);
   });
 
   it('一覧の版(revision)を渡すと、他の管理者が先に保存していれば何も変えずに conflict にする', async () => {

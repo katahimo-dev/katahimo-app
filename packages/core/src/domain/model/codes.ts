@@ -30,14 +30,15 @@ export type TenantSecretName = (typeof TENANT_SECRET_NAMES)[number];
 
 /**
  * 取込の経路(import_runs.source)。external_api は外部システムからの顧客の受け取り(POST /api/integrations/customers)、
- * report_ai_xlsx は管理画面「日報AIの調整」の日報キーワード表現マスター(xlsx)の取込、legacy_reports_sheet /
- * legacy_receipts_sheet は GAS版のスプレッドシート(日報・事故報告 / 領収書一覧)からの移行の取込(運用担当者の CLI)。
+ * report_ai_xlsx は管理画面「日報AIの調整」の日報キーワード表現マスター(xlsx)の取込、staff_xlsx は管理画面
+ * 「スタッフ」の xlsx の取込、legacy_reports_sheet / legacy_receipts_sheet は GAS版のスプレッドシート(日報・事故報告 / 領収書一覧)からの移行の取込(運用担当者の CLI)。
  */
 export const IMPORT_SOURCES = [
   'reserva_csv',
   'staff_master_csv',
   'external_api',
   'report_ai_xlsx',
+  'staff_xlsx',
   'legacy_reports_sheet',
   'legacy_receipts_sheet',
 ] as const;

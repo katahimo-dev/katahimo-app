@@ -25,6 +25,7 @@ export * from './scheduleDirectory';
 export * from './settings';
 export * from './staff';
 export * from './staffAdmin';
+export * from './staffAdminImport';
 export * from './staffBusyBlocks';
 export * from './staffHome';
 export * from './staffMasterImport';

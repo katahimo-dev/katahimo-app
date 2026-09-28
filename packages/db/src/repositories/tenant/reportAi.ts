@@ -367,7 +367,7 @@ export class DrizzleCustomerReportProfileRepository
 
   async save(
     customerId: string,
-    educationLevel: number,
+    educationLevel: number | null,
     updatedBy: string,
     expectedVersion: number | undefined,
   ): Promise<CustomerReportProfileRecord> {

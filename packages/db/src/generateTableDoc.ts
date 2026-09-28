@@ -18,6 +18,7 @@ const GROUPS: { file: string; title: string }[] = [
   { file: 'customers.ts', title: '顧客・子ども' },
   { file: 'attendance.ts', title: '勤怠(出勤簿)' },
   { file: 'records.ts', title: '活動記録・領収書・ファイル・AIプロンプト' },
+  { file: 'reportAi.ts', title: '日報AI(調整のマスター・家庭の教育思考★・生成の記録)' },
   { file: 'push.ts', title: '通知(Web Push)' },
   { file: 'outbox.ts', title: '非同期処理・変更履歴' },
   { file: 'appLogs.ts', title: '操作ログ(月のパーティション)' },

@@ -1,6 +1,7 @@
 import type { CustomerListItem } from '@katahimo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { customerQueryKeys, customersApi } from '../../api/customers';
+import { useUiConfig } from '../../app/uiConfig/useUiConfig';
 import { NETWORK_ERROR_MESSAGE } from '../../lib/messages';
 import { EducationLevelPicker } from '../../ui/EducationLevelPicker';
 import { Modal, ModalFooter, ModalHeader } from '../../ui/modal';
@@ -31,6 +32,7 @@ export function CustomerDetailModal({
   });
   const detail = detailQuery.data;
   const reportProfile = useCustomerReportProfile(customerId || null, open);
+  const uiConfig = useUiConfig();
 
   return (
     <Modal
@@ -84,6 +86,7 @@ export function CustomerDetailModal({
                   educationLevel={reportProfile.educationLevel}
                   disabled={reportProfile.saving}
                   onSelect={reportProfile.setEducationLevel}
+                  definitions={uiConfig.data?.educationLevels}
                 />
                 {reportProfile.updatedByName ? (
                   <p className="text-sm text-gray-500 mt-1">{`最後に変えた人: ${reportProfile.updatedByName}`}</p>

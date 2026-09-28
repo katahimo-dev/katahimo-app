@@ -1,5 +1,5 @@
 import { SECRET_MASK_CHAR } from '@katahimo/shared';
-import { useVisibilityToggle } from '../../ui/useVisibilityToggle';
+import { useVisibilityToggle } from '../../../ui/useVisibilityToggle';
 import type { AdminSettingsLoadStatus } from './useAdminSettingsForm';
 
 /** 読み込み状態に応じた入力欄の案内(GAS版: 読み込み中は「読み込み中...」、失敗は「取得に失敗しました」)。 */
@@ -42,12 +42,12 @@ export function SecretInput({
         }}
         placeholder={loadingPlaceholder(status)}
         disabled={status !== 'loaded'}
-        className="flex-1 p-3 border border-gray-300 rounded-xl text-base focus:ring-2 focus:ring-blue-500"
+        className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
       />
       <button
         type="button"
         onClick={visibility.toggle}
-        className="min-h-12 px-3 rounded-xl bg-gray-200 text-sm font-bold text-gray-800"
+        className="min-h-9 px-3 rounded-lg border border-gray-300 bg-white text-sm font-bold text-gray-800"
       >
         {visibility.visible ? '隠す' : '表示'}
       </button>

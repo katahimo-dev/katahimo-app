@@ -1,10 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { settingsApi } from '../../api/settings';
-import { showErrorToast, showToast } from '../../ui/toast';
+import { settingsApi } from '../../../api/settings';
+import { showErrorToast, showToast } from '../../../ui/toast';
 import { buildModelOptions, type ModelOption } from './modelOptions';
 import { type AdminSettingsValues, planSettingsSave } from './saveSettingsPlan';
 
 export type AdminSettingsLoadStatus = 'loading' | 'loaded' | 'failed';
+
+/** 保存した設定の値(保存しなかった設定は入力のまま)。 */
+function pickKeys(
+  v: AdminSettingsValues,
+  plan: { keyChanged: boolean; modelsChanged: boolean; webhooksChanged: boolean },
+): Partial<AdminSettingsValues> {
+  return {
+    ...(plan.keyChanged ? { geminiApiKey: v.geminiApiKey } : {}),
+    ...(plan.modelsChanged ? { reportModel: v.reportModel, ocrModel: v.ocrModel } : {}),
+    ...(plan.webhooksChanged
+      ? { reportWebhookUrl: v.reportWebhookUrl, receiptWebhookUrl: v.receiptWebhookUrl }
+      : {}),
+  };
+}
 
 const EMPTY_VALUES: AdminSettingsValues = {
   geminiApiKey: '',
@@ -15,14 +29,16 @@ const EMPTY_VALUES: AdminSettingsValues = {
 };
 
 /**
- * 設定ダイアログの「詳細設定（管理者のみ）」の読み込み・入力・保存(GAS版 setupAdminSettingsArea /
- * loadGeminiModelSettings / loadGChatWebhookSettings / refreshGeminiModelList / saveSettings)。
+ * 管理タブの「AI → APIキー・モデル」「通知先」の読み込み・入力・保存(GAS版 setupAdminSettingsArea /
+ * loadGeminiModelSettings / loadGChatWebhookSettings / refreshGeminiModelList / saveSettings。GAS版は設定ダイアログの
+ * 「詳細設定」にあった)。
  *
- * GAS版と同じく、ダイアログを開くたびにサーバーから読み直し、読み込みが終わるまでは入力欄を
- * 無効にして保存もさせない(現在の値を確認できていない状態で上書きしないため)。
- * GAS版は3つのAPIで別々に読み込んでいたが、新APIは GET /api/settings/admin の1回で全部読む。
+ * 画面を開くたびにサーバーから読み直し、読み込みが終わるまでは入力欄を無効にして保存もさせない
+ * (現在の値を確認できていない状態で上書きしないため)。GET /api/settings/admin の1回で全部読む。
+ * 保存は変わった設定だけを送るため、APIキー・モデルの画面と通知先の画面がそれぞれこのフックを使っても、
+ * 画面に出していない設定は書き換えない。
  */
-export function useAdminSettingsForm(open: boolean, enabled: boolean) {
+export function useAdminSettingsForm() {
   const [status, setStatus] = useState<AdminSettingsLoadStatus>('loading');
   const [loaded, setLoaded] = useState<AdminSettingsValues | null>(null);
   const [values, setValues] = useState<AdminSettingsValues>(EMPTY_VALUES);
@@ -32,8 +48,10 @@ export function useAdminSettingsForm(open: boolean, enabled: boolean) {
   // 開き直したあとに古い読み込みの結果が届いても無視するための世代番号
   const loadSeq = useRef(0);
 
+  const [reloadCount, setReloadCount] = useState(0);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadCount は読み直しの合図
   useEffect(() => {
-    if (!open || !enabled) return;
     const seq = ++loadSeq.current;
     setStatus('loading');
     setLoaded(null);
@@ -60,7 +78,10 @@ export function useAdminSettingsForm(open: boolean, enabled: boolean) {
         setStatus('failed');
         showErrorToast(e);
       });
-  }, [open, enabled]);
+  }, [reloadCount]);
+
+  /** 入力を捨ててサーバーから読み直す。 */
+  const reload = useCallback(() => setReloadCount((n) => n + 1), []);
 
   const setValue = useCallback(
     <K extends keyof AdminSettingsValues>(key: K, value: AdminSettingsValues[K]) => {
@@ -117,6 +138,8 @@ export function useAdminSettingsForm(open: boolean, enabled: boolean) {
           l ? { ...l, reportWebhookUrl: v.reportWebhookUrl, receiptWebhookUrl: v.receiptWebhookUrl } : l,
         );
       }
+      // 前後の空白を除いた値を画面にも残す(保存した値と入力がずれて「未保存」に見えないように)
+      setValues((cur) => ({ ...cur, ...pickKeys(v, plan) }));
       return true;
     } catch (e) {
       showErrorToast(e, '保存に失敗しました');
@@ -124,9 +147,16 @@ export function useAdminSettingsForm(open: boolean, enabled: boolean) {
     }
   }, [status, loaded, values]);
 
+  const dirty =
+    status === 'loaded' &&
+    loaded !== null &&
+    (Object.keys(values) as (keyof AdminSettingsValues)[]).some((k) => values[k].trim() !== loaded[k]);
+
   return {
     status,
     values,
+    dirty,
+    reload,
     setValue,
     reportModelOptions,
     ocrModelOptions,
