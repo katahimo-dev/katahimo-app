@@ -10,11 +10,11 @@ import { StaffAdminPanel } from './staff/StaffAdminPanel';
 import { UnsavedChangesProvider, useConfirmLeave } from './unsavedChanges';
 
 const ALL_SECTIONS = [
-  { key: 'staff', label: '👤 スタッフ', adminOnly: true },
-  { key: 'reports', label: '📋 報告一覧', adminOnly: false },
-  { key: 'ai', label: '🤖 AI', adminOnly: true },
-  { key: 'notify', label: '🔔 通知先', adminOnly: true },
-  { key: 'logs', label: '📄 操作ログ', adminOnly: true },
+  { key: 'staff', icon: '👤', label: 'スタッフ', adminOnly: true },
+  { key: 'reports', icon: '📋', label: '報告一覧', adminOnly: false },
+  { key: 'ai', icon: '🤖', label: 'AI', adminOnly: true },
+  { key: 'notify', icon: '🔔', label: '通知先', adminOnly: true },
+  { key: 'logs', icon: '📄', label: '操作ログ', adminOnly: true },
 ] as const;
 
 type Section = (typeof ALL_SECTIONS)[number]['key'];
