@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { provisionTenant, registerStaff } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import { DrizzleTenantDirectory, DrizzleTenantProvisioning } from '@katahimo/db/repositories';
-import { DEMO_ACCOUNTS, DEMO_AI_USES_PER_SESSION, DEMO_PASSWORD } from '@katahimo/shared';
+import { DEMO_ACCOUNTS, DEMO_AI_USES_PER_SESSION, DEMO_PASSWORD, type DemoAccount } from '@katahimo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
@@ -30,7 +30,12 @@ const ownerDb = createDatabase(process.env.MIGRATION_DATABASE_URL ?? '', { max: 
 const container = createContainer(env, appDb);
 const app = createApp({ env, container });
 
-const admin = DEMO_ACCOUNTS.find((a) => a.role === 'admin') ?? DEMO_ACCOUNTS[0];
+function demoAccount(role: DemoAccount['role']): DemoAccount {
+  const account = DEMO_ACCOUNTS.find((a) => a.role === role);
+  if (!account) throw new Error(`デモ用アカウントがありません: ${role}`);
+  return account;
+}
+const admin = demoAccount('admin');
 const OTHER_PASSWORD = 'integration-pass-1';
 let demoAdminId = '';
 let extraStaffId = '';
@@ -160,7 +165,7 @@ describe('公開デモ: 断る操作', () => {
 
 describe('公開デモ: ログインと AI の回数', () => {
   it('パスワードを間違え続けてもアカウントはロックされない', async () => {
-    const staff = DEMO_ACCOUNTS.find((a) => a.role === 'staff') ?? admin;
+    const staff = demoAccount('staff');
     for (let i = 0; i < 12; i++) {
       expect((await loginAs(demoSlug, staff.email, 'wrong-password-0')).status).toBe(401);
     }
@@ -168,7 +173,7 @@ describe('公開デモ: ログインと AI の回数', () => {
   });
 
   it(`AI は1回のログインにつき ${DEMO_AI_USES_PER_SESSION} 回まで(ログインし直すと使える)`, async () => {
-    const coordinator = DEMO_ACCOUNTS.find((a) => a.role === 'coordinator') ?? admin;
+    const coordinator = demoAccount('coordinator');
     const generate = (cookie: string) =>
       post(
         '/api/reports/daily/generate',
