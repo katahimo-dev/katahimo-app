@@ -3,10 +3,13 @@ import { type KeyboardEvent, type ReactNode, useEffect, useRef } from 'react';
 export interface SectionTab<K extends string> {
   key: K;
   label: string;
+  /** 上の段(underline)でアイコンの下に文字を置くときのアイコン。 */
+  icon?: string;
 }
 
 /**
- * 管理タブの中の切り替え(WAI-ARIA のタブ。矢印キー・Home・End で移る)。狭い画面では横にスクロールし、見出しを折り返さない。
+ * 管理タブの中の切り替え(WAI-ARIA のタブ。矢印キー・Home・End で移る)。上の段(underline)は項目を等幅に並べ、アイコンの下に
+ * 文字を置く(狭い画面でも横にスクロールしない)。下の段(pill)は折り返す。
  * 中身は呼び出し側が `role="tabpanel"`・`id={`${idPrefix}Panel-${key}`}`・`aria-labelledby={`${idPrefix}Tab-${key}`}` で置く
  * (`SectionTabPanel`)。variant は、上の段が underline、その下の段が pill。
  */
@@ -66,10 +69,11 @@ export function SectionTabs<K extends string>({
     <div
       role="tablist"
       aria-label={label}
-      className={
+      className={variant === 'underline' ? 'grid border-b border-gray-200' : 'flex flex-wrap gap-1'}
+      style={
         variant === 'underline'
-          ? 'flex overflow-x-auto border-b border-gray-200 -mx-1 px-1'
-          : 'flex flex-wrap gap-1'
+          ? { gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }
+          : undefined
       }
     >
       {tabs.map((t, index) => {
@@ -88,9 +92,10 @@ export function SectionTabs<K extends string>({
             tabIndex={isSelected ? 0 : -1}
             onClick={() => void select(t.key)}
             onKeyDown={(e) => onKeyDown(e, index)}
+            aria-label={t.icon ? `${t.icon} ${t.label}` : undefined}
             className={
               variant === 'underline'
-                ? `shrink-0 whitespace-nowrap min-h-10 px-3 py-2 text-sm font-bold border-b-2 -mb-px transition-colors ${
+                ? `min-w-0 flex flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-1.5 text-xs font-bold border-b-2 -mb-px transition-colors ${
                     isSelected
                       ? 'text-blue-600 border-blue-600'
                       : 'text-gray-600 border-transparent hover:text-gray-800'
@@ -100,7 +105,16 @@ export function SectionTabs<K extends string>({
                   }`
             }
           >
-            {t.label}
+            {variant === 'underline' && t.icon ? (
+              <>
+                <span aria-hidden="true" className="text-lg leading-none">
+                  {t.icon}
+                </span>
+                <span className="block max-w-full truncate">{t.label}</span>
+              </>
+            ) : (
+              t.label
+            )}
           </button>
         );
       })}

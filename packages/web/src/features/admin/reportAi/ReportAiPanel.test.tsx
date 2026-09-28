@@ -188,8 +188,8 @@ describe('日報AIの調整', () => {
       .mockResolvedValueOnce(importResult())
       .mockResolvedValueOnce(importResult({ dryRun: false, applied: true }));
     renderPanel();
-    fireEvent.click(await screen.findByRole('tab', { name: '取込・書き出し' }));
-    const input = await screen.findByLabelText('ファイル(.xlsx)');
+    fireEvent.click(await screen.findByRole('button', { name: '⬆ Excel取込' }));
+    const input = await screen.findByLabelText('日報キーワード表現マスターのファイル(.xlsx)');
     const file = new File([new Uint8Array([1, 2, 3])], 'master.xlsx', {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });

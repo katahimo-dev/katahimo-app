@@ -1017,7 +1017,7 @@ async function runJourney() {
       // 書き出した xlsx(お客様のマスターと同じ見出しの形)を画面から取り込む
       const exported = await page.request.get(`${WEB_URL}/api/admin/report-ai/export.xlsx`);
       assert(exported.ok(), `書き出しが ${exported.status()}`);
-      await page.getByRole('tab', { name: '取込・書き出し' }).click();
+      await button(page, '⬆ Excel取込').click();
       const input = page.locator('#reportAiImportFile');
       await input.waitFor({ timeout: 10_000 });
       const xlsx = Buffer.from(await exported.body());

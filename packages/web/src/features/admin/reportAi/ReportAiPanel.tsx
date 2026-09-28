@@ -8,7 +8,7 @@ import { EmptyState, ErrorState, Loading } from '../../../ui/StatusViews';
 import { adminQueryKeys } from '../adminQueryKeys';
 import { PRIMARY_BUTTON } from '../components/FormField';
 import { SectionTabPanel, SectionTabs } from '../components/SectionTabs';
-import { ImportExportTab } from './ImportExportTab';
+import { ReportAiExcelTools } from './ReportAiExcelTools';
 import { type EditorTarget, RowEditorModal } from './RowEditorModal';
 import { type EditorTable, type RowTable, summaryOf } from './reportAiModel';
 
@@ -18,7 +18,6 @@ const TABS = [
   { key: 'educationLevels', label: '教育思考★' },
   { key: 'psiLevels', label: 'PSI' },
   { key: 'phrases', label: '表現' },
-  { key: 'io', label: '取込・書き出し' },
 ] as const;
 type Tab = (typeof TABS)[number]['key'];
 
@@ -63,6 +62,7 @@ export function ReportAiPanel() {
         保護者に送る日報で、AI がお子様の年齢・ご家庭の教育思考★・PSI に合わせて使う言葉の表です。PSI
         は教育思考★より優先します(PSI 2 以下は教育の言葉を使わず、温かみ表現で寄り添います)。
       </p>
+      <ReportAiExcelTools onImported={reload} />
       <SectionTabs
         tabs={TABS}
         selected={tab}
@@ -72,9 +72,7 @@ export function ReportAiPanel() {
         variant="pill"
       />
       <SectionTabPanel idPrefix="reportAi" tabKey={tab}>
-        {tab === 'io' ? (
-          <ImportExportTab onImported={reload} />
-        ) : query.isPending ? (
+        {query.isPending ? (
           <Loading />
         ) : query.isError ? (
           <ErrorState message={userMessageOf(query.error)} />
@@ -92,7 +90,7 @@ function MasterTab({
   masters,
   onEdit,
 }: {
-  tab: Exclude<Tab, 'io'>;
+  tab: Tab;
   masters: ReportAiMastersResponse;
   onEdit: (target: EditorTarget) => void;
 }) {
@@ -148,7 +146,7 @@ function MasterTab({
               <EmptyState
                 icon="🧩"
                 title="まだありません"
-                hint="「取込・書き出し」から日報キーワード表現マスターを取り込めます。"
+                hint="上の「⬆ Excel取込」で日報キーワード表現マスターをまとめて取り込めます。"
               />
             ) : (
               <ul
