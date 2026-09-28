@@ -50,7 +50,7 @@ jobs:
           --health-retries 20
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -111,7 +111,7 @@ jobs:
       API_PORT: '8080'
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -122,7 +122,7 @@ jobs:
         name: Playwright の版
         run: echo "version=$(node -p "require('./tools/e2e/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         id: browsers
         with:
           path: ~/.cache/ms-playwright
@@ -138,7 +138,7 @@ jobs:
 
       # Google Fonts のキャッシュ(src/fontCache.ts)。手順によって取得するサブセットが増えるため、
       # 毎回新しいキーで保存し、直近のものから復元する
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: tools/e2e/.cache/fonts
           key: e2e-fonts-${{ github.run_id }}
