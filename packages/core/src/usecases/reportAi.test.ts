@@ -138,6 +138,19 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
     expect(generation?.careRecipientId).toBe(recipientId);
   });
 
+  it('家庭の★を未設定に戻した(null の行)家庭は、行の無い家庭と同じく★2 で組み立てる', async () => {
+    await seedMasters(ctx, staff.staffId);
+    const input = { text: 'メモ', customerId, careRecipientId: recipientId, reportDate: '2026-09-20' };
+    await generateDailyReportDraft(deps, staff, input);
+    await ctx.uow.run(ctx.tenantId, async (r) => {
+      await r.customerReportProfiles.save(customerId, 5, staff.staffId, undefined);
+      await r.customerReportProfiles.save(customerId, null, staff.staffId, 1);
+    });
+    const result = await generateDailyReportDraft(deps, staff, input);
+    expect(result.ai).toMatchObject({ educationLevel: 2 });
+    expect(ai.prompts[1]).toBe(ai.prompts[0]);
+  });
+
   it('PSI 1 は AI が書かなくても warnings に「管理者へ連絡」を入れ、記録にも残す', async () => {
     const result = await generateDailyReportDraft(deps, staff, { text: 'メモ', customerId, riskRating: 1 });
     expect(result.draft.warnings).toEqual([ESCALATION_WARNING]);

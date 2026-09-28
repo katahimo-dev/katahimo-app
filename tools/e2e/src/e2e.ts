@@ -347,14 +347,30 @@ async function runJourney() {
       await childSelect.waitFor({ state: 'visible', timeout: 10_000 });
       const childId = await childSelect.inputValue();
       assert(childId !== '', 'お子様が1人なのに日報のお子様が選ばれていない');
-      await page.locator('#dailyAiSection').getByRole('radio', { name: '★4' }).waitFor({ timeout: 10_000 });
+      const levelGroup = page.locator('#dailyAiSection');
+      await levelGroup.getByRole('radio', { name: '★4' }).waitFor({ timeout: 10_000 });
+      const profilePath = new URL(`/api/customers/${await customerIdOfReport(page)}/report-profile`, WEB_URL)
+        .pathname;
+      // 前に流したときの★が残っていれば、先に ☆0(未設定)に戻す(同じ★を押しても保存しないため)
+      const zero = levelGroup.getByRole('radio', { name: '☆0 未設定' });
+      if ((await zero.getAttribute('aria-checked')) !== 'true') {
+        const cleared = await clickForResponse<{ profile: { educationLevel: number | null } }>(
+          page,
+          'PUT',
+          profilePath,
+          () => zero.click(),
+        );
+        assert(cleared.profile.educationLevel === null, `☆0 で未設定に戻らない: ${JSON.stringify(cleared)}`);
+        await levelGroup.getByText(/未設定（★2 標準として書きます）/).waitFor({ timeout: 10_000 });
+      }
       const profile = await clickForResponse<{ profile: { educationLevel: number } }>(
         page,
         'PUT',
-        new URL(`/api/customers/${await customerIdOfReport(page)}/report-profile`, WEB_URL).pathname,
-        () => page.locator('#dailyAiSection').getByRole('radio', { name: '★4' }).click(),
+        profilePath,
+        () => levelGroup.getByRole('radio', { name: '★4' }).click(),
       );
       assert(profile.profile.educationLevel === 4, `ご家庭の★が保存されない: ${JSON.stringify(profile)}`);
+      await levelGroup.getByText('★4 関心高い（先取り検討層）').waitFor({ timeout: 10_000 });
       await page.locator('#star-risk').getByRole('radio', { name: '3' }).click();
       const generateRequest = page.waitForRequest(
         (r) => new URL(r.url()).pathname === '/api/reports/daily/generate' && r.method() === 'POST',

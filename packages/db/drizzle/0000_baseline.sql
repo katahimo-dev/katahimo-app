@@ -812,7 +812,7 @@ ALTER TABLE "stored_files" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "customer_report_profiles" (
 	"tenant_id" uuid NOT NULL,
 	"customer_id" uuid NOT NULL,
-	"education_level" smallint NOT NULL,
+	"education_level" smallint,
 	"updated_by" uuid,
 	"row_version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,

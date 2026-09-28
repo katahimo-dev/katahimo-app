@@ -81,3 +81,54 @@ export const ASSESSMENT_DEFINITIONS: AssessmentDefinitions = {
     ],
   },
 };
+
+/** 家庭の教育思考★の1段階の説明(日報のダイアログ・お客様の情報の「❓ 説明」と★の下の一言)。 */
+export interface EducationLevelDefinition {
+  score: number;
+  /** 呼称(例「標準」)。 */
+  label: string;
+  /** 想定顧客像。 */
+  customerProfile: string;
+  /** 教育語の使い方。 */
+  usage: string;
+}
+
+/**
+ * 教育思考★の既定の説明(お客様の日報キーワード表現マスター「03 教育思考レベル定義」の文言)。テナントが「日報AIの調整」の
+ * 教育思考★を入れていれば、段階ごと・項目ごとにその文言にする(GET /api/ui-config)。
+ */
+export const EDUCATION_LEVEL_DEFINITIONS: { title: string; levels: EducationLevelDefinition[] } = {
+  title: 'ご家庭の教育への関心（教育思考★）',
+  levels: [
+    {
+      score: 1,
+      label: '関心薄・安心最優先',
+      customerProfile: '教育への関心は薄め。まず安心・安全を重視する家庭。',
+      usage: '教育語は原則使わない。日常の様子＋温かい所感のみ。',
+    },
+    {
+      score: 2,
+      label: '標準',
+      customerProfile: '一般的な家庭。日報はきちんと読む。',
+      usage: '平易な自然語を1つまで（集中していた/楽しそう/自分から）。',
+    },
+    {
+      score: 3,
+      label: 'やや関心あり',
+      customerProfile: '成長に関心。習い事を検討し始める層。',
+      usage: '平易な教育概念を1語、意味づけとともに。',
+    },
+    {
+      score: 4,
+      label: '関心高い（先取り検討層）',
+      customerProfile: '体験重視・慎重先取り。',
+      usage: '教育語1〜2語をやさしい説明つきで。',
+    },
+    {
+      score: 5,
+      label: '非常に高い（モンテッソーリ等志向）',
+      customerProfile: '教育投資に積極的。専門知識に関心。',
+      usage: '専門用語を用語名＋説明つきで積極活用。',
+    },
+  ],
+};

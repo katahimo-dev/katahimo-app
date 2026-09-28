@@ -16,14 +16,25 @@ export function useCustomerReportProfile(customerId: string | null, enabled = tr
   });
   const profile = query.data;
   const save = useMutation({
-    mutationFn: ({ id, level, rowVersion }: { id: string; level: number; rowVersion: number | null }) =>
+    mutationFn: ({
+      id,
+      level,
+      rowVersion,
+    }: {
+      id: string;
+      level: number | null;
+      rowVersion: number | null;
+    }) =>
       customersApi.saveReportProfile(id, {
         educationLevel: level,
         ...(rowVersion === null ? {} : { rowVersion }),
       }),
     onSuccess: (res, { id }) => {
       queryClient.setQueryData(customerQueryKeys.reportProfile(id), res);
-      showToast(`ご家庭の教育思考を★${res.profile.educationLevel}にしました`);
+      const level = res.profile.educationLevel;
+      showToast(
+        level === null ? 'ご家庭の教育思考を未設定に戻しました' : `ご家庭の教育思考を★${level}にしました`,
+      );
     },
     onError: (error, { id }) => {
       showErrorToast(error);
@@ -35,7 +46,8 @@ export function useCustomerReportProfile(customerId: string | null, enabled = tr
     educationLevel: profile ? profile.educationLevel : undefined,
     updatedByName: profile?.updatedByName ?? null,
     saving: save.isPending,
-    setEducationLevel: (level: number) => {
+    /** null は未設定(☆0)に戻す。 */
+    setEducationLevel: (level: number | null) => {
       if (!customerId || !profile) return;
       save.mutate({ id: customerId, level, rowVersion: profile.rowVersion });
     },

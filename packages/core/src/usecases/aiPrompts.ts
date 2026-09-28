@@ -1,8 +1,9 @@
-import type { AiPromptKey, AssessmentDefinitions } from '@katahimo/shared';
+import type { AiPromptKey, AssessmentDefinitions, EducationLevelDefinition } from '@katahimo/shared';
 import {
   AI_PROMPT_DEFINITIONS,
   AI_PROMPT_KEYS,
   ASSESSMENT_DEFINITIONS,
+  EDUCATION_LEVEL_DEFINITIONS,
   findAiPromptDefinition,
 } from '@katahimo/shared';
 import type { AppLogPort } from '../ports/appLog';
@@ -20,17 +21,25 @@ export interface UiConfigView {
   accidentHint: string;
   hiyariPlaceholder: string;
   assessments: AssessmentDefinitions;
+  /** 家庭の教育思考★の段階ごとの説明(★1〜5)。 */
+  educationLevels: { title: string; levels: EducationLevelDefinition[] };
 }
 
 /**
  * 日報/事故報告画面の文言・評価定義。GAS版Main.js getUiConfigに対応。PSI の定義・判定基準は、テナントが
  * 「日報AIの調整」の PSI(日報キーワード表現マスターのシート04)を入れていればその文言にする(段階ごと)。
+ * 教育思考★の説明も同じく「日報AIの調整」の教育思考★(シート03)の呼称・想定顧客像・教育語の使い方にする
+ * (段階ごと・項目ごと。空の項目は EDUCATION_LEVEL_DEFINITIONS の文言)。
  */
 export async function getUiConfig(deps: AiPromptDeps, tenantId: string): Promise<UiConfigView> {
-  const { prompts, psiLevels } = await deps.uow.run(tenantId, async (r) => ({
-    prompts: await r.aiPrompts.listAll(),
-    psiLevels: (await r.reportAi.loadActive()).psiLevels,
-  }));
+  const { prompts, psiLevels, educationLevels } = await deps.uow.run(tenantId, async (r) => {
+    const masters = await r.reportAi.loadActive();
+    return {
+      prompts: await r.aiPrompts.listAll(),
+      psiLevels: masters.psiLevels,
+      educationLevels: masters.educationLevels,
+    };
+  });
   const overrides = new Map(prompts.map((p) => [p.key, p.body]));
   const risk = {
     ...ASSESSMENT_DEFINITIONS.risk,
@@ -41,6 +50,21 @@ export async function getUiConfig(deps: AiPromptDeps, tenantId: string): Promise
         : level;
     }),
   };
+  const orDefault = (value: string | null | undefined, fallback: string) => value?.trim() || fallback;
+  const education = {
+    title: EDUCATION_LEVEL_DEFINITIONS.title,
+    levels: EDUCATION_LEVEL_DEFINITIONS.levels.map((level) => {
+      const tenantLevel = educationLevels.find((e) => e.level === level.score);
+      return tenantLevel
+        ? {
+            score: level.score,
+            label: orDefault(tenantLevel.label, level.label),
+            customerProfile: orDefault(tenantLevel.customerProfile, level.customerProfile),
+            usage: orDefault(tenantLevel.usage, level.usage),
+          }
+        : level;
+    }),
+  };
   const body = (key: AiPromptKey) => overrides.get(key) || findAiPromptDefinition(key)?.defaultBody || '';
   return {
     dailyPlaceholder: body(AI_PROMPT_KEYS.DAILY_MEMO_PLACEHOLDER),
@@ -48,6 +72,7 @@ export async function getUiConfig(deps: AiPromptDeps, tenantId: string): Promise
     accidentHint: body(AI_PROMPT_KEYS.ACCIDENT_WRITING_HINT),
     hiyariPlaceholder: body(AI_PROMPT_KEYS.HIYARI_WRITING_HINT),
     assessments: { risk, es: ASSESSMENT_DEFINITIONS.es },
+    educationLevels: education,
   };
 }
 

@@ -120,8 +120,8 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | --- | --- | --- | --- |
 | `GET /?familyName=` | `customerListQuerySchema` / `customerListResponseSchema` | `{ customers: [{ id, name, phone, city }], cities }` | `familyName` 省略でアーカイブされていない全件(絞り込みは画面)。指定すると苗字の完全一致 |
 | `GET /:id` | — / `customerDetailResponseSchema` | 住所・連絡先・子ども(アレルギー等)の全項目 | 形の違う ID は 404。INFO `customer.detail.viewed`(`details.customerId`) |
-| `GET /:id/report-profile` | — / `customerReportProfileResponseSchema` | `{ profile: { customerId, educationLevel, rowVersion, updatedAt, updatedByName } }`(家庭の教育思考★。未設定は `educationLevel`・`rowVersion` が null) | 無い・別テナントのお客様は 404 |
-| `PUT /:id/report-profile` | `saveCustomerReportProfileRequestSchema`(`educationLevel` 1〜5・`rowVersion?`(未設定の家庭は省略))/ 同上 | 同上 | ログインしているスタッフなら誰でも。版が違う(未設定のつもりで送ったが他の人が先に設定した場合を含む)と 409(WARN `customer.report_profile.update_rejected`)。INFO `customer.report_profile.updated`(`customerId`・前後の★) |
+| `GET /:id/report-profile` | — / `customerReportProfileResponseSchema` | `{ profile: { customerId, educationLevel, rowVersion, updatedAt, updatedByName } }`(家庭の教育思考★。一度も設定していない家庭は `educationLevel`・`rowVersion` が null、未設定に戻した家庭は `educationLevel` だけ null) | 無い・別テナントのお客様は 404 |
+| `PUT /:id/report-profile` | `saveCustomerReportProfileRequestSchema`(`educationLevel` 1〜5 または null(未設定に戻す)・`rowVersion?`(行の無い家庭は省略))/ 同上 | 同上 | ログインしているスタッフなら誰でも。null は行を消さずに `education_level` を null にする(`rowVersion` は上がり続け、行の無い家庭を null にすると null の行を作る)。未設定の家庭の日報AIは行の無い家庭と同じく★2(`DEFAULT_EDUCATION_LEVEL`)。版が違う(未設定のつもりで送ったが他の人が先に設定した場合を含む)と 409(WARN `customer.report_profile.update_rejected`)。INFO `customer.report_profile.updated`(`customerId`・前後の★。未設定は null) |
 
 ### 2.4 予定 `/api/schedule`(`routes/schedule.ts`、全てログイン)
 
@@ -189,7 +189,7 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 
 | メソッド・パス | 権限 | 契約(要求 / 応答) | 応答・ログ |
 | --- | --- | --- | --- |
-| `GET /api/ui-config` | ログイン | — / `uiConfigResponseSchema` | `{ dailyPlaceholder, accidentPlaceholder, accidentHint, hiyariPlaceholder, assessments }`(テナントの上書き → `defaults/aiPrompts.ts`)。PSI の定義・判定基準は日報AIの調整の PSI(段階ごと)があればその文言 |
+| `GET /api/ui-config` | ログイン | — / `uiConfigResponseSchema` | `{ dailyPlaceholder, accidentPlaceholder, accidentHint, hiyariPlaceholder, assessments, educationLevels }`(テナントの上書き → `defaults/aiPrompts.ts`)。PSI の定義・判定基準は日報AIの調整の PSI(段階ごと)があればその文言。`educationLevels` = `{ title, levels: [{ score, label, customerProfile, usage }] }`(★1〜5 の説明): 日報AIの調整の教育思考★(段階ごと)があればその呼称・想定顧客像・教育語の使い方、空の項目と行の無い段階は `EDUCATION_LEVEL_DEFINITIONS`(`defaults/assessments.ts`) |
 | `GET /api/data-version` | ログイン | — / `dataVersionResponseSchema` | `{ dataVersion: '12' }`(`tenant_settings.customer_data_version`) |
 | `GET /api/settings/admin` | 管理者 | — / `adminSettingsResponseSchema` | `{ settings: { geminiApiKey, geminiApiKeySet, geminiReportModel, geminiOcrModel, gchatReportWebhookUrl, gchatReportWebhookUrlSet, gchatReceiptWebhookUrl, gchatReceiptWebhookUrlSet } }`。秘密値は伏せ字 |
 | `POST /api/settings/admin/gemini-key` | 管理者 | `saveGeminiApiKeyRequestSchema`(`apiKey` 500字まで)/ `saveSettingsResponseSchema` | `{ ok, changed, message }`。空・伏せ字の一部だけ書き換えは 400。SECURITY `settings.gemini_api_key.changed` |

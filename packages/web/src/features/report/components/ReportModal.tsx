@@ -93,6 +93,7 @@ export function ReportModal({
                 today={c.today}
                 educationLevel={c.dailyAi.educationLevel}
                 savingLevel={c.dailyAi.savingLevel}
+                educationLevels={c.uiConfig?.educationLevels}
                 onSelectChild={c.dailyAi.selectChild}
                 onSetLevel={c.dailyAi.setEducationLevel}
               />

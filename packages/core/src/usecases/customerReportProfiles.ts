@@ -50,14 +50,16 @@ export async function getCustomerReportProfile(
 }
 
 /**
- * 教育思考★を変える。rowVersion は画面が読んだ版(未設定の家庭は省略)。その間に他の人が変えていれば 409。
- * INFO `customer.report_profile.updated`(前後の★)。
+ * 教育思考★を変える。educationLevel の null は未設定に戻す(行は消さずに null を書くので、row_version・更新者・
+ * 操作ログは★を付けるときと同じに続く。行の無い家庭を未設定にしても null の行を作るだけ)。未設定の家庭の日報は
+ * 行が無い家庭と同じく★2(DEFAULT_EDUCATION_LEVEL)。rowVersion は画面が読んだ版(行の無い家庭は省略)。
+ * その間に他の人が変えていれば 409。INFO `customer.report_profile.updated`(前後の★。未設定は null)。
  */
 export async function saveCustomerReportProfile(
   deps: CustomerReportProfileDeps,
   actor: Actor,
   customerId: string,
-  input: { educationLevel: number; rowVersion?: number | undefined },
+  input: { educationLevel: number | null; rowVersion?: number | undefined },
 ): Promise<CustomerReportProfileView> {
   let before: number | null = null;
   let view: CustomerReportProfileView;

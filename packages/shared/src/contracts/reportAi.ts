@@ -435,7 +435,8 @@ export const customerReportProfileResponseSchema = z.object({ profile: customerR
 
 /** PUT /api/customers/:id/report-profile(ログインしているスタッフなら誰でも)。 */
 export const saveCustomerReportProfileRequestSchema = z.object({
-  educationLevel: level,
+  /** null は未設定に戻す(☆0。日報では DEFAULT_EDUCATION_LEVEL を使う)。 */
+  educationLevel: level.nullable(),
   /** 画面が読んだ版(未設定の家庭は省略)。 */
   rowVersion: rowVersion.optional(),
 });

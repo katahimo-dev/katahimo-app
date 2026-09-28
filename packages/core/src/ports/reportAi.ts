@@ -97,10 +97,10 @@ export interface ReportAiMasterRepository {
   ): Promise<ReportAiRowMeta>;
 }
 
-/** 家庭ごとの教育思考★。 */
+/** 家庭ごとの教育思考★。educationLevel が null の行は未設定に戻した家庭(行が無い家庭と同じく★2 として扱う)。 */
 export interface CustomerReportProfileRecord {
   customerId: string;
-  educationLevel: number;
+  educationLevel: number | null;
   rowVersion: number;
   updatedAt: Date;
   updatedBy: string | null;
@@ -110,11 +110,12 @@ export interface CustomerReportProfileRepository {
   find(customerId: string): Promise<CustomerReportProfileRecord | null>;
   /**
    * 書く(無ければ作る)。expectedVersion を渡すと既にある行の版が一致するときだけ(違えば conflict。無い行に版を
-   * 渡したとき・版を渡さずに既にある行へ書いたときも、他の人が先に保存したので conflict)。
+   * 渡したとき・版を渡さずに既にある行へ書いたときも、他の人が先に保存したので conflict)。educationLevel の null は
+   * 未設定に戻す(行は消さずに null を書く)。
    */
   save(
     customerId: string,
-    educationLevel: number,
+    educationLevel: number | null,
     updatedBy: string,
     expectedVersion: number | undefined,
   ): Promise<CustomerReportProfileRecord>;

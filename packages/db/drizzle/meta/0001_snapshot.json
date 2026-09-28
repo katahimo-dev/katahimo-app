@@ -7316,7 +7316,7 @@
           "name": "education_level",
           "type": "smallint",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "updated_by": {
           "name": "updated_by",

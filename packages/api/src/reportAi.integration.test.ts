@@ -241,6 +241,11 @@ describe('管理画面「日報AIの調整」', () => {
       assessments: { risk: { levels: { score: number; label: string }[] } };
     };
     expect(ui.assessments.risk.levels.find((l) => l.score === 3)?.label).toBe('要観察(テナント)');
+    // 教育思考★の説明(テナントの行が無い段階は既定の文言)
+    const eduUi = (await (await request('GET', '/api/ui-config', t.staffCookie)).json()) as {
+      educationLevels: { levels: { score: number; label: string }[] };
+    };
+    expect(eduUi.educationLevels.levels.map((l) => l.score)).toEqual([1, 2, 3, 4, 5]);
     // 他のテナントの行は触れない
     expect(
       (await request('DELETE', `/api/admin/report-ai/keywords/${id}`, other.adminCookie, {})).status,
@@ -286,6 +291,19 @@ describe('家庭の教育思考★', () => {
     expect((await request('PUT', path, t.staffCookie, { educationLevel: 6, rowVersion: 2 })).status).toBe(
       400,
     );
+    // null で未設定に戻す(行は残って版は続く)
+    expect((await request('PUT', path, t.staffCookie, { educationLevel: null, rowVersion: 2 })).status).toBe(
+      200,
+    );
+    expect(await read(t.otherCookie)).toMatchObject({
+      educationLevel: null,
+      rowVersion: 3,
+      updatedByName: '一般 花子',
+    });
+    expect((await request('PUT', path, t.otherCookie, { educationLevel: null, rowVersion: 2 })).status).toBe(
+      409,
+    );
+    expect((await request('PUT', path, t.otherCookie, { rowVersion: 3 })).status).toBe(400);
   });
 });
 
