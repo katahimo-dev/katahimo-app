@@ -10,6 +10,8 @@ coverage/
 # ローカル開発用の領収書画像保存先(LocalFileStoragePort)。本番はGCSに置き換わる想定で、
 # 実データを含みうるためコミットしない。
 packages/api/data/
+# リポジトリの直下で実行したときの置き場(LOCAL_RECEIPT_STORAGE_DIR の既定 ./data/receipts)
+/data/
 
 # 通し確認(e2e)の画面・フォントのキャッシュ
 tools/e2e/out/
