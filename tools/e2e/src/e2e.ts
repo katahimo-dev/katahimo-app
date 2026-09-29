@@ -351,17 +351,23 @@ async function runJourney() {
       await levelGroup.getByRole('radio', { name: '★4' }).waitFor({ timeout: 10_000 });
       const profilePath = new URL(`/api/customers/${await customerIdOfReport(page)}/report-profile`, WEB_URL)
         .pathname;
-      // 前に流したときの★が残っていれば、先に ☆0(未設定)に戻す(同じ★を押しても保存しないため)
-      const zero = levelGroup.getByRole('radio', { name: '☆0 未設定' });
-      if ((await zero.getAttribute('aria-checked')) !== 'true') {
-        const cleared = await clickForResponse<{ profile: { educationLevel: number | null } }>(
+      // 前に流したときの★4 が残っていれば、先に★3 にする(同じ★を押しても保存しないため)。☆0(未設定)は無い
+      const star4 = levelGroup.getByRole('radio', { name: '★4' });
+      // 読み込み中の★は押せず aria-checked もまだ違うので、押せるようになってから読む
+      await page.waitForFunction(
+        (el) => el !== null && !(el as HTMLButtonElement).disabled,
+        await star4.elementHandle(),
+        { timeout: 10_000 },
+      );
+      if ((await star4.getAttribute('aria-checked')) === 'true') {
+        const moved = await clickForResponse<{ profile: { educationLevel: number | null } }>(
           page,
           'PUT',
           profilePath,
-          () => zero.click(),
+          () => levelGroup.getByRole('radio', { name: '★3' }).click(),
         );
-        assert(cleared.profile.educationLevel === null, `☆0 で未設定に戻らない: ${JSON.stringify(cleared)}`);
-        await levelGroup.getByText(/未設定（★2 標準として書きます）/).waitFor({ timeout: 10_000 });
+        assert(moved.profile.educationLevel === 3, `★3 が保存されない: ${JSON.stringify(moved)}`);
+        await levelGroup.getByText(/^★3 /).waitFor({ timeout: 10_000 });
       }
       const profile = await clickForResponse<{ profile: { educationLevel: number } }>(
         page,

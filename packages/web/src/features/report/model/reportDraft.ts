@@ -159,7 +159,26 @@ export function applyDraftToForm(form: ReportFormState, draft: PendingReportDraf
   return next;
 }
 
-/** 戻したときのお知らせ(赤。「閉じる」まで消えない) */
+/** 戻したときのお知らせ(赤。「破棄する」か「閉じる」まで消えない) */
 export function draftRestoredMessage(draft: PendingReportDraft): string {
-  return `前回の${draft.customerName || ''}様の日報が保存されていません。続きを書いて保存してください`;
+  return `前回の${draft.customerName || ''}様の日報が保存されていません。続きを書いて保存するか、要らなければ「破棄する」を押してください`;
+}
+
+export const DISCARD_DRAFT_LABEL = '破棄する';
+export const DISCARD_DRAFT_CONFIRM = '保存していない日報の書きかけを破棄しますか？（元に戻せません）';
+
+/**
+ * 書きかけを破棄して、開いたときの空の入力(fresh)に戻す。お客様の世帯から選んだ事故報告の対象のお子様は
+ * 書きかけと関係ないので残す(GAS版には無い。間違えたお客様で書き始めた書きかけを消せるように足した)。
+ */
+export function discardDraftFromForm(current: ReportFormState, fresh: ReportFormState): ReportFormState {
+  return {
+    ...fresh,
+    familyIndex: current.familyIndex,
+    accident: {
+      ...fresh.accident,
+      targetName: current.accident.targetName,
+      targetDob: current.accident.targetDob,
+    },
+  };
 }

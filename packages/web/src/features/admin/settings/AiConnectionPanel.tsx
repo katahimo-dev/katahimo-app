@@ -22,7 +22,8 @@ export function AiConnectionPanel() {
         Gemini の APIキー
       </h3>
       <div>
-        <label htmlFor="settingGeminiApiKey" className="block text-xs font-bold text-gray-700 mb-1">
+        {/* 見出しと同じ文言を2度出さないよう、入力欄の名前は読み上げだけにする */}
+        <label htmlFor="settingGeminiApiKey" className="sr-only">
           Gemini APIキー
         </label>
         <SecretInput

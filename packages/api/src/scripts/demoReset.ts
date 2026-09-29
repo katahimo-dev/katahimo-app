@@ -3,7 +3,7 @@ import { loadDotenv } from '../loadDotenv';
 loadDotenv();
 
 import type { StoredFileRow } from '@katahimo/core/ports';
-import { provisionTenant } from '@katahimo/core/usecases';
+import { provisionTenant, readTenantSecrets, usableSecretValue } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import {
   DrizzleTenantCalendarSettingsStore,
@@ -87,6 +87,20 @@ async function terminateAndPurgeTenant(ownerDb: ReturnType<typeof createDatabase
 }
 
 /**
+ * 引き継ぐ Gemini の API キー(無ければ空文字)。開けないとき(ジョブに KMS の権限が無い等)は、記録先の操作ログが
+ * この後の消去で消えるため、ジョブの出力に警告を出す。
+ */
+async function readKeptGeminiApiKey(container: Container, tenantId: string): Promise<string> {
+  const { gemini_api_key: secret } = await readTenantSecrets(container, tenantId, ['gemini_api_key']);
+  if (secret.state === 'unreadable') {
+    console.warn(
+      '[demo:reset] 保存済みの Gemini の API キーを開けないため引き継ぎません(ジョブのサービスアカウントの KMS の権限・SECRET_BOX_* を確かめる)',
+    );
+  }
+  return usableSecretValue(secret);
+}
+
+/**
  * 公開デモ用テナントを消去して作り直す(呼び出し側 = CLI(main)と結合テストの両方から使う本体。
  * slug の安全確認(DEMO_TENANT_SLUG との一致・"demo" の拒否)は呼び出し側の責務)。
  */
@@ -110,6 +124,9 @@ export async function resetDemoTenant(
       `slug ${slug} のテナントは demo:reset が作ったもの(名前「${DEMO_TENANT_NAME}」)ではないため、消しません: ${existing.name}`,
     );
   }
+  // 管理画面で保存した Gemini の API キーも、テナントの消去で消えるため引き継ぐ(封はテナントの ID に結び付くので、
+  // 開いて新しいテナントで封をし直す。本物のテナントの秘密値を開かないよう、名前を確かめた後に読む)
+  const keptGeminiApiKey = existing ? await readKeptGeminiApiKey(container, existing.id) : '';
   if (existing) {
     console.log(`[demo:reset] 既存のテナントを消去します: ${existing.name} (id=${existing.id})`);
     const deletedBlobs = await deleteStoredBlobs(container, existing.id);
@@ -130,6 +147,12 @@ export async function resetDemoTenant(
     console.log(
       `[demo:reset] カレンダーの設定を引き継ぎました(共有カレンダー ${keptCalendarSettings.sharedCalendars.length}件)`,
     );
+  }
+
+  if (keptGeminiApiKey) {
+    const sealed = await container.secretBox.seal(tenant.id, 'gemini_api_key', keptGeminiApiKey);
+    await container.uow.run(tenant.id, (r) => r.secrets.put('gemini_api_key', sealed, null));
+    console.log('[demo:reset] Gemini の API キーを引き継ぎました');
   }
 
   const summary = await seedDemoTenant(container, tenant, now);

@@ -17,8 +17,8 @@ import {
 } from '../../../lib/storage';
 import { useTodayJst } from '../../../lib/useTodayJst';
 import { confirmNative, useConfirmModal } from '../../../ui/confirm';
-import { hideToast, showErrorToast, showToast } from '../../../ui/toast';
-import { toastStore } from '../../../ui/toast/toastStore';
+import { hideToast, showActionToast, showErrorToast, showToast } from '../../../ui/toast';
+import { type ToastAction, toastStore } from '../../../ui/toast/toastStore';
 import { useSession } from '../../auth';
 import { useCustomerReportProfile } from '../../customers/useCustomerReportProfile';
 import { type ClockTime, formatClock, receiptFallbackTimestamp, shiftReportDate } from '../model/dateTime';
@@ -26,6 +26,9 @@ import {
   applyDraftToForm,
   buildDraftSnapshot,
   clearPendingDraft,
+  DISCARD_DRAFT_CONFIRM,
+  DISCARD_DRAFT_LABEL,
+  discardDraftFromForm,
   draftRestoredMessage,
   readPendingDraft,
   writePendingDraft,
@@ -176,6 +179,8 @@ export function useReportController(session: ReportSession | null) {
   const nonceRef = useRef(nonce);
   const generatingRef = useRef<number | null>(null);
   const savingRef = useRef<number | null>(null);
+  /** 書きかけを戻したお知らせの「破棄する」(AI を始めたときに、ほかのボタンつきのお知らせと分けて消すため) */
+  const draftToastActionRef = useRef<ToastAction | null>(null);
 
   // ── お客様 ──
   const customerId = session?.kind === 'customer' ? session.target.customerId : null;
@@ -237,16 +242,40 @@ export function useReportController(session: ReportSession | null) {
     setVisitComplete({ status: 'idle' });
     selectDailyChild('');
     rememberAiInfo(null);
-    let initial = createInitialForm({
+    const fresh = createInitialForm({
       today: today(),
       lastStart: lastStartTime(storageScope),
       lastAccidentTime: readStorage(userStorageKey(STORAGE_KEYS.lastAccidentTime, storageScope)) || '',
     });
-    // 保存していない入力が残っていれば、どのお客様を開いたときでもまず戻して見せる(GAS版と同じ)
+    // 保存していない入力が残っていれば、どのお客様を開いたときでもまず戻して見せる(GAS版と同じ)。
+    // 間違えたお客様で書き始めたときなど、要らない書きかけはお知らせの「破棄する」で消せる(GAS版には無い)
     const draft = readPendingDraft(storageScope);
-    if (draft) initial = applyDraftToForm(initial, draft);
-    apply({ type: 'reset', state: initial });
-    if (draft) showToast(draftRestoredMessage(draft), true);
+    apply({ type: 'reset', state: draft ? applyDraftToForm(fresh, draft) : fresh });
+    if (!draft) return;
+    const openedNonce = session.nonce;
+    const action: ToastAction = {
+      label: DISCARD_DRAFT_LABEL,
+      run: () => {
+        // 保存・AI の生成の途中で消すと、遅れて届いた結果が空の入力に付いてしまうため断る
+        if (savingRef.current !== null || generatingRef.current !== null) {
+          showToast('保存・AIの生成が終わってから破棄してください', true);
+          return;
+        }
+        if (!confirmNative(DISCARD_DRAFT_CONFIRM)) {
+          showActionToast(draftRestoredMessage(draft), action, true);
+          return;
+        }
+        clearPendingDraft(storageScope);
+        draftToastActionRef.current = null;
+        // 開き直した後なら、いまのダイアログは書きかけを戻していないので入力には触らない
+        if (nonceRef.current !== openedNonce) return;
+        rememberAiInfo(null);
+        apply({ type: 'reset', state: discardDraftFromForm(formRef.current, fresh) });
+        showToast('書きかけを破棄しました');
+      },
+    };
+    draftToastActionRef.current = action;
+    showActionToast(draftRestoredMessage(draft), action, true);
   }, [nonce]);
 
   // 世帯構成員が読めたら、1人目を事故報告の「対象のお子様」に選んでおく(GAS版 openModal の Auto Select first
@@ -430,7 +459,8 @@ export function useReportController(session: ReportSession | null) {
     setAiProgress(null);
     apply({ type: 'aiStarted' });
     // 出ているお知らせは消す(下の「⏹ 止めて手で書く」に重ならないように。新しい版の「更新する」つきは残す)
-    if (!toastStore.getState().action) hideToast();
+    const toastAction = toastStore.getState().action;
+    if (!toastAction || toastAction === draftToastActionRef.current) hideToast();
     const finish = () => {
       if (generatingRef.current !== startedAt) return;
       generatingRef.current = null;
@@ -618,6 +648,10 @@ export function useReportController(session: ReportSession | null) {
     const requestNonce = nonceRef.current;
     savingRef.current = startedAt;
     setSavingSince(startedAt);
+    // 保存するなら書きかけの「破棄する」は要らない(保存の途中で押せないように消す)
+    if (draftToastActionRef.current && toastStore.getState().action === draftToastActionRef.current) {
+      hideToast();
+    }
     const finish = () => {
       if (savingRef.current !== startedAt) return;
       savingRef.current = null;

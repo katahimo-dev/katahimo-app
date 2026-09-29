@@ -10,8 +10,9 @@ import { StarRating } from './StarRating';
 type EducationLevelDefinitions = UiConfigResponse['educationLevels'];
 
 /**
- * 家庭の教育思考★(☆0 = 未設定、★1〜5)。日報の PSI と同じ★で選び、★の下に選んだ段階の呼称と教育語の使い方を出す。
- * 「❓ 説明」で段階ごとの説明(呼称・想定顧客像・教育語の使い方)の表を開く。未設定は★2 として日報を書く。
+ * 家庭の教育思考★(★1〜5)。日報の PSI と同じ★で選び、★の下に選んだ段階の呼称と教育語の使い方を出す。
+ * 「❓ 説明」で段階ごとの説明(呼称・想定顧客像・教育語の使い方)の表を開く。未設定(null)は日報を★2(標準)で
+ * 書くので、★2 を選んだ状態で見せる(未設定と★2 は同じ書き方になり分ける意味が無いため、「☆0 未設定」は置かない)。
  * 説明はテナントの「日報AIの調整」の教育思考★(GET /api/ui-config)、読み込み前は既定の文言。
  */
 export function EducationLevelPicker({
@@ -30,13 +31,13 @@ export function EducationLevelPicker({
   educationLevel: number | null | undefined;
   /** 保存中(押しても何もしない。キーボードのフォーカスは★に残す) */
   disabled: boolean;
-  /** null は未設定に戻す。 */
-  onSelect: (level: number | null) => void;
+  onSelect: (level: number) => void;
   definitions?: EducationLevelDefinitions | undefined;
 }) {
   const [helpOpen, setHelpOpen] = useState(false);
-  const selected = definitions.levels.find((l) => l.score === educationLevel);
-  const fallback = definitions.levels.find((l) => l.score === DEFAULT_EDUCATION_LEVEL);
+  // 未設定は★2(DEFAULT_EDUCATION_LEVEL)として見せる
+  const effective = educationLevel === undefined ? undefined : (educationLevel ?? DEFAULT_EDUCATION_LEVEL);
+  const selected = definitions.levels.find((l) => l.score === effective);
   const helpButton = (
     <button
       type="button"
@@ -59,24 +60,19 @@ export function EducationLevelPicker({
       <div className="flex items-center gap-2 flex-wrap">
         <StarRating
           labelledBy={labelId}
-          score={educationLevel ?? 0}
+          score={effective ?? 0}
           disabled={educationLevel === undefined}
           busy={disabled}
-          zeroLabel="☆0 未設定"
           starLabel={(value) => `★${value}`}
           onRate={(value) => {
-            const next = value === 0 ? null : value;
-            if (next !== educationLevel) onSelect(next);
+            // 見えている★(未設定なら★2)と同じなら保存しない
+            if (value !== effective) onSelect(value);
           }}
         />
         {heading ? null : helpButton}
       </div>
       <div className="text-base font-bold text-gray-700 mt-1" aria-live="polite">
-        {educationLevel === undefined
-          ? ''
-          : selected
-            ? `★${selected.score} ${selected.label}`
-            : `未設定（★${DEFAULT_EDUCATION_LEVEL}${fallback ? ` ${fallback.label}` : ''}として書きます）`}
+        {selected ? `★${selected.score} ${selected.label}` : ''}
       </div>
       {selected ? <p className="text-sm text-gray-600">{`教育語: ${selected.usage}`}</p> : null}
       <EducationLevelHelpModal open={helpOpen} definitions={definitions} onClose={() => setHelpOpen(false)} />
@@ -105,9 +101,9 @@ function EducationLevelHelpModal({
         <ModalHeader title={definitions.title} titleId="educationLevelHelpTitle" onClose={onClose} />
         <div className="p-4 overflow-y-auto text-gray-700 space-y-3">
           <p className="text-sm text-gray-600">
-            日報のAIが、保護者に送る文で教育の言葉をどのくらい使うかの目安です。☆0(未設定)は★
+            日報のAIが、保護者に送る文で教育の言葉をどのくらい使うかの目安です。選んでいないご家庭は★
             {DEFAULT_EDUCATION_LEVEL}
-            として書きます。その日のPSI(ヒヤッとした度合い)が低いときは★より優先し、教育の言葉を控えます。
+            (標準)として書きます。その日のPSI(ヒヤッとした度合い)が低いときは★より優先し、教育の言葉を控えます。
           </p>
           <table className="w-full text-left border-collapse">
             <thead>

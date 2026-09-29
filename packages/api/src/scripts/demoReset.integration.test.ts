@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { normalizeEmailForIndex } from '@katahimo/core/domain';
-import { provisionTenant } from '@katahimo/core/usecases';
+import { provisionTenant, readTenantSecret } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import {
   DrizzleTenantCalendarSettingsStore,
@@ -82,6 +82,10 @@ describe('resetDemoTenant(実DB)', () => {
       allowedStaffCalendars: [],
     };
     await calendars.set(first.tenantId, settings);
+    // 管理画面で保存した Gemini の API キーも引き継ぐ(新しいテナントで封をし直す)
+    const geminiKey = 'AIza-demo-reset-carry-over';
+    const sealed = await container.secretBox.seal(first.tenantId, 'gemini_api_key', geminiKey);
+    await container.uow.run(first.tenantId, (r) => r.secrets.put('gemini_api_key', sealed, null));
 
     const deleteSpy = vi.spyOn(container.storage, 'delete');
     const later = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -98,6 +102,7 @@ describe('resetDemoTenant(実DB)', () => {
     expect(second.summary.attendanceDayCount).toBeGreaterThan(0);
     expect(second.summary.generatedThrough).toBe(toJstDateIso(later));
     expect(await calendars.get(second.tenantId)).toEqual(settings);
+    expect(await readTenantSecret(container, second.tenantId, 'gemini_api_key')).toBe(geminiKey);
 
     // 1回目のテナントは消えている(所有者接続で見ても見つからない)
     const gone = await ownerDb.execute(
