@@ -8,8 +8,13 @@ export interface GeminiModelInfo {
  * モデルのみを返す。GAS版GeminiReport.js listAvailableGeminiModelsForAdminのAPI呼び出し部分に
  * 対応(保存前の入力中キーでも確認できるよう、常に呼び出し元から明示的にapiKeyを受け取る)。
  */
-export async function listAvailableGeminiModels(apiKey: string): Promise<GeminiModelInfo[]> {
+export async function listAvailableGeminiModels(
+  apiKey: string,
+  options: { timeoutMs?: number } = {},
+): Promise<GeminiModelInfo[]> {
   const models: GeminiModelInfo[] = [];
+  // 全ページ合わせての上限(指定したときだけ。日報のモデルの切り替えは生成の前に読むので止まらないようにする)
+  const signal = options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined;
   let pageToken = '';
   let pageCount = 0;
 
@@ -18,7 +23,10 @@ export async function listAvailableGeminiModels(apiKey: string): Promise<GeminiM
     if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
 
     // APIキーはURLに載せずヘッダーで送る。失敗時の応答本文はエラーに含めない(アプリログに残るため)。
-    const response = await fetch(url, { headers: { 'x-goog-api-key': apiKey } });
+    const response = await fetch(url, {
+      headers: { 'x-goog-api-key': apiKey },
+      ...(signal ? { signal } : {}),
+    });
     if (!response.ok) {
       await response.body?.cancel();
       throw new Error(`モデル一覧の取得に失敗しました(HTTP ${response.status})`);

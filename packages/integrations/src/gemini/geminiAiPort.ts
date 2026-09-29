@@ -13,6 +13,12 @@ import { listAvailableGeminiModels } from './listModels';
 const DEFAULT_MODEL_REPORT = 'gemini-2.5-flash';
 const DEFAULT_MODEL_OCR = 'gemini-2.5-flash-lite';
 
+/**
+ * 1回の generateContent の上限。画面は1つのモデルを90秒で見切って次のモデルに移るので、それより前にサーバー側でも
+ * 切る(見切られた呼び出しが走り続けて課金・記録だけが残らないように)。
+ */
+const GENERATE_TIMEOUT_MS = 80_000;
+
 type GeminiCallResult =
   | { ok: true; value: unknown }
   | { ok: false; error: string; httpCode?: number; rawError?: string };
@@ -56,10 +62,14 @@ async function callGemini(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
     });
     httpCode = response.status;
     responseText = await response.text();
   } catch (e) {
+    if (e instanceof Error && e.name === 'TimeoutError') {
+      return { ok: false, error: 'Gemini APIの応答に時間がかかりすぎたため、打ち切りました。' };
+    }
     return { ok: false, error: `System Error: ${e instanceof Error ? e.message : String(e)}` };
   }
 
@@ -191,22 +201,34 @@ const MODEL_LIST_FAILURE_TTL_MS = 5 * 60 * 1000;
 /** API キーの SHA-256 → 一覧(null = 読めなかった)。テナントごとに鍵が違うのでキーで分ける。 */
 const modelListCache = new Map<string, { expiresAt: number; models: string[] | null }>();
 
+/** 読みに行っている途中の一覧(同じキーで同時に読みに行かない)。 */
+const modelListInFlight = new Map<string, Promise<string[] | null>>();
+/** 一覧を読む上限(生成の前に読むので、止まったら既知の名前ですぐ進む)。 */
+const MODEL_LIST_TIMEOUT_MS = 5_000;
+
 async function cachedModelList(apiKey: string): Promise<string[] | null> {
   const key = createHash('sha256').update(apiKey).digest('hex');
-  const now = Date.now();
   const hit = modelListCache.get(key);
-  if (hit && hit.expiresAt > now) return hit.models;
-  let models: string[] | null;
-  try {
-    models = (await listAvailableGeminiModels(apiKey)).map((m) => m.name);
-  } catch {
-    models = null;
-  }
-  modelListCache.set(key, {
-    expiresAt: now + (models ? MODEL_LIST_TTL_MS : MODEL_LIST_FAILURE_TTL_MS),
-    models,
-  });
-  return models;
+  if (hit && hit.expiresAt > Date.now()) return hit.models;
+  const inFlight = modelListInFlight.get(key);
+  if (inFlight) return inFlight;
+  const loading = (async () => {
+    let models: string[] | null;
+    try {
+      models = (await listAvailableGeminiModels(apiKey, { timeoutMs: MODEL_LIST_TIMEOUT_MS })).map(
+        (m) => m.name,
+      );
+    } catch {
+      models = null;
+    }
+    modelListCache.set(key, {
+      expiresAt: Date.now() + (models ? MODEL_LIST_TTL_MS : MODEL_LIST_FAILURE_TTL_MS),
+      models,
+    });
+    return models;
+  })().finally(() => modelListInFlight.delete(key));
+  modelListInFlight.set(key, loading);
+  return loading;
 }
 
 export class GeminiAiPort implements ReportAiPort {
