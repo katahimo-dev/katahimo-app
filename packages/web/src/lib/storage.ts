@@ -36,8 +36,9 @@ export const STORAGE_KEYS = {
   /** 領収書の重複登録チェック用(接頭辞。後ろにスタッフ単位の識別子が付く)。GAS版と同じ。 */
   receiptLocalKeyPrefix: 'GAS_RECEIPT_KEYS_V1_',
   /**
-   * 予定タブのルートつき予定の2時間キャッシュ(接頭辞。後ろに `<スタッフID>_<YYYY-MM-DD>`)。
-   * GAS版 GAS_SCHEDULE_ROUTE_V2_<スタッフ名>_<日付> と同じ役割だが、スタッフを名前ではなくIDで
+   * 予定タブのルートつき予定の前回の結果(24時間。接頭辞。後ろに `<スタッフID>_<YYYY-MM-DD>`)。
+   * 開いたときにすぐ出すためだけに使い、必ずサーバーへ最新を取りに行く(features/schedule/routeCache.ts)。
+   * GAS版 GAS_SCHEDULE_ROUTE_V2_<スタッフ名>_<日付> に当たるが、スタッフを名前ではなくIDで
    * 区別するため別のキー名にしている(予定・お客様の担当が使う)。
    */
   scheduleRouteCachePrefix: 'katahimo_schedule_route_v1_',
@@ -155,7 +156,7 @@ export function removeUnscopedUserData(storage: KeyValueStorage | null = getBrow
 }
 
 /**
- * この端末に置いている、画面の表示用の2時間キャッシュ(予定のルート・出勤簿の週間予定・今月のまとめ)を
+ * この端末に置いている、画面の表示用のキャッシュ(予定のルート・出勤簿の週間予定・今月のまとめ)を
  * すべて消す(ログアウト・セッション切れのとき。次にログインした人に前の人の予定が見えないように)。
  * 領収書の重複チェック用のキー(GAS_RECEIPT_KEYS_V1_<スタッフ名>)はスタッフごとに分かれていて、
  * 重複の登録を防ぐためのものなので消さない。

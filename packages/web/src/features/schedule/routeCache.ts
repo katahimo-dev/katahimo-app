@@ -10,13 +10,16 @@ import {
 } from '../../lib/storage';
 
 /**
- * ルートつき予定のブラウザ内キャッシュ(GAS版 getCachedRoute / setCachedRoute)。
- * 地図APIの呼び出し(10秒ほどかかる)を減らすため、同じスタッフ・同じ日の結果を2時間使い回す。
- * このブラウザだけのキャッシュで、他の人・他の端末とは共有しない(サーバー側にも別の共有キャッシュがある)。
+ * ルートつき予定のブラウザ内キャッシュ(GAS版 getCachedRoute / setCachedRoute に当たるが、使い方が違う)。
+ * GAS版はキャッシュがあればサーバーに問い合わせなかったが、ここでは開いたときにすぐ出すための前回の結果
+ * (stale-while-revalidate)で、出したあと必ずサーバーへ最新を取りに行き、届いたら差し替えてこの値も上書きする
+ * (useScheduleView)。担当変更をすぐ出すため。前の晩に見た明日の予定を翌朝すぐ出せるよう、24時間まで使う
+ * (「HH:MM 時点」を添えて出すため、古い値でも取り違えない)。
+ * このブラウザだけのキャッシュで、他の人・他の端末とは共有しない。
  * 読むときは契約(zod)で確かめ、形が違う・古い値は使わない。書くときに期限切れの値を消す
  * (日付ごとにキーが増えていくため)。ログアウト・セッション切れのときはすべて消す(lib/storage.ts)。
  */
-export const ROUTE_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+export const ROUTE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface CachedRoute {
   res: ScheduleWithRouteResponse;

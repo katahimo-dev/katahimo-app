@@ -15,7 +15,7 @@ export const scheduleApi = {
     api.get('/api/schedule', scheduleLightResponseSchema, { date, staffId }, { signal }),
   /**
    * GET /api/schedule/route: ルート・移動時間つきの予定(GAS版 getRouteForStaffOnDate)。
-   * forceRefresh は「🔄 最新にする」を押したとき(サーバーの共有キャッシュを使わずに調べ直す)。
+   * forceRefresh は「🔄 最新にする」を押したとき(サーバーの地図の結果のキャッシュを使わずに調べ直す。予定はどちらでも毎回カレンダーから読まれる)。
    */
   getWithRoute: ({ date, staffId }: ScheduleRequest, forceRefresh: boolean, signal?: AbortSignal) =>
     api.get(

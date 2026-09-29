@@ -94,11 +94,12 @@ export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerConta
   const tenants = new DrizzleTenantDirectory(db);
   const vapid = vapidDetailsOf(env);
   const bridge = gasBridgeConfigOf(env);
-  // API と同じ予定・ルート計算の実装を使う(夜間の反映は fresh のためルートのキャッシュは使わない)
+  // API と同じ予定・ルート計算の実装を使う(夜間の反映は fresh のため地図の結果のキャッシュは使わない)
   const scheduleServices = createScheduleServices(env, {
     directory: createScheduleDirectory({ uow }),
     appLog,
-    routeCache: new InMemoryTtlCache({ maxEntries: 100 }),
+    mapsCache: new InMemoryTtlCache({ maxEntries: 100 }),
+    calendarCache: new InMemoryTtlCache({ maxEntries: 100 }),
     tenants,
   });
 

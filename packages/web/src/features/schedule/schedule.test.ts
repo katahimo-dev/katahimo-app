@@ -10,7 +10,7 @@ import {
   routeCacheKey,
   writeCachedRoute,
 } from './routeCache';
-import { formatRouteFetchedAt, scheduleDateFor } from './scheduleDate';
+import { formatRouteFetchedAt, routeMetaText, scheduleDateFor } from './scheduleDate';
 import { itemsFromPlainSchedule, itemsFromRouteSchedule, toRouteLeg } from './scheduleItems';
 
 describe('scheduleDateFor', () => {
@@ -34,6 +34,14 @@ describe('scheduleDateFor', () => {
 
   it('「HH:MM 時点」はJSTの時刻', () => {
     expect(formatRouteFetchedAt(new Date('2026-09-25T01:05:00Z').getTime())).toBe('10:05 時点');
+  });
+
+  it('一覧の下の時点の表示に、最新を確かめている間・確かめられなかったことを添える', () => {
+    const ts = new Date('2026-09-25T01:05:00Z').getTime();
+    expect(routeMetaText(ts, 'fresh')).toBe('10:05 時点');
+    expect(routeMetaText(ts, 'revalidating')).toBe('10:05 時点（最新を確認中…）');
+    expect(routeMetaText(ts, 'stale')).toBe('10:05 時点（最新を読み込めませんでした）');
+    expect(routeMetaText(null, null)).toBe('');
   });
 });
 
@@ -141,7 +149,7 @@ describe('itemsFromRouteSchedule', () => {
 describe('routeCache', () => {
   const res: ScheduleWithRouteResponse = { success: true, appointments: [] };
 
-  it('2時間以内は使い、過ぎたら使わない', () => {
+  it('24時間以内は使い、過ぎたら使わない', () => {
     const storage = createMemoryStorage();
     const t0 = 1_000_000;
     writeCachedRoute('staff-1', '2026-09-25', res, t0, storage);

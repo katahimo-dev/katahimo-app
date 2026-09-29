@@ -137,8 +137,11 @@ export function createContainer(env: Env, db: Database): Container {
       cache: new InMemoryTtlCache({ maxEntries: 200 }),
     }),
     appLog,
-    // ルート結果の共有キャッシュ(GAS版 CacheService 相当。プロセス内のため Cloud Run のインスタンス間では共有しない)
-    routeCache: new InMemoryTtlCache({ maxEntries: 2000 }),
+    // 区間ごとのルート・住所ごとのジオコーディング結果の共有キャッシュ(閲覧用。予定そのものは毎回カレンダーから読む)。
+    // プロセス内のため Cloud Run のインスタンス間では共有しない
+    mapsCache: new InMemoryTtlCache({ maxEntries: 5000 }),
+    // テナント × カレンダー × 日付のイベント一覧(閲覧用、60秒)。開くたびに全カレンダーを読む分の Calendar API を抑える
+    calendarCache: new InMemoryTtlCache({ maxEntries: 2000 }),
     tenants,
   });
   console.info(`予定・ルート計算の実装: ${scheduleServices.provider}`);

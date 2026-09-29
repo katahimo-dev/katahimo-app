@@ -26,6 +26,11 @@ export interface ScheduleLightResult {
   staffName?: string;
   appointments?: ScheduleAppointmentLight[];
   message?: string;
+  /**
+   * 閲覧で読めないカレンダーがあり、予定が欠けているかもしれない(読めた分だけの結果)。欠けていなければ省く。
+   * 画面はこの結果で前回の表示を置き換えない。strict / fresh は部分的な結果を返さず失敗させる。
+   */
+  partial?: boolean;
 }
 
 /**
@@ -60,6 +65,15 @@ export interface ScheduleWithRouteResult {
   staffName?: string;
   appointments?: ScheduleAppointmentWithRoute[];
   message?: string;
+  /** ScheduleLightResult.partial と同じ */
+  partial?: boolean;
+}
+
+/** 1回のルートつきの計算で、実際に地図APIを呼んだ回数と共有キャッシュで済ませた回数(ログ用)。 */
+export interface MapsUsage {
+  geocodeCalls: number;
+  routeCalls: number;
+  cacheHits: number;
 }
 
 export interface ScheduleRequestOptions {
@@ -77,11 +91,14 @@ export interface ScheduleRequestOptions {
 
 export interface ScheduleWithRouteOptions extends ScheduleRequestOptions {
   /**
-   * trueの場合、共有ルートキャッシュを読みも書きもせず、必ずその時点のカレンダーから計算する。
+   * trueの場合、地図の結果(区間ごとのルート・ジオコーディング)の共有キャッシュを読みも書きもせず、
+   * その時点のカレンダーと地図APIから計算する(予定そのものは fresh でなくても毎回カレンダーから読む)。
    * 公式な勤怠記録(出勤簿・勤怠集計)へ書き込む経路は必ずtrueにすること
    * (GAS版 refreshAttendanceForStaffOnDate がキャッシュを使わないのと同じ規則)。
    */
   fresh?: boolean;
+  /** 地図APIの呼び出し回数を受け取る(ログ用。GoogleSchedulePort だけが呼ぶ)。 */
+  onMapsUsage?: (usage: MapsUsage) => void;
 }
 
 /**
@@ -100,8 +117,10 @@ export interface SchedulePort {
     options?: ScheduleRequestOptions,
   ): Promise<ScheduleLightResult>;
   /**
-   * forceRefresh=true は「🔄 再取得」ボタン用: キャッシュを読まずに再計算し、結果はキャッシュに
+   * 予定は毎回カレンダーから読む(担当変更をすぐ出す)。キャッシュするのは地図の結果(区間・住所ごと)だけ。
+   * forceRefresh=true は「🔄 最新にする」ボタン用: 地図の結果のキャッシュを読まずに調べ直し、結果はキャッシュに
    * 書き直す(以後の閲覧に反映させるため)。キャッシュに一切触れない場合は options.fresh を使う。
+   * (gas_bridge では GAS版側のスタッフ×日のキャッシュのまま。forceRefresh / fresh だけが読み飛ばす)
    */
   getScheduleWithRoute(
     target: ScheduleTarget,

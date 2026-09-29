@@ -45,6 +45,32 @@ describe('予定の閲覧', () => {
     });
   });
 
+  it('ルートつきの INFO には地図APIを実際に呼んだ回数・キャッシュで済ませた回数と、部分的な結果かを載せる', async () => {
+    const schedule = {
+      getSchedule: async () => ({ success: true, appointments: [] }),
+      getScheduleWithRoute: async (
+        _target: unknown,
+        _date: string,
+        _force: boolean,
+        options?: {
+          onMapsUsage?: (u: { geocodeCalls: number; routeCalls: number; cacheHits: number }) => void;
+        },
+      ) => {
+        options?.onMapsUsage?.({ geocodeCalls: 1, routeCalls: 2, cacheHits: 3 });
+        return { success: true, appointments: [], partial: true };
+      },
+    };
+    const result = await getScheduleWithRouteForStaff(
+      { ...ctx.deps, schedule },
+      { ...request(staffId, staffId), forceRefresh: false },
+    );
+    expect(result.partial).toBe(true);
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({
+      action: 'schedule.route.succeeded',
+      details: { forceRefresh: false, geocodeCalls: 1, routeCalls: 2, cacheHits: 3, partial: true },
+    });
+  });
+
   it('記録に書く処理はキャッシュを使わない(fresh)', async () => {
     await getFreshScheduleWithRouteForStaff(ctx.deps, { ...request(staffId, staffId), actorStaffId: null });
     expect(ctx.schedule.calls[0]).toMatchObject({ forceRefresh: false, options: { fresh: true } });
