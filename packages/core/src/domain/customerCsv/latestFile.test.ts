@@ -18,6 +18,14 @@ describe('顧客CSVの取込対象(GAS版 checkAndImportLatestCsv)', () => {
     expect(pickLatestCustomerCsv([{ name: 'Kokyaku_2026_1.csv' }])).toBeNull();
   });
 
+  it('末尾に「_N」が無いファイル名(RESERVAの実際のエクスポート)も取り込める', () => {
+    const latest = pickLatestCustomerCsv([
+      { name: 'Kokyaku_202609010300_1.csv' },
+      { name: 'Kokyaku_202609291152.csv' },
+    ]);
+    expect(latest).toEqual({ file: { name: 'Kokyaku_202609291152.csv' }, version: '202609291152' });
+  });
+
   it('最後に取り込んだ版より新しいときだけ取り込む', () => {
     expect(isNewerCustomerCsvVersion('202609250300', null)).toBe(true);
     expect(isNewerCustomerCsvVersion('202609250300', '202609250300')).toBe(false);

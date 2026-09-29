@@ -1,12 +1,14 @@
 /**
- * 顧客CSV(RESERVAの顧客エクスポート「Kokyaku_YYYYMMDDHHmm_N.csv」)の取込対象ファイル選び。
+ * 顧客CSV(RESERVAの顧客エクスポート「Kokyaku_YYYYMMDDHHmm.csv」、末尾に「_N」が付くこともある)の
+ * 取込対象ファイル選び。
  *
- * 移植元: gas-childcare-visit-app/CsvImport.js の checkAndImportLatestCsv。
+ * 移植元: gas-childcare-visit-app/CsvImport.js の checkAndImportLatestCsv(GAS版は「_N」を必須にしていたが、
+ * RESERVAが実際にエクスポートするファイル名には付かないことがあるため、無くても取り込めるようにする)。
  * ファイル名の YYYYMMDDHHmm(エクスポート日時)を版として扱い、最も新しいものを選ぶ。
  * 最後に取り込んだ版以下なら取り込まない(同じファイルの再取込を防ぐ)。
  */
 
-export const CUSTOMER_CSV_FILE_PATTERN = /^Kokyaku_(\d{12})_\d+\.csv$/;
+export const CUSTOMER_CSV_FILE_PATTERN = /^Kokyaku_(\d{12})(?:_\d+)?\.csv$/;
 
 export interface LatestCustomerCsv<T> {
   file: T;
