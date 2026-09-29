@@ -135,6 +135,32 @@ describe('useReportController', () => {
     confirmSpy.mockRestore();
   });
 
+  it('保存を始めたら「破棄する」のお知らせを消し、保存の途中では破棄しない', async () => {
+    localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({ customerId: 'c1', customerName: '明智 光秀', mode: 'daily', inputText: 'メモ' }),
+    );
+    const { result } = renderController(sessionFor('c1', 1));
+    const discard = toastStore.getState().action;
+    expect(discard?.label).toBe('破棄する');
+
+    const pending = deferred<SaveResult>();
+    saveDaily.mockReturnValueOnce(pending.promise);
+    act(() => result.current.save());
+    expect(toastStore.getState().visible).toBe(false);
+
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    act(() => discard?.run());
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(result.current.form.memo).toBe('メモ');
+    expect(toastStore.getState().message).toBe('保存・AIの生成が終わってから破棄してください');
+    confirmSpy.mockRestore();
+    await act(async () => {
+      pending.resolve(savedReport('r1', 'c1'));
+      await pending.promise;
+    });
+  });
+
   it('保存を待つ間に別のお客様で開き直したら、遅れて届いた結果で今の入力を「保存済み」にしない', async () => {
     const { result, rerender } = renderController(sessionFor('c1', 1));
     act(() => result.current.actions.setMemo('前のお客様のメモ'));

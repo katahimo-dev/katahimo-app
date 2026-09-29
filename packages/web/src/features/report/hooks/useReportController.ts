@@ -256,6 +256,11 @@ export function useReportController(session: ReportSession | null) {
     const action: ToastAction = {
       label: DISCARD_DRAFT_LABEL,
       run: () => {
+        // 保存・AI の生成の途中で消すと、遅れて届いた結果が空の入力に付いてしまうため断る
+        if (savingRef.current !== null || generatingRef.current !== null) {
+          showToast('保存・AIの生成が終わってから破棄してください', true);
+          return;
+        }
         if (!confirmNative(DISCARD_DRAFT_CONFIRM)) {
           showActionToast(draftRestoredMessage(draft), action, true);
           return;
@@ -643,6 +648,10 @@ export function useReportController(session: ReportSession | null) {
     const requestNonce = nonceRef.current;
     savingRef.current = startedAt;
     setSavingSince(startedAt);
+    // 保存するなら書きかけの「破棄する」は要らない(保存の途中で押せないように消す)
+    if (draftToastActionRef.current && toastStore.getState().action === draftToastActionRef.current) {
+      hideToast();
+    }
     const finish = () => {
       if (savingRef.current !== startedAt) return;
       savingRef.current = null;

@@ -353,6 +353,12 @@ async function runJourney() {
         .pathname;
       // 前に流したときの★4 が残っていれば、先に★3 にする(同じ★を押しても保存しないため)。☆0(未設定)は無い
       const star4 = levelGroup.getByRole('radio', { name: '★4' });
+      // 読み込み中の★は押せず aria-checked もまだ違うので、押せるようになってから読む
+      await page.waitForFunction(
+        (el) => el !== null && !(el as HTMLButtonElement).disabled,
+        await star4.elementHandle(),
+        { timeout: 10_000 },
+      );
       if ((await star4.getAttribute('aria-checked')) === 'true') {
         const moved = await clickForResponse<{ profile: { educationLevel: number | null } }>(
           page,
