@@ -4,11 +4,15 @@
 
 ### 追加
 
-- 日報の AI が API エラーのとき、自動でモデルを変えて試し直す(設定のモデル → Gemini Flash 系 → Flash-Lite 系、新しい版から)。
-  待っているあいだはボタンにいま試しているモデル(「gemini-2.0-flash で書いています（2/6）」)と書けなかったモデルを出し、
-  「⏹ 止めて手で書く」で止められる。どのモデルで失敗・成功したかは操作ログ(`ai.daily_report.generate_failed` /
-  `ai.daily_report.model_fallback_succeeded`)と生成の記録に残る。API `GET /api/reports/daily/generate/models`、
-  `POST /api/reports/daily/generate` の `model`(`doc/05_バッチ・外部連携.md` 6章)。
+- 日報・事故報告の AI が API エラーのとき、自動でモデルを変えて試し直す(Gemini Flash 系 → Flash-Lite 系、系統ごとに4つまで。
+  系統の中は `-latest` が先頭、次に新しい版から)。待っているあいだはボタンにいま試しているモデル(「gemini-2.0-flash で書いています（2/6）」)
+  と書けなかったモデルを出し、「⏹ 止めて手で書く」で止められる。どのモデルで失敗・成功したかは操作ログ(`ai.daily_report.generate_failed` /
+  `ai.daily_report.model_fallback_succeeded`、事故報告は `ai.accident_report.*`)と生成の記録に残る。API `GET /api/reports/generate/models`、
+  `POST /api/reports/daily/generate`・`/accident/generate` の `model`(事故報告の応答に `model`・`retryable` を足した。
+  `doc/05_バッチ・外部連携.md` 6章)。
+- 領収書の読み取り(OCR)が混み合い・時間切れ(1回30秒)などで失敗したとき、サーバーの中で Flash-Lite 系の次のモデルで読み直す
+  (最大3つ。画面は変わらない)。失敗ごとにモデル名つきで `ai.receipt_ocr.failed`、切り替え先で読めたら WARN
+  `ai.receipt_ocr.model_fallback_succeeded` を残す。
 
 - 宣伝用の公開デモ: 本番と別の環境に1つのデモ用テナント(`DEMO_TENANT_SLUG`、例 `public-demo`)を置き、ログイン画面の
   デモ用アカウント(管理者・コーディネーター・スタッフ、`VITE_DEMO_MODE=1` のビルド)で使ってもらう。データは架空のもの(歴史上の人物の
@@ -144,6 +148,12 @@
   通信や回数制限の失敗のときも結果欄を開いて手で書いて保存できる。事故報告・ヒヤリハットも同じ)。
 
 ### 変更
+
+- Gemini のモデルを自動で選ぶようにし、管理者がモデルを選ぶ設定を無くした(🛠 管理 → 🤖 AI の「APIキー・モデル」は「APIキー」だけに。
+  API `POST /api/settings/admin/gemini-models`・`/gemini-models/available`、`GET /api/settings/admin` の `geminiReportModel`・
+  `geminiOcrModel`、環境変数 `GEMINI_MODEL_REPORT`・`GEMINI_MODEL_OCR`(Terraform の `gemini_models`)を削除)。日報・事故報告は
+  Flash 系 → Flash-Lite 系、領収書の読み取りは Flash-Lite 系を使える新しいものから試す。`tenant_settings.gemini_report_model` /
+  `gemini_ocr_model` の列は読み書きしなくなった(移行の互換のため残す。次の版で消せる)。
 
 - 予定タブ(`/api/schedule`・`/api/schedule/route`、🔄 最新にする を含む)で読むカレンダーを、見ているスタッフ自身の予定のカレンダーと
   共有カレンダー全部(持ち主名にかかわらない)にした(これまでは1人分を見るのにテナントの全カレンダーを読んでいた。他のスタッフの予定の

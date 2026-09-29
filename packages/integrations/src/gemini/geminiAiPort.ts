@@ -3,6 +3,7 @@ import type {
   AccidentReportDraft,
   AccidentReportDraftError,
   DailyReportDraft,
+  ExtractReceiptAmountInput,
   GenerateAccidentReportInput,
   GenerateDailyReportInput,
   ReceiptOcrResult,
@@ -10,14 +11,20 @@ import type {
 } from '@katahimo/core/ports';
 import { listAvailableGeminiModels } from './listModels';
 
-const DEFAULT_MODEL_REPORT = 'gemini-2.5-flash';
-const DEFAULT_MODEL_OCR = 'gemini-2.5-flash-lite';
+/**
+ * モデルを渡されなかったときの既定(usecase は core/domain/reports/modelFallback.ts の順で決めて必ず渡す。
+ * これは直接呼んだとき用で、その順の先頭と同じ -latest の別名)。
+ */
+const DEFAULT_MODEL_REPORT = 'gemini-flash-latest';
+const DEFAULT_MODEL_OCR = 'gemini-flash-lite-latest';
 
 /**
  * 1回の generateContent の上限。画面は1つのモデルを90秒で見切って次のモデルに移るので、それより前にサーバー側でも
  * 切る(見切られた呼び出しが走り続けて課金・記録だけが残らないように)。
  */
 const GENERATE_TIMEOUT_MS = 80_000;
+/** 領収書の読み取り1回の上限(サーバーの中で最大3モデルを順に試すので、画面を長く待たせない)。 */
+const OCR_TIMEOUT_MS = 30_000;
 
 type GeminiCallResult =
   | { ok: true; value: unknown }
@@ -47,6 +54,7 @@ async function callGemini(
   contentParts: unknown[],
   generationConfig: Record<string, unknown> | null,
   modelName: string,
+  timeoutMs: number = GENERATE_TIMEOUT_MS,
 ): Promise<GeminiCallResult> {
   // APIキーはURLに載せずヘッダーで送る(URLはプロキシ・アクセスログに残りやすいため)。
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`;
@@ -62,7 +70,7 @@ async function callGemini(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     httpCode = response.status;
     responseText = await response.text();
@@ -145,8 +153,6 @@ async function callGemini(
 
 export interface GeminiAiPortOptions {
   apiKey: string;
-  reportModel?: string;
-  ocrModel?: string;
 }
 
 /** GAS版GeminiReport.jsのAPI呼び出しロジックを実装するReportAiPort。GEMINI_API_KEYが設定されている場合に使う。 */
@@ -234,9 +240,7 @@ async function cachedModelList(apiKey: string): Promise<string[] | null> {
 export class GeminiAiPort implements ReportAiPort {
   constructor(private readonly options: GeminiAiPortOptions) {}
 
-  get reportModel(): string {
-    return this.options.reportModel || DEFAULT_MODEL_REPORT;
-  }
+  readonly hasApiKey = true;
 
   availableModels(): Promise<string[] | null> {
     return cachedModelList(this.options.apiKey);
@@ -247,7 +251,7 @@ export class GeminiAiPort implements ReportAiPort {
       this.options.apiKey,
       [{ text: input.prompt }],
       { responseMimeType: 'application/json', responseSchema: DAILY_REPORT_RESPONSE_SCHEMA },
-      input.model || this.reportModel,
+      input.model || DEFAULT_MODEL_REPORT,
     );
 
     if (!result.ok) {
@@ -295,14 +299,14 @@ export class GeminiAiPort implements ReportAiPort {
       this.options.apiKey,
       [{ text: prompt }],
       { responseMimeType: 'application/json', responseSchema: schema },
-      this.reportModel,
+      input.model || DEFAULT_MODEL_REPORT,
     );
 
-    if (!result.ok) return { error: result.error };
+    if (!result.ok) return { error: result.error, retryable: isRetryableFailure(result) };
     return result.value as AccidentReportDraft;
   }
 
-  async extractReceiptAmount(base64Image: string): Promise<ReceiptOcrResult> {
+  async extractReceiptAmount(input: ExtractReceiptAmountInput): Promise<ReceiptOcrResult> {
     const prompt = `
     Analyze the image of this receipt.
     Identify the following information:
@@ -318,22 +322,31 @@ export class GeminiAiPort implements ReportAiPort {
     Do NOT include currency symbols or commas in the amount.
     `;
 
-    const rawBase64 = base64Image.split(',')[1] ?? '';
+    const rawBase64 = input.base64Image.split(',')[1] ?? '';
     const result = await callGemini(
       this.options.apiKey,
       [{ text: prompt }, { inline_data: { mime_type: 'image/jpeg', data: rawBase64 } }],
       null,
-      this.options.ocrModel || DEFAULT_MODEL_OCR,
+      input.model || DEFAULT_MODEL_OCR,
+      OCR_TIMEOUT_MS,
     );
 
-    if (!result.ok) return { amount: '', storeName: '', receiptDate: '', error: result.error };
+    if (!result.ok) {
+      return {
+        amount: '',
+        storeName: '',
+        receiptDate: '',
+        error: result.error,
+        retryable: isRetryableFailure(result),
+      };
+    }
     return result.value as ReceiptOcrResult;
   }
 }
 
 /** GEMINI_API_KEY未設定時のフォールバック。GAS版のapiKey未設定時の挙動と同じ値を返す。 */
 export class NoopReportAiPort implements ReportAiPort {
-  readonly reportModel = null;
+  readonly hasApiKey = false;
 
   async generateDailyReport(): Promise<DailyReportDraft> {
     return { warnings: ['API Key Missing'], internal: 'Error: API Key not set', customer: '' };

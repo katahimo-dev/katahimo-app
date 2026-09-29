@@ -40,8 +40,6 @@ const envSchema = z.object({
   LEGACY_AUTH_SALT: z.preprocess(emptyToUndefined, z.string().optional()),
 
   GEMINI_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
-  GEMINI_MODEL_REPORT: z.preprocess(emptyToUndefined, z.string().optional()),
-  GEMINI_MODEL_OCR: z.preprocess(emptyToUndefined, z.string().optional()),
   /** Cloud Run が付けるリビジョン名(AI 生成の記録にアプリの版として残す。ローカルは未設定)。 */
   K_REVISION: z.preprocess(emptyToUndefined, z.string().max(200).optional()),
 

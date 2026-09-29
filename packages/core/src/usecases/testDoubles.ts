@@ -197,8 +197,6 @@ function emptyTenantData(): TenantData {
     receipts: [],
     files: [],
     settings: {
-      geminiReportModel: null,
-      geminiOcrModel: null,
       careRecordRetentionDays: 1825,
       customerDataVersion: 0,
     },
@@ -1052,9 +1050,6 @@ export function fakeRepositories(
     settings: {
       async get() {
         return structuredClone(d().settings);
-      },
-      async update(patch) {
-        Object.assign(d().settings, patch);
       },
       async bumpCustomerDataVersion() {
         return ++d().settings.customerDataVersion;

@@ -21,7 +21,10 @@ export interface GenerateDailyReportInput {
    * 日報AIの3軸の差し込みを入れたもの(usecases/reportAi.ts が core/domain/reports/promptAssembly.ts で組み立てる)。
    */
   prompt: string;
-  /** 使うモデル(省略時は reportModel)。API エラーのとき usecase が次のモデルを指定して呼び直す。 */
+  /**
+   * 使うモデル(usecase が core/domain/reports/modelFallback.ts の順で決めて必ず渡す。省略は実装の既定の
+   * モデル)。API エラーのとき、画面が次のモデルを指定して呼び直す。
+   */
   model?: string;
 }
 
@@ -44,6 +47,8 @@ export interface DailyReportDraft {
 export interface GenerateAccidentReportInput {
   /** GenerateDailyReportInput.prompt と同じ(入力メモ・時間情報を差し込んだ全文)。 */
   prompt: string;
+  /** GenerateDailyReportInput.model と同じ。 */
+  model?: string;
 }
 
 export interface AccidentReportDraft {
@@ -59,6 +64,15 @@ export interface AccidentReportDraft {
 
 export interface AccidentReportDraftError {
   error: string;
+  /** DailyReportDraft.retryable と同じ(別のモデルで試し直す意味があるか)。 */
+  retryable?: boolean;
+}
+
+export interface ExtractReceiptAmountInput {
+  /** data URL(`data:image/jpeg;base64,...`)。 */
+  base64Image: string;
+  /** 使うモデル(usecase が Flash-Lite 系の順で決めて渡す。省略は実装の既定のモデル)。 */
+  model?: string;
 }
 
 export interface ReceiptOcrResult {
@@ -72,13 +86,15 @@ export interface ReceiptOcrResult {
    * 成功時・APIキー未設定でもエラー扱いにしない場合はundefined。
    */
   error?: string;
+  /** 失敗したとき、別のモデルで試し直す意味があるか(usecase の中だけで使い、画面には返さない)。 */
+  retryable?: boolean;
 }
 
 export interface ReportAiPort {
-  /** 日報・事故報告に使うモデル名(記録に残す。API キーが無い実装は null)。 */
-  readonly reportModel: string | null;
+  /** API キーがあるか(無い実装は false。試すモデルは無く、生成・読み取りは「API Key Missing」を返す)。 */
+  readonly hasApiKey: boolean;
   /**
-   * この API キーで使えるモデルの名前(ListModels。日報のモデルの切り替え先を決める)。読めなければ null。
+   * この API キーで使えるモデルの名前(ListModels。試すモデルの順番を決める)。読めなければ null。
    * 無い実装は既知の名前(core/domain/reports/modelFallback.ts)で切り替える。
    */
   availableModels?(): Promise<string[] | null>;
@@ -86,17 +102,15 @@ export interface ReportAiPort {
   generateAccidentReport(
     input: GenerateAccidentReportInput,
   ): Promise<AccidentReportDraft | AccidentReportDraftError>;
-  extractReceiptAmount(base64Image: string): Promise<ReceiptOcrResult>;
+  extractReceiptAmount(input: ExtractReceiptAmountInput): Promise<ReceiptOcrResult>;
 }
 
 export interface ReportAiPortOptions {
   apiKey: string;
-  reportModel?: string;
-  ocrModel?: string;
 }
 
 /**
- * テナントが管理者設定画面で独自のGemini APIキーを保存している場合、そのキー/モデルで
+ * テナントが管理者設定画面で独自のGemini APIキーを保存している場合、そのキーで
  * 都度 ReportAiPort を組み立てるためのファクトリ。usecases/reportAi.ts の
  * resolveReportAiPort が、.env設定のフォールバック(単一インスタンス)とこのファクトリを
  * 使い分ける。

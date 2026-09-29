@@ -1,5 +1,4 @@
 import {
-  dailyReportModelsResponseSchema,
   type GenerateDailyReportRequest,
   type GenerateReportRequest,
   generateAccidentReportResponseSchema,
@@ -8,6 +7,7 @@ import {
   type ReportListQuery,
   reportDetailResponseSchema,
   reportListResponseSchema,
+  reportModelsResponseSchema,
   type SaveAccidentReportRequest,
   type SaveDailyReportRequest,
   saveAccidentReportResponseSchema,
@@ -31,10 +31,16 @@ export const reportsApi = {
    */
   generateDaily: (body: GenerateDailyReportRequest, signal?: AbortSignal) =>
     api.post('/api/reports/daily/generate', generateDailyReportResponseSchema, body, { signal }),
-  /** GET /api/reports/daily/generate/models: API エラーのとき試すモデルの順番(Flash 系 → Flash-Lite 系) */
-  dailyModels: (signal?: AbortSignal) =>
-    api.get('/api/reports/daily/generate/models', dailyReportModelsResponseSchema, undefined, { signal }),
-  /** POST /api/reports/accident/generate: メモから事故報告書の下書きを作る(失敗時は draft.error) */
+  /**
+   * GET /api/reports/generate/models: 日報・事故報告の生成で試すモデルの順番(Flash 系 → Flash-Lite 系。
+   * API エラーのとき次のモデルで試し直す)
+   */
+  generateModels: (signal?: AbortSignal) =>
+    api.get('/api/reports/generate/models', reportModelsResponseSchema, undefined, { signal }),
+  /**
+   * POST /api/reports/accident/generate: メモから事故報告書の下書きを作る(失敗時は draft.error。model・retryable は
+   * 日報の ai.model・ai.retryable と同じ)
+   */
   generateAccident: (body: GenerateReportRequest, signal?: AbortSignal) =>
     api.post('/api/reports/accident/generate', generateAccidentReportResponseSchema, body, { signal }),
   /** POST /api/reports/daily: 日報を保存する(reportId を渡すと上書き) */

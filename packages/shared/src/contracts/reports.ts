@@ -105,13 +105,17 @@ export const saveAccidentReportResponseSchema = z.object({
 
 /**
  * POST /api/reports/accident/generate のリクエスト(GAS版 generateAccidentReport の引数)。start/end は 'HH:mm'。
+ * model: 試すモデル(GET /api/reports/generate/models の1つ。省略時はその先頭)。API エラーのとき画面が次のモデルを
+ * 指定して呼び直す。Gemini Flash / Flash-Lite 系の名前以外は 400 `model_not_allowed`(値段の違うモデルを画面から
+ * 選ばせない)。日報も同じ。
  */
 export const generateReportRequestSchema = z.object({
   text: freeText(z.string().trim().min(1, 'text が必要です').max(20_000, 'メモが長すぎます')),
   start: z.string().optional(),
   end: z.string().optional(),
+  model: z.string().trim().min(1).max(100).optional(),
 });
-export type GenerateReportRequest = z.infer<typeof generateReportRequestSchema>;
+export type GenerateReportRequest = z.input<typeof generateReportRequestSchema>;
 
 /**
  * POST /api/reports/daily/generate のリクエスト(GAS版 generateReportWithWarnings の引数 + 日報AIの3軸)。
@@ -120,15 +124,13 @@ export type GenerateReportRequest = z.infer<typeof generateReportRequestSchema>;
  *   世帯にアーカイブされていない子がちょうど1人ならその子(画面の自動選択と同じ)
  * - riskRating: 生成の前に付けた PSI(未評価は省略。言葉の絞り込みは PSI 4 = 通常運用として扱う)
  * - reportDate: 訪問日(月齢を数える日。省略時はテナントの今日)
- * - model: 試すモデル(GET /api/reports/daily/generate/models の1つ。省略時は設定のモデル)。API エラーのとき
- *   画面が次のモデルを指定して呼び直す。設定のモデルか Flash / Flash-Lite 系の名前以外は 400 `model_not_allowed`
+ * - model: 試すモデル(事故報告と同じ。GET /api/reports/generate/models の1つ、省略時はその先頭)
  */
 export const generateDailyReportRequestSchema = generateReportRequestSchema.extend({
   customerId: idSchema,
   careRecipientId: idSchema.nullable().optional(),
   riskRating: z.number().int().min(1).max(5).nullable().optional(),
   reportDate: recordDateSchema.optional(),
-  model: z.string().trim().min(1).max(100).optional(),
 });
 export type GenerateDailyReportRequest = z.input<typeof generateDailyReportRequestSchema>;
 
@@ -180,13 +182,13 @@ export const generateDailyReportResponseSchema = z.object({
 });
 
 /**
- * GET /api/reports/daily/generate/models の応答。API エラーのとき試すモデルの順番(設定のモデル → Gemini Flash 系 →
- * Flash-Lite 系、新しい版から。最大8件)。API キーが無ければ空(モデルを指定せずに1回だけ呼ぶ)。
+ * GET /api/reports/generate/models の応答。保育日報・事故報告の生成で試すモデルの順番(Gemini Flash 系 → Flash-Lite 系。
+ * 系統の中は -latest の別名が先頭、次に新しい版から。最大8件)。API キーが無ければ空(モデルを指定せずに1回だけ呼ぶ)。
  */
-export const dailyReportModelsResponseSchema = z.object({
+export const reportModelsResponseSchema = z.object({
   models: z.array(z.string()),
 });
-export type DailyReportModelsResponse = z.infer<typeof dailyReportModelsResponseSchema>;
+export type ReportModelsResponse = z.infer<typeof reportModelsResponseSchema>;
 
 /** POST /api/reports/accident/generate の応答。失敗時は draft が { error }(GAS版と同じ)。 */
 export const accidentReportDraftSchema = z.object({
@@ -200,8 +202,14 @@ export const accidentReportDraftSchema = z.object({
   prevention: z.string(),
 });
 export type AccidentReportDraft = z.infer<typeof accidentReportDraftSchema>;
+/**
+ * model はこの生成で使ったモデル(API キーが無ければ null)、retryable は失敗(draft が { error })で次のモデルで
+ * 試し直す意味があるか(成功・API キーの誤り・未設定は false)。日報の ai.model / ai.retryable と同じ。
+ */
 export const generateAccidentReportResponseSchema = z.object({
   draft: z.union([accidentReportDraftSchema, z.object({ error: z.string() })]),
+  model: z.string().nullable(),
+  retryable: z.boolean(),
 });
 
 /** POST /api/reports/visit-complete(「訪問終わりました」の通知だけを送る。GAS版 sendVisitCompleteNotification) */

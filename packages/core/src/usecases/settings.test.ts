@@ -5,13 +5,7 @@ import { notifyWithLog } from './notify';
 import type { ReportAiDeps } from './reportAi';
 import { generateDailyReportDraft } from './reportAi';
 import type { SettingsActor, SettingsDeps } from './settings';
-import {
-  getAdminSettings,
-  listGeminiModelsForAdmin,
-  saveGeminiApiKey,
-  saveGeminiModelSettings,
-  saveGoogleChatWebhookSettings,
-} from './settings';
+import { getAdminSettings, saveGeminiApiKey, saveGoogleChatWebhookSettings } from './settings';
 import type { TestContext } from './testContext';
 import { createTestContext } from './testContext';
 import type { FakeAppLogPort } from './testDoubles';
@@ -19,7 +13,6 @@ import type { FakeAppLogPort } from './testDoubles';
 describe('管理者設定(app_settings)', () => {
   let deps: SettingsDeps;
   let appLog: FakeAppLogPort;
-  let listedWith: string[];
   let ctx: TestContext;
   let actor: SettingsActor;
   let otherTenantId: string;
@@ -29,16 +22,7 @@ describe('管理者設定(app_settings)', () => {
     otherTenantId = ctx.db.addTenant({ slug: 'other' }).id;
     actor = { tenantId: ctx.tenantId, staffId: '00000000-0000-7000-8000-0000000000aa', role: 'admin' };
     appLog = ctx.appLog;
-    listedWith = [];
-    deps = {
-      uow: ctx.uow,
-      secretBox: ctx.secretBox,
-      appLog,
-      listGeminiModels: async (apiKey) => {
-        listedWith.push(apiKey);
-        return [{ name: 'gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' }];
-      },
-    };
+    deps = { uow: ctx.uow, secretBox: ctx.secretBox, appLog };
   });
 
   /** 保存済みの値(tenant_secrets の暗号文を開いたもの)。 */
@@ -58,12 +42,10 @@ describe('管理者設定(app_settings)', () => {
   const REPORT_URL = 'https://chat.googleapis.com/v1/spaces/AAAA/messages?key=k1&token=t1';
   const RECEIPT_URL = 'https://chat.googleapis.com/v1/spaces/BBBB/messages?key=k2&token=t2';
 
-  it('未設定時はGemini APIキー/Webhook URLが空文字(未設定)、モデルはデフォルト値を返す', async () => {
+  it('未設定時はGemini APIキー/Webhook URLが空文字(未設定)を返す(モデルは自動で選ぶので設定は無い)', async () => {
     expect(await getAdminSettings(deps, actor)).toEqual({
       geminiApiKey: '',
       geminiApiKeySet: false,
-      geminiReportModel: 'gemini-2.5-flash',
-      geminiOcrModel: 'gemini-2.5-flash-lite',
       gchatReportWebhookUrl: '',
       gchatReportWebhookUrlSet: false,
       gchatReceiptWebhookUrl: '',
@@ -119,16 +101,6 @@ describe('管理者設定(app_settings)', () => {
     expect((await stored()).geminiApiKey).toBe('sk-existing');
   });
 
-  it('モデル設定を保存できる。どちらか一方でも空なら拒否される', async () => {
-    expect((await saveGeminiModelSettings(deps, actor, 'gemini-3.0-pro', 'gemini-3.0-flash')).ok).toBe(true);
-    expect((await saveGeminiModelSettings(deps, actor, '', 'gemini-3.0-flash')).ok).toBe(false);
-    expect(await getAdminSettings(deps, actor)).toMatchObject({
-      geminiReportModel: 'gemini-3.0-pro',
-      geminiOcrModel: 'gemini-3.0-flash',
-    });
-    expect(appLog.actions()).toContain('settings.gemini_models.changed');
-  });
-
   it('Webhook URLを保存できる。どちらか一方でも空なら拒否される', async () => {
     const result = await saveGoogleChatWebhookSettings(deps, actor, REPORT_URL, RECEIPT_URL);
     expect(result).toMatchObject({ ok: true, changed: true });
@@ -181,44 +153,6 @@ describe('管理者設定(app_settings)', () => {
     await saveGeminiApiKey(deps, actor, 'key-1');
     await saveGeminiApiKey(deps, { ...actor, tenantId: otherTenantId }, 'key-2');
     expect((await stored()).geminiApiKey).toBe('key-1');
-  });
-
-  describe('listGeminiModelsForAdmin', () => {
-    it('入力中のキーがあればそれで一覧を取得する', async () => {
-      await saveGeminiApiKey(deps, actor, 'stored-key');
-      const result = await listGeminiModelsForAdmin(deps, actor, 'typed-key');
-      expect(result.ok).toBe(true);
-      expect(listedWith).toEqual(['typed-key']);
-    });
-
-    it('入力中のキーが空・伏せ字のままなら保存済みのキーを使う(GAS版と同じ)', async () => {
-      await saveGeminiApiKey(deps, actor, 'stored-key-1234');
-      await listGeminiModelsForAdmin(deps, actor, '  ');
-      await listGeminiModelsForAdmin(deps, actor, (await getAdminSettings(deps, actor)).geminiApiKey);
-      expect(listedWith).toEqual(['stored-key-1234', 'stored-key-1234']);
-    });
-
-    it('どちらも無ければAPIを呼ばずに案内を返す', async () => {
-      expect(await listGeminiModelsForAdmin(deps, actor, undefined)).toMatchObject({
-        ok: false,
-        reason: 'no_api_key',
-      });
-      expect(listedWith).toEqual([]);
-    });
-
-    it('API呼び出しの失敗はERRORログに残す', async () => {
-      deps.listGeminiModels = async () => {
-        throw new Error('HTTP 403');
-      };
-      expect(await listGeminiModelsForAdmin(deps, actor, 'k')).toMatchObject({
-        ok: false,
-        reason: 'api_error',
-      });
-      expect(appLog.entries.at(-1)).toMatchObject({
-        level: 'ERROR',
-        action: 'settings.gemini_models.list_failed',
-      });
-    });
   });
 
   describe('保存済みの秘密値が開けないとき(SecretBox の鍵・プロバイダを変えた等)', () => {
@@ -279,7 +213,7 @@ describe('管理者設定(app_settings)', () => {
     it('AIの下書きは .env の設定(deps.reportAi)に戻す', async () => {
       const used: string[] = [];
       const portOf = (label: string): ReportAiPort => ({
-        reportModel: label,
+        hasApiKey: true,
         async generateDailyReport() {
           used.push(label);
           return { warnings: [], internal: '', customer: '' };

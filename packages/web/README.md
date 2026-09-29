@@ -96,7 +96,7 @@ src/
 - **予定→お客様タブへの移動**(GAS版 `jumpToCustomerFromSchedule`)は `useHomeTabs().switchTab('visitors')` を使い、
   検索欄への受け渡しは `features/customers` の中で用意する。
 - 「🛠 管理」タブは `homeTabsFor(user.role)` が管理者・コーディネーター(`canActForOthers`)にだけ出し、`AppShell` もそのときだけ置く(`React.lazy` で別のJS)。
-  中の「スタッフ」「報告一覧」「AI」(① プロンプト・② 日報の言葉の表(日報AIの調整)・APIキー/モデル)「通知先」「操作ログ」は切り替えると作り直す
+  中の「スタッフ」「報告一覧」「AI」(① プロンプト・② 日報の言葉の表(日報AIの調整)・APIキー)「通知先」「操作ログ」は切り替えると作り直す
   (コーディネーターには「報告一覧」だけを出し、タブの列は出さない)。切り替えは `components/SectionTabs.tsx`、保存していない変更は
   各画面が `useReportUnsavedChanges(dirty)` で知らせ、切り替える側が `useConfirmLeave()` で確かめる(`unsavedChanges.tsx`)。
   管理タブは管理者・コーディネーター向けなので、スタッフの画面より小さい入力欄・ボタン(`components/FormField.tsx` の `INPUT_CLASS`・
@@ -253,8 +253,8 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
   Drive の CSV ログの確認の置き換え。コーディネーターは報告一覧だけ。`doc/02_機能仕様.md` 10章)。
 - パスワード再設定の画面に「番号が届いている方はこちら」を置く(管理者が送った「パスワード設定の案内」の番号を、送り直さずに
   入力する)。
-- GAS版の設定の詳細設定(Gemini の APIキー・モデル、Google Chat の Webhook)は管理タブの「AI → APIキー・モデル」「通知先」に移した
-  (`features/admin/settings`。設定が2か所に分かれないように)。1回のAPI(GET /api/settings/admin)で読むため、読み込み中に保存したときの案内は
+- GAS版の設定の詳細設定(Gemini の APIキー、Google Chat の Webhook)は管理タブの「AI → APIキー」「通知先」に移した
+  (`features/admin/settings`。設定が2か所に分かれないように。モデルは自動で選ぶので、GAS版のモデルの選択・一覧の取得は無い)。1回のAPI(GET /api/settings/admin)で読むため、読み込み中に保存したときの案内は
   「Gemini APIキーの読み込みが完了してから保存してください」の1種類(GAS版は設定ごとに3種類)。
 - パスワード変更に成功したら入力欄を空にする(GAS版は残っていた)。
 - 設定の版数は `package.json` の version。

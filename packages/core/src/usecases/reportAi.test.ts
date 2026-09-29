@@ -1,12 +1,13 @@
 import { AI_PROMPT_KEYS, findAiPromptDefinition } from '@katahimo/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ESCALATION_WARNING } from '../domain';
-import type { DailyReportDraft, ReportAiPort } from '../ports/ai';
+import type { DailyReportDraft, ReceiptOcrResult, ReportAiPort } from '../ports/ai';
 import { reportAiFixtureMasters } from '../testSupport/reportAiFixtures';
 import {
+  extractReceiptAmount,
   generateAccidentReportDraft,
   generateDailyReportDraft,
-  listDailyReportModels,
+  listReportModels,
   type ReportAiDeps,
 } from './reportAi';
 import type { Actor } from './requestMeta';
@@ -17,14 +18,15 @@ function fakeAi(answer: DailyReportDraft = { warnings: [], internal: '社内', c
   const prompts: string[] = [];
   const models: (string | undefined)[] = [];
   const port: ReportAiPort = {
-    reportModel: 'test-model',
+    hasApiKey: true,
     async generateDailyReport({ prompt, model }) {
       prompts.push(prompt);
       models.push(model);
       return structuredClone(answer);
     },
-    async generateAccidentReport({ prompt }) {
+    async generateAccidentReport({ prompt, model }) {
       prompts.push(prompt);
+      models.push(model);
       return { error: 'unused' };
     },
     async extractReceiptAmount() {
@@ -96,7 +98,7 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
       promptKey: AI_PROMPT_KEYS.DAILY_REPORT_GENERATE,
       promptRevision: null,
       appVersion: 'rev-1',
-      model: 'test-model',
+      model: 'gemini-flash-latest',
       inputText: 'メモ',
       timeInfo: '09:00〜12:00',
       educationLevel: 2,
@@ -189,31 +191,49 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
     expect(ctx.appLog.actions()).toContain('ai.daily_report.generate_failed');
   });
 
-  it('試すモデルの順番は 設定のモデル → Flash 系 → Flash-Lite 系(使えるモデルの一覧から。読めなければ既知の名前)', async () => {
+  it('試すモデルの順番は Flash 系 → Flash-Lite 系で -latest が先頭(使えるモデルの一覧から。読めなければ既知の名前)', async () => {
     ai.port.availableModels = async () => [
       'gemini-2.0-flash-lite',
       'gemini-2.5-flash',
       'gemini-2.5-pro',
+      'gemini-flash-latest',
       'gemini-2.5-flash-lite',
       'gemini-2.5-flash-preview-tts',
     ];
-    expect(await listDailyReportModels(deps, staff)).toEqual([
-      'test-model',
+    expect(await listReportModels(deps, staff)).toEqual([
+      'gemini-flash-latest',
       'gemini-2.5-flash',
       'gemini-2.5-flash-lite',
       'gemini-2.0-flash-lite',
     ]);
     ai.port.availableModels = async () => null;
-    expect((await listDailyReportModels(deps, staff))[1]).toBe('gemini-2.5-flash');
+    expect((await listReportModels(deps, staff)).slice(0, 2)).toEqual([
+      'gemini-flash-latest',
+      'gemini-2.5-flash',
+    ]);
   });
 
-  it('API キーが無ければ試すモデルは無く、モデルを指定すると 400', async () => {
-    const noop: ReportAiPort = { ...ai.port, reportModel: null };
+  it('モデルを指定しなければ順番の先頭で書く(設定のモデルは無い)', async () => {
+    ai.port.availableModels = async () => ['gemini-2.5-flash', 'gemini-2.0-flash'];
+    const result = await generateDailyReportDraft(deps, staff, { text: 'メモ', customerId });
+    expect(ai.models).toEqual(['gemini-2.5-flash']);
+    expect(result.ai.model).toBe('gemini-2.5-flash');
+    expect(ctx.appLog.actions()).not.toContain('ai.daily_report.model_fallback_succeeded');
+  });
+
+  it('API キーが無ければ試すモデルは無く、モデルを指定すると 400(日報・事故報告)', async () => {
+    const noop: ReportAiPort = { ...ai.port, hasApiKey: false };
     deps = { ...deps, reportAi: noop, reportAiFactory: { create: () => noop } };
-    expect(await listDailyReportModels(deps, staff)).toEqual([]);
+    expect(await listReportModels(deps, staff)).toEqual([]);
     await expect(
       generateDailyReportDraft(deps, staff, { text: 'メモ', customerId, model: 'gemini-2.5-flash' }),
     ).rejects.toMatchObject({ code: 'validation_failed', reason: 'model_not_allowed' });
+    await expect(
+      generateAccidentReportDraft(deps, staff, { text: 'ころんだ', model: 'gemini-2.5-flash' }),
+    ).rejects.toMatchObject({ code: 'validation_failed', reason: 'model_not_allowed' });
+    const result = await generateDailyReportDraft(deps, staff, { text: 'メモ', customerId });
+    expect(result.ai.model).toBeNull();
+    expect(ai.models).toEqual([undefined]);
   });
 
   it('指定したモデルで呼び、失敗はモデル名つきで残す。Flash / Flash-Lite 系以外は 400(AI を呼ばない)', async () => {
@@ -243,8 +263,8 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
     expect(ai.models).toHaveLength(1);
   });
 
-  it('切り替えた先のモデルで書けたら WARN で残す(設定のモデルで書けたときは残さない)', async () => {
-    await generateDailyReportDraft(deps, staff, { text: 'メモ', customerId, model: 'test-model' });
+  it('切り替えた先のモデルで書けたら WARN で残す(先頭のモデルで書けたときは残さない)', async () => {
+    await generateDailyReportDraft(deps, staff, { text: 'メモ', customerId, model: 'gemini-flash-latest' });
     expect(ctx.appLog.actions()).not.toContain('ai.daily_report.model_fallback_succeeded');
     const result = await generateDailyReportDraft(deps, staff, {
       text: 'メモ',
@@ -254,7 +274,7 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
     expect(result.ai).toMatchObject({ model: 'gemini-2.5-flash-lite', retryable: false });
     expect(ctx.appLog.byAction('ai.daily_report.model_fallback_succeeded')[0]).toMatchObject({
       level: 'WARN',
-      details: { model: 'gemini-2.5-flash-lite', configuredModel: 'test-model' },
+      details: { model: 'gemini-2.5-flash-lite', firstModel: 'gemini-flash-latest' },
     });
   });
 
@@ -311,10 +331,158 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
         updatedBy: staff.staffId,
       }),
     );
-    await generateAccidentReportDraft(deps, staff, { text: 'ころんだ', start: '10:00' });
+    const result = await generateAccidentReportDraft(deps, staff, { text: 'ころんだ', start: '10:00' });
     expect(ai.prompts[0]).toBe('ころんだ|10:00|10:00');
+    expect(result).toEqual({ draft: { error: 'unused' }, model: 'gemini-flash-latest', retryable: false });
     expect(findAiPromptDefinition(AI_PROMPT_KEYS.ACCIDENT_REPORT_GENERATE)?.defaultBody).toContain(
       '{timeInfo}',
     );
+  });
+
+  it('事故報告もモデルを指定して呼び、失敗はモデル名と試し直す意味つきで返し・残す', async () => {
+    ai.port.generateAccidentReport = async ({ model }) => {
+      ai.models.push(model);
+      return model === 'gemini-flash-latest'
+        ? { error: '混み合っています', retryable: true }
+        : { error: 'APIキーが無効です', retryable: false };
+    };
+    const first = await generateAccidentReportDraft(deps, staff, { text: 'ころんだ' });
+    expect(first).toEqual({
+      draft: { error: '混み合っています' },
+      model: 'gemini-flash-latest',
+      retryable: true,
+    });
+    const second = await generateAccidentReportDraft(deps, staff, {
+      text: 'ころんだ',
+      model: 'gemini-2.5-flash',
+    });
+    expect(second).toMatchObject({ model: 'gemini-2.5-flash', retryable: false });
+    expect(ctx.appLog.byAction('ai.accident_report.generate_failed').map((e) => e.details)).toMatchObject([
+      { model: 'gemini-flash-latest', fallback: false, retryable: true },
+      { model: 'gemini-2.5-flash', fallback: true, retryable: false },
+    ]);
+    await expect(
+      generateAccidentReportDraft(deps, staff, { text: 'ころんだ', model: 'gemini-2.5-pro' }),
+    ).rejects.toMatchObject({ code: 'validation_failed', reason: 'model_not_allowed' });
+    expect(ai.models).toEqual(['gemini-flash-latest', 'gemini-2.5-flash']);
+  });
+
+  it('事故報告を切り替えた先のモデルで書けたら WARN で残す', async () => {
+    const draft = {
+      occurrenceTime: '10:00',
+      location: '公園',
+      accidentContent: 'a',
+      situation: 'b',
+      immediateResponse: 'c',
+      parentCorrespondence: 'd',
+      diagnosisTreatment: 'e',
+      prevention: 'f',
+    };
+    ai.port.generateAccidentReport = async () => draft;
+    const result = await generateAccidentReportDraft(deps, staff, {
+      text: 'ころんだ',
+      model: 'gemini-2.0-flash',
+    });
+    expect(result).toEqual({ draft, model: 'gemini-2.0-flash', retryable: false });
+    expect(ctx.appLog.byAction('ai.accident_report.model_fallback_succeeded')[0]).toMatchObject({
+      level: 'WARN',
+      details: { model: 'gemini-2.0-flash', firstModel: 'gemini-flash-latest' },
+    });
+  });
+});
+
+describe('領収書の読み取り(Flash-Lite 系をサーバーの中で順に試す)', () => {
+  let ctx: TestContext;
+  let staff: Actor;
+  let calls: (string | undefined)[];
+  let answers: Record<string, ReceiptOcrResult>;
+  let deps: ReportAiDeps;
+  const ok: ReceiptOcrResult = { amount: 1200, storeName: '駐車場', receiptDate: '2026/09/25 10:00' };
+  const busy: ReceiptOcrResult = {
+    amount: '',
+    storeName: '',
+    receiptDate: '',
+    error: '混み合っています',
+    retryable: true,
+  };
+
+  beforeEach(async () => {
+    ctx = createTestContext({ now: '2026-09-25T03:00:00Z' });
+    staff = (await ctx.addStaff('山田 太郎', 'taro@example.com')).actor;
+    calls = [];
+    answers = {};
+    const port: ReportAiPort = {
+      hasApiKey: true,
+      availableModels: async () => [
+        'gemini-2.5-flash',
+        'gemini-flash-lite-latest',
+        'gemini-2.5-flash-lite',
+        'gemini-2.0-flash-lite',
+        'gemini-2.0-flash-lite-001',
+      ],
+      async generateDailyReport() {
+        return { warnings: [], internal: '', customer: '' };
+      },
+      async generateAccidentReport() {
+        return { error: 'unused' };
+      },
+      async extractReceiptAmount({ model }) {
+        calls.push(model);
+        return structuredClone(answers[model ?? ''] ?? busy);
+      },
+    };
+    deps = {
+      uow: ctx.uow,
+      appLog: ctx.appLog,
+      secretBox: ctx.secretBox,
+      reportAi: port,
+      reportAiFactory: { create: () => port },
+      now: ctx.deps.now,
+    };
+  });
+
+  it('先頭のモデルで読めればそれだけを呼び、ログは残さない', async () => {
+    answers['gemini-flash-lite-latest'] = ok;
+    expect(await extractReceiptAmount(deps, staff, 'data:image/jpeg;base64,AAAA')).toEqual(ok);
+    expect(calls).toEqual(['gemini-flash-lite-latest']);
+    expect(ctx.appLog.actions()).toEqual([]);
+  });
+
+  it('試し直す意味のある失敗なら次のモデルへ進み、失敗ごとにモデル名つきで残し、切り替え先で読めたら WARN', async () => {
+    answers['gemini-2.5-flash-lite'] = ok;
+    expect(await extractReceiptAmount(deps, staff, 'data:image/jpeg;base64,AAAA')).toEqual(ok);
+    expect(calls).toEqual(['gemini-flash-lite-latest', 'gemini-2.5-flash-lite']);
+    expect(ctx.appLog.byAction('ai.receipt_ocr.failed').map((e) => e.details)).toMatchObject([
+      { model: 'gemini-flash-lite-latest', attempt: 1, retryable: true },
+    ]);
+    expect(ctx.appLog.byAction('ai.receipt_ocr.model_fallback_succeeded')[0]).toMatchObject({
+      level: 'WARN',
+      details: { model: 'gemini-2.5-flash-lite', firstModel: 'gemini-flash-lite-latest', attempt: 2 },
+    });
+  });
+
+  it('試すのは 3つまで。全部だめなら最後の失敗を返す(retryable は画面に返さない)', async () => {
+    const result = await extractReceiptAmount(deps, staff, 'data:image/jpeg;base64,AAAA');
+    expect(calls).toEqual(['gemini-flash-lite-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite']);
+    expect(result).toEqual({ amount: '', storeName: '', receiptDate: '', error: '混み合っています' });
+    expect(ctx.appLog.byAction('ai.receipt_ocr.failed')).toHaveLength(3);
+  });
+
+  it('API キーの誤りなど試し直す意味の無い失敗では次のモデルに進まない', async () => {
+    answers['gemini-flash-lite-latest'] = { ...busy, error: 'APIキーが無効です', retryable: false };
+    const result = await extractReceiptAmount(deps, staff, 'data:image/jpeg;base64,AAAA');
+    expect(calls).toEqual(['gemini-flash-lite-latest']);
+    expect(result.error).toBe('APIキーが無効です');
+    expect(ctx.appLog.byAction('ai.receipt_ocr.failed')[0]?.details).toMatchObject({
+      model: 'gemini-flash-lite-latest',
+      retryable: false,
+    });
+  });
+
+  it('API キーが無ければモデルを指定せずに1回だけ呼ぶ', async () => {
+    const port = { ...deps.reportAi, hasApiKey: false };
+    deps = { ...deps, reportAi: port, reportAiFactory: { create: () => port } };
+    await extractReceiptAmount(deps, staff, 'data:image/jpeg;base64,AAAA');
+    expect(calls).toEqual([undefined]);
   });
 });

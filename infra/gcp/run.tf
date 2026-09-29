@@ -30,8 +30,6 @@ locals {
     OUTBOX_DRAIN_JOB    = local.outbox_drain_job_id
     SECRET_BOX_PROVIDER = "gcp"
     SECRET_BOX_KMS_KEY  = google_kms_crypto_key.tenant_secrets.id
-    GEMINI_MODEL_REPORT = var.gemini_models.report
-    GEMINI_MODEL_OCR    = var.gemini_models.ocr
   } : k => v if v != "" })
 
   # パスワード再設定メール・Web Push・ミラーは outbox 経由でジョブ(outbox-drain・バッチのジョブの最後)が送る

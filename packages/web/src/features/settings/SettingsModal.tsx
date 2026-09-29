@@ -15,7 +15,7 @@ interface SettingsModalProps {
 
 /**
  * GAS版 #settingsModal。文字の大きさ・通知・パスワード変更・ログアウト・版数。GAS版の「詳細設定(管理者のみ)」
- * (Gemini の APIキー・モデル、Google Chat の通知先)は「🛠 管理」タブに移した(設定が2か所に分かれないように)。
+ * (Gemini の APIキー、Google Chat の通知先)は「🛠 管理」タブに移した(設定が2か所に分かれないように)。
  * 閉じても中身を残す(GAS版と同じく<details>の開き具合などが次に開いたときも残る)。
  */
 export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsModalProps) {
@@ -75,8 +75,7 @@ export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsM
 
           {isAdminRole(user.role) ? (
             <p className="border-t pt-4 text-sm text-gray-600">
-              Gemini の APIキー・モデルは「🛠 管理」タブの「🤖 AI」、Google Chat の通知先は「🔔
-              通知先」で設定します。
+              Gemini の APIキーは「🛠 管理」タブの「🤖 AI」、Google Chat の通知先は「🔔 通知先」で設定します。
             </p>
           ) : null}
 

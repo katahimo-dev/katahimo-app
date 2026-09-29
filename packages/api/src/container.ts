@@ -36,7 +36,6 @@ import {
   createStoragePort,
   GeminiAiPort,
   InMemoryTtlCache,
-  listAvailableGeminiModels,
   NoopReportAiPort,
   outboxTopicPolicyOf,
   type ScheduleProvider,
@@ -74,7 +73,6 @@ export interface Container {
   reportAiFactory: ReportAiPortFactory;
   /** AI 生成の記録に残すアプリの版(Cloud Run のリビジョン)。 */
   appVersion: string | null;
-  listGeminiModels: typeof listAvailableGeminiModels;
   /** 「今日/明日の予定」(SCHEDULE_PROVIDER で Google / GAS Bridge / Noop を切り替える)。 */
   schedule: SchedulePort;
   scheduleProvider: ScheduleProvider;
@@ -170,16 +168,9 @@ export function createContainer(env: Env, db: Database): Container {
     resetCodeSecret: deriveSecret(env.SESSION_SECRET, 'katahimo/password-reset-code/v1'),
     rateLimiter: new DrizzleRateLimiter(db, deriveSecret(env.SESSION_SECRET, 'katahimo/rate-limit-key/v1')),
     rateLimits: rateLimitPolicyOf(env),
-    reportAi: env.GEMINI_API_KEY
-      ? new GeminiAiPort({
-          apiKey: env.GEMINI_API_KEY,
-          ...(env.GEMINI_MODEL_REPORT ? { reportModel: env.GEMINI_MODEL_REPORT } : {}),
-          ...(env.GEMINI_MODEL_OCR ? { ocrModel: env.GEMINI_MODEL_OCR } : {}),
-        })
-      : new NoopReportAiPort(),
+    reportAi: env.GEMINI_API_KEY ? new GeminiAiPort({ apiKey: env.GEMINI_API_KEY }) : new NoopReportAiPort(),
     reportAiFactory: { create: (options) => new GeminiAiPort(options) },
     appVersion: env.K_REVISION ?? null,
-    listGeminiModels: listAvailableGeminiModels,
     schedule: scheduleServices.schedule,
     scheduleProvider: scheduleServices.provider,
     ...(scheduleServices.maps ? { maps: scheduleServices.maps } : {}),

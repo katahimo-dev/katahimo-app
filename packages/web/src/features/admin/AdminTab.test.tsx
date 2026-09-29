@@ -28,9 +28,7 @@ vi.mock('../../api/admin', () => ({
 vi.mock('../../api/settings', () => ({
   settingsApi: {
     get: vi.fn(),
-    listAvailableModels: vi.fn(),
     saveGeminiApiKey: vi.fn(),
-    saveGeminiModels: vi.fn(),
     saveGchatWebhooks: vi.fn(),
   },
 }));
@@ -480,8 +478,6 @@ describe('管理タブ: AI(しくみ・APIキー)と通知先', () => {
     settings: {
       geminiApiKey: '••••abcd',
       geminiApiKeySet: true,
-      geminiReportModel: 'gemini-2.5-flash',
-      geminiOcrModel: 'gemini-2.5-flash',
       gchatReportWebhookUrl: 'https://chat.example/report',
       gchatReportWebhookUrlSet: true,
       gchatReceiptWebhookUrl: 'https://chat.example/receipt',
@@ -503,12 +499,12 @@ describe('管理タブ: AI(しくみ・APIキー)と通知先', () => {
     expect(within(chips).getByText('年齢帯 0件・未登録')).toBeTruthy();
   });
 
-  it('APIキー・モデル: 変えたものだけを保存し、保存していないまま移るときは確かめる', async () => {
+  it('APIキー: 変えたものだけを保存し、保存していないまま移るときは確かめる', async () => {
     adminSettingsApi.get.mockResolvedValue(loadedSettings);
     adminSettingsApi.saveGeminiApiKey.mockResolvedValue({ ok: true, changed: true, message: '' });
     renderAdmin();
     fireEvent.click(screen.getByRole('tab', { name: '🤖 AI' }));
-    fireEvent.click(await screen.findByRole('tab', { name: 'APIキー・モデル' }));
+    fireEvent.click(await screen.findByRole('tab', { name: 'APIキー' }));
     const key = (await screen.findByLabelText('Gemini APIキー')) as HTMLInputElement;
     await waitFor(() => expect(key.disabled).toBe(false));
     fireEvent.change(key, { target: { value: ' new-key ' } });
@@ -521,9 +517,8 @@ describe('管理タブ: AI(しくみ・APIキー)と通知先', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '保存する' }));
     await waitFor(() => expect(adminSettingsApi.saveGeminiApiKey).toHaveBeenCalledWith('new-key'));
-    expect(adminSettingsApi.saveGeminiModels).not.toHaveBeenCalled();
     expect(adminSettingsApi.saveGchatWebhooks).not.toHaveBeenCalled();
-    expect(showToast).toHaveBeenCalledWith('APIキー・モデルを保存しました');
+    expect(showToast).toHaveBeenCalledWith('APIキーを保存しました');
     await waitFor(() => expect(screen.queryByText('保存していない変更があります')).toBeNull());
   });
 

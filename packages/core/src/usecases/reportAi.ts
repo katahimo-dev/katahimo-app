@@ -4,6 +4,7 @@ import {
   accidentTimeInfo,
   ageInMonths,
   assembleDailyReportPrompt,
+  buildOcrModelChain,
   buildReportModelChain,
   dailyTimeInfo,
   enforceEscalationWarning,
@@ -28,7 +29,6 @@ import type {
 import type { AppLogPort } from '../ports/appLog';
 import type { ReportAiGenerationInput } from '../ports/reportAi';
 import type { SecretBoxPort } from '../ports/secretBox';
-import type { TenantSettingsRecord } from '../ports/settings';
 import type { TenantRepositories } from '../ports/unitOfWork';
 import type { AiPromptDeps } from './aiPrompts';
 import { resolveReportCareRecipient } from './reportCareRecipient';
@@ -53,18 +53,14 @@ export interface ReportAiCaller {
 }
 
 /**
- * テナントの秘密値(tenant_secrets)に Gemini API キーがあればそれとテナントのモデル設定を使い、無ければ .env の
- * 設定(deps.reportAi、未設定なら Noop)にする。キーが開けない・設定を読めないときも .env の設定に戻す
- * (AI の下書き・読み取りは失敗しても結果の形で返す処理のため、ここで例外にしない)。
+ * テナントの秘密値(tenant_secrets)に Gemini API キーがあればそのキーを使い、無ければ .env の設定(deps.reportAi、
+ * 未設定なら Noop)にする。キーが開けないときも .env の設定に戻す(AI の下書き・読み取りは失敗しても結果の形で
+ * 返す処理のため、ここで例外にしない)。モデルは自動で選ぶ(core/domain/reports/modelFallback.ts)。
  */
 async function resolveReportAiPort(deps: ReportAiDeps, tenantId: string): Promise<ReportAiPort> {
   let apiKey: string;
-  let settings: TenantSettingsRecord;
   try {
-    [apiKey, settings] = await Promise.all([
-      readTenantSecret(deps, tenantId, 'gemini_api_key'),
-      deps.uow.run(tenantId, (r) => r.settings.get()),
-    ]);
+    apiKey = await readTenantSecret(deps, tenantId, 'gemini_api_key');
   } catch (e) {
     await deps.appLog.write({
       tenantId,
@@ -75,11 +71,7 @@ async function resolveReportAiPort(deps: ReportAiDeps, tenantId: string): Promis
     return deps.reportAi;
   }
   if (!apiKey) return deps.reportAi;
-  return deps.reportAiFactory.create({
-    apiKey,
-    ...(settings.geminiReportModel ? { reportModel: settings.geminiReportModel } : {}),
-    ...(settings.geminiOcrModel ? { ocrModel: settings.geminiOcrModel } : {}),
-  });
+  return deps.reportAiFactory.create({ apiKey });
 }
 
 function logAiError(
@@ -99,19 +91,44 @@ function logAiError(
   });
 }
 
-/** API エラーのとき試し直すモデルの順番(core/domain/reports/modelFallback.ts)。 */
+/** 使えるモデルの一覧(API キーが無ければ読まない。読めなければ null = 既知の名前)。 */
+async function availableModelsOf(reportAi: ReportAiPort): Promise<string[] | null> {
+  return reportAi.hasApiKey && reportAi.availableModels ? await reportAi.availableModels() : null;
+}
+
+/** 日報・事故報告で試すモデルの順番(core/domain/reports/modelFallback.ts)。API キーが無ければ空。 */
 async function reportModelChainOf(reportAi: ReportAiPort): Promise<string[]> {
-  const available =
-    reportAi.reportModel && reportAi.availableModels ? await reportAi.availableModels() : null;
-  return buildReportModelChain(reportAi.reportModel, available);
+  if (!reportAi.hasApiKey) return [];
+  return buildReportModelChain(await availableModelsOf(reportAi));
 }
 
 /**
- * 保育日報の生成で試すモデルの順番(設定のモデル → Flash 系 → Flash-Lite 系)。画面はこの順に
- * generateDailyReportDraft の model を変えて呼び、いま試しているモデルを見せる。API キーが無ければ空。
+ * 保育日報・事故報告の生成で試すモデルの順番(Flash 系 → Flash-Lite 系。系統の中は -latest が先頭)。画面はこの順に
+ * generateDailyReportDraft / generateAccidentReportDraft の model を変えて呼び、いま試しているモデルを見せる。
+ * API キーが無ければ空。
  */
-export async function listDailyReportModels(deps: ReportAiDeps, caller: ReportAiCaller): Promise<string[]> {
+export async function listReportModels(deps: ReportAiDeps, caller: ReportAiCaller): Promise<string[]> {
   return reportModelChainOf(await resolveReportAiPort(deps, caller.tenantId));
+}
+
+/** 試すモデル。画面の指定(Flash / Flash-Lite 系だけ。それ以外・API キーが無いのに指定は 400)か、順番の先頭。 */
+interface ChosenModel {
+  /** 使うモデル(API キーが無ければ null)。 */
+  model: string | null;
+  /** 順番の先頭(先頭でないモデルで書けたら「切り替えた」として残す)。 */
+  firstModel: string | null;
+}
+
+async function chooseReportModel(
+  reportAi: ReportAiPort,
+  requested: string | undefined,
+): Promise<ChosenModel> {
+  if (requested !== undefined && (!reportAi.hasApiKey || reportModelFamilyOf(requested) === null)) {
+    throw invalid('このモデルは使えません', { model: '使えないモデルです' }, 'model_not_allowed');
+  }
+  const chain = await reportModelChainOf(reportAi);
+  const firstModel = chain[0] ?? null;
+  return { model: requested ?? firstModel, firstModel };
 }
 
 /** テナントの上書き(版つき)か既定の文面。 */
@@ -138,8 +155,8 @@ export interface GenerateDailyReportDraftInput {
   /** 月齢を数える日('YYYY-MM-DD')。省略時はテナントの今日。 */
   reportDate?: string | undefined;
   /**
-   * 試すモデル(listDailyReportModels の順の1つ)。省略時は設定のモデル。設定のモデルか Flash / Flash-Lite 系の
-   * 名前だけを受け付ける(それ以外は 400。値段の違うモデルを画面から選ばせない)。
+   * 試すモデル(listReportModels の順の1つ)。省略時はその先頭。Flash / Flash-Lite 系の名前だけを受け付ける
+   * (それ以外は 400。値段の違うモデルを画面から選ばせない)。
    */
   model?: string | undefined;
 }
@@ -176,7 +193,7 @@ function errorCodeOf(draft: DailyReportDraft): ReportAiErrorCode | null {
  * 2. プロンプトを組み立て(core/domain/reports/promptAssembly.ts)、トランザクションの外で Gemini を呼ぶ
  * 3. 生成の記録(report_ai_generations)を別のトランザクションで書く。記録に失敗しても生成の結果は返す
  *    (ERROR `ai.daily_report.generation_log_failed`。記録の ID は null)
- * input.model で試すモデルを変えられる(API エラーのとき、画面が listDailyReportModels の順に呼び直す。1回の呼び出しで
+ * input.model で試すモデルを変えられる(API エラーのとき、画面が listReportModels の順に呼び直す。1回の呼び出しで
  * 試すのは1つのモデルだけ)。失敗は ERROR `ai.daily_report.generate_failed`(モデル名つき)、切り替え先で書けたら
  * WARN `ai.daily_report.model_fallback_succeeded` を残す。
  * PSI 1 は AI の答えに関わらず warnings に「管理者へ連絡」を入れる。失敗しても例外にはせず、warnings/internal に
@@ -189,14 +206,7 @@ export async function generateDailyReportDraft(
 ): Promise<DailyReportGeneration> {
   const startedAt = currentTime(deps);
   const reportAi = await resolveReportAiPort(deps, caller.tenantId);
-  const model = input.model ?? reportAi.reportModel;
-  if (
-    input.model !== undefined &&
-    (reportAi.reportModel === null ||
-      (input.model !== reportAi.reportModel && reportModelFamilyOf(input.model) === null))
-  ) {
-    throw invalid('このモデルは使えません', { model: '使えないモデルです' }, 'model_not_allowed');
-  }
+  const { model, firstModel } = await chooseReportModel(reportAi, input.model);
   const context = await deps.uow.run(caller.tenantId, async (r) => {
     const customer = await r.customers.findById(input.customerId);
     if (!customer) throw notFound('お客様が見つかりません', 'customer_not_found');
@@ -229,10 +239,10 @@ export async function generateDailyReportDraft(
 
   const raw = await reportAi.generateDailyReport({
     prompt: assembled.prompt,
-    ...(input.model !== undefined ? { model: input.model } : {}),
+    ...(model !== null ? { model } : {}),
   });
   const errorCode = errorCodeOf(raw);
-  const fallback = model !== null && model !== reportAi.reportModel;
+  const fallback = model !== null && model !== firstModel;
   if (errorCode) {
     await logAiError(deps, caller, 'ai.daily_report.generate_failed', raw.internal, {
       customerId: input.customerId,
@@ -241,13 +251,13 @@ export async function generateDailyReportDraft(
       retryable: raw.retryable === true,
     });
   } else if (fallback) {
-    // 設定のモデルが使えず、切り替えた先のモデルで書けた(どのモデルで書いたかを残す)
+    // 先頭のモデルが使えず、切り替えた先のモデルで書けた(どのモデルで書いたかを残す)
     await deps.appLog.write({
       tenantId: caller.tenantId,
       level: 'WARN',
       action: 'ai.daily_report.model_fallback_succeeded',
       actorStaffId: caller.staffId,
-      details: { customerId: input.customerId, model, configuredModel: reportAi.reportModel },
+      details: { customerId: input.customerId, model, firstModel },
       ...caller.meta,
     });
   }
@@ -329,34 +339,99 @@ async function recordGeneration(
   }
 }
 
-/** GAS版GeminiReport.js generateAccidentReportに対応。失敗時は{error}を返す。 */
+export interface AccidentReportGeneration {
+  draft: AccidentReportDraft | AccidentReportDraftError;
+  /** この生成で使ったモデル(API キーが無ければ null)。 */
+  model: string | null;
+  /** 失敗で、別のモデルで試し直す意味があるか(成功・API キー未設定・キーの誤りは false)。 */
+  retryable: boolean;
+}
+
+/**
+ * GAS版GeminiReport.js generateAccidentReportに対応。失敗時は draft が {error}。
+ * モデルの選び方・切り替えは保育日報と同じ(input.model。画面が listReportModels の順に呼び直す)。失敗は ERROR
+ * `ai.accident_report.generate_failed`(モデル名つき)、切り替え先で書けたら WARN `ai.accident_report.model_fallback_succeeded`。
+ */
 export async function generateAccidentReportDraft(
   deps: ReportAiDeps,
   caller: ReportAiCaller,
-  input: { text: string; start?: string | undefined; end?: string | undefined },
-): Promise<AccidentReportDraft | AccidentReportDraftError> {
-  const [reportAi, template] = await Promise.all([
-    resolveReportAiPort(deps, caller.tenantId),
-    deps.uow.run(caller.tenantId, (r) => resolvePrompt(r, AI_PROMPT_KEYS.ACCIDENT_REPORT_GENERATE)),
-  ]);
+  input: { text: string; start?: string | undefined; end?: string | undefined; model?: string | undefined },
+): Promise<AccidentReportGeneration> {
+  const reportAi = await resolveReportAiPort(deps, caller.tenantId);
+  const { model, firstModel } = await chooseReportModel(reportAi, input.model);
+  const template = await deps.uow.run(caller.tenantId, (r) =>
+    resolvePrompt(r, AI_PROMPT_KEYS.ACCIDENT_REPORT_GENERATE),
+  );
   const prompt = renderAccidentReportPrompt(
     template.body,
     input.text,
     accidentTimeInfo(input.start, input.end),
   );
-  const draft = await reportAi.generateAccidentReport({ prompt });
-  if ('error' in draft) await logAiError(deps, caller, 'ai.accident_report.generate_failed', draft.error);
-  return draft;
+  const result = await reportAi.generateAccidentReport({ prompt, ...(model !== null ? { model } : {}) });
+  const fallback = model !== null && model !== firstModel;
+  if ('error' in result) {
+    const retryable = model !== null && result.retryable === true;
+    await logAiError(deps, caller, 'ai.accident_report.generate_failed', result.error, {
+      model,
+      fallback,
+      retryable,
+    });
+    return { draft: { error: result.error }, model, retryable };
+  }
+  if (fallback) {
+    await deps.appLog.write({
+      tenantId: caller.tenantId,
+      level: 'WARN',
+      action: 'ai.accident_report.model_fallback_succeeded',
+      actorStaffId: caller.staffId,
+      details: { model, firstModel },
+      ...caller.meta,
+    });
+  }
+  return { draft: result, model, retryable: false };
 }
 
-/** GAS版GeminiReport.js extractAmountFromImageに対応。失敗時も空値のフォールバックを返す。 */
+/**
+ * GAS版GeminiReport.js extractAmountFromImageに対応。失敗時も空値のフォールバックを返す。
+ * モデルは Flash-Lite 系だけを順に(最大 MAX_OCR_MODEL_ATTEMPTS)サーバーの中で試す(画面は変えない)。試し直す意味の
+ * ある失敗(混雑・上限・モデルが無い・時間切れ)のときだけ次のモデルに進み、失敗ごとに ERROR `ai.receipt_ocr.failed`
+ * (モデル名つき)、切り替え先で読めたら WARN `ai.receipt_ocr.model_fallback_succeeded` を残す。
+ */
 export async function extractReceiptAmount(
   deps: ReportAiDeps,
   caller: ReportAiCaller,
   base64Image: string,
 ): Promise<ReceiptOcrResult> {
   const reportAi = await resolveReportAiPort(deps, caller.tenantId);
-  const result = await reportAi.extractReceiptAmount(base64Image);
-  if (result.error) await logAiError(deps, caller, 'ai.receipt_ocr.failed', result.error);
-  return result;
+  const chain = reportAi.hasApiKey ? buildOcrModelChain(await availableModelsOf(reportAi)) : [];
+  const models: (string | null)[] = chain.length > 0 ? chain : [null];
+  let last: ReceiptOcrResult = { amount: '', storeName: '', receiptDate: '' };
+  for (const [attempt, model] of models.entries()) {
+    const { retryable, ...result } = await reportAi.extractReceiptAmount({
+      base64Image,
+      ...(model !== null ? { model } : {}),
+    });
+    last = result;
+    if (!result.error) {
+      if (attempt > 0) {
+        await deps.appLog.write({
+          tenantId: caller.tenantId,
+          level: 'WARN',
+          action: 'ai.receipt_ocr.model_fallback_succeeded',
+          actorStaffId: caller.staffId,
+          details: { model, firstModel: models[0], attempt: attempt + 1 },
+          ...caller.meta,
+        });
+      }
+      return result;
+    }
+    const canRetry = model !== null && retryable === true;
+    await logAiError(deps, caller, 'ai.receipt_ocr.failed', result.error, {
+      model,
+      attempt: attempt + 1,
+      retryable: canRetry,
+    });
+    if (!canRetry) break;
+  }
+  return last;
 }

@@ -95,15 +95,6 @@ variable "smtp" {
   })
 }
 
-variable "gemini_models" {
-  description = "GEMINI_MODEL_REPORT / GEMINI_MODEL_OCR(空ならアプリ既定)"
-  type = object({
-    report = string
-    ocr    = string
-  })
-  default = { report = "", ocr = "" }
-}
-
 variable "web_push" {
   description = <<-EOT
     Web Push(翌日の予定のお知らせ)の VAPID の公開鍵(VAPID_PUBLIC_KEY)と連絡先(VAPID_SUBJECT。mailto: か https:)。

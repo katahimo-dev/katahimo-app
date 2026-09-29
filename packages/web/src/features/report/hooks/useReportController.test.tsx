@@ -11,7 +11,7 @@ import { useReportController } from './useReportController';
 vi.mock('../../../api/reports', () => ({
   reportsApi: {
     generateDaily: vi.fn(),
-    dailyModels: vi.fn(),
+    generateModels: vi.fn(),
     generateAccident: vi.fn(),
     saveDaily: vi.fn(),
     saveAccident: vi.fn(),
@@ -80,7 +80,7 @@ describe('useReportController', () => {
     vi.clearAllMocks();
     vi.mocked(customersApi.detail).mockImplementation(() => new Promise(() => undefined));
     vi.mocked(customersApi.reportProfile).mockImplementation(() => new Promise(() => undefined));
-    vi.mocked(reportsApi.dailyModels).mockResolvedValue({ models: [] });
+    vi.mocked(reportsApi.generateModels).mockResolvedValue({ models: [] });
     toastStore.hide();
   });
 
@@ -291,7 +291,7 @@ describe('useReportController', () => {
     }
 
     it('API エラーなら次のモデル(Flash → Flash-Lite の順)を指定して試し直し、書けたモデルの結果を入れる', async () => {
-      vi.mocked(reportsApi.dailyModels).mockResolvedValue({
+      vi.mocked(reportsApi.generateModels).mockResolvedValue({
         models: ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'],
       });
       generateDaily
@@ -312,7 +312,7 @@ describe('useReportController', () => {
     });
 
     it('全部のモデルで書けなければ、試したモデルと理由を出して結果欄を開き、手で書いて保存できる', async () => {
-      vi.mocked(reportsApi.dailyModels).mockResolvedValue({
+      vi.mocked(reportsApi.generateModels).mockResolvedValue({
         models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'],
       });
       generateDaily
@@ -340,7 +340,7 @@ describe('useReportController', () => {
     });
 
     it('試し直しても変わらない失敗(API キーの誤り)は次のモデルを試さない', async () => {
-      vi.mocked(reportsApi.dailyModels).mockResolvedValue({
+      vi.mocked(reportsApi.generateModels).mockResolvedValue({
         models: ['gemini-2.5-flash', 'gemini-2.0-flash'],
       });
       generateDaily.mockResolvedValueOnce(apiError('gemini-2.5-flash', false));
@@ -352,7 +352,7 @@ describe('useReportController', () => {
     });
 
     it('モデルの順番が読めなければ、モデルを指定せずに1回だけ試す', async () => {
-      vi.mocked(reportsApi.dailyModels).mockRejectedValue(new Error('network'));
+      vi.mocked(reportsApi.generateModels).mockRejectedValue(new Error('network'));
       generateDaily.mockResolvedValueOnce(ok('gemini-2.5-flash'));
       const { result } = await openWithMemo();
       await generateNow(result);
@@ -362,7 +362,7 @@ describe('useReportController', () => {
     });
 
     it('いま試しているモデルを見せ、⏹ 止めると問い合わせを切って手で書けるようにする', async () => {
-      vi.mocked(reportsApi.dailyModels).mockResolvedValue({
+      vi.mocked(reportsApi.generateModels).mockResolvedValue({
         models: ['gemini-2.5-flash', 'gemini-2.0-flash'],
       });
       const pending = deferred<Awaited<ReturnType<typeof reportsApi.generateDaily>>>();
@@ -394,6 +394,99 @@ describe('useReportController', () => {
         await pending.promise;
       });
       expect(result.current.form.internalText).toBe('');
+    });
+  });
+
+  describe('事故報告の AI 生成(日報と同じモデルの切り替え)', () => {
+    const generateAccident = vi.mocked(reportsApi.generateAccident);
+    const DRAFT = {
+      occurrenceTime: '10:00',
+      location: '公園',
+      accidentContent: '転んだ',
+      situation: '走っていた',
+      immediateResponse: '冷やした',
+      parentCorrespondence: '伝えた',
+      diagnosisTreatment: 'なし',
+      prevention: '見守る',
+    };
+    const failed = (model: string, retryable: boolean) => ({
+      draft: { error: `${model} は混み合っています` },
+      model,
+      retryable,
+    });
+
+    async function openAccidentWithMemo() {
+      const rendered = renderController(sessionFor('c1', 1));
+      act(() => {
+        rendered.result.current.actions.switchMode('accident');
+        rendered.result.current.actions.setMemo('公園で転んだ');
+      });
+      return rendered;
+    }
+
+    it('失敗なら次のモデルを指定して試し直し、書けたモデルの結果を入れる', async () => {
+      vi.mocked(reportsApi.generateModels).mockResolvedValue({
+        models: ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest'],
+      });
+      generateAccident
+        .mockResolvedValueOnce(failed('gemini-flash-latest', true))
+        .mockResolvedValueOnce({ draft: DRAFT, model: 'gemini-2.5-flash', retryable: false });
+      const { result } = await openAccidentWithMemo();
+      await generateNow(result);
+      expect(generateAccident.mock.calls.map(([body]) => body.model)).toEqual([
+        'gemini-flash-latest',
+        'gemini-2.5-flash',
+      ]);
+      expect(result.current.form.accident.location).toBe('公園');
+      expect(result.current.form.accidentResultShown).toBe(true);
+      expect(result.current.form.aiFailure).toBeNull();
+      expect(toastStore.getState().message).toBe('gemini-2.5-flash で書きました');
+      expect(result.current.generatingSince).toBeNull();
+    });
+
+    it('試し直しても変わらない失敗・全部のモデルで書けなければ、理由を出して手で書けるようにする', async () => {
+      vi.mocked(reportsApi.generateModels).mockResolvedValue({
+        models: ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'],
+      });
+      generateAccident
+        .mockResolvedValueOnce(failed('gemini-flash-latest', true))
+        .mockResolvedValueOnce(failed('gemini-2.5-flash', false));
+      const { result } = await openAccidentWithMemo();
+      await generateNow(result);
+      expect(generateAccident).toHaveBeenCalledTimes(2);
+      expect(result.current.form.accidentResultShown).toBe(true);
+      expect(result.current.form.aiFailure).toContain('gemini-flash-latest → gemini-2.5-flash');
+      expect(result.current.form.aiFailure).toContain('gemini-2.5-flash は混み合っています');
+    });
+
+    it('いま試しているモデルを見せ、⏹ 止めると問い合わせを切って手で書けるようにする', async () => {
+      vi.mocked(reportsApi.generateModels).mockResolvedValue({
+        models: ['gemini-flash-latest', 'gemini-2.5-flash'],
+      });
+      const pending = deferred<Awaited<ReturnType<typeof reportsApi.generateAccident>>>();
+      generateAccident
+        .mockResolvedValueOnce(failed('gemini-flash-latest', true))
+        .mockReturnValueOnce(pending.promise);
+      const { result } = await openAccidentWithMemo();
+      act(() => result.current.generate());
+      await waitFor(() => expect(generateAccident).toHaveBeenCalledTimes(2));
+      expect(result.current.aiProgress).toEqual({
+        model: 'gemini-2.5-flash',
+        attempt: 2,
+        total: 2,
+        failed: ['gemini-flash-latest'],
+        notice: 'gemini-flash-latest で書けなかったので、gemini-2.5-flash で試しています',
+      });
+      act(() => result.current.stopGenerating());
+      expect(generateAccident.mock.calls[1]?.[1]?.aborted).toBe(true);
+      await waitFor(() => expect(result.current.generatingSince).toBeNull());
+      expect(result.current.form.accidentResultShown).toBe(true);
+      expect(result.current.form.aiFailure).toContain('AIを止めました');
+      await act(async () => {
+        pending.resolve({ draft: DRAFT, model: 'gemini-2.5-flash', retryable: false });
+        await pending.promise;
+      });
+      expect(result.current.form.accident.location).toBe('');
     });
   });
 });

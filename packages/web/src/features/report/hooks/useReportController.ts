@@ -60,7 +60,7 @@ function failureMessage(tried: readonly string[], reason: string): string {
 
 /** AI生成の途中の様子(いま試しているモデル。画面に出す) */
 export interface AiProgress {
-  /** いま試しているモデル(null = 設定のモデル。順番が読めなかったとき) */
+  /** いま試しているモデル(null = サーバーが選ぶ既定のモデル。順番が読めなかったとき) */
   model: string | null;
   /** 何番目か(1から) */
   attempt: number;
@@ -73,6 +73,14 @@ export interface AiProgress {
    */
   notice: string | null;
 }
+
+/**
+ * 1つのモデルでの生成の結果(日報・事故報告で同じ形にして、同じ切り替えの手順で扱う)。
+ * 書けたら ok と、結果を画面に入れる処理(ボタンを元に戻してから呼ぶ)。書けなければ理由と、次のモデルで試す意味があるか。
+ */
+type ModelGeneration =
+  | { ok: true; model: string | null; show: () => void }
+  | { ok: false; model: string | null; reason: string; retryable: boolean };
 
 interface GenerationRun {
   /** 止めた理由(⏹ 止める / 開き直し。null = 動いている) */
@@ -432,77 +440,37 @@ export function useReportController(session: ReportSession | null) {
     };
     const stale = () => requestNonce !== nonceRef.current || run.stopped === 'reopened';
 
-    try {
-      if (f.mode === 'daily') {
-        const target = customerRef.current;
-        if (!target) {
-          showToast('お客様の情報が見つかりません。画面を開きなおしてください', true);
-          return;
-        }
-        // 試すモデルの順番(設定のモデル → Flash 系 → Flash-Lite 系)。読めなければモデルを指定せずに1回だけ試す
-        const listed = await runAttempt(run, (signal) => reportsApi.dailyModels(signal));
-        if (stale()) return;
-        if (listed.kind === 'stopped') {
-          flushSync(finish);
-          openManualEntry('daily', STOPPED_MESSAGE);
-          return;
-        }
-        const models: (string | undefined)[] =
-          listed.kind === 'ok' && listed.value.models.length > 0 ? listed.value.models : [undefined];
-        const tried: string[] = [];
-        let lastReason = '';
-        let notice: string | null = null;
-        for (const [index, model] of models.entries()) {
-          const label = model ?? '設定のモデル';
-          setAiProgress({
-            model: model ?? null,
-            attempt: index + 1,
-            total: models.length,
-            failed: [...tried],
-            notice,
-          });
-          const attempt = await runAttempt(run, (signal) =>
-            reportsApi.generateDaily(
-              {
-                text: f.memo,
-                start: formatClock(f.start),
-                end: formatClock(f.end),
-                customerId: target.id,
-                careRecipientId: dailyChildRef.current || null,
-                riskRating: f.ratings.risk || null,
-                reportDate: f.reportDate,
-                ...(model ? { model } : {}),
-              },
-              signal,
-            ),
-          );
-          if (stale() || attempt.kind === 'reopened') return;
-          if (attempt.kind === 'stopped') {
-            flushSync(finish);
-            openManualEntry('daily', STOPPED_MESSAGE);
-            return;
-          }
-          if (attempt.kind === 'error') throw attempt.error;
-          const next = models[index + 1];
-          if (attempt.kind === 'timeout') {
-            tried.push(label);
-            lastReason = '時間がかかりすぎたため、問い合わせを切りました';
-            if (next) notice = `${label} は時間がかかっているので、${next} で試しています`;
-            continue;
-          }
-          const { draft, ai } = attempt.value;
-          if (isDailyDraftApiError(draft.warnings)) {
-            tried.push(ai.model ?? label);
-            lastReason = draft.internal || '不明なエラーが発生しました';
-            if (ai.retryable && next) {
-              notice = `${ai.model ?? label} で書けなかったので、${next} で試しています`;
-              continue;
-            }
-            break;
-          }
-          // GAS版と同じく、まずボタンを元に戻して(すぐ描画して)から結果を入れる
-          // (結果へのスクロールの位置が、下のボタンの高さで変わるため)
-          flushSync(finish);
+    /** 保育日報を1つのモデルで書く */
+    const generateDaily = async (
+      target: ReportCustomer,
+      model: string | undefined,
+      signal: AbortSignal,
+    ): Promise<ModelGeneration> => {
+      const { draft, ai } = await reportsApi.generateDaily(
+        {
+          text: f.memo,
+          start: formatClock(f.start),
+          end: formatClock(f.end),
+          customerId: target.id,
+          careRecipientId: dailyChildRef.current || null,
+          riskRating: f.ratings.risk || null,
+          reportDate: f.reportDate,
+          ...(model ? { model } : {}),
+        },
+        signal,
+      );
+      if (isDailyDraftApiError(draft.warnings)) {
+        return {
+          ok: false,
+          model: ai.model,
+          reason: draft.internal || '不明なエラーが発生しました',
+          retryable: ai.retryable,
+        };
+      }
+      return {
+        ok: true,
+        model: ai.model,
+        show: () => {
           const warnings = draft.warnings.length > 0 ? draft.warnings.join(', ') : null;
           if (warnings !== null) {
             // GAS版は結果欄を出す前に、足りない情報の知らせまでスクロールしていた。同じ位置で止まるよう、
@@ -519,49 +487,112 @@ export function useReportController(session: ReportSession | null) {
             customer: appendStaffSurname(draft.customer, user.name),
             warnings,
           });
-          if (tried.length > 0) showToast(`${ai.model ?? label} で書きました`);
           saveSnapshot('daily');
-          return;
-        }
+        },
+      };
+    };
+
+    /** 事故報告・ヒヤリハットを1つのモデルで書く */
+    const generateAccident = async (
+      model: string | undefined,
+      signal: AbortSignal,
+    ): Promise<ModelGeneration> => {
+      const res = await reportsApi.generateAccident(
+        { text: f.memo, start: formatClock(f.start), end: '', ...(model ? { model } : {}) },
+        signal,
+      );
+      const { draft } = res;
+      if ('error' in draft) {
+        return { ok: false, model: res.model, reason: draft.error, retryable: res.retryable };
+      }
+      return {
+        ok: true,
+        model: res.model,
+        show: () => {
+          writeLastAccidentTime(draft.occurrenceTime || '');
+          apply({
+            type: 'accidentGenerated',
+            draft: {
+              occurrenceTime: draft.occurrenceTime || '',
+              location: draft.location || '',
+              accidentContent: draft.accidentContent || '',
+              situation: draft.situation || '',
+              immediateResponse: draft.immediateResponse || '',
+              parentCorrespondence: draft.parentCorrespondence || '',
+              diagnosisTreatment: draft.diagnosisTreatment || '',
+              prevention: draft.prevention || '',
+            },
+          });
+          scrollTo('accidentResult');
+          saveSnapshot('accident');
+        },
+      };
+    };
+
+    try {
+      const target = customerRef.current;
+      if (f.mode === 'daily' && !target) {
+        showToast('お客様の情報が見つかりません。画面を開きなおしてください', true);
+        return;
+      }
+      const generateWith = (model: string | undefined, signal: AbortSignal) =>
+        f.mode === 'daily' && target ? generateDaily(target, model, signal) : generateAccident(model, signal);
+      // 試すモデルの順番(Flash 系 → Flash-Lite 系。日報・事故報告で同じ)。読めなければモデルを指定せずに1回だけ試す
+      const listed = await runAttempt(run, (signal) => reportsApi.generateModels(signal));
+      if (stale()) return;
+      if (listed.kind === 'stopped') {
         flushSync(finish);
-        openManualEntry('daily', failureMessage(tried, lastReason));
-      } else {
-        const attempt = await runAttempt(run, (signal) =>
-          reportsApi.generateAccident({ text: f.memo, start: formatClock(f.start), end: '' }, signal),
-        );
+        openManualEntry(f.mode, STOPPED_MESSAGE);
+        return;
+      }
+      const models: (string | undefined)[] =
+        listed.kind === 'ok' && listed.value.models.length > 0 ? listed.value.models : [undefined];
+      const tried: string[] = [];
+      let lastReason = '';
+      let notice: string | null = null;
+      for (const [index, model] of models.entries()) {
+        const label = model ?? '既定のモデル';
+        setAiProgress({
+          model: model ?? null,
+          attempt: index + 1,
+          total: models.length,
+          failed: [...tried],
+          notice,
+        });
+        const attempt = await runAttempt(run, (signal) => generateWith(model, signal));
         if (stale() || attempt.kind === 'reopened') return;
-        flushSync(finish);
         if (attempt.kind === 'stopped') {
-          openManualEntry('accident', STOPPED_MESSAGE);
-          return;
-        }
-        if (attempt.kind === 'timeout') {
-          openManualEntry('accident', failureMessage([], '時間がかかりすぎたため、問い合わせを切りました'));
+          flushSync(finish);
+          openManualEntry(f.mode, STOPPED_MESSAGE);
           return;
         }
         if (attempt.kind === 'error') throw attempt.error;
-        const { draft } = attempt.value;
-        if ('error' in draft) {
-          openManualEntry('accident', failureMessage([], draft.error));
-          return;
+        const next = models[index + 1];
+        if (attempt.kind === 'timeout') {
+          tried.push(label);
+          lastReason = '時間がかかりすぎたため、問い合わせを切りました';
+          if (next) notice = `${label} は時間がかかっているので、${next} で試しています`;
+          continue;
         }
-        writeLastAccidentTime(draft.occurrenceTime || '');
-        apply({
-          type: 'accidentGenerated',
-          draft: {
-            occurrenceTime: draft.occurrenceTime || '',
-            location: draft.location || '',
-            accidentContent: draft.accidentContent || '',
-            situation: draft.situation || '',
-            immediateResponse: draft.immediateResponse || '',
-            parentCorrespondence: draft.parentCorrespondence || '',
-            diagnosisTreatment: draft.diagnosisTreatment || '',
-            prevention: draft.prevention || '',
-          },
-        });
-        scrollTo('accidentResult');
-        saveSnapshot('accident');
+        const result = attempt.value;
+        if (!result.ok) {
+          tried.push(result.model ?? label);
+          lastReason = result.reason;
+          if (result.retryable && next) {
+            notice = `${result.model ?? label} で書けなかったので、${next} で試しています`;
+            continue;
+          }
+          break;
+        }
+        // GAS版と同じく、まずボタンを元に戻して(すぐ描画して)から結果を入れる
+        // (結果へのスクロールの位置が、下のボタンの高さで変わるため)
+        flushSync(finish);
+        result.show();
+        if (tried.length > 0) showToast(`${result.model ?? label} で書きました`);
+        return;
       }
+      flushSync(finish);
+      openManualEntry(f.mode, failureMessage(tried, lastReason));
     } catch (e) {
       if (stale()) return;
       flushSync(finish);

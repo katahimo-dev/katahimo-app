@@ -4,7 +4,7 @@ import {
   generateDailyReportDraft,
   getCustomerHistory,
   getReportDetail,
-  listDailyReportModels,
+  listReportModels,
   listReports,
   saveAccidentReport,
   saveDailyReport,
@@ -13,7 +13,6 @@ import {
 import {
   customerHistoryQuerySchema,
   customerHistoryResponseSchema,
-  dailyReportModelsResponseSchema,
   generateAccidentReportResponseSchema,
   generateDailyReportRequestSchema,
   generateDailyReportResponseSchema,
@@ -23,6 +22,7 @@ import {
   reportDetailResponseSchema,
   reportListQuerySchema,
   reportListResponseSchema,
+  reportModelsResponseSchema,
   saveAccidentReportRequestSchema,
   saveAccidentReportResponseSchema,
   saveDailyReportRequestSchema,
@@ -65,10 +65,10 @@ export function createReportRoutes(container: Container) {
     return jsonOk(c, generateDailyReportResponseSchema, result);
   });
 
-  /** 保育日報の生成で試すモデルの順番(API エラーのとき画面がこの順に model を変えて呼び直す)。 */
-  app.get('/daily/generate/models', requireSession(container), async (c) => {
-    const models = await listDailyReportModels(container, actorOf(c));
-    return jsonOk(c, dailyReportModelsResponseSchema, { models });
+  /** 保育日報・事故報告の生成で試すモデルの順番(API エラーのとき画面がこの順に model を変えて呼び直す)。 */
+  app.get('/generate/models', requireSession(container), async (c) => {
+    const models = await listReportModels(container, actorOf(c));
+    return jsonOk(c, reportModelsResponseSchema, { models });
   });
 
   /** 事故報告/ヒヤリハットの下書きをAI生成する(GAS版 generateAccidentReport)。 */
@@ -82,8 +82,8 @@ export function createReportRoutes(container: Container) {
       AI_QUOTA_MESSAGE,
     );
     if (limited) return limited;
-    const draft = await generateAccidentReportDraft(container, actorOf(c), body.data);
-    return jsonOk(c, generateAccidentReportResponseSchema, { draft });
+    const result = await generateAccidentReportDraft(container, actorOf(c), body.data);
+    return jsonOk(c, generateAccidentReportResponseSchema, result);
   });
 
   /** 保育日報を保存する(GAS版 Main.js saveReport)。 */

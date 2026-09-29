@@ -6,11 +6,6 @@ import type { SecretBoxPort } from '../ports/secretBox';
 import type { UnitOfWorkPort } from '../ports/unitOfWork';
 import type { Actor } from './requestMeta';
 
-export interface GeminiModelInfo {
-  name: string;
-  displayName: string;
-}
-
 /** テナントの秘密値(tenant_secrets)を読み書きする usecase の依存。 */
 export interface TenantSecretDeps {
   uow: UnitOfWorkPort;
@@ -19,10 +14,7 @@ export interface TenantSecretDeps {
   appLog: AppLogPort;
 }
 
-export interface SettingsDeps extends TenantSecretDeps {
-  /** Gemini ListModels(@katahimo/integrationsのlistAvailableGeminiModels)。失敗時は例外を投げる。 */
-  listGeminiModels: (apiKey: string) => Promise<GeminiModelInfo[]>;
-}
+export type SettingsDeps = TenantSecretDeps;
 
 /** 設定を操作した管理者(ログ記録用。権限確認はAPIルート側で済ませてから呼ぶ)。 */
 export type SettingsActor = Actor;
@@ -96,16 +88,10 @@ async function writeTenantSecrets(
   });
 }
 
-/** GAS版GeminiReport.jsのGEMINI_MODEL_REPORT_DEFAULT/GEMINI_MODEL_OCR_DEFAULTと同じ値。 */
-export const DEFAULT_GEMINI_REPORT_MODEL = 'gemini-2.5-flash';
-export const DEFAULT_GEMINI_OCR_MODEL = 'gemini-2.5-flash-lite';
-
 export interface AdminSettingsView {
   /** 伏せ字にした値(未設定なら空文字)。 */
   geminiApiKey: string;
   geminiApiKeySet: boolean;
-  geminiReportModel: string;
-  geminiOcrModel: string;
   gchatReportWebhookUrl: string;
   gchatReportWebhookUrlSet: boolean;
   gchatReceiptWebhookUrl: string;
@@ -152,11 +138,6 @@ export function maskWebhookUrl(value: string): string {
   }
 }
 
-/** 画面から送られた値が伏せ字を含むか(伏せ字のまま=変更しない、の判定に使う)。 */
-function isMaskedInput(value: string | undefined): boolean {
-  return value === undefined || value.includes(SECRET_MASK_CHAR);
-}
-
 type SecretInput = { kind: 'unchanged' } | { kind: 'new'; value: string } | { kind: 'partially_masked' };
 
 /**
@@ -181,25 +162,20 @@ const PARTIALLY_MASKED_MESSAGE =
   '伏せ字の一部だけを書き換えることはできません。値全体を入力し直してください。';
 
 /**
- * 管理者設定画面用の現在値を返す。GAS版のgetGeminiApiKeyForAdmin/getGeminiModelSettingsForAdmin/
- * getGoogleChatWebhookSettingsForAdminをまとめたもの。GAS版と違い、APIキー・Webhook URLは平文では
+ * 管理者設定画面用の現在値を返す。GAS版のgetGeminiApiKeyForAdmin/getGoogleChatWebhookSettingsForAdminを
+ * まとめたもの(モデルは自動で選ぶので、GAS版 getGeminiModelSettingsForAdmin にあたる値は無い)。GAS版と違い、APIキー・Webhook URLは平文では
  * 返さず伏せ字にする(画面から漏れても使えないようにするため。「表示」を押しても伏せ字が見えるだけ)。
  * 開けない秘密値は設定済み・伏せ字は空文字で返す(管理者が値を入力し直して保存すると上書きされる)。
  */
 export async function getAdminSettings(deps: SettingsDeps, actor: SettingsActor): Promise<AdminSettingsView> {
-  const [row, secrets] = await Promise.all([
-    deps.uow.run(actor.tenantId, (r) => r.settings.get()),
-    readTenantSecrets(deps, actor.tenantId, [
-      'gemini_api_key',
-      'gchat_report_webhook',
-      'gchat_receipt_webhook',
-    ]),
+  const secrets = await readTenantSecrets(deps, actor.tenantId, [
+    'gemini_api_key',
+    'gchat_report_webhook',
+    'gchat_receipt_webhook',
   ]);
   return {
     geminiApiKey: maskApiKey(usableSecretValue(secrets.gemini_api_key)),
     geminiApiKeySet: secrets.gemini_api_key.state !== 'unset',
-    geminiReportModel: row.geminiReportModel || DEFAULT_GEMINI_REPORT_MODEL,
-    geminiOcrModel: row.geminiOcrModel || DEFAULT_GEMINI_OCR_MODEL,
     gchatReportWebhookUrl: maskWebhookUrl(usableSecretValue(secrets.gchat_report_webhook)),
     gchatReportWebhookUrlSet: secrets.gchat_report_webhook.state !== 'unset',
     gchatReceiptWebhookUrl: maskWebhookUrl(usableSecretValue(secrets.gchat_receipt_webhook)),
@@ -240,39 +216,6 @@ export async function saveGeminiApiKey(
   await writeTenantSecrets(deps, actor, { gemini_api_key: trimmed });
   await writeLog(deps, actor, 'SECURITY', 'settings.gemini_api_key.changed');
   return { ok: true, changed: true, message: 'Gemini APIキーを保存しました。' };
-}
-
-/** GAS版saveGeminiModelSettingsForAdminと同じガード(どちらか一方でも空なら拒否、同じ値なら何もしない)。 */
-export async function saveGeminiModelSettings(
-  deps: SettingsDeps,
-  actor: SettingsActor,
-  reportModel: string,
-  ocrModel: string,
-): Promise<SaveSettingsResult> {
-  const trimmedReport = reportModel.trim();
-  const trimmedOcr = ocrModel.trim();
-  if (!trimmedReport || !trimmedOcr) {
-    await writeLog(deps, actor, 'WARN', 'settings.gemini_models.save_rejected', { reason: 'empty' });
-    return {
-      ok: false,
-      reason: 'empty',
-      message: 'モデルが未選択です。空のまま保存すると既存の設定が失われるため、保存を中止しました。',
-    };
-  }
-  const changed = await deps.uow.run(actor.tenantId, async (r) => {
-    const row = await r.settings.get();
-    const currentReport = row.geminiReportModel || DEFAULT_GEMINI_REPORT_MODEL;
-    const currentOcr = row.geminiOcrModel || DEFAULT_GEMINI_OCR_MODEL;
-    if (currentReport === trimmedReport && currentOcr === trimmedOcr) return false;
-    await r.settings.update({ geminiReportModel: trimmedReport, geminiOcrModel: trimmedOcr });
-    return true;
-  });
-  if (!changed) return { ok: true, changed: false, message: 'モデル設定は変更ありません。' };
-  await writeLog(deps, actor, 'SECURITY', 'settings.gemini_models.changed', {
-    reportModel: trimmedReport,
-    ocrModel: trimmedOcr,
-  });
-  return { ok: true, changed: true, message: 'モデル設定を保存しました。' };
 }
 
 /**
@@ -343,41 +286,4 @@ export async function saveGoogleChatWebhookSettings(
   await writeTenantSecrets(deps, actor, result);
   await writeLog(deps, actor, 'SECURITY', 'settings.gchat_webhooks.changed');
   return { ok: true, changed: true, message: 'Webhook URLを保存しました。' };
-}
-
-export type ListGeminiModelsResult =
-  | { ok: true; models: GeminiModelInfo[] }
-  | { ok: false; reason: 'no_api_key' | 'api_error'; message: string };
-
-/**
- * Gemini APIで使えるモデル一覧を取得する。GAS版listAvailableGeminiModelsForAdminに対応。
- * apiKeyOverrideが空・伏せ字のままなら保存済みのキーを使う(保存前の入力中キーでも確認できるようにするため)。
- */
-export async function listGeminiModelsForAdmin(
-  deps: SettingsDeps,
-  actor: SettingsActor,
-  apiKeyOverride: string | undefined,
-): Promise<ListGeminiModelsResult> {
-  let apiKey = apiKeyOverride?.trim() ?? '';
-  if (!apiKey || isMaskedInput(apiKey)) {
-    apiKey = await readTenantSecret(deps, actor.tenantId, 'gemini_api_key');
-  }
-  if (!apiKey) {
-    return {
-      ok: false,
-      reason: 'no_api_key',
-      message: 'Gemini APIキーが設定されていません。先にAPIキーを入力してください。',
-    };
-  }
-  try {
-    const models = await deps.listGeminiModels(apiKey);
-    await writeLog(deps, actor, 'INFO', 'settings.gemini_models.listed', { count: models.length });
-    return { ok: true, models };
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    await writeLog(deps, actor, 'ERROR', 'settings.gemini_models.list_failed', {
-      error: message.slice(0, 300),
-    });
-    return { ok: false, reason: 'api_error', message };
-  }
 }

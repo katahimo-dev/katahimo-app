@@ -152,6 +152,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'settings.ai_prompts.update_rejected': 'AIプロンプトの変更を断った',
   'settings.gemini_api_key.changed': 'Gemini APIキーの変更',
   'settings.gemini_api_key.save_rejected': 'Gemini APIキーの保存を断った',
+  // モデルの設定は無くなった(自動で選ぶ)。以前の版が残した行の表示のために名前だけ残す
   'settings.gemini_models.changed': 'Geminiモデルの変更',
   'settings.gemini_models.save_rejected': 'Geminiモデルの保存を断った',
   'settings.gemini_models.listed': 'Geminiモデル一覧の取得',
@@ -223,7 +224,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'ai.daily_report.model_fallback_succeeded': '日報のAI生成(切り替えたモデルで成功)',
   'ai.daily_report.generation_log_failed': '日報のAI生成の記録の失敗',
   'ai.accident_report.generate_failed': '事故報告のAI生成の失敗',
+  'ai.accident_report.model_fallback_succeeded': '事故報告のAI生成(切り替えたモデルで成功)',
   'ai.receipt_ocr.failed': '領収書の読み取りの失敗',
+  'ai.receipt_ocr.model_fallback_succeeded': '領収書の読み取り(切り替えたモデルで成功)',
   'notification.gchat.failed': 'Google Chatへの通知の失敗',
   'notification.gchat.not_configured': 'Google Chatの通知先が未設定',
   'outbox.message_failed': '外部への送信の失敗',
