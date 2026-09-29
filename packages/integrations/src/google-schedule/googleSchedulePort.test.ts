@@ -53,6 +53,10 @@ class FakeMaps implements MapsPort {
   geocodeCalls: string[] = [];
   routeCalls: Array<{ origin: LatLng; destination: LatLng; options?: RouteOptions | undefined }> = [];
   failRoutes = false;
+  routeResult: { durationSeconds: number; distanceMeters: number } | null = {
+    durationSeconds: 600,
+    distanceMeters: 3210,
+  };
   async geocode(address: string) {
     this.geocodeCalls.push(address);
     return address.includes('不明') ? null : { lat: 35.7, lng: 139.6 };
@@ -60,7 +64,7 @@ class FakeMaps implements MapsPort {
   async route(origin: LatLng, destination: LatLng, options?: RouteOptions) {
     this.routeCalls.push({ origin, destination, options });
     if (this.failRoutes) throw new Error('Routes API エラー: HTTP 429 RESOURCE_EXHAUSTED');
-    return { durationSeconds: 600, distanceMeters: 3210 };
+    return this.routeResult;
   }
 }
 
@@ -133,6 +137,7 @@ describe('GoogleSchedulePort', () => {
       maps,
       directory: { load: async () => directory },
       mapsCache: new InMemoryTtlCache({ maxEntries: 100, now: () => now }),
+      calendarCache: new InMemoryTtlCache({ maxEntries: 100, now: () => now }),
       appLog: { write: async (entry) => void logs.push(entry) },
     });
   });
@@ -183,7 +188,7 @@ describe('GoogleSchedulePort', () => {
     expect(maps.geocodeCalls.sort()).toEqual(['東京都世田谷区用賀4-1-1', '東京都渋谷区道玄坂1-1'].sort());
   });
 
-  it('閲覧でも予定は毎回カレンダーから読む(担当変更をすぐ出す)。地図の結果は区間・住所ごとに6時間使い回す', async () => {
+  it('閲覧でも予定はカレンダーから読み直す(担当変更は60秒の短期キャッシュの後に出る)。地図の結果は区間・住所ごとに6時間使い回す', async () => {
     const first = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
     const calendarCalls = calendar.calls.length;
     const routeCalls = maps.routeCalls.length;
@@ -245,6 +250,78 @@ describe('GoogleSchedulePort', () => {
     expect(fresh.appointments?.[0]?.attendanceMin).toBe('');
     // fresh の結果はキャッシュに書かれず、閲覧は前のキャッシュのまま
     expect(await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId })).toEqual(cached);
+  });
+
+  it('fresh の結果はキャッシュに書かない(fresh の後の閲覧は地図APIに問い合わせ、fresh の値を読まない)', async () => {
+    const fresh = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, {
+      tenantId,
+      fresh: true,
+    });
+    expect(fresh.appointments?.[0]?.attendanceMin).toBe(10);
+    const routeCalls = maps.routeCalls.length;
+    maps.routeResult = { durationSeconds: 1200, distanceMeters: 5000 };
+    const view = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
+    expect(maps.routeCalls.length).toBe(routeCalls * 2);
+    expect(view.appointments?.[0]).toMatchObject({ attendanceMin: 20, attendanceKm: '5.00' });
+  });
+
+  it('見つからなかった経路(null)は30分だけ覚え、開くたびに問い合わせ直さない(fresh は使わない)', async () => {
+    maps.routeResult = null;
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
+    const routeCalls = maps.routeCalls.length;
+    now = 30 * 60 * 1000 - 1;
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
+    expect(maps.routeCalls.length).toBe(routeCalls);
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId, fresh: true });
+    expect(maps.routeCalls.length).toBe(routeCalls * 2);
+    now = 30 * 60 * 1000;
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
+    expect(maps.routeCalls.length).toBe(routeCalls * 3);
+  });
+
+  it('地図APIを実際に呼んだ回数とキャッシュで済ませた回数を onMapsUsage で知らせる', async () => {
+    const usages: unknown[] = [];
+    const onMapsUsage = (usage: unknown) => void usages.push(usage);
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId, onMapsUsage });
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId, onMapsUsage });
+    expect(usages[0]).toEqual({ geocodeCalls: 2, routeCalls: maps.routeCalls.length, cacheHits: 0 });
+    expect(usages[1]).toMatchObject({ geocodeCalls: 0, routeCalls: 0 });
+    expect((usages[1] as { cacheHits: number }).cacheHits).toBeGreaterThan(0);
+  });
+
+  it('閲覧のカレンダーの読み込みは60秒だけ使い回す。🔄(forceRefresh)・strict・fresh は読み直す', async () => {
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
+    const perView = calendar.calls.length;
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
+    await port.getSchedule(targetOf('佐藤 美咲'), date, { tenantId });
+    expect(calendar.calls.length).toBe(perView);
+
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, true, { tenantId });
+    expect(calendar.calls.length).toBe(perView * 2);
+    await port.getSchedule(targetOf('佐藤 美咲'), date, { tenantId, strict: true });
+    expect(calendar.calls.length).toBe(perView * 3);
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId, fresh: true });
+    expect(calendar.calls.length).toBe(perView * 4);
+
+    now = 60 * 1000;
+    await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
+    expect(calendar.calls.length).toBe(perView * 5);
+    // 日時は ISO 文字列で入れて Date に戻す(キャッシュからの結果も同じ)
+    now = 60 * 1000 + 1;
+    const cached = await port.getSchedule(targetOf('佐藤 美咲'), date, { tenantId });
+    expect(calendar.calls.length).toBe(perView * 5);
+    expect(cached.appointments?.[0]).toMatchObject({ start: '10:00', end: '12:00' });
+  });
+
+  it('閲覧で読めないカレンダーがあれば partial を付け、読めなかった分は覚えない', async () => {
+    calendar.failing.add('reserva@group.calendar.google.com');
+    const view = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
+    expect(view.partial).toBe(true);
+    expect((await port.getSchedule(targetOf('佐藤 美咲'), date, { tenantId })).partial).toBe(true);
+    calendar.failing.clear();
+    const recovered = await port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId });
+    expect(recovered.partial).toBeUndefined();
+    expect(recovered.appointments?.map((a) => a.customerName)).toEqual(['山田 花子', '請求書']);
   });
 
   it('地図の結果のキャッシュはテナントをまたいで使い回さない', async () => {
@@ -309,6 +386,7 @@ describe('GoogleSchedulePort', () => {
         }),
       },
       mapsCache: new InMemoryTtlCache({ maxEntries: 10, now: () => now }),
+      calendarCache: new InMemoryTtlCache({ maxEntries: 10, now: () => now }),
       appLog: { write: async (entry) => void logs.push(entry) },
     });
     const result = await port.getSchedule(targetOf('佐藤 美咲'), date, { tenantId });

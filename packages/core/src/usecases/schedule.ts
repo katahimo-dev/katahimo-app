@@ -1,6 +1,7 @@
 import { DomainError } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
 import type {
+  MapsUsage,
   ScheduleLightResult,
   SchedulePort,
   ScheduleTarget,
@@ -74,10 +75,22 @@ export async function getScheduleWithRouteForStaff(
   request: ScheduleRouteViewRequest,
 ): Promise<ScheduleWithRouteResult> {
   return runLogged(deps, 'schedule.route', request, async (target) => {
+    let mapsUsage: MapsUsage | undefined;
     const result = await deps.schedule.getScheduleWithRoute(target, request.date, request.forceRefresh, {
       tenantId: request.tenantId,
+      onMapsUsage: (usage) => {
+        mapsUsage = usage;
+      },
     });
-    return { result, logSuccess: true, details: { forceRefresh: request.forceRefresh } };
+    return {
+      result,
+      logSuccess: true,
+      details: {
+        forceRefresh: request.forceRefresh,
+        ...mapsUsage,
+        ...(result.partial ? { partial: true } : {}),
+      },
+    };
   });
 }
 
@@ -91,11 +104,15 @@ export async function getFreshScheduleWithRouteForStaff(
   request: FreshScheduleRouteRequest,
 ): Promise<ScheduleWithRouteResult> {
   return runLogged(deps, 'schedule.route_fresh', request, async (target) => {
+    let mapsUsage: MapsUsage | undefined;
     const result = await deps.schedule.getScheduleWithRoute(target, request.date, false, {
       tenantId: request.tenantId,
       fresh: true,
+      onMapsUsage: (usage) => {
+        mapsUsage = usage;
+      },
     });
-    return { result, logSuccess: true };
+    return { result, logSuccess: true, details: { ...mapsUsage } };
   });
 }
 

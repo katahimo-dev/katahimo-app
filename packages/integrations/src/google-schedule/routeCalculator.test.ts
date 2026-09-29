@@ -56,8 +56,9 @@ describe('RouteCalculator の共有キャッシュ', () => {
     expect(maps.routes).toBe(4);
   });
 
-  it('見つからなかった住所(null)はキャッシュしない', async () => {
-    const cache = new InMemoryTtlCache({ maxEntries: 10 });
+  it('見つからなかった住所(null)は30分だけ覚える(開くたびに課金されないように)', async () => {
+    let now = 0;
+    const cache = new InMemoryTtlCache({ maxEntries: 10, now: () => now });
     let calls = 0;
     const maps: MapsPort = {
       geocode: async () => {
@@ -67,8 +68,19 @@ describe('RouteCalculator の共有キャッシュ', () => {
       route: async () => null,
     };
     const shared = { cache, tenantId: 't', read: true };
-    await new RouteCalculator(maps, '2026-09-25', 'car', shared).summarizePlan(plan);
+    const first = new RouteCalculator(maps, '2026-09-25', 'car', shared);
+    await first.summarizePlan(plan);
+    expect(first.usage).toEqual({ geocodeCalls: 1, routeCalls: 0, cacheHits: 0 });
+    now = 30 * 60 * 1000 - 1;
+    const second = new RouteCalculator(maps, '2026-09-25', 'car', shared);
+    await second.summarizePlan(plan);
+    expect(second.usage).toEqual({ geocodeCalls: 0, routeCalls: 0, cacheHits: 1 });
+    expect(calls).toBe(1);
+    now = 30 * 60 * 1000;
     await new RouteCalculator(maps, '2026-09-25', 'car', shared).summarizePlan(plan);
     expect(calls).toBe(2);
+    // 共有キャッシュを使わない計算(fresh)は覚えた値を読まない
+    await new RouteCalculator(maps, '2026-09-25', 'car', null).summarizePlan(plan);
+    expect(calls).toBe(3);
   });
 });

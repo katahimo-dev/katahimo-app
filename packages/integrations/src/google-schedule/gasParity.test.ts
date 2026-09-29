@@ -206,6 +206,7 @@ function createGoogleSchedulePort(scenario: Scenario) {
     maps,
     directory: directoryPort,
     mapsCache: new InMemoryTtlCache({ maxEntries: 10 }),
+    calendarCache: new InMemoryTtlCache({ maxEntries: 10 }),
     appLog,
   });
 }

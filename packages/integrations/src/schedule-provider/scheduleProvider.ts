@@ -59,6 +59,8 @@ export interface ScheduleServiceDeps {
   directory: ScheduleDirectoryPort;
   appLog: AppLogPort;
   mapsCache: CachePort;
+  /** 閲覧用のカレンダーのイベント一覧の短期キャッシュ(GoogleSchedulePortDeps.calendarCache)。 */
+  calendarCache: CachePort;
   /** gas_bridge で、予定を求めたテナントが Bridge の持ち主か確かめるのに使う。 */
   tenants: Pick<TenantDirectoryPort, 'findById'>;
 }
@@ -97,6 +99,7 @@ export function createScheduleServices(
         maps,
         directory: deps.directory,
         mapsCache: deps.mapsCache,
+        calendarCache: deps.calendarCache,
         appLog: deps.appLog,
       });
       return { provider, schedule, maps, scheduleTenantSlug: null };

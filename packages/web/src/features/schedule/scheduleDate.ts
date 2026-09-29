@@ -33,12 +33,13 @@ const FRESHNESS_NOTE = {
   fresh: '',
   revalidating: '（最新を確認中…）',
   stale: '（最新を読み込めませんでした）',
+  partial: '（一部のカレンダーを読み込めませんでした）',
 } as const;
 
 /** 予定の一覧の下に出す「HH:MM 時点（最新を確認中…）」 */
 export function routeMetaText(
   fetchedAt: number | null,
-  freshness: 'fresh' | 'revalidating' | 'stale' | null,
+  freshness: keyof typeof FRESHNESS_NOTE | null,
 ): string {
   if (fetchedAt === null) return '';
   return `${formatRouteFetchedAt(fetchedAt)}${freshness ? FRESHNESS_NOTE[freshness] : ''}`;

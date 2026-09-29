@@ -99,6 +99,7 @@ export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerConta
     directory: createScheduleDirectory({ uow }),
     appLog,
     mapsCache: new InMemoryTtlCache({ maxEntries: 100 }),
+    calendarCache: new InMemoryTtlCache({ maxEntries: 100 }),
     tenants,
   });
 

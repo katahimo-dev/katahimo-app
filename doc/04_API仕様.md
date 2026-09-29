@@ -155,8 +155,8 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 
 | メソッド・パス | 契約 | 応答 | 備考 |
 | --- | --- | --- | --- |
-| `GET /?date=&staffId?` | `scheduleQuerySchema` / `scheduleLightResponseSchema` | 予定の一覧(ルートなし) | 地図 API を呼ばない。成功はログに残さない |
-| `GET /route?date=&staffId?&forceRefresh?` | `scheduleRouteQuerySchema` / `scheduleWithRouteResponseSchema` | 予定 + 区間ごとの所要時間・距離・経路URL | `forceRefresh=1` はキャッシュを読まない(回数制限あり)。INFO `schedule.route.succeeded`、502(外部の失敗) |
+| `GET /?date=&staffId?` | `scheduleQuerySchema` / `scheduleLightResponseSchema` | 予定の一覧(ルートなし)。読めないカレンダーがあれば `partial: true`(読めた分だけ) | 地図 API を呼ばない。カレンダーのイベント一覧は60秒の短期キャッシュ(05 4.4)。成功はログに残さない |
+| `GET /route?date=&staffId?&forceRefresh?` | `scheduleRouteQuerySchema` / `scheduleWithRouteResponseSchema` | 予定 + 区間ごとの所要時間・距離・経路URL。読めないカレンダーがあれば `partial: true` | 予定はカレンダーから読む(イベント一覧は60秒、地図の結果は区間・住所ごとに6時間の共有キャッシュ。05 4.4)。`forceRefresh=1` はどちらのキャッシュも読まずに調べ直して書き直す(回数制限あり)。INFO `schedule.route.succeeded`(`forceRefresh`・`geocodeCalls`・`routeCalls`・`cacheHits`・部分的なら `partial`)、502(外部の失敗) |
 | `GET /api/staff` | — / `activeStaffListResponseSchema` | `{ staff: [{ id, name }] }`(退職者を除く) | 一般スタッフには空の一覧(`routes/staff.ts`) |
 
 ### 2.5 出勤簿 `/api/attendance`(`routes/attendance.ts`、全てログイン)

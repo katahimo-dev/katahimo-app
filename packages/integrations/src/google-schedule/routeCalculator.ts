@@ -7,7 +7,7 @@ import type {
   PlannedLeg,
 } from '@katahimo/core/domain';
 import { locationQueryFor, summarizeLeg, UNKNOWN_LEG } from '@katahimo/core/domain';
-import type { CachePort, LatLng, MapsPort, RouteLeg, TravelMode } from '@katahimo/core/ports';
+import type { CachePort, LatLng, MapsPort, MapsUsage, RouteLeg, TravelMode } from '@katahimo/core/ports';
 
 /**
  * 区間(出発座標→到着座標・移動手段)ごとのルート結果・住所ごとのジオコーディング結果を持つ期間(6時間)。
@@ -26,6 +26,17 @@ export const MAPS_RESULT_CACHE_TTL_SECONDS = 6 * 60 * 60;
  */
 export const TRANSIT_ROUTE_CACHE_TTL_SECONDS = 60 * 60;
 
+/**
+ * 見つからなかった(住所が地図に無い・経路が無い = null)という結果を持つ期間(30分)。開くたびに同じ住所・区間を
+ * 問い合わせ直して課金されないように短く覚える(住所を直したときも30分で調べ直す。🔄 最新にするならすぐ)。
+ */
+export const NOT_FOUND_CACHE_TTL_SECONDS = 30 * 60;
+
+/** 共有キャッシュに入れる形(null = 見つからなかった、も覚えるため包む)。 */
+interface CachedMapsResult<T> {
+  value: T | null;
+}
+
 /** 地図の結果のキャッシュの使い方(閲覧: 読み書き / 🔄 最新にする: 書くだけ / fresh: 使わない)。 */
 export interface MapsResultCache {
   cache: CachePort;
@@ -41,13 +52,14 @@ export interface MapsResultCache {
  * GAS版の実行内メモ(GEOCODE_MEMO_CACHE_ / DIRECTIONS_MEMO_CACHE_)に相当し、同じ住所・同じ
  * 区間を同じ計算の中で2回APIに問い合わせない。例外(通信・クォータ等)の結果は覚えず、その区間は
  * 算出不可('')として扱い failures に理由を残す(GAS版も失敗時は空欄にして処理を続けていた)。
- * sharedCache があれば、計算をまたいで区間・住所ごとの結果を使い回す(見つかった結果だけを書く。
- * 例外・見つからなかった(null)結果は書かず、次の閲覧で問い合わせ直す)。
+ * sharedCache があれば、計算をまたいで区間・住所ごとの結果を使い回す(例外は書かず、次の閲覧で問い合わせ直す。
+ * 見つからなかった(null)結果は短い期間だけ覚える)。usage に実際に地図APIを呼んだ回数とキャッシュで済ませた回数を数える。
  */
 export class RouteCalculator {
   private readonly geocodes = new Map<string, Promise<LatLng | null>>();
   private readonly routes = new Map<string, Promise<RouteLeg | null>>();
   readonly failures: string[] = [];
+  readonly usage: MapsUsage = { geocodeCalls: 0, routeCalls: 0, cacheHits: 0 };
 
   constructor(
     private readonly maps: MapsPort,
@@ -78,9 +90,10 @@ export class RouteCalculator {
     if (!query) return null;
     if (query.kind === 'latLng') return query.latLng;
     return this.memoize(this.geocodes, query.address, 'geocode', () =>
-      this.withSharedCache(['geocode', query.address], MAPS_RESULT_CACHE_TTL_SECONDS, () =>
-        this.maps.geocode(query.address),
-      ),
+      this.withSharedCache(['geocode', query.address], MAPS_RESULT_CACHE_TTL_SECONDS, () => {
+        this.usage.geocodeCalls++;
+        return this.maps.geocode(query.address);
+      }),
     );
   }
 
@@ -89,9 +102,10 @@ export class RouteCalculator {
     const ttl =
       this.travelMode === 'transit' ? TRANSIT_ROUTE_CACHE_TTL_SECONDS : MAPS_RESULT_CACHE_TTL_SECONDS;
     return this.memoize(this.routes, key, 'route', () =>
-      this.withSharedCache(['route', key], ttl, () =>
-        this.maps.route(origin, destination, { travelMode: this.travelMode }),
-      ),
+      this.withSharedCache(['route', key], ttl, () => {
+        this.usage.routeCalls++;
+        return this.maps.route(origin, destination, { travelMode: this.travelMode });
+      }),
     );
   }
 
@@ -104,11 +118,18 @@ export class RouteCalculator {
     if (!shared) return compute();
     const key = mapsCacheKey(shared.tenantId, kind, input);
     if (shared.read) {
-      const cached = await shared.cache.get<T>(key);
-      if (cached !== undefined) return cached;
+      const cached = await shared.cache.get<CachedMapsResult<T>>(key);
+      if (cached !== undefined) {
+        this.usage.cacheHits++;
+        return cached.value;
+      }
     }
     const value = await compute();
-    if (value !== null) await shared.cache.set(key, value, ttlSeconds);
+    await shared.cache.set<CachedMapsResult<T>>(
+      key,
+      { value },
+      value === null ? NOT_FOUND_CACHE_TTL_SECONDS : ttlSeconds,
+    );
     return value;
   }
 

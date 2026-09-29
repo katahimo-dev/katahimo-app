@@ -18,6 +18,7 @@ const deps: ScheduleServiceDeps = {
   directory: { load: async () => ({ staff: [], customers: [], calendarSettings: EMPTY_CALENDAR_SETTINGS }) },
   appLog: { write: async () => {} },
   mapsCache: new InMemoryTtlCache({ maxEntries: 1 }),
+  calendarCache: new InMemoryTtlCache({ maxEntries: 1 }),
   tenants: {
     findById: async (id) =>
       ({ cutest: 'cutest', other: 'other' })[id]

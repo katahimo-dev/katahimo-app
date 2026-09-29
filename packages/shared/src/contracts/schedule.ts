@@ -41,6 +41,8 @@ export const scheduleLightResponseSchema = z.object({
   staffName: z.string().optional(),
   appointments: z.array(scheduleAppointmentLightSchema).optional(),
   message: z.string().optional(),
+  /** 読めないカレンダーがあり、予定が欠けているかもしれない(閲覧だけ。画面は前回の表示を置き換えない) */
+  partial: z.boolean().optional(),
 });
 export type ScheduleLightResponse = z.infer<typeof scheduleLightResponseSchema>;
 
@@ -72,6 +74,8 @@ export const scheduleWithRouteResponseSchema = z.object({
   staffName: z.string().optional(),
   appointments: z.array(scheduleAppointmentWithRouteSchema).optional(),
   message: z.string().optional(),
+  /** scheduleLightResponseSchema.partial と同じ */
+  partial: z.boolean().optional(),
 });
 export type ScheduleWithRouteResponse = z.infer<typeof scheduleWithRouteResponseSchema>;
 
