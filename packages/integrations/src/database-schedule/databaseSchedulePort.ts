@@ -73,7 +73,7 @@ export class DatabaseSchedulePort implements SchedulePort {
     return {
       success: true,
       date: query.date,
-      staffName: query.staffName,
+      staffName: staff?.name ?? query.staffName,
       appointments: staff
         ? planRouteLegs(appointments, staff.home).map((plan) =>
             toAppointmentWithRoute(plan.appointment, estimatePlanLegs(plan, query.date, staff.travelMode)),

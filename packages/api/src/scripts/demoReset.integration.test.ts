@@ -105,6 +105,9 @@ describe('resetDemoTenant(実DB)', () => {
       );
       // 顧客の緯度経度から見積もった訪問の間の距離が入る(2件目以降)
       if (planned.length > 1) expect(result.appointments?.[1]?.moveKm).not.toBe('');
+      // デモのスタッフには自宅の緯度経度も入れるので、出勤・退勤の区間も見積もる(反映で出勤簿の距離が空欄にならない)
+      expect(result.appointments?.[0]?.attendanceKm).not.toBe('');
+      expect(result.appointments?.at(-1)?.leavingKm).not.toBe('');
     }
     for (const account of DEMO_ACCOUNTS) {
       const name = account.name;
