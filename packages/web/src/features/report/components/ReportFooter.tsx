@@ -102,14 +102,19 @@ export function ReportFooter({
       </button>
       {generating ? (
         <div className="space-y-2">
+          <button type="button" id="stopGenerateBtn" onClick={onStop} className={STOP_BTN_BASE}>
+            ⏹ 止めて手で書く
+          </button>
+          {aiProgress?.notice ? (
+            <p id="aiModelNotice" role="status" className="text-sm font-bold text-gray-800">
+              {aiProgress.notice}
+            </p>
+          ) : null}
           {aiProgress && aiProgress.failed.length > 0 ? (
             <p id="aiModelFailures" className="text-sm text-gray-700">
               書けなかったモデル: {aiProgress.failed.join('、')}
             </p>
           ) : null}
-          <button type="button" id="stopGenerateBtn" onClick={onStop} className={STOP_BTN_BASE}>
-            ⏹ 止めて手で書く
-          </button>
         </div>
       ) : null}
       <div id="saveBtnContainer" className={cx(!saveShown && 'hidden')}>

@@ -17,7 +17,8 @@ import {
 } from '../../../lib/storage';
 import { useTodayJst } from '../../../lib/useTodayJst';
 import { confirmNative, useConfirmModal } from '../../../ui/confirm';
-import { showErrorToast, showToast } from '../../../ui/toast';
+import { hideToast, showErrorToast, showToast } from '../../../ui/toast';
+import { toastStore } from '../../../ui/toast/toastStore';
 import { useSession } from '../../auth';
 import { useCustomerReportProfile } from '../../customers/useCustomerReportProfile';
 import { type ClockTime, formatClock, receiptFallbackTimestamp, shiftReportDate } from '../model/dateTime';
@@ -66,6 +67,11 @@ export interface AiProgress {
   total: number;
   /** ここまでに書けなかったモデル */
   failed: string[];
+  /**
+   * モデルを切り替えたときの一言(「〇〇 で書けなかったので、△△ で試しています」。無ければ null)。
+   * トーストにすると下の「⏹ 止めて手で書く」に重なって押しにくいため、ボタンの下に文字で出す
+   */
+  notice: string | null;
 }
 
 interface GenerationRun {
@@ -415,6 +421,8 @@ export function useReportController(session: ReportSession | null) {
     setGeneratingSince(startedAt);
     setAiProgress(null);
     apply({ type: 'aiStarted' });
+    // 出ているお知らせは消す(下の「⏹ 止めて手で書く」に重ならないように。新しい版の「更新する」つきは残す)
+    if (!toastStore.getState().action) hideToast();
     const finish = () => {
       if (generatingRef.current !== startedAt) return;
       generatingRef.current = null;
@@ -443,6 +451,7 @@ export function useReportController(session: ReportSession | null) {
           listed.kind === 'ok' && listed.value.models.length > 0 ? listed.value.models : [undefined];
         const tried: string[] = [];
         let lastReason = '';
+        let notice: string | null = null;
         for (const [index, model] of models.entries()) {
           const label = model ?? '設定のモデル';
           setAiProgress({
@@ -450,6 +459,7 @@ export function useReportController(session: ReportSession | null) {
             attempt: index + 1,
             total: models.length,
             failed: [...tried],
+            notice,
           });
           const attempt = await runAttempt(run, (signal) =>
             reportsApi.generateDaily(
@@ -477,7 +487,7 @@ export function useReportController(session: ReportSession | null) {
           if (attempt.kind === 'timeout') {
             tried.push(label);
             lastReason = '時間がかかりすぎたため、問い合わせを切りました';
-            if (next) showToast(`${label} は時間がかかっているので、${next} で試します`);
+            if (next) notice = `${label} は時間がかかっているので、${next} で試しています`;
             continue;
           }
           const { draft, ai } = attempt.value;
@@ -485,7 +495,7 @@ export function useReportController(session: ReportSession | null) {
             tried.push(ai.model ?? label);
             lastReason = draft.internal || '不明なエラーが発生しました';
             if (ai.retryable && next) {
-              showToast(`${ai.model ?? label} で書けなかったので、${next} で試します`);
+              notice = `${ai.model ?? label} で書けなかったので、${next} で試しています`;
               continue;
             }
             break;
