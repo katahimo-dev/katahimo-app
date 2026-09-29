@@ -32,15 +32,17 @@ describe('scheduleDateFor', () => {
     });
   });
 
-  it('「HH:MM 時点」はJSTの時刻', () => {
-    expect(formatRouteFetchedAt(new Date('2026-09-25T01:05:00Z').getTime())).toBe('10:05 時点');
+  it('「9月25日（金） 10:05 時点」はJSTの日付・時刻(今日の分でも日付を出す)', () => {
+    expect(formatRouteFetchedAt(new Date('2026-09-25T01:05:00Z').getTime())).toBe('9月25日（金） 10:05 時点');
+    // JSTでは次の日になる時刻
+    expect(formatRouteFetchedAt(new Date('2026-09-25T15:30:00Z').getTime())).toBe('9月26日（土） 00:30 時点');
   });
 
   it('一覧の下の時点の表示に、最新を確かめている間・確かめられなかったことを添える', () => {
     const ts = new Date('2026-09-25T01:05:00Z').getTime();
-    expect(routeMetaText(ts, 'fresh')).toBe('10:05 時点');
-    expect(routeMetaText(ts, 'revalidating')).toBe('10:05 時点（最新を確認中…）');
-    expect(routeMetaText(ts, 'stale')).toBe('10:05 時点（最新を読み込めませんでした）');
+    expect(routeMetaText(ts, 'fresh')).toBe('9月25日（金） 10:05 時点');
+    expect(routeMetaText(ts, 'revalidating')).toBe('9月25日（金） 10:05 時点（最新を確認中…）');
+    expect(routeMetaText(ts, 'stale')).toBe('9月25日（金） 10:05 時点（最新を読み込めませんでした）');
     expect(routeMetaText(null, null)).toBe('');
   });
 });

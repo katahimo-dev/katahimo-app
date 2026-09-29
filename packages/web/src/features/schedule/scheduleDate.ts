@@ -23,9 +23,14 @@ export function scheduleDateFor(offset: ScheduleOffset, now: Date = new Date()):
   return { dateStr, label: `${month}月${day}日（${dow}）${suffix}` };
 }
 
-/** 「HH:MM 時点」(GAS版 renderScheduleWithRoute の scheduleRouteMeta)。JSTで表す。 */
+/**
+ * 「9月29日（火） 10:05 時点」(GAS版 renderScheduleWithRoute の scheduleRouteMeta)。JSTで表す。
+ * 今日の分でも日付を出す(いつの日の何時の情報かを、見てすぐ分かるように)。
+ */
 export function formatRouteFetchedAt(ts: number): string {
-  return `${jstHHmm(ts)} 時点`;
+  const ymd = todayJst(new Date(ts));
+  const { month, day } = ymdParts(ymd);
+  return `${month}月${day}日（${WEEKDAY_LABELS[weekdayOfYmd(ymd)]}） ${jstHHmm(ts)} 時点`;
 }
 
 /** 出している予定が最新か(useScheduleView の routeFreshness)を「HH:MM 時点」に添える文言 */
@@ -36,7 +41,7 @@ const FRESHNESS_NOTE = {
   partial: '（一部のカレンダーを読み込めませんでした）',
 } as const;
 
-/** 予定の一覧の下に出す「HH:MM 時点（最新を確認中…）」 */
+/** 予定の一覧の下に出す「9月29日（火） 10:05 時点（最新を確認中…）」 */
 export function routeMetaText(
   fetchedAt: number | null,
   freshness: keyof typeof FRESHNESS_NOTE | null,
