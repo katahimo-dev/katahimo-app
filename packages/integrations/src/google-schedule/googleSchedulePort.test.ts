@@ -421,3 +421,102 @@ describe('GoogleSchedulePort', () => {
     await expect(port.getSchedule(targetOf('佐藤 美咲'), date)).rejects.toThrow('tenantId');
   });
 });
+
+describe('GoogleSchedulePort の読むカレンダー(閲覧は対象スタッフ分だけ、strict / fresh は全部)', () => {
+  const staffOf = (id: string, name: string, calendarId: string | null) => ({
+    id,
+    name,
+    calendarId,
+    home: { address: '', latLng: null },
+    travelMode: 'car' as const,
+  });
+  const wide: ScheduleDirectory = {
+    calendarSettings: {
+      sharedCalendars: [
+        { calendarId: 'reserva@group.calendar.google.com' },
+        { calendarId: 'sato-team@group.calendar.google.com', ownerName: '佐藤 美咲' },
+        { calendarId: 'takahashi-team@group.calendar.google.com', ownerName: '高橋 由美' },
+      ],
+      allowedStaffCalendars: ['@cutest.biz'],
+    },
+    staff: [
+      staffOf('staff-sato', '佐藤 美咲', 'sato@cutest.biz'),
+      staffOf('staff-takahashi', '高橋 由美', 'takahashi@cutest.biz'),
+      staffOf('staff-suzuki', '鈴木 花', 'sato@cutest.biz'),
+      staffOf('staff-blocked', '伊藤 誠', 'ito@blocked.example'),
+    ],
+    customers: [],
+  };
+  const all = [
+    'sato@cutest.biz',
+    'takahashi@cutest.biz',
+    'reserva@group.calendar.google.com',
+    'sato-team@group.calendar.google.com',
+    'takahashi-team@group.calendar.google.com',
+  ];
+  let calendar: FakeCalendar;
+  let logs: AppLogEntry[];
+  let port: GoogleSchedulePort;
+
+  beforeEach(() => {
+    const empty = (calendarName: string): CalendarEventList => ({ calendarName, events: [] });
+    calendar = new FakeCalendar(Object.fromEntries(all.map((id) => [id, empty(id)])));
+    // 他スタッフのカレンダーに手作業で作った「施設：佐藤 美咲」の予定(閲覧では取りこぼす例外)
+    calendar.calendars['takahashi@cutest.biz'] = {
+      calendarName: 'takahashi@cutest.biz',
+      events: [event({ title: '[予約確定]山田 花子', description: '施設：佐藤 美咲[訪問保育]' })],
+    };
+    logs = [];
+    port = new GoogleSchedulePort({
+      calendar,
+      maps: new FakeMaps(),
+      directory: { load: async () => wide },
+      mapsCache: new InMemoryTtlCache({ maxEntries: 100 }),
+      calendarCache: new InMemoryTtlCache({ maxEntries: 100 }),
+      appLog: { write: async (entry) => void logs.push(entry) },
+    });
+  });
+  const read = () => calendar.calls.map((c) => c.calendarId).sort();
+  const sato = { staffId: 'staff-sato', staffName: '佐藤 美咲' };
+
+  it('閲覧は対象スタッフのカレンダー・持ち主名が一致する共有・持ち主名の無い共有だけを読み、他スタッフのカレンダーは読まない', async () => {
+    const result = await port.getSchedule(sato, date, { tenantId });
+    expect(read()).toEqual(
+      ['sato@cutest.biz', 'reserva@group.calendar.google.com', 'sato-team@group.calendar.google.com'].sort(),
+    );
+    expect(result.appointments).toEqual([]);
+    calendar.calls = [];
+    await port.getScheduleWithRoute(sato, date, true, { tenantId });
+    expect(read()).not.toContain('takahashi@cutest.biz');
+    expect(read()).not.toContain('takahashi-team@group.calendar.google.com');
+  });
+
+  it('strict(翌日の予定のお知らせ)と fresh(出勤簿への同期)は全カレンダーを読み、他スタッフのカレンダーの予定も拾う', async () => {
+    const strict = await port.getSchedule(sato, date, { tenantId, strict: true });
+    expect(read()).toEqual([...all].sort());
+    expect(strict.appointments?.map((a) => a.title)).toEqual(['山田 花子']);
+    calendar.calls = [];
+    const fresh = await port.getScheduleWithRoute(sato, date, false, { tenantId, fresh: true });
+    expect(read()).toEqual([...all].sort());
+    expect(fresh.appointments?.map((a) => a.customerName)).toEqual(['山田 花子']);
+  });
+
+  it('同じカレンダーを複数のスタッフが設定していれば、後のスタッフの閲覧でもそのカレンダーを読む', async () => {
+    await port.getSchedule({ staffId: 'staff-suzuki', staffName: '鈴木 花' }, date, { tenantId });
+    expect(read()).toEqual(['sato@cutest.biz', 'reserva@group.calendar.google.com'].sort());
+  });
+
+  it('閲覧の WARN は対象スタッフの分だけ(他のスタッフの許可外・読めないカレンダーは記録しない)', async () => {
+    calendar.failing.add('takahashi@cutest.biz');
+    await port.getSchedule(sato, date, { tenantId });
+    expect(logs).toEqual([]);
+    await port.getSchedule({ staffId: 'staff-blocked', staffName: '伊藤 誠' }, date, { tenantId });
+    expect(logs).toEqual([
+      expect.objectContaining({
+        action: 'calendar.staff_calendar_not_allowed',
+        targetStaffId: 'staff-blocked',
+      }),
+    ]);
+    expect(read()).not.toContain('ito@blocked.example');
+  });
+});
