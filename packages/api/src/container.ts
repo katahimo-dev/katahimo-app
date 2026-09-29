@@ -140,7 +140,7 @@ export function createContainer(env: Env, db: Database): Container {
     // 区間ごとのルート・住所ごとのジオコーディング結果の共有キャッシュ(閲覧用。予定そのものは毎回カレンダーから読む)。
     // プロセス内のため Cloud Run のインスタンス間では共有しない
     mapsCache: new InMemoryTtlCache({ maxEntries: 5000 }),
-    // テナント × カレンダー × 日付のイベント一覧(閲覧用、60秒)。開くたびに全カレンダーを読む分の Calendar API を抑える
+    // テナント × カレンダー × 日付のイベント一覧(閲覧用、60秒)。開くたびに対象スタッフ・共有カレンダーを読む分の Calendar API を抑える
     calendarCache: new InMemoryTtlCache({ maxEntries: 2000 }),
     tenants,
   });

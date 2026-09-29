@@ -24,7 +24,7 @@ import type {
   ScheduleWithRouteOptions,
   ScheduleWithRouteResult,
 } from '@katahimo/core/ports';
-import { type CalendarSource, resolveCalendarSources } from './calendarSources';
+import { type CalendarSource, resolveCalendarSources, selectViewCalendarSources } from './calendarSources';
 import { type MapsResultCache, RouteCalculator } from './routeCalculator';
 
 export interface GoogleSchedulePortDeps {
@@ -39,7 +39,8 @@ export interface GoogleSchedulePortDeps {
   mapsCache: CachePort;
   /**
    * 閲覧用の、テナント × カレンダー × 日付ごとのイベント一覧の短期キャッシュ(60秒)。予定タブは開くたび・戻るたびに
-   * テナントの全カレンダーを読むため、同じ時間帯に何人も開いても Calendar API の呼び出しが人数分にならないようにする。
+   * 対象スタッフのカレンダーと共有カレンダーを読むため、同じ時間帯に何度・何人が開いても(共有カレンダーや
+   * 他の人の予定を見る管理者の分も)Calendar API の呼び出しが開いた回数分にならないようにする。
    * 担当変更の反映はこの分(最大60秒)遅れる。🔄 最新にする(forceRefresh)は読まずに書き直し、strict / fresh
    * (お知らせのジョブ・公式記録への書き込み)は読みも書きもしない。
    */
@@ -149,7 +150,11 @@ export class GoogleSchedulePort implements SchedulePort {
         details: { source: 'schedule' },
       });
     }
-    const { events, partial } = await this.readCalendars(query, sources, mode);
+    // 閲覧(view / refresh)は他のスタッフの予定のカレンダーを読まない(自分のカレンダーと共有カレンダー全部。selectViewCalendarSources)。
+    // strict(翌日の予定のお知らせ)と fresh(出勤簿への同期)は取りこぼさないよう全カレンダーを読む。
+    // お知らせは1日1回のジョブで読み込み数の心配が小さく、内容を出勤簿に入る予定(夜間の同期)と揃えるため絞らない。
+    const readSources = mode === 'strict' ? sources : selectViewCalendarSources(sources, staff);
+    const { events, partial } = await this.readCalendars(query, readSources, mode);
     const all = classifyCalendarEvents(events, directory.customers);
     return { staff, appointments: appointmentsForStaff(all, staff.name), partial };
   }
