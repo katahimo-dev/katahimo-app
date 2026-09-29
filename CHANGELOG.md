@@ -153,7 +153,9 @@
   API `POST /api/settings/admin/gemini-models`・`/gemini-models/available`、`GET /api/settings/admin` の `geminiReportModel`・
   `geminiOcrModel`、環境変数 `GEMINI_MODEL_REPORT`・`GEMINI_MODEL_OCR`(Terraform の `gemini_models`)を削除)。日報・事故報告は
   Flash 系 → Flash-Lite 系、領収書の読み取りは Flash-Lite 系を使える新しいものから試す。`tenant_settings.gemini_report_model` /
-  `gemini_ocr_model` の列は読み書きしなくなった(移行の互換のため残す。次の版で消せる)。
+  `gemini_ocr_model` の列は読み書きしなくなった(移行の互換のため残す。次の版で消せる)。管理者が Flash / Flash-Lite 以外の
+  モデル(例 `gemini-2.5-pro`)を選んでいたテナントも、知らせなしに自動の選び方に変わる。反映の直後に開いたままの管理画面は
+  読み込みに失敗することがあるので、読み込み直す。
 
 - 予定タブ(`/api/schedule`・`/api/schedule/route`、🔄 最新にする を含む)で読むカレンダーを、見ているスタッフ自身の予定のカレンダーと
   共有カレンダー全部(持ち主名にかかわらない)にした(これまでは1人分を見るのにテナントの全カレンダーを読んでいた。他のスタッフの予定の
