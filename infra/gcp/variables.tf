@@ -56,7 +56,7 @@ variable "sql_deletion_protection" {
 
 # ── アプリの設定(秘密でないもの) ───────────────────────────────
 variable "schedule_provider" {
-  description = "SCHEDULE_PROVIDER(google / gas_bridge / noop)。doc/05_バッチ・外部連携.md"
+  description = "SCHEDULE_PROVIDER(google / gas_bridge / database / noop)。doc/05_バッチ・外部連携.md"
   type        = string
   default     = "google"
 }

@@ -22,6 +22,7 @@ import type {
   ReportAiGenerationRepository,
   ReportAiMasterRepository,
 } from './reportAi';
+import type { ReservationRepository } from './reservations';
 import type { AiPromptRepository, TenantSecretRepository, TenantSettingsRepository } from './settings';
 import type { PasswordResetCodeRepository, SessionRepository, StaffRepository } from './staff';
 import type { TenantRecord } from './tenants';
@@ -63,6 +64,8 @@ export interface TenantRepositories {
   integrationApiKeys: IntegrationApiKeyRepository;
   staffCalendars: StaffCalendarRepository;
   busyBlocks: StaffBusyBlockRepository;
+  /** 予約とスタッフの割当(マッチング拡張の表。いまは公開デモの予定と SCHEDULE_PROVIDER=database だけが使う)。 */
+  reservations: ReservationRepository;
   pushSubscriptions: PushSubscriptionRepository;
   outbox: OutboxWriter;
   entityChanges: EntityChangeWriter;

@@ -3,6 +3,7 @@ import {
   COMMUTE_DISTANCE_COLUMN,
   LEAVING_DISTANCE_COLUMN,
   MOVE_LEGS,
+  newId,
   normalizeEmailForIndex,
   VISIT_SLOTS,
   WEATHER_OPTIONS,
@@ -36,6 +37,8 @@ export interface DemoSeedSummary {
   attendanceDayCount: number;
   receiptCount: number;
   reportProfileCount: number;
+  /** 予定タブ(SCHEDULE_PROVIDER=database)に出す今日・明日の予約の件数。 */
+  reservationCount: number;
   /** 履歴を作った最後の業務日('YYYY-MM-DD')。 */
   generatedThrough: string;
 }
@@ -136,6 +139,8 @@ function attendancePatchForVisits(
  *   (出勤簿と同じ予定を使うので、日報の担当・時間帯と出勤簿の訪問先が一致する)。
  * - 出勤簿: ログインする3人全員ぶん、同じ期間(+当日)を `importAttendanceSheetRows` で取り込む
  *   (source: 'import' は当月ロックの対象外なので、過去月も書ける)。
+ * - 予定: ログインする3人全員ぶん、今日・明日の訪問を予約(reservations + 確定した割当)として入れる(出勤簿と同じ
+ *   visitPlan.ts の予定。SCHEDULE_PROVIDER=database の予定タブ・翌日のお知らせがこれを読むので、Google カレンダーは要らない)。
  * - 事故報告・ヒヤリハット、教育思考★の一部、領収書を少数だけ追加する。
  */
 export async function seedDemoTenant(
@@ -274,6 +279,32 @@ export async function seedDemoTenant(
     attendanceDayCount += result.imported;
   }
 
+  // ── 予定(今日・明日の予約。3人全員ぶん、出勤簿と同じ visitPlan.ts の予定) ──────
+  // 予約の登録の usecase はまだ無い(マッチングのアプリで作る)ため、リポジトリで直接入れる
+  const scheduleDates = [today, toJstDateIso(new Date(now.getTime() + 24 * 60 * 60 * 1000))];
+  const reservationCount = await container.uow.run(tenant.id, async (r) => {
+    let count = 0;
+    for (const staff of staffByRole.values()) {
+      for (const date of scheduleDates) {
+        for (const visit of planVisitsForDate(date, staff.name, DEMO_FIGURES.length)) {
+          const customerId = customerIdByFigureIndex[visit.figureIndex];
+          if (!customerId) continue;
+          const period = { start: jstInstant(date, visit.start), end: jstInstant(date, visit.end) };
+          await r.reservations.create({
+            id: newId(),
+            customerId,
+            period,
+            businessDate: date,
+            status: 'confirmed',
+            assignments: [{ id: newId(), staffId: staff.id, confirmedAt: now }],
+          });
+          count++;
+        }
+      }
+    }
+    return count;
+  });
+
   // ── 領収書(今月数枚・先月数枚、お客様請求/会社負担を混ぜる) ────────────
   // 日付は業務日の月で決める(月の初めでも「今月」の分があり、「先月」の分が2か月前にならないように)
   const receiptSpecs: {
@@ -358,8 +389,14 @@ export async function seedDemoTenant(
     attendanceDayCount,
     receiptCount,
     reportProfileCount,
+    reservationCount,
     generatedThrough: toJstDateIso(now),
   };
+}
+
+/** 業務日('YYYY-MM-DD')と日本時間の 'HH:mm' の時刻。 */
+export function jstInstant(date: string, time: string): Date {
+  return new Date(`${date}T${time}:00+09:00`);
 }
 
 /** 'HH:mm'(日本時間)。 */

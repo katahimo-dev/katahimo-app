@@ -129,6 +129,7 @@ export function createContainer(env: Env, db: Database): Container {
   const appLog = new DrizzleAppLogRepository(db);
   const tenants = new DrizzleTenantDirectory(db);
   const scheduleServices = createScheduleServices(env, {
+    uow,
     directory: createScheduleDirectory({
       uow,
       // 顧客・スタッフのマスタ(テナント × 顧客データの版数)。顧客CSVの取込で版数が変わると読み直す

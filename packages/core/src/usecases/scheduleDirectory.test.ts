@@ -55,8 +55,10 @@ describe('createScheduleDirectory', () => {
   it('顧客・スタッフを DB から読み、予定計算用の形にする', async () => {
     const { ctx, staffId } = await setup();
     const directory = await createScheduleDirectory(ctx.deps).load(ctx.tenantId);
+    const customerRecordId = ctx.data().customers[0]?.id;
     expect(directory.customers).toEqual([
       {
+        recordId: customerRecordId,
         customerId: 'C0002',
         name: '鈴木 一郎',
         place: {
@@ -103,8 +105,8 @@ describe('createScheduleDirectory', () => {
     await directory.load(ctx.tenantId);
     expect(cache.sets).toBe(2);
     expect([...cache.values.keys()]).toEqual([
-      `schedule-directory:v1:${ctx.tenantId}:0`,
-      `schedule-directory:v1:${ctx.tenantId}:1`,
+      `schedule-directory:v2:${ctx.tenantId}:0`,
+      `schedule-directory:v2:${ctx.tenantId}:1`,
     ]);
   });
 });

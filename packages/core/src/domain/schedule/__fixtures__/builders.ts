@@ -48,11 +48,13 @@ export function reservaDescription(
 
 export const customers: ScheduleCustomer[] = [
   {
+    recordId: '00000000-0000-7000-8000-000000000c01',
     customerId: 'C0001',
     name: '山田 花子',
     place: { address: '東京都世田谷区三軒茶屋1-2-3', latLng: { lat: 35.6437, lng: 139.6708 } },
   },
   {
+    recordId: '00000000-0000-7000-8000-000000000c02',
     customerId: 'C0002',
     name: '鈴木 一郎',
     place: {
@@ -65,7 +67,12 @@ export const customers: ScheduleCustomer[] = [
       },
     },
   },
-  { customerId: '', name: '田中　美和', place: { address: '東京都渋谷区恵比寿4-5-6', latLng: null } },
+  {
+    recordId: '00000000-0000-7000-8000-000000000c03',
+    customerId: '',
+    name: '田中　美和',
+    place: { address: '東京都渋谷区恵比寿4-5-6', latLng: null },
+  },
 ];
 
 export function appointment(overrides: Partial<Appointment> = {}): Appointment {

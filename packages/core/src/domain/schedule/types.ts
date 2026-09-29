@@ -54,6 +54,8 @@ export interface Place {
 
 /** 予定タイトルとの突合に使う顧客。 */
 export interface ScheduleCustomer {
+  /** 顧客のID(customers.id)。予約(reservations.customer_id)と突き合わせる(SCHEDULE_PROVIDER=database)。 */
+  recordId: string;
   /** RESERVAの顧客ID(customers.external_id)。GAS版の出力 customerId と同じ値。未発行なら ''。 */
   customerId: string;
   /** 'Last First' 形式の氏名(GAS版の顧客CSV「姓 名」)。 */

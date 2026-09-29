@@ -1,18 +1,20 @@
 import { randomBytes } from 'node:crypto';
 import { normalizeEmailForIndex } from '@katahimo/core/domain';
-import { provisionTenant, readTenantSecret } from '@katahimo/core/usecases';
+import { createScheduleDirectory, provisionTenant, readTenantSecret } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import {
   DrizzleTenantCalendarSettingsStore,
   DrizzleTenantDirectory,
   DrizzleTenantProvisioning,
 } from '@katahimo/db/repositories';
+import { DatabaseSchedulePort } from '@katahimo/integrations';
 import { DEMO_ACCOUNTS } from '@katahimo/shared';
 import { sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createContainer } from '../container';
 import { loadEnv } from '../env';
-import { toJstDateIso } from './demo/visitPlan';
+import { DEMO_FIGURES } from './demo/figures';
+import { planVisitsForDate, toJstDateIso } from './demo/visitPlan';
 import { resetDemoTenant } from './demoReset';
 
 /**
@@ -74,6 +76,43 @@ describe('resetDemoTenant(実DB)', () => {
       return r.attendance.loadDay(staff.id, toJstDateIso(now));
     });
     expect(todayDay.visits.length).toBeGreaterThan(0);
+
+    // 今日・明日の予定を予約として入れている(SCHEDULE_PROVIDER=database の予定タブ。Google カレンダーは要らない)。
+    // 出勤簿と同じ visitPlan.ts の予定なので、件数・時間帯が一致する
+    const staffRecord = await container.uow.run(first.tenantId, (r) =>
+      r.staff.findByLoginEmail(normalizeEmailForIndex(staffAccount.email)),
+    );
+    if (!staffRecord) throw new Error('デモ用スタッフが見つかりません');
+    const schedule = new DatabaseSchedulePort({
+      uow: container.uow,
+      directory: createScheduleDirectory({ uow: container.uow }),
+    });
+    const tomorrow = toJstDateIso(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+    let expectedReservations = 0;
+    for (const date of [toJstDateIso(now), tomorrow]) {
+      const planned = planVisitsForDate(date, staffRecord.displayName, DEMO_FIGURES.length);
+      const result = await schedule.getScheduleWithRoute(
+        { staffId: staffRecord.id, staffName: staffRecord.displayName },
+        date,
+        false,
+        { tenantId: first.tenantId, fresh: true },
+      );
+      expect(result.appointments?.map((a) => [a.startTime, a.endTime])).toEqual(
+        planned.map((v) => [v.start, v.end]),
+      );
+      expect(result.appointments?.map((a) => a.customerId)).toEqual(
+        planned.map((v) => DEMO_FIGURES[v.figureIndex]?.externalId),
+      );
+      // 顧客の緯度経度から見積もった訪問の間の距離が入る(2件目以降)
+      if (planned.length > 1) expect(result.appointments?.[1]?.moveKm).not.toBe('');
+    }
+    for (const account of DEMO_ACCOUNTS) {
+      const name = account.name;
+      for (const date of [toJstDateIso(now), tomorrow]) {
+        expectedReservations += planVisitsForDate(date, name, DEMO_FIGURES.length).length;
+      }
+    }
+    expect(first.summary.reservationCount).toBe(expectedReservations);
 
     // 運用担当者のカレンダーの設定は作り直しでも引き継ぐ
     const calendars = new DrizzleTenantCalendarSettingsStore(ownerDb);
