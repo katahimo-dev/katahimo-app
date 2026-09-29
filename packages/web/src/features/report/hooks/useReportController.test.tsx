@@ -377,7 +377,10 @@ describe('useReportController', () => {
         attempt: 2,
         total: 2,
         failed: ['gemini-2.5-flash'],
+        notice: 'gemini-2.5-flash で書けなかったので、gemini-2.0-flash で試しています',
       });
+      // 切り替えの知らせはトーストにしない(「⏹ 止めて手で書く」に重ならないように)
+      expect(toastStore.getState().visible).toBe(false);
 
       act(() => result.current.stopGenerating());
       expect(generateDaily.mock.calls[1]?.[1]?.aborted).toBe(true);
