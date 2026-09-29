@@ -1,6 +1,7 @@
 import { EMPTY_CALENDAR_SETTINGS } from '@katahimo/core/domain';
 import { describe, expect, it, vi } from 'vitest';
 import { InMemoryTtlCache } from '../cache';
+import { DatabaseSchedulePort } from '../database-schedule';
 import { GasBridgeSchedulePort } from '../gas-bridge';
 import { GoogleMapsPlatformPort } from '../google-maps';
 import { GoogleSchedulePort } from '../google-schedule';
@@ -17,6 +18,11 @@ const google = { GOOGLE_MAPS_API_KEY: 'key', GOOGLE_APPLICATION_CREDENTIALS: '/s
 const deps: ScheduleServiceDeps = {
   directory: { load: async () => ({ staff: [], customers: [], calendarSettings: EMPTY_CALENDAR_SETTINGS }) },
   appLog: { write: async () => {} },
+  uow: {
+    run: async () => {
+      throw new Error('このテストでは DB を読まない');
+    },
+  },
   mapsCache: new InMemoryTtlCache({ maxEntries: 1 }),
   calendarCache: new InMemoryTtlCache({ maxEntries: 1 }),
   tenants: {
@@ -40,6 +46,7 @@ describe('selectScheduleProvider', () => {
       'gas_bridge',
     );
     expect(selectScheduleProvider({ SCHEDULE_PROVIDER: 'noop', ...google })).toBe('noop');
+    expect(selectScheduleProvider({ SCHEDULE_PROVIDER: 'database', ...google, ...bridge })).toBe('database');
   });
 
   it('未指定なら Google の資格情報 → GASブリッジ → noop の順', () => {
@@ -67,6 +74,13 @@ describe('createScheduleServices', () => {
     expect(b.maps).toBeNull();
     // 夜間のジョブは Bridge の持ち主のテナントだけを処理する
     expect(b.scheduleTenantSlug).toBe(bridge.GAS_BRIDGE_TENANT);
+
+    // DB の予約を予定にする(公開デモ用)。区間は緯度経度から見積もるため地図 API は無し
+    const d = createScheduleServices({ SCHEDULE_PROVIDER: 'database', ...google }, deps);
+    expect(d.provider).toBe('database');
+    expect(d.schedule).toBeInstanceOf(DatabaseSchedulePort);
+    expect(d.maps).toBeNull();
+    expect(d.scheduleTenantSlug).toBeNull();
 
     const n = createScheduleServices({}, deps);
     expect(n.schedule).toBeInstanceOf(NoopSchedulePort);

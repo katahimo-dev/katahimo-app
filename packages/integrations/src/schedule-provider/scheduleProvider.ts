@@ -6,7 +6,9 @@ import type {
   ScheduleDirectoryPort,
   SchedulePort,
   TenantDirectoryPort,
+  UnitOfWorkPort,
 } from '@katahimo/core/ports';
+import { DatabaseSchedulePort } from '../database-schedule';
 import {
   type GasBridgeEnv,
   GasBridgeSchedulePort,
@@ -18,7 +20,7 @@ import { GoogleMapsPlatformPort } from '../google-maps';
 import { GoogleSchedulePort } from '../google-schedule';
 import { NoopSchedulePort } from '../noop';
 
-export const SCHEDULE_PROVIDERS = ['google', 'gas_bridge', 'noop'] as const;
+export const SCHEDULE_PROVIDERS = ['google', 'gas_bridge', 'database', 'noop'] as const;
 export type ScheduleProvider = (typeof SCHEDULE_PROVIDERS)[number];
 
 /** 予定・地図の実装選択に使う環境変数(api/worker の env から渡す)。 */
@@ -34,6 +36,7 @@ export interface ScheduleProviderEnv extends Omit<GasBridgeEnv, 'SCHEDULE_PROVID
  * 1. GOOGLE_MAPS_API_KEY と GOOGLE_APPLICATION_CREDENTIALS が両方あれば google
  * 2. GAS_BRIDGE_URL・GAS_BRIDGE_SECRET・GAS_BRIDGE_TENANT が揃っていれば gas_bridge(そのテナントだけ予定を返す)
  * 3. どちらも無ければ noop(常に予定なし)
+ * database(DB の予約を予定にする。公開デモ用)は自動では選ばない(明示したときだけ)。
  * Cloud Run(Workload Identity)では GOOGLE_APPLICATION_CREDENTIALS を使わないため、
  * SCHEDULE_PROVIDER=google を明示すること。
  */
@@ -50,7 +53,9 @@ export function selectScheduleProvider(env: ScheduleProviderEnv): ScheduleProvid
  */
 export function scheduleEnvProblems(env: ScheduleProviderEnv, isProduction: boolean): string[] {
   if (isProduction && !env.SCHEDULE_PROVIDER) {
-    return ['  - SCHEDULE_PROVIDER: 本番は google / gas_bridge / noop のいずれかを明示してください'];
+    return [
+      '  - SCHEDULE_PROVIDER: 本番は google / gas_bridge / database / noop のいずれかを明示してください',
+    ];
   }
   return [];
 }
@@ -61,6 +66,8 @@ export interface ScheduleServiceDeps {
   mapsCache: CachePort;
   /** 閲覧用のカレンダーのイベント一覧の短期キャッシュ(GoogleSchedulePortDeps.calendarCache)。 */
   calendarCache: CachePort;
+  /** database で、スタッフの確定した予約を読む。 */
+  uow: UnitOfWorkPort;
   /** gas_bridge で、予定を求めたテナントが Bridge の持ち主か確かめるのに使う。 */
   tenants: Pick<TenantDirectoryPort, 'findById'>;
 }
@@ -69,7 +76,8 @@ export interface ScheduleServices {
   provider: ScheduleProvider;
   schedule: SchedulePort;
   /**
-   * スタッフの自宅住所のジオコーディングに使う地図 API(google だけ)。gas_bridge はルートを GAS版が計算するため
+   * スタッフの自宅住所のジオコーディングに使う地図 API(google だけ。database は区間を緯度経度から見積もり、地図 API を
+   * 使わないため無し)。gas_bridge はルートを GAS版が計算するため
    * 本アプリの緯度経度を使わず、テナントを持たない地図の呼び出しで別のテナントの住所を Bridge に送らないよう、無し。
    */
   maps: MapsPort | null;
@@ -118,6 +126,13 @@ export function createScheduleServices(
         ),
         maps: null,
         scheduleTenantSlug: bridge.tenantSlug,
+      };
+    case 'database':
+      return {
+        provider,
+        schedule: new DatabaseSchedulePort({ uow: deps.uow, directory: deps.directory }),
+        maps: null,
+        scheduleTenantSlug: null,
       };
     case 'noop':
       return { provider, schedule: new NoopSchedulePort(), maps: null, scheduleTenantSlug: null };

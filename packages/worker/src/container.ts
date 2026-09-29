@@ -96,6 +96,7 @@ export function createWorkerContainer(env: WorkerEnv, db: Database): WorkerConta
   const bridge = gasBridgeConfigOf(env);
   // API と同じ予定・ルート計算の実装を使う(夜間の反映は fresh のため地図の結果のキャッシュは使わない)
   const scheduleServices = createScheduleServices(env, {
+    uow,
     directory: createScheduleDirectory({ uow }),
     appLog,
     mapsCache: new InMemoryTtlCache({ maxEntries: 100 }),

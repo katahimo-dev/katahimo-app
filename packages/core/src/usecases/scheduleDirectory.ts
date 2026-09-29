@@ -47,6 +47,7 @@ export function createScheduleDirectory(deps: ScheduleDirectoryDeps): ScheduleDi
       const secondary = addresses.find((a) => a.kind === 'secondary');
       const latLng = routeLatLngOf(home?.geo ?? null);
       customers.push({
+        recordId: c.id,
         customerId: externalIdOf.get(c.id) ?? '',
         name: c.displayName,
         place: {
@@ -84,7 +85,7 @@ export function createScheduleDirectory(deps: ScheduleDirectoryDeps): ScheduleDi
     async load(tenantId: string): Promise<ScheduleDirectory> {
       if (!deps.cache) return loadFresh(tenantId);
       const version = await deps.uow.run(tenantId, async (r) => (await r.settings.get()).customerDataVersion);
-      const key = `schedule-directory:v1:${tenantId}:${version}`;
+      const key = `schedule-directory:v2:${tenantId}:${version}`;
       const cached = await deps.cache.get<ScheduleDirectory>(key);
       if (cached) return cached;
       let pending = inflight.get(key);

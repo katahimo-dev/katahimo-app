@@ -80,6 +80,7 @@ import type {
   ReceiptUploadRow,
   StoredFileRow,
 } from '../ports/records';
+import type { ReservationCreateInput } from '../ports/reservations';
 import type {
   ScheduleLightResult,
   SchedulePort,
@@ -170,6 +171,8 @@ export interface TenantData extends ReportAiFakeData {
   integrationApiKeys: (IntegrationApiKeyRecord & { tokenHash: Uint8Array })[];
   calendars: StaffCalendarRecord[];
   busyBlocks: { staffId: string; start: Date; end: Date }[];
+  /** 予約と確定した割当(reservations + reservation_assignments)。 */
+  reservations: ReservationCreateInput[];
   pushSubscriptions: PushSubscriptionRecord[];
   outbox: OutboxRow[];
   entityChanges: EntityChangeInput[];
@@ -209,6 +212,7 @@ function emptyTenantData(): TenantData {
     integrationApiKeys: [],
     calendars: [],
     busyBlocks: [],
+    reservations: [],
     pushSubscriptions: [],
     outbox: [],
     entityChanges: [],
@@ -1250,6 +1254,26 @@ export function fakeRepositories(
           ),
           ...blocks.map((b) => ({ staffId, start: b.period.start, end: b.period.end })),
         ];
+      },
+    },
+    reservations: {
+      async create(input) {
+        d().reservations.push(structuredClone(input));
+      },
+      async listConfirmedVisitsForStaffOnDate(staffId, businessDate) {
+        const data = d();
+        return data.reservations
+          .filter((r) => r.businessDate === businessDate && r.assignments.some((a) => a.staffId === staffId))
+          .map((r) => ({
+            reservationId: r.id,
+            customerId: r.customerId,
+            customerDisplayName: data.customers.find((c) => c.id === r.customerId)?.displayName ?? '',
+            start: new Date(r.period.start),
+            end: new Date(r.period.end),
+          }))
+          .sort(
+            (a, b) => a.start.getTime() - b.start.getTime() || (a.reservationId < b.reservationId ? -1 : 1),
+          );
       },
     },
     pushSubscriptions: {

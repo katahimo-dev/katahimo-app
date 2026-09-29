@@ -1,7 +1,7 @@
 // @katahimo/core の ports インターフェースの具体実装を置く層。
 // このパッケージだけが googleapis / Google Maps Platform / Gemini に依存する。
 // 予定・ルート計算は google-schedule(Google Calendar API + Google Maps Platform を直接呼ぶ)と
-// gas-bridge(GAS版Web Appに委ねる移行期の実装)を schedule-provider で切り替える。
+// gas-bridge(GAS版Web Appに委ねる移行期の実装)・database-schedule(DB の予約。公開デモ用)を schedule-provider で切り替える。
 // ファイル保存(local-storage / gcs-storage)も同様に storage-provider で開発用と本番(GCS)の実装を切り替える。
 // テナントの秘密値の封(secret-box)は開発用のローカル鍵と本番の Cloud KMS を切り替える。
 // cloud-run は outbox を処理するジョブ(outbox-drain)の起動の依頼(Cloud Run Admin API)。
@@ -9,6 +9,7 @@
 export * from './cache';
 export * from './cloud-run';
 export * from './customer-csv';
+export * from './database-schedule';
 export * from './gas-bridge';
 export * from './gcs-storage';
 export * from './gemini';

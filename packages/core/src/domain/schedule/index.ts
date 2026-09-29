@@ -1,5 +1,6 @@
 export * from './calendarPolicy';
 export * from './classifyEvents';
+export * from './estimatedLeg';
 export * from './eventTitle';
 export * from './jstDate';
 export * from './officeWork';

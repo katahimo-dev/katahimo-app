@@ -176,6 +176,7 @@ function createGoogleSchedulePort(scenario: Scenario) {
   const toLatLng = (v?: [number, number]) => (v ? { lat: v[0], lng: v[1] } : null);
   const directory: ScheduleDirectory = {
     customers: scenario.customers.map((c) => ({
+      recordId: `record-${c.id}`,
       customerId: c.id,
       name: c.name,
       place: {

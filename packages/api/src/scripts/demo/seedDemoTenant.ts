@@ -1,8 +1,10 @@
 import {
   type AttendanceRowPatch,
   COMMUTE_DISTANCE_COLUMN,
+  geoCellOf,
   LEAVING_DISTANCE_COLUMN,
   MOVE_LEGS,
+  newId,
   normalizeEmailForIndex,
   VISIT_SLOTS,
   WEATHER_OPTIONS,
@@ -36,6 +38,8 @@ export interface DemoSeedSummary {
   attendanceDayCount: number;
   receiptCount: number;
   reportProfileCount: number;
+  /** 予定タブ(SCHEDULE_PROVIDER=database)に出す今日・明日の予約の件数。 */
+  reservationCount: number;
   /** 履歴を作った最後の業務日('YYYY-MM-DD')。 */
   generatedThrough: string;
 }
@@ -127,6 +131,16 @@ function attendancePatchForVisits(
 }
 
 /**
+ * デモのスタッフの自宅(架空の住所。大阪市内。出勤・退勤の区間の起点・終点)。SCHEDULE_PROVIDER=database は住所を
+ * ジオコーディングしないので緯度経度も入れる(無いと「予定から反映」で出勤・退勤の距離が空欄になる)。
+ */
+const DEMO_STAFF_HOMES: Readonly<Record<string, { address: string; lat: number; lng: number }>> = {
+  admin: { address: '大阪府大阪市北区梅田1-1-1', lat: 34.7025, lng: 135.4959 },
+  coordinator: { address: '大阪府大阪市天王寺区上本町6-1-1', lat: 34.6655, lng: 135.5205 },
+  staff: { address: '大阪府大阪市西区靱本町1-1-1', lat: 34.6853, lng: 135.4935 },
+};
+
+/**
  * 公開デモ用のテナントにデータを一式投入する。全て本番の usecase 経由で書く(SQLを直接流し込まない。
  * outbox・RLS・ミラー判定など本番と同じ経路を通す)。
  *
@@ -136,6 +150,8 @@ function attendancePatchForVisits(
  *   (出勤簿と同じ予定を使うので、日報の担当・時間帯と出勤簿の訪問先が一致する)。
  * - 出勤簿: ログインする3人全員ぶん、同じ期間(+当日)を `importAttendanceSheetRows` で取り込む
  *   (source: 'import' は当月ロックの対象外なので、過去月も書ける)。
+ * - 予定: ログインする3人全員ぶん、今日・明日の訪問を予約(reservations + 確定した割当)として入れる(出勤簿と同じ
+ *   visitPlan.ts の予定。SCHEDULE_PROVIDER=database の予定タブ・翌日のお知らせがこれを読むので、Google カレンダーは要らない)。
  * - 事故報告・ヒヤリハット、教育思考★の一部、領収書を少数だけ追加する。
  */
 export async function seedDemoTenant(
@@ -163,6 +179,14 @@ export async function seedDemoTenant(
       staff = { id: created.id, role: created.role, name: created.displayName };
     }
     staffByRole.set(account.role, staff);
+    const home = DEMO_STAFF_HOMES[account.role];
+    if (home) {
+      // 自宅の緯度経度を直接入れる(スタッフの更新の usecase は地図APIで住所を探すため。デモには地図APIが無い)
+      const geo = { lat: home.lat, lng: home.lng };
+      await container.uow.run(tenant.id, (r) =>
+        r.staff.update(staff.id, { home: { address: home.address, geo, geoCell: geoCellOf(geo) } }),
+      );
+    }
   }
   const visitingStaff = staffByRole.get('staff');
   if (!visitingStaff) throw new Error('デモ用のスタッフ役割アカウントの作成に失敗しました');
@@ -274,6 +298,32 @@ export async function seedDemoTenant(
     attendanceDayCount += result.imported;
   }
 
+  // ── 予定(今日・明日の予約。3人全員ぶん、出勤簿と同じ visitPlan.ts の予定) ──────
+  // 予約の登録の usecase はまだ無い(マッチングのアプリで作る)ため、リポジトリで直接入れる
+  const scheduleDates = [today, toJstDateIso(new Date(now.getTime() + 24 * 60 * 60 * 1000))];
+  const reservationCount = await container.uow.run(tenant.id, async (r) => {
+    let count = 0;
+    for (const staff of staffByRole.values()) {
+      for (const date of scheduleDates) {
+        for (const visit of planVisitsForDate(date, staff.name, DEMO_FIGURES.length)) {
+          const customerId = customerIdByFigureIndex[visit.figureIndex];
+          if (!customerId) continue;
+          const period = { start: jstInstant(date, visit.start), end: jstInstant(date, visit.end) };
+          await r.reservations.create({
+            id: newId(),
+            customerId,
+            period,
+            businessDate: date,
+            status: 'confirmed',
+            assignments: [{ id: newId(), staffId: staff.id, confirmedAt: now }],
+          });
+          count++;
+        }
+      }
+    }
+    return count;
+  });
+
   // ── 領収書(今月数枚・先月数枚、お客様請求/会社負担を混ぜる) ────────────
   // 日付は業務日の月で決める(月の初めでも「今月」の分があり、「先月」の分が2か月前にならないように)
   const receiptSpecs: {
@@ -358,8 +408,14 @@ export async function seedDemoTenant(
     attendanceDayCount,
     receiptCount,
     reportProfileCount,
+    reservationCount,
     generatedThrough: toJstDateIso(now),
   };
+}
+
+/** 業務日('YYYY-MM-DD')と日本時間の 'HH:mm' の時刻。 */
+export function jstInstant(date: string, time: string): Date {
+  return new Date(`${date}T${time}:00+09:00`);
 }
 
 /** 'HH:mm'(日本時間)。 */

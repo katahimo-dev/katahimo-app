@@ -39,6 +39,7 @@ import {
   DrizzleReportAiGenerationRepository,
   DrizzleReportAiMasterRepository,
 } from './repositories/tenant/reportAi';
+import { DrizzleReservationRepository } from './repositories/tenant/reservations';
 import { DrizzlePasswordResetCodeRepository, DrizzleSessionRepository } from './repositories/tenant/sessions';
 import {
   DrizzleAiPromptRepository,
@@ -104,6 +105,7 @@ export function bindRepositories(
     integrationApiKeys: new DrizzleIntegrationApiKeyRepository(tx, tenantId),
     staffCalendars: new DrizzleStaffCalendarRepository(tx, tenantId),
     busyBlocks: new DrizzleStaffBusyBlockRepository(tx, tenantId),
+    reservations: new DrizzleReservationRepository(tx, tenantId),
     pushSubscriptions: new DrizzlePushSubscriptionRepository(tx, tenantId),
     outbox: new DrizzleOutboxWriter(
       tx,

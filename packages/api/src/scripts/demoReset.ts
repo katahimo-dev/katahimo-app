@@ -169,6 +169,7 @@ function printSummary(summary: DemoSeedSummary) {
   console.log(`事故報告・ヒヤリハット: ${summary.accidentReportCount}件`);
   console.log(`出勤簿: ${summary.attendanceDayCount}日ぶん`);
   console.log(`領収書: ${summary.receiptCount}件`);
+  console.log(`今日・明日の予定(予約): ${summary.reservationCount}件`);
   console.log(`履歴の最終日: ${summary.generatedThrough}`);
 }
 

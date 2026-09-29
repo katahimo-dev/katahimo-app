@@ -15,6 +15,13 @@
       "when": 1790351762427,
       "tag": "0001_baseline_custom",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790693855633,
+      "tag": "0002_worker_reads_reservations",
+      "breakpoints": true
     }
   ]
 }

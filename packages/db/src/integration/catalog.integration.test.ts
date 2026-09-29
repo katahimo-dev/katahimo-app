@@ -131,8 +131,6 @@ describe('スキーマの約束事(カタログ)', () => {
       'ai_prompt_revisions',
       'care_record_revisions',
       'matching_runs',
-      'reservations',
-      'reservation_assignments',
       'reservation_recipients',
       'customer_staff_affinities',
       'customer_preferences',
@@ -155,6 +153,9 @@ describe('スキーマの約束事(カタログ)', () => {
     expect(of('public.care_records')).toEqual(['SELECT']);
     expect(of('public.staff')).toEqual(['SELECT']);
     expect(of('public.attendance_periods')).toEqual(['SELECT']);
+    // SCHEDULE_PROVIDER=database の予定(確定した予約)を夜間の反映・翌日のお知らせで読むだけ
+    expect(of('public.reservations')).toEqual(['SELECT']);
+    expect(of('public.reservation_assignments')).toEqual(['SELECT']);
     expect(of('public.matching_run_candidates')).toEqual(['DELETE', 'SELECT']);
     expect(of('public.entity_changes')).toEqual(['INSERT']);
     expect(of('public.customers')).toEqual(['INSERT', 'SELECT', 'UPDATE']);

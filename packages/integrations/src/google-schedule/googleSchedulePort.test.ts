@@ -91,6 +91,7 @@ const directory: ScheduleDirectory = {
   ],
   customers: [
     {
+      recordId: 'customer-c0001',
       customerId: 'C0001',
       name: '山田 花子',
       place: { address: '東京都世田谷区三軒茶屋1-2-3', latLng: { lat: 35.64, lng: 139.67 } },

@@ -99,7 +99,15 @@ describe('classifyCalendarEvents: [予約確定](RESERVA予約)', () => {
   it('同名の顧客が複数いれば先に登録された方と突合する', () => {
     const [result] = classifyCalendarEvents(
       [source('佐藤 美咲', [calendarEvent({ title: '[予約確定]山田 花子' })])],
-      [...customers, { customerId: 'C9999', name: '山田花子', place: { address: '別住所', latLng: null } }],
+      [
+        ...customers,
+        {
+          recordId: 'c9999',
+          customerId: 'C9999',
+          name: '山田花子',
+          place: { address: '別住所', latLng: null },
+        },
+      ],
     );
     expect(result?.customerId).toBe('C0001');
   });
