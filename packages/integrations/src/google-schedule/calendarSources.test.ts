@@ -56,26 +56,25 @@ describe('selectViewCalendarSources', () => {
   });
   const settings = {
     sharedCalendars: [
-      { calendarId: 'reserva@group.calendar.google.com' },
-      { calendarId: 'sato-shared@group.calendar.google.com', ownerName: '佐藤　美咲' },
-      { calendarId: 'takahashi-shared@group.calendar.google.com', ownerName: '高橋 由美' },
+      { calendarId: 'reserva@group.calendar.google.com', ownerName: '山田 太郎' },
+      { calendarId: 'events@group.calendar.google.com' },
     ],
     allowedStaffCalendars: ['@cutest.biz'],
   };
   const sato = staff('s1', '佐藤 美咲', 'sato@cutest.biz');
   const takahashi = staff('s2', '高橋 由美', 'takahashi@cutest.biz');
 
-  it('対象スタッフのカレンダーと、持ち主名が対象と一致する・持ち主名の無い共有カレンダーだけを残す', () => {
+  it('他のスタッフの予定のカレンダーだけを除き、共有カレンダーは持ち主名にかかわらず全部残す', () => {
     const { sources } = resolveCalendarSources(settings, [sato, takahashi]);
     expect(selectViewCalendarSources(sources, sato).map((s) => s.calendarId)).toEqual([
       'sato@cutest.biz',
       'reserva@group.calendar.google.com',
-      'sato-shared@group.calendar.google.com',
+      'events@group.calendar.google.com',
     ]);
     expect(selectViewCalendarSources(sources, takahashi).map((s) => s.calendarId)).toEqual([
       'takahashi@cutest.biz',
       'reserva@group.calendar.google.com',
-      'takahashi-shared@group.calendar.google.com',
+      'events@group.calendar.google.com',
     ]);
   });
 
@@ -84,16 +83,17 @@ describe('selectViewCalendarSources', () => {
     const { sources } = resolveCalendarSources(settings, [sato, takahashi, second]);
     expect(selectViewCalendarSources(sources, second)).toEqual([
       { calendarId: 'sato@cutest.biz', ownerName: '佐藤 美咲', staffId: 's1' },
-      { calendarId: 'reserva@group.calendar.google.com' },
+      { calendarId: 'reserva@group.calendar.google.com', ownerName: '山田 太郎' },
+      { calendarId: 'events@group.calendar.google.com' },
     ]);
   });
 
-  it('予定のカレンダーが無いスタッフは、持ち主名の無い共有カレンダーと自分の名前の共有カレンダーだけ', () => {
+  it('予定のカレンダーが無いスタッフは共有カレンダーだけ。同姓同名の他のスタッフのカレンダーも読まない', () => {
     const noCalendar = staff('s4', '佐藤 美咲', null);
-    const { sources } = resolveCalendarSources(settings, [takahashi, noCalendar]);
+    const { sources } = resolveCalendarSources(settings, [sato, noCalendar]);
     expect(selectViewCalendarSources(sources, noCalendar).map((s) => s.calendarId)).toEqual([
       'reserva@group.calendar.google.com',
-      'sato-shared@group.calendar.google.com',
+      'events@group.calendar.google.com',
     ]);
   });
 });

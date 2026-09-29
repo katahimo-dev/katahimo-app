@@ -150,7 +150,7 @@ export class GoogleSchedulePort implements SchedulePort {
         details: { source: 'schedule' },
       });
     }
-    // 閲覧(view / refresh)は対象スタッフの予定が載りうるカレンダーだけを読む(selectViewCalendarSources)。
+    // 閲覧(view / refresh)は他のスタッフの予定のカレンダーを読まない(自分のカレンダーと共有カレンダー全部。selectViewCalendarSources)。
     // strict(翌日の予定のお知らせ)と fresh(出勤簿への同期)は取りこぼさないよう全カレンダーを読む。
     // お知らせは1日1回のジョブで読み込み数の心配が小さく、内容を出勤簿に入る予定(夜間の同期)と揃えるため絞らない。
     const readSources = mode === 'strict' ? sources : selectViewCalendarSources(sources, staff);
