@@ -384,33 +384,30 @@ async function runJourney() {
           sent.customerId,
         `AI に送る日報AIの材料が違う: ${JSON.stringify(sent)}`,
       );
-      await page.locator('#warningsArea').filter(visible).waitFor({ timeout: 20_000 });
-      const text = (await page.locator('#warningsList').innerText()).trim();
+      // AIで書けなくても(API キー未設定)、理由を出して結果欄と「保存する」を開き、手で書いて保存できる
+      await page.locator('#aiFailureArea').filter(visible).waitFor({ timeout: 20_000 });
+      const text = (await page.locator('#aiFailureArea').innerText()).trim();
       assert(/API Key/.test(text), `AIキー未設定の知らせが出ない: ${text}`);
-      assert(!(await page.locator('#saveBtn').isVisible()), 'AIが失敗したのに保存ボタンが出ている');
+      await page.locator('#internalResult').filter(visible).waitFor({ timeout: 10_000 });
+      assert(
+        await page.locator('#saveBtn').isVisible(),
+        'AIが失敗したときに保存ボタンが出ない(手で書いて送れない)',
+      );
       return `知らせ: ${text.replace(/\s+/g, ' ').slice(0, 60)}`;
     });
 
-    await step(page, 'report-save-api', async () => {
-      // AIが使えないと画面からは保存できない(GAS版と同じ)ため、同じ入力をAPIで保存する
-      const customers = await page.request.get(`${WEB_URL}/api/customers`);
-      assert(customers.ok(), `GET /api/customers が ${customers.status()}`);
-      const body = (await customers.json()) as { customers: { id: string; name: string }[] };
-      const target = body.customers.find((c) => c.name.startsWith('佐藤'));
-      assert(target, 'お客様「佐藤」が見つからない');
-      const res = await page.request.post(`${WEB_URL}/api/reports/daily`, {
-        data: {
-          customerId: target.id,
-          reportDate: today,
-          startTime: '09:00',
-          endTime: '11:00',
-          inputText: '公園で外遊び。お昼ごはんの手伝い。(e2e)',
-          internalText: '【サポート内容】\n公園で外遊び(e2e)',
-          customerText: '本日もありがとうございました(e2e)',
-        },
-      });
-      assert(res.ok(), `POST /api/reports/daily が ${res.status()}: ${await res.text()}`);
-      return ((await res.json()) as { message?: string }).message ?? '';
+    await step(page, 'report-save-manual', async () => {
+      // AIで書けなかったので、結果欄に手で書いて画面から保存する
+      await page.locator('#internalResult').fill('【サポート内容】\n公園で外遊び(e2e)');
+      await page.locator('#customerResult').fill('本日もありがとうございました(e2e)');
+      const saved = await clickForResponse<{ message?: string; report: { id: string } }>(
+        page,
+        'POST',
+        '/api/reports/daily',
+        () => page.locator('#saveBtn').click(),
+      );
+      await page.locator('#saveBtn', { hasText: '✅ 保存しました' }).waitFor({ timeout: 10_000 });
+      return saved.message ?? '';
     });
 
     /** この回に送った領収書の束(領収書の一覧の手順で、その画像を開く) */
