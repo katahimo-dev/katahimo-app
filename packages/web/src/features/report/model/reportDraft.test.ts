@@ -155,7 +155,7 @@ describe('戻す(GAS版 applyPendingReportDraft_)', () => {
 
   it('お知らせの文', () => {
     expect(draftRestoredMessage({ customerId: 'x', customerName: '田中 さくら' })).toBe(
-      '前回の田中 さくら様の日報が保存されていません。続きを書いて保存してください',
+      '前回の田中 さくら様の日報が保存されていません。続きを書いて保存するか、要らなければ「破棄する」を押してください',
     );
   });
 });

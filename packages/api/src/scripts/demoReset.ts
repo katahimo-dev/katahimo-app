@@ -3,7 +3,7 @@ import { loadDotenv } from '../loadDotenv';
 loadDotenv();
 
 import type { StoredFileRow } from '@katahimo/core/ports';
-import { provisionTenant } from '@katahimo/core/usecases';
+import { provisionTenant, readTenantSecret } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import {
   DrizzleTenantCalendarSettingsStore,
@@ -104,6 +104,9 @@ export async function resetDemoTenant(
   const existing = await tenantDirectory.findBySlug(slug);
   // 運用担当者の設定(`pnpm tenant:calendars` の共有カレンダー等)はテナントの行にあり、消去で消えるため引き継ぐ
   const keptCalendarSettings = existing ? await calendarSettings.get(existing.id) : null;
+  // 管理画面で保存した Gemini の API キーも、テナントの消去で消えるため引き継ぐ(封はテナントの ID に結び付くので、
+  // 開いて新しいテナントで封をし直す。開けないときは引き継がない)
+  const keptGeminiApiKey = existing ? await readTenantSecret(container, existing.id, 'gemini_api_key') : '';
   if (existing && existing.name !== DEMO_TENANT_NAME) {
     // demo:reset が作ったテナントでなければ消さない(slug の取り違えで本物のテナントを消さないための2つ目の歯止め)
     throw new Error(
@@ -130,6 +133,12 @@ export async function resetDemoTenant(
     console.log(
       `[demo:reset] カレンダーの設定を引き継ぎました(共有カレンダー ${keptCalendarSettings.sharedCalendars.length}件)`,
     );
+  }
+
+  if (keptGeminiApiKey) {
+    const sealed = await container.secretBox.seal(tenant.id, 'gemini_api_key', keptGeminiApiKey);
+    await container.uow.run(tenant.id, (r) => r.secrets.put('gemini_api_key', sealed, null));
+    console.log('[demo:reset] Gemini の API キーを引き継ぎました');
   }
 
   const summary = await seedDemoTenant(container, tenant, now);

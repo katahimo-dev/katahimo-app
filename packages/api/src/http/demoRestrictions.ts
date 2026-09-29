@@ -17,7 +17,8 @@ import { apiError } from './responses';
  * 「1人の操作で他の訪問者のデモを壊す」「外へ送る」ものだけにする:
  * - デモ用アカウント(`DEMO_ACCOUNTS`)のパスワードの変更・再設定、変更・削除(ログインできなくなる)
  * - スタッフの xlsx の取込・パスワード案内メール、顧客 CSV の取込(データを丸ごと入れ替える・メールを送る)
- * - Gemini の API キー、Google Chat の通知先の保存(訪問者の入れた先へ外部送信が起きる)
+ * - Google Chat の通知先の保存(訪問者の入れた先へ外部送信が起きる)。Gemini の API キーは保存できる(デモでも実際に
+ *   AI で書けるように。毎晩の作り直しでも引き継ぐ)
  * また、アカウント単位のログインのロックはしない(誰かがわざと間違え続けると全員がログインできなくなるため。
  * 送信元IP単位のロックは残す)。AI(日報・事故報告の生成、領収書の読み取り)は1回のログインで
  * `DEMO_AI_USES_PER_SESSION` 回まで。
@@ -107,12 +108,8 @@ export const DEMO_RESTRICTION_RULES: readonly DemoRestrictionRule[] = [
   // 操作ログには他の訪問者の送信元IP・ブラウザが残るため、共有の管理者アカウントには見せない
   { name: 'audit_log.view', method: 'GET', path: /^\/api\/admin\/audit-logs$/, tenant: 'session' },
   { name: 'audit_log.export', method: 'GET', path: /^\/api\/admin\/audit-logs\.csv$/, tenant: 'session' },
-  {
-    name: 'settings.gemini_api_key.save',
-    method: 'POST',
-    path: /^\/api\/settings\/admin\/gemini-key$/,
-    tenant: 'session',
-  },
+  // Gemini の API キーの保存は断らない(運用担当者がデモでも実際に AI で書けるようにするため。回数は enforceAiQuota で
+  // 絞り、キーは demo:reset が引き継ぐ。GET は伏せ字しか返さないので、訪問者に保存済みのキーは見えない)
   {
     name: 'settings.gchat_webhooks.save',
     method: 'POST',

@@ -101,9 +101,12 @@ export function showToast(message: string, isError = false) {
   toastStore.show(message, isError);
 }
 
-/** ボタンつきのお知らせ(押すか「閉じる」まで消えない)。GAS版には無い(新しい版のお知らせに使う)。 */
-export function showActionToast(message: string, action: ToastAction) {
-  toastStore.show(message, false, action);
+/**
+ * ボタンつきのお知らせ(押すか「閉じる」まで消えない)。GAS版には無い(新しい版のお知らせ、書きかけの日報の「破棄する」に使う)。
+ * isError なら赤で出す。
+ */
+export function showActionToast(message: string, action: ToastAction, isError = false) {
+  toastStore.show(message, isError, action);
 }
 
 /** GAS版 hideToast() と同じ。 */

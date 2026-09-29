@@ -103,6 +103,38 @@ describe('useReportController', () => {
     ).toEqual(['c1']);
   });
 
+  it('戻した書きかけは、お知らせの「破棄する」で消して空の入力に戻せる(確かめて断れば残す)', async () => {
+    localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({
+        customerId: 'c1',
+        customerName: '明智 光秀',
+        mode: 'daily',
+        inputText: '間違えたメモ',
+      }),
+    );
+    const { result } = renderController(sessionFor('c2', 1));
+    expect(result.current.form.memo).toBe('間違えたメモ');
+    const toast = toastStore.getState();
+    expect(toast.isError).toBe(true);
+    expect(toast.message).toContain('明智 光秀様の日報が保存されていません');
+    expect(toast.action?.label).toBe('破棄する');
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false);
+    act(() => toast.action?.run());
+    expect(localStorage.getItem(DRAFT_KEY)).not.toBeNull();
+    expect(result.current.form.memo).toBe('間違えたメモ');
+    // 断ったら同じお知らせを出し直す
+    expect(toastStore.getState().action?.label).toBe('破棄する');
+
+    confirmSpy.mockReturnValueOnce(true);
+    act(() => toastStore.getState().action?.run());
+    expect(localStorage.getItem(DRAFT_KEY)).toBeNull();
+    expect(result.current.form.memo).toBe('');
+    expect(toastStore.getState().message).toBe('書きかけを破棄しました');
+    confirmSpy.mockRestore();
+  });
+
   it('保存を待つ間に別のお客様で開き直したら、遅れて届いた結果で今の入力を「保存済み」にしない', async () => {
     const { result, rerender } = renderController(sessionFor('c1', 1));
     act(() => result.current.actions.setMemo('前のお客様のメモ'));

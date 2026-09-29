@@ -104,9 +104,12 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `POST /api/auth/change-password`、`POST /api/auth/password-reset/request`・`/confirm`(本文の `tenantSlug` がデモ用テナント) | 共有のアカウントでログインできなくなる・メールが外に出る |
 | `PATCH`・`DELETE /api/admin/staff/:id`(デモ用アカウント `DEMO_ACCOUNTS` だけ。他のスタッフは編集できる)、`POST /api/admin/staff/:id/password-guide`、`POST /api/admin/staff/import` | 同上 |
 | `POST /api/admin/customers/import` | 顧客を丸ごと入れ替える |
-| `POST /api/settings/admin/gemini-key`・`/gchat-webhooks` | 訪問者の入れたキー・送り先へ外部送信が起きる。AI の設定は全員に効く |
+| `POST /api/settings/admin/gchat-webhooks` | 訪問者の入れた送り先へ外部送信が起きる |
 | `GET /api/admin/audit-logs`・`/audit-logs.csv` | 操作ログに他の訪問者の送信元IP・ブラウザが残る(共有の管理者アカウントで見られる) |
 
+- Gemini の API キー(`POST /api/settings/admin/gemini-key`)は断らない。運用担当者がデモ用の管理者で保存すれば、デモでも実際に AI で書ける
+  (回数は下の上限。保存済みのキーは伏せ字でしか返さない。`demo:reset` が新しいテナントへ封をし直して引き継ぐ。07 3.9)。
+  共有の管理者アカウントなので、訪問者も上書きできる(そのときは保存し直す)。
 - 応答は 403 `{ code: 'forbidden', message: 'デモ環境ではこの操作はできません。' }`、WARN `demo.action_refused`(`details.rule` に規則名)。
 - テナントはセッション Cookie の先頭(テナント ID)か本文の `tenantSlug` で決める(断るかどうかの判定だけ。認証は各ルートが行う)。
 - ログイン: デモ用テナントはアカウント単位のロック(`login_failure_account`)をしない(わざと間違え続けて全員を締め出させない)。

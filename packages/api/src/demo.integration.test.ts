@@ -149,10 +149,10 @@ describe('公開デモ: 断る操作', () => {
     expect(del.status).toBe(403);
   });
 
-  it('外部への送信の設定は 403(普通のテナントでは断らない)', async () => {
+  it('Google Chat の通知先の保存は 403(普通のテナントでは断らない)。Gemini の API キーは保存できる', async () => {
     const cookie = await cookieOf(demoSlug, admin.email, DEMO_PASSWORD);
     const key = await post('/api/settings/admin/gemini-key', { apiKey: 'AIza-demo' }, cookie);
-    expect(key.status).toBe(403);
+    expect(key.status).toBe(200);
     const hooks = await post(
       '/api/settings/admin/gchat-webhooks',
       { reportWebhookUrl: 'https://example.com/a', receiptWebhookUrl: '' },

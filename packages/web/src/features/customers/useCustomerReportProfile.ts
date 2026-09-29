@@ -46,7 +46,7 @@ export function useCustomerReportProfile(customerId: string | null, enabled = tr
     educationLevel: profile ? profile.educationLevel : undefined,
     updatedByName: profile?.updatedByName ?? null,
     saving: save.isPending,
-    /** null は未設定(☆0)に戻す。 */
+    /** null は未設定に戻す(画面からは使わない。未設定は★2 として見せる)。 */
     setEducationLevel: (level: number | null) => {
       if (!customerId || !profile) return;
       save.mutate({ id: customerId, level, rowVersion: profile.rowVersion });

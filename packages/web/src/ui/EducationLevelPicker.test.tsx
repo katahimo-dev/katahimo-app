@@ -17,30 +17,31 @@ function renderPicker(educationLevel: number | null | undefined, onSelect = vi.f
 }
 
 describe('EducationLevelPicker', () => {
-  it('★で選び、選んだ段階の呼称と教育語の使い方を出す。☆0 で未設定に戻す', () => {
+  it('★で選び、選んだ段階の呼称と教育語の使い方を出す', () => {
     const onSelect = renderPicker(3);
     const group = screen.getByRole('radiogroup', { name: /教育思考★/ });
     expect(within(group).getByRole('radio', { name: '★3' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByText('★3 やや関心あり')).toBeTruthy();
     expect(screen.getByText('教育語: 平易な教育概念を1語、意味づけとともに。')).toBeTruthy();
+    // ☆0(未設定に戻す)は置かない
+    expect(within(group).getAllByRole('radio')).toHaveLength(5);
 
     fireEvent.click(within(group).getByRole('radio', { name: '★5' }));
     expect(onSelect).toHaveBeenLastCalledWith(5);
-    fireEvent.click(within(group).getByRole('radio', { name: '☆0 未設定' }));
-    expect(onSelect).toHaveBeenLastCalledWith(null);
     // 選んでいる★をもう一度押しても送らない
     onSelect.mockClear();
     fireEvent.click(within(group).getByRole('radio', { name: '★3' }));
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('未設定は ☆0 を選んだ状態にし、★2 として書くことを出す。矢印キーでも選べる', () => {
+  it('未設定は★2 標準を選んだ状態で見せ、★2 を押しても送らない。矢印キーでも選べる', () => {
     const onSelect = renderPicker(null);
-    const zero = screen.getByRole('radio', { name: '☆0 未設定' });
-    expect(zero.getAttribute('aria-checked')).toBe('true');
-    expect(screen.getByText('未設定（★2 標準として書きます）')).toBeTruthy();
+    expect(screen.getByRole('radio', { name: '★2' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByText('★2 標準')).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: '★2' }));
+    expect(onSelect).not.toHaveBeenCalled();
     fireEvent.keyDown(screen.getByRole('radiogroup'), { key: 'ArrowRight' });
-    expect(onSelect).toHaveBeenLastCalledWith(1);
+    expect(onSelect).toHaveBeenLastCalledWith(3);
   });
 
   it('保存中は押しても送らず、フォーカスは★に残す(disabled にしない)', () => {
