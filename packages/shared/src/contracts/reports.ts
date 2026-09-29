@@ -120,12 +120,15 @@ export type GenerateReportRequest = z.infer<typeof generateReportRequestSchema>;
  *   世帯にアーカイブされていない子がちょうど1人ならその子(画面の自動選択と同じ)
  * - riskRating: 生成の前に付けた PSI(未評価は省略。言葉の絞り込みは PSI 4 = 通常運用として扱う)
  * - reportDate: 訪問日(月齢を数える日。省略時はテナントの今日)
+ * - model: 試すモデル(GET /api/reports/daily/generate/models の1つ。省略時は設定のモデル)。API エラーのとき
+ *   画面が次のモデルを指定して呼び直す。設定のモデルか Flash / Flash-Lite 系の名前以外は 400 `model_not_allowed`
  */
 export const generateDailyReportRequestSchema = generateReportRequestSchema.extend({
   customerId: idSchema,
   careRecipientId: idSchema.nullable().optional(),
   riskRating: z.number().int().min(1).max(5).nullable().optional(),
   reportDate: recordDateSchema.optional(),
+  model: z.string().trim().min(1).max(100).optional(),
 });
 export type GenerateDailyReportRequest = z.input<typeof generateDailyReportRequestSchema>;
 
@@ -165,12 +168,25 @@ export const dailyReportAiInfoSchema = z.object({
   educationLevel: z.number().int(),
   /** PSI で調整したあとの★(PSI 2 以下は教育語を使わないので null)。 */
   effectiveEducationLevel: z.number().int().nullable(),
+  /** この生成で使ったモデル(API キーが無ければ null)。 */
+  model: z.string().nullable(),
+  /** API エラーで、次のモデルで試し直す意味があるか(API キーの誤り・未設定は false)。 */
+  retryable: z.boolean(),
 });
 export type DailyReportAiInfo = z.infer<typeof dailyReportAiInfoSchema>;
 export const generateDailyReportResponseSchema = z.object({
   draft: dailyReportDraftSchema,
   ai: dailyReportAiInfoSchema,
 });
+
+/**
+ * GET /api/reports/daily/generate/models の応答。API エラーのとき試すモデルの順番(設定のモデル → Gemini Flash 系 →
+ * Flash-Lite 系、新しい版から。最大8件)。API キーが無ければ空(モデルを指定せずに1回だけ呼ぶ)。
+ */
+export const dailyReportModelsResponseSchema = z.object({
+  models: z.array(z.string()),
+});
+export type DailyReportModelsResponse = z.infer<typeof dailyReportModelsResponseSchema>;
 
 /** POST /api/reports/accident/generate の応答。失敗時は draft が { error }(GAS版と同じ)。 */
 export const accidentReportDraftSchema = z.object({

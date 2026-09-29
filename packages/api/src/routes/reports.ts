@@ -4,6 +4,7 @@ import {
   generateDailyReportDraft,
   getCustomerHistory,
   getReportDetail,
+  listDailyReportModels,
   listReports,
   saveAccidentReport,
   saveDailyReport,
@@ -12,6 +13,7 @@ import {
 import {
   customerHistoryQuerySchema,
   customerHistoryResponseSchema,
+  dailyReportModelsResponseSchema,
   generateAccidentReportResponseSchema,
   generateDailyReportRequestSchema,
   generateDailyReportResponseSchema,
@@ -61,6 +63,12 @@ export function createReportRoutes(container: Container) {
     if (limited) return limited;
     const result = await generateDailyReportDraft(container, actorOf(c), body.data);
     return jsonOk(c, generateDailyReportResponseSchema, result);
+  });
+
+  /** 保育日報の生成で試すモデルの順番(API エラーのとき画面がこの順に model を変えて呼び直す)。 */
+  app.get('/daily/generate/models', requireSession(container), async (c) => {
+    const models = await listDailyReportModels(container, actorOf(c));
+    return jsonOk(c, dailyReportModelsResponseSchema, { models });
   });
 
   /** 事故報告/ヒヤリハットの下書きをAI生成する(GAS版 generateAccidentReport)。 */

@@ -2,6 +2,7 @@ export * from './careRecord';
 export * from './history';
 export * from './jstTime';
 export * from './listing';
+export * from './modelFallback';
 export * from './notificationText';
 export * from './promptAssembly';
 export * from './receiptCancel';

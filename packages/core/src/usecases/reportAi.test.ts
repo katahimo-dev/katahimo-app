@@ -3,17 +3,24 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ESCALATION_WARNING } from '../domain';
 import type { DailyReportDraft, ReportAiPort } from '../ports/ai';
 import { reportAiFixtureMasters } from '../testSupport/reportAiFixtures';
-import { generateAccidentReportDraft, generateDailyReportDraft, type ReportAiDeps } from './reportAi';
+import {
+  generateAccidentReportDraft,
+  generateDailyReportDraft,
+  listDailyReportModels,
+  type ReportAiDeps,
+} from './reportAi';
 import type { Actor } from './requestMeta';
 import { createTestContext, type TestContext } from './testContext';
 
 /** 送られたプロンプトを覚え、決めた答えを返す AI。 */
 function fakeAi(answer: DailyReportDraft = { warnings: [], internal: '社内', customer: '保護者' }) {
   const prompts: string[] = [];
+  const models: (string | undefined)[] = [];
   const port: ReportAiPort = {
     reportModel: 'test-model',
-    async generateDailyReport({ prompt }) {
+    async generateDailyReport({ prompt, model }) {
       prompts.push(prompt);
+      models.push(model);
       return structuredClone(answer);
     },
     async generateAccidentReport({ prompt }) {
@@ -24,7 +31,7 @@ function fakeAi(answer: DailyReportDraft = { warnings: [], internal: '社内', c
       return { amount: '', storeName: '', receiptDate: '' };
     },
   };
-  return { port, prompts };
+  return { port, prompts, models };
 }
 
 /** テナントのマスターを入れる(架空の中身)。 */
@@ -180,6 +187,75 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
     expect(result.draft.warnings).toEqual(['API Key Missing']);
     expect(ctx.data().reportAiGenerations[0]).toMatchObject({ output: null, errorCode: 'api_key_missing' });
     expect(ctx.appLog.actions()).toContain('ai.daily_report.generate_failed');
+  });
+
+  it('試すモデルの順番は 設定のモデル → Flash 系 → Flash-Lite 系(使えるモデルの一覧から。読めなければ既知の名前)', async () => {
+    ai.port.availableModels = async () => [
+      'gemini-2.0-flash-lite',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+      'gemini-2.5-flash-lite',
+      'gemini-2.5-flash-preview-tts',
+    ];
+    expect(await listDailyReportModels(deps, staff)).toEqual([
+      'test-model',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+      'gemini-2.0-flash-lite',
+    ]);
+    ai.port.availableModels = async () => null;
+    expect((await listDailyReportModels(deps, staff))[1]).toBe('gemini-2.5-flash');
+  });
+
+  it('API キーが無ければ試すモデルは無く、モデルを指定すると 400', async () => {
+    const noop: ReportAiPort = { ...ai.port, reportModel: null };
+    deps = { ...deps, reportAi: noop, reportAiFactory: { create: () => noop } };
+    expect(await listDailyReportModels(deps, staff)).toEqual([]);
+    await expect(
+      generateDailyReportDraft(deps, staff, { text: 'メモ', customerId, model: 'gemini-2.5-flash' }),
+    ).rejects.toMatchObject({ code: 'validation_failed', reason: 'model_not_allowed' });
+  });
+
+  it('指定したモデルで呼び、失敗はモデル名つきで残す。Flash / Flash-Lite 系以外は 400(AI を呼ばない)', async () => {
+    ai = fakeAi({ warnings: ['API Error'], internal: '混み合っています', customer: '', retryable: true });
+    deps = { ...deps, reportAi: ai.port, reportAiFactory: { create: () => ai.port } };
+    const failed = await generateDailyReportDraft(deps, staff, {
+      text: 'メモ',
+      customerId,
+      model: 'gemini-2.0-flash',
+    });
+    expect(ai.models).toEqual(['gemini-2.0-flash']);
+    expect(failed.ai).toMatchObject({ model: 'gemini-2.0-flash', retryable: true });
+    expect(failed.draft).toEqual({ warnings: ['API Error'], internal: '混み合っています', customer: '' });
+    expect(ctx.data().reportAiGenerations[0]).toMatchObject({
+      model: 'gemini-2.0-flash',
+      errorCode: 'api_error',
+    });
+    expect(ctx.appLog.byAction('ai.daily_report.generate_failed')[0]?.details).toMatchObject({
+      model: 'gemini-2.0-flash',
+      fallback: true,
+      retryable: true,
+    });
+
+    await expect(
+      generateDailyReportDraft(deps, staff, { text: 'メモ', customerId, model: 'gemini-2.5-pro' }),
+    ).rejects.toMatchObject({ code: 'validation_failed', reason: 'model_not_allowed' });
+    expect(ai.models).toHaveLength(1);
+  });
+
+  it('切り替えた先のモデルで書けたら WARN で残す(設定のモデルで書けたときは残さない)', async () => {
+    await generateDailyReportDraft(deps, staff, { text: 'メモ', customerId, model: 'test-model' });
+    expect(ctx.appLog.actions()).not.toContain('ai.daily_report.model_fallback_succeeded');
+    const result = await generateDailyReportDraft(deps, staff, {
+      text: 'メモ',
+      customerId,
+      model: 'gemini-2.5-flash-lite',
+    });
+    expect(result.ai).toMatchObject({ model: 'gemini-2.5-flash-lite', retryable: false });
+    expect(ctx.appLog.byAction('ai.daily_report.model_fallback_succeeded')[0]).toMatchObject({
+      level: 'WARN',
+      details: { model: 'gemini-2.5-flash-lite', configuredModel: 'test-model' },
+    });
   });
 
   it('対象のお子様を省略すると世帯の子が1人ならその子の月齢で絞る(null は選ばない)', async () => {

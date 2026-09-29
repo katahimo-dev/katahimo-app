@@ -22,6 +22,8 @@ describe('AIが書いた日報', () => {
           childAgeMonths: 14,
           educationLevel: 2,
           effectiveEducationLevel: 2,
+          model: 'gemini-2.5-flash',
+          retryable: false,
         }}
       />,
     );
