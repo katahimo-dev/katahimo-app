@@ -131,7 +131,7 @@
 | 文字の大きさ | ふつう・大きい・とても大きい(`app_text_size`) | 同じ | 同等 |
 | 版数 | 「Ver. 1.1.0」(手で書いた値) | `packages/web/package.json` の version | 同等 |
 | Gemini の APIキー | 平文で返し「表示」で見せる | 伏せ字と設定済みの印だけを返す。伏せ字の一部だけ書き換えた値は 400 | 改善 |
-| Gemini のモデル・最新のモデル一覧 | `saveGeminiModelSettingsForAdmin` / `listAvailableGeminiModelsForAdmin`(管理者がモデルを選ぶ) | 無い。モデルは自動で選ぶ(日報・事故報告は Flash 系 → Flash-Lite 系、領収書の読み取りは Flash-Lite 系。使えないモデルは次に切り替える。05 6章)。GAS版にも同じ変更を並行して入れる | 変更(モデルの入れ替わりで管理者が設定し直さなくてよいように) |
+| Gemini のモデル・最新のモデル一覧 | `saveGeminiModelSettingsForAdmin` / `listAvailableGeminiModelsForAdmin`(管理者がモデルを選ぶ) | 無い。モデルは自動で選ぶ(日報・事故報告は Flash 系 → Flash-Lite 系、領収書の読み取りは Flash-Lite 系。使えないモデルは次に切り替える。05 6章) | 同等(GAS版 Ver. 1.1.50 も同じく自動で選ぶ。モデルの入れ替わりで管理者が設定し直さなくてよいように) |
 | Google Chat の Webhook | 平文で返す | 伏せ字だけ。`https://chat.googleapis.com/v1/spaces/…` だけ受け付ける | 改善 |
 | 通知(翌日の予定のお知らせ) | — | 「翌日の予定を通知する」「テスト通知を送る」(8章) | 改善 |
 | アプリとして使う(PWA) | ブラウザで Web App の URL を開く | ホーム画面に追加できる。新しい版はお知らせの「更新する」で切り替える(書きかけを消さない) | 改善 |
