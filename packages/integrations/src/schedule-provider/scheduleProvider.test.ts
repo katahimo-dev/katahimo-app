@@ -17,7 +17,7 @@ const google = { GOOGLE_MAPS_API_KEY: 'key', GOOGLE_APPLICATION_CREDENTIALS: '/s
 const deps: ScheduleServiceDeps = {
   directory: { load: async () => ({ staff: [], customers: [], calendarSettings: EMPTY_CALENDAR_SETTINGS }) },
   appLog: { write: async () => {} },
-  routeCache: new InMemoryTtlCache({ maxEntries: 1 }),
+  mapsCache: new InMemoryTtlCache({ maxEntries: 1 }),
   tenants: {
     findById: async (id) =>
       ({ cutest: 'cutest', other: 'other' })[id]

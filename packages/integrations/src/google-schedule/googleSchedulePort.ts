@@ -23,17 +23,18 @@ import type {
   ScheduleWithRouteResult,
 } from '@katahimo/core/ports';
 import { type CalendarSource, resolveCalendarSources } from './calendarSources';
-import { RouteCalculator } from './routeCalculator';
-
-/** GAS版 ROUTE_RESULT_CACHE_TTL_SEC と同じ2時間(ブラウザ側のキャッシュ期限とも揃えている)。 */
-export const ROUTE_RESULT_CACHE_TTL_SECONDS = 2 * 60 * 60;
+import { type MapsResultCache, RouteCalculator } from './routeCalculator';
 
 export interface GoogleSchedulePortDeps {
   calendar: GoogleCalendarPort;
   maps: MapsPort;
   directory: ScheduleDirectoryPort;
-  /** ルート結果の共有キャッシュ(閲覧用。fresh指定時は読み書きしない)。 */
-  routeCache: CachePort;
+  /**
+   * 区間ごとのルート・住所ごとのジオコーディングの結果の共有キャッシュ(RouteCalculator)。
+   * 閲覧は読み書き、forceRefresh は書くだけ、fresh(公式記録への書き込み)は読みも書きもしない。
+   * 予定(カレンダー)そのものはキャッシュしない。
+   */
+  mapsCache: CachePort;
   appLog: AppLogPort;
 }
 
@@ -54,6 +55,9 @@ interface StaffAppointments {
  * GAS版 RouteSearch.js の getScheduleForStaffOnDate / getScheduleWithRouteForStaffOnDate を
  * 置き換え、GasBridgeSchedulePort と同じ形の結果を返す。分類・経路の組み立ては
  * @katahimo/core の domain/schedule(GAS版ロジックの移植)に任せ、ここは取得と実行だけを行う。
+ *
+ * GAS版はスタッフ×日の「予定+ルート」を丸ごと2時間キャッシュしていたが、それでは担当変更がすぐ出ないため、
+ * 閲覧でも予定は毎回カレンダーから読む。地図APIの呼び出し(従量課金)は区間・住所ごとのキャッシュで減らす。
  */
 export class GoogleSchedulePort implements SchedulePort {
   constructor(private readonly deps: GoogleSchedulePortDeps) {}
@@ -83,24 +87,20 @@ export class GoogleSchedulePort implements SchedulePort {
   ): Promise<ScheduleWithRouteResult> {
     const query = parseQuery(target, dateString, options);
     const fresh = options?.fresh === true;
-    const cacheKey = routeCacheKey(query);
-
-    if (!fresh && !forceRefresh) {
-      const cached = await this.deps.routeCache.get<ScheduleWithRouteResult>(cacheKey);
-      if (cached) return cached;
-    }
 
     // 勤怠記録を書く経路(fresh)では、読めないカレンダーがあれば予定が欠けたまま記録しないよう失敗させる。
     const { staff, appointments } = await this.loadStaffAppointments(query, { strict: fresh });
-    const result: ScheduleWithRouteResult = {
+    // fresh は地図の結果も使い回さない(公式記録の距離はその時点で調べた値にする)。
+    // 🔄 最新にする(forceRefresh)はキャッシュを読まずに調べ、結果は以後の閲覧のために書き直す。
+    const mapsCache: MapsResultCache | null = fresh
+      ? null
+      : { cache: this.deps.mapsCache, tenantId: query.tenantId, read: !forceRefresh };
+    return {
       success: true,
       date: query.date,
       staffName: query.staffName,
-      appointments: staff ? await this.withRoutes(query, staff, appointments) : [],
+      appointments: staff ? await this.withRoutes(query, staff, appointments, mapsCache) : [],
     };
-
-    if (!fresh) await this.deps.routeCache.set(cacheKey, result, ROUTE_RESULT_CACHE_TTL_SECONDS);
-    return result;
   }
 
   private async loadStaffAppointments(
@@ -169,8 +169,13 @@ export class GoogleSchedulePort implements SchedulePort {
     return events;
   }
 
-  private async withRoutes(query: ScheduleQuery, staff: ScheduleStaff, appointments: Appointment[]) {
-    const calculator = new RouteCalculator(this.deps.maps, query.date, staff.travelMode);
+  private async withRoutes(
+    query: ScheduleQuery,
+    staff: ScheduleStaff,
+    appointments: Appointment[],
+    mapsCache: MapsResultCache | null,
+  ) {
+    const calculator = new RouteCalculator(this.deps.maps, query.date, staff.travelMode, mapsCache);
     const withRoutes = await Promise.all(
       planRouteLegs(appointments, staff.home).map(async (plan) =>
         toAppointmentWithRoute(plan.appointment, await calculator.summarizePlan(plan)),
@@ -201,9 +206,4 @@ function parseQuery(
   }
   if (!options?.tenantId) throw new Error('GoogleSchedulePort には tenantId の指定が必要です。');
   return { tenantId: options.tenantId, staffId: target.staffId, staffName: trimmedName, date: dateString };
-}
-
-/** 結果の形を変えたら v を上げる(古い形のキャッシュを読ませないため。GAS版 RS_ROUTE_V2_ と同じ考え方)。 */
-function routeCacheKey({ tenantId, staffId, date }: ScheduleQuery): string {
-  return `schedule-route:v2:${tenantId}:${staffId}:${date}`;
 }

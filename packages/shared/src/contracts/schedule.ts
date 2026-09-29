@@ -83,7 +83,7 @@ export const scheduleQuerySchema = z.object({
   staffId: idSchema.optional(),
 });
 
-/** GET /api/schedule/route。forceRefresh=1 でキャッシュを使わずに再計算する(回数制限あり)。 */
+/** GET /api/schedule/route。予定は毎回カレンダーから読む。forceRefresh=1 で地図の結果のキャッシュも使わずに再計算する(回数制限あり)。 */
 export const scheduleRouteQuerySchema = scheduleQuerySchema.extend({
   forceRefresh: z.enum(['0', '1']).optional(),
 });

@@ -77,7 +77,8 @@ export interface ScheduleRequestOptions {
 
 export interface ScheduleWithRouteOptions extends ScheduleRequestOptions {
   /**
-   * trueの場合、共有ルートキャッシュを読みも書きもせず、必ずその時点のカレンダーから計算する。
+   * trueの場合、地図の結果(区間ごとのルート・ジオコーディング)の共有キャッシュを読みも書きもせず、
+   * その時点のカレンダーと地図APIから計算する(予定そのものは fresh でなくても毎回カレンダーから読む)。
    * 公式な勤怠記録(出勤簿・勤怠集計)へ書き込む経路は必ずtrueにすること
    * (GAS版 refreshAttendanceForStaffOnDate がキャッシュを使わないのと同じ規則)。
    */
@@ -100,8 +101,10 @@ export interface SchedulePort {
     options?: ScheduleRequestOptions,
   ): Promise<ScheduleLightResult>;
   /**
-   * forceRefresh=true は「🔄 再取得」ボタン用: キャッシュを読まずに再計算し、結果はキャッシュに
+   * 予定は毎回カレンダーから読む(担当変更をすぐ出す)。キャッシュするのは地図の結果(区間・住所ごと)だけ。
+   * forceRefresh=true は「🔄 最新にする」ボタン用: 地図の結果のキャッシュを読まずに調べ直し、結果はキャッシュに
    * 書き直す(以後の閲覧に反映させるため)。キャッシュに一切触れない場合は options.fresh を使う。
+   * (gas_bridge では GAS版側のスタッフ×日のキャッシュのまま。forceRefresh / fresh だけが読み飛ばす)
    */
   getScheduleWithRoute(
     target: ScheduleTarget,

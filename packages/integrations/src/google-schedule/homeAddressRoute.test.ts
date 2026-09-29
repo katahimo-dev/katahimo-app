@@ -91,7 +91,7 @@ describe('自宅住所だけのスタッフの出勤・退勤経路', () => {
       },
       maps,
       directory: createScheduleDirectory({ uow: ctx.uow }),
-      routeCache: new InMemoryTtlCache({ maxEntries: 10 }),
+      mapsCache: new InMemoryTtlCache({ maxEntries: 10 }),
       appLog: ctx.appLog,
     });
     const deps = { ...ctx.deps, schedule };

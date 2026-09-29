@@ -27,3 +27,19 @@ export function scheduleDateFor(offset: ScheduleOffset, now: Date = new Date()):
 export function formatRouteFetchedAt(ts: number): string {
   return `${jstHHmm(ts)} 時点`;
 }
+
+/** 出している予定が最新か(useScheduleView の routeFreshness)を「HH:MM 時点」に添える文言 */
+const FRESHNESS_NOTE = {
+  fresh: '',
+  revalidating: '（最新を確認中…）',
+  stale: '（最新を読み込めませんでした）',
+} as const;
+
+/** 予定の一覧の下に出す「HH:MM 時点（最新を確認中…）」 */
+export function routeMetaText(
+  fetchedAt: number | null,
+  freshness: 'fresh' | 'revalidating' | 'stale' | null,
+): string {
+  if (fetchedAt === null) return '';
+  return `${formatRouteFetchedAt(fetchedAt)}${freshness ? FRESHNESS_NOTE[freshness] : ''}`;
+}

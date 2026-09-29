@@ -36,7 +36,7 @@ export interface ScheduleLightViewRequest extends ScheduleViewRequest {
 }
 
 export interface ScheduleRouteViewRequest extends ScheduleViewRequest {
-  /** 「🔄 再取得」ボタン。共有キャッシュを読まずに再計算する(結果はキャッシュに書き直す)。 */
+  /** 「🔄 最新にする」ボタン。地図の結果の共有キャッシュを読まずに再計算する(結果はキャッシュに書き直す)。 */
   forceRefresh: boolean;
 }
 
