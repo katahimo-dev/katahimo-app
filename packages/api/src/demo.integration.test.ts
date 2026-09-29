@@ -159,11 +159,7 @@ describe('公開デモ: 断る操作', () => {
       cookie,
     );
     expect(hooks.status).toBe(403);
-    const plain = await post(
-      '/api/settings/admin/gemini-models',
-      { reportModel: '', ocrModel: '' },
-      otherAdminCookie,
-    );
+    const plain = await post('/api/settings/admin/gemini-key', { apiKey: '' }, otherAdminCookie);
     expect(plain.status).not.toBe(403);
   });
 });

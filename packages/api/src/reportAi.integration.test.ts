@@ -340,13 +340,27 @@ describe('日報の生成 → 保存', () => {
     expect((await generate(t.staffCookie, { customerId: other.customerId })).status).toBe(404);
   });
 
-  it('API キーが無ければ試すモデルは空で、モデルを指定した生成は 400', async () => {
-    const models = await request('GET', '/api/reports/daily/generate/models', t.staffCookie);
+  it('API キーが無ければ試すモデルは空で、モデルを指定した生成は 400(日報・事故報告)', async () => {
+    const models = await request('GET', '/api/reports/generate/models', t.staffCookie);
     expect(models.status).toBe(200);
     expect(await models.json()).toEqual({ models: [] });
     const res = await generate(t.staffCookie, { customerId: t.customerId, model: 'gemini-2.5-flash' });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { fields?: Record<string, string> }).fields).toHaveProperty('model');
+    const accident = await request('POST', '/api/reports/accident/generate', t.staffCookie, {
+      text: 'ころんだ',
+      model: 'gemini-2.5-flash',
+    });
+    expect(accident.status).toBe(400);
+    const plain = await request('POST', '/api/reports/accident/generate', t.staffCookie, {
+      text: 'ころんだ',
+    });
+    expect(plain.status).toBe(200);
+    expect(await plain.json()).toEqual({
+      draft: { error: 'API Key Missing' },
+      model: null,
+      retryable: false,
+    });
   });
 
   it('保存で生成の記録を結び付け・対象のお子様を持ち、PSI 2 以下は管理者の端末に知らせを積む(同じ PSI の保存し直しでは積まない)', async () => {

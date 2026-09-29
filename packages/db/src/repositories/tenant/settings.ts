@@ -42,8 +42,6 @@ export class DrizzleTenantSettingsRepository extends TenantBound implements Tena
   async get(): Promise<TenantSettingsRecord> {
     const [row] = await this.tx
       .select({
-        geminiReportModel: tenantSettings.geminiReportModel,
-        geminiOcrModel: tenantSettings.geminiOcrModel,
         careRecordRetentionDays: tenantSettings.careRecordRetentionDays,
         customerDataVersion: tenantSettings.customerDataVersion,
       })
@@ -54,12 +52,6 @@ export class DrizzleTenantSettingsRepository extends TenantBound implements Tena
         `テナントの設定がありません(tenantId=${this.tenantId})。provision_tenant で作成してください`,
       );
     return row;
-  }
-
-  async update(
-    patch: Partial<Pick<TenantSettingsRecord, 'geminiReportModel' | 'geminiOcrModel'>>,
-  ): Promise<void> {
-    await this.tx.update(tenantSettings).set(patch).where(eq(tenantSettings.tenantId, this.tenantId));
   }
 
   async bumpCustomerDataVersion(): Promise<number> {

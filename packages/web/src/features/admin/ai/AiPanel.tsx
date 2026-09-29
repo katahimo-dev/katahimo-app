@@ -12,13 +12,13 @@ import { type MasterUsage, summarizeAiUsage } from './aiUsageModel';
 const TABS = [
   { key: 'prompts', label: '① プロンプト(指示文)' },
   { key: 'words', label: '② 日報の言葉の表' },
-  { key: 'connection', label: 'APIキー・モデル' },
+  { key: 'connection', label: 'APIキー' },
 ] as const;
 type Tab = (typeof TABS)[number]['key'];
 
 /**
  * 管理タブ「🤖 AI」。AI に関わる設定を1か所にまとめる: プロンプト(日報・事故報告の指示文の型。GAS版「ＡＩプロンプト」シート)、
- * 日報の言葉の表(日報AIの調整。お客様の日報キーワード表現マスター)、Gemini の APIキー・モデル(GAS版は設定ダイアログ)。
+ * 日報の言葉の表(日報AIの調整。お客様の日報キーワード表現マスター)、Gemini の APIキー(GAS版は設定ダイアログ。モデルは自動で選ぶ)。
  * プロンプトと表は「どちらか」ではなく、プロンプトの差し込みに表から選んだ言葉が入ることを上の「しくみ」で見せる。
  */
 export function AiPanel() {

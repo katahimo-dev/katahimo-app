@@ -38,4 +38,31 @@ describe('GeminiAiPort(日報のモデルの切り替え)', () => {
     expect(await port.availableModels()).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('事故報告は指定したモデルで呼び、失敗に試し直す意味を付ける', async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) => new Response('busy', { status: 503 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await new GeminiAiPort({ apiKey: 'key-accident' }).generateAccidentReport({
+      prompt: 'p',
+      model: 'gemini-2.5-flash',
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/models/gemini-2.5-flash:generateContent');
+    expect(result).toMatchObject({ retryable: true });
+  });
+
+  it('領収書の読み取りは指定したモデルで 30秒で打ち切り、失敗に試し直す意味を付ける', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response('{}', { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await new GeminiAiPort({ apiKey: 'key-ocr' }).extractReceiptAmount({
+      base64Image: 'data:image/jpeg;base64,AAAA',
+      model: 'gemini-2.5-flash-lite',
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/models/gemini-2.5-flash-lite:generateContent');
+    expect(timeout).toHaveBeenCalledWith(30_000);
+    expect(result).toMatchObject({ amount: '', retryable: false });
+    timeout.mockRestore();
+  });
 });

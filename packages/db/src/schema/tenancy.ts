@@ -49,7 +49,9 @@ export const tenantSettings = pgTable(
   'tenant_settings',
   {
     tenantId: tenantIdColumn(),
+    /** 使っていない(モデルは自動で選ぶようになった。アプリは読み書きしない。次の版で消せる)。 */
     geminiReportModel: text(),
+    /** 使っていない(gemini_report_model と同じ。次の版で消せる)。 */
     geminiOcrModel: text(),
     /** 介護・保育記録(care_records)の保存期間(日)。retain_until の計算に使う。 */
     careRecordRetentionDays: integer().notNull().default(1825),

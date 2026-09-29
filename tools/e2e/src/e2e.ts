@@ -707,7 +707,7 @@ async function runJourney() {
     });
 
     await step(page, 'settings-admin-note', async () => {
-      // APIキー・モデル・通知先は管理タブに移した(設定ダイアログには案内だけ)
+      // APIキー・通知先は管理タブに移した(設定ダイアログには案内だけ)
       await page
         .getByText(/「🛠 管理」タブの「🤖 AI」/)
         .filter(visible)
@@ -962,9 +962,13 @@ async function runJourney() {
     });
 
     await step(page, 'admin-ai-connection', async () => {
-      await page.getByRole('tab', { name: 'APIキー・モデル' }).click();
+      await page.getByRole('tab', { name: 'APIキー', exact: true }).click();
       await page.locator('#settingGeminiApiKey').waitFor({ state: 'visible', timeout: 10_000 });
-      await page.locator('#settingGeminiReportModel').waitFor({ timeout: 10_000 });
+      // モデルは自動で選ぶので、モデルを選ぶ欄・一覧の取得は無い
+      assert(
+        (await page.locator('#settingGeminiReportModel, #settingGeminiOcrModel').count()) === 0,
+        'APIキーの画面にモデルを選ぶ欄が残っている',
+      );
       return undefined;
     });
 

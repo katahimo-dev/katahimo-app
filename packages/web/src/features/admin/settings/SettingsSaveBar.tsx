@@ -1,7 +1,7 @@
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../components/FormField';
 import type { AdminSettingsForm } from './useAdminSettingsForm';
 
-/** APIキー・モデル / 通知先の下の「元に戻す」「保存する」。 */
+/** APIキー / 通知先の下の「元に戻す」「保存する」。 */
 export function SettingsSaveBar({
   form,
   saving,

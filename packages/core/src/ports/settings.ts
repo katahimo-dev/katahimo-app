@@ -2,16 +2,17 @@ import type { TenantSecretName } from '../domain/model';
 
 export type AiPromptKindValue = 'prompt' | 'placeholder';
 
+/**
+ * テナントの設定(tenant_settings)。gemini_report_model / gemini_ocr_model の列はモデルを自動で選ぶようになって
+ * 使っていない(読み書きしない。次の版で列を消せる。doc/03)。
+ */
 export interface TenantSettingsRecord {
-  geminiReportModel: string | null;
-  geminiOcrModel: string | null;
   careRecordRetentionDays: number;
   customerDataVersion: number;
 }
 
 export interface TenantSettingsRepository {
   get(): Promise<TenantSettingsRecord>;
-  update(patch: Partial<Pick<TenantSettingsRecord, 'geminiReportModel' | 'geminiOcrModel'>>): Promise<void>;
   /** 顧客データの版数を1上げ、上げた後の値を返す。 */
   bumpCustomerDataVersion(): Promise<number>;
 }

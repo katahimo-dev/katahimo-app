@@ -1,11 +1,9 @@
 /**
- * 管理タブの API キー・モデル・通知先の「保存する」で何を保存するか・保存してよいかを決める(GAS版 saveSettings の判定部分)。
+ * 管理タブの API キー・通知先の「保存する」で何を保存するか・保存してよいかを決める(GAS版 saveSettings の判定部分)。
  * 画面から切り離して、判定の順番と文言をテストできるようにしている。
  */
 export interface AdminSettingsValues {
   geminiApiKey: string;
-  reportModel: string;
-  ocrModel: string;
   reportWebhookUrl: string;
   receiptWebhookUrl: string;
 }
@@ -16,7 +14,6 @@ export type SaveSettingsPlan =
   | {
       kind: 'save';
       keyChanged: boolean;
-      modelsChanged: boolean;
       webhooksChanged: boolean;
       values: AdminSettingsValues;
     };
@@ -36,25 +33,20 @@ export function planSettingsSave(
 
   const values: AdminSettingsValues = {
     geminiApiKey: input.geminiApiKey.trim(),
-    reportModel: input.reportModel,
-    ocrModel: input.ocrModel,
     reportWebhookUrl: input.reportWebhookUrl.trim(),
     receiptWebhookUrl: input.receiptWebhookUrl.trim(),
   };
 
   const keyChanged = values.geminiApiKey !== loaded.geminiApiKey;
-  const modelsChanged = values.reportModel !== loaded.reportModel || values.ocrModel !== loaded.ocrModel;
   const webhooksChanged =
     values.reportWebhookUrl !== loaded.reportWebhookUrl ||
     values.receiptWebhookUrl !== loaded.receiptWebhookUrl;
 
-  if (!keyChanged && !modelsChanged && !webhooksChanged) return { kind: 'nothing' };
+  if (!keyChanged && !webhooksChanged) return { kind: 'nothing' };
   if (keyChanged && !values.geminiApiKey)
     return { kind: 'error', message: 'Gemini APIキーを空にすることはできません' };
-  if (modelsChanged && (!values.reportModel || !values.ocrModel))
-    return { kind: 'error', message: 'モデルが未選択です' };
   if (webhooksChanged && (!values.reportWebhookUrl || !values.receiptWebhookUrl)) {
     return { kind: 'error', message: 'Webhook URLが空です' };
   }
-  return { kind: 'save', keyChanged, modelsChanged, webhooksChanged, values };
+  return { kind: 'save', keyChanged, webhooksChanged, values };
 }
