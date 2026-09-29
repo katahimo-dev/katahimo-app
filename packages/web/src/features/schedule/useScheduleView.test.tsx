@@ -8,7 +8,7 @@ import { createWrapper, deferred, TEST_USER } from '../../test/providers';
 import { toastStore } from '../../ui/toast/toastStore';
 import { readCachedRoute, writeCachedRoute } from './routeCache';
 import { formatRouteFetchedAt } from './scheduleDate';
-import { useScheduleView } from './useScheduleView';
+import { SCHEDULE_REFOCUS_INTERVAL_MS, useScheduleView } from './useScheduleView';
 
 vi.mock('../../api/schedule', () => ({
   scheduleApi: { get: vi.fn(), getWithRoute: vi.fn() },
@@ -192,7 +192,7 @@ describe('useScheduleView(前に調べた結果をすぐ出し、裏で最新を
     expect(result.current.routeFetchedAt).toBe(storedAt);
     expect(toastStore.getState()).toMatchObject({ isError: true });
     expect(toastStore.getState().message).toBe(
-      'うまくいきませんでした。電波を確認して、もう一度押してください。20:30 時点の表示のままです',
+      'うまくいきませんでした。電波を確認して、もう一度押してください。9月27日（日） 20:30 時点の表示のままです',
     );
     expect(getPlain).not.toHaveBeenCalled();
   });
@@ -213,14 +213,14 @@ describe('useScheduleView(前に調べた結果をすぐ出し、裏で最新を
     expect(result.current.routeFetchedAt).toBeNull();
   });
 
-  it('画面に戻ってきたときは前に調べてから60秒以上たっていれば読み直す。予定タブに戻ってきたときは必ず読み直す', async () => {
+  it('画面に戻ってきた・予定タブに戻ってきたときは、前に調べてから10分以上たっていれば読み直す', async () => {
     getWithRoute.mockResolvedValue(withAppointments());
     const { result, rerender } = setup();
     await waitFor(() => expect(result.current.routeFreshness).toBe('fresh'));
     expect(getWithRoute).toHaveBeenCalledTimes(1);
 
-    // 60秒以内(visibilitychange と pageshow の続けての知らせなど)は読まない
-    vi.setSystemTime(Date.now() + 59_000);
+    // 10分以内は画面に戻っても読まない(すぐ確かめたいときは 🔄)
+    vi.setSystemTime(Date.now() + SCHEDULE_REFOCUS_INTERVAL_MS - 1_000);
     becomeVisible();
     expect(getWithRoute).toHaveBeenCalledTimes(1);
     vi.setSystemTime(Date.now() + 1_000);
@@ -230,15 +230,39 @@ describe('useScheduleView(前に調べた結果をすぐ出し、裏で最新を
     // 下タブで隠れている間は画面に戻っても読まない
     rerender({ active: false });
     await waitFor(() => expect(result.current.routeLoading).toBe(false));
-    vi.setSystemTime(Date.now() + 120_000);
+    vi.setSystemTime(Date.now() + 60_000);
     becomeVisible();
     expect(getWithRoute).toHaveBeenCalledTimes(2);
-    // 予定タブに戻ったら、60秒以内でも読む
+    // 予定タブに戻っても、10分以内なら読まない
+    rerender({ active: true });
+    expect(getWithRoute).toHaveBeenCalledTimes(2);
+    // 10分たってから予定タブに戻ったら読む
+    rerender({ active: false });
+    vi.setSystemTime(Date.now() + SCHEDULE_REFOCUS_INTERVAL_MS);
     rerender({ active: true });
     await waitFor(() => expect(getWithRoute).toHaveBeenCalledTimes(3));
-    rerender({ active: false });
+  });
+
+  it('予定タブを開いたままなら10分ごとに読み直す(予定タブが隠れている間は読まない)', async () => {
+    getWithRoute.mockResolvedValue(withAppointments());
+    const { result, rerender } = setup({ active: false });
+    await waitFor(() => expect(result.current.routeFreshness).toBe('fresh'));
+    expect(getWithRoute).toHaveBeenCalledTimes(1);
+    // ここからの繰り返しの時計を進められるようにしてから、予定タブを前に出す(10分以内なので、戻っただけでは読まない)
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     rerender({ active: true });
-    await waitFor(() => expect(getWithRoute).toHaveBeenCalledTimes(4));
+    const advance = (ms: number) =>
+      act(async () => {
+        vi.advanceTimersByTime(ms);
+      });
+    await advance(SCHEDULE_REFOCUS_INTERVAL_MS - 1_000);
+    expect(getWithRoute).toHaveBeenCalledTimes(1);
+    await advance(1_000);
+    expect(getWithRoute).toHaveBeenCalledTimes(2);
+
+    rerender({ active: false });
+    await advance(SCHEDULE_REFOCUS_INTERVAL_MS * 2);
+    expect(getWithRoute).toHaveBeenCalledTimes(2);
   });
 
   it('所要時間・距離だけが変わったときは「更新しました」を出さない(予定の中身だけで比べる)', async () => {
@@ -264,7 +288,7 @@ describe('useScheduleView(前に調べた結果をすぐ出し、裏で最新を
     expect(result.current.routeFetchedAt).toBe(storedAt);
     expect(readCachedRoute(TEST_USER.staffId, DATE)).toEqual({ res: previous, ts: storedAt });
     expect(toastStore.getState()).toMatchObject({
-      message: '一部のカレンダーを読み込めませんでした。20:30 時点の表示のままです',
+      message: '一部のカレンダーを読み込めませんでした。9月27日（日） 20:30 時点の表示のままです',
       isError: true,
     });
   });
@@ -287,7 +311,7 @@ describe('useScheduleView(前に調べた結果をすぐ出し、裏で最新を
     await waitFor(() => expect(result.current.routeFreshness).toBe('partial'));
     const firstAt = result.current.routeFetchedAt;
 
-    vi.setSystemTime(Date.now() + 5_000);
+    vi.setSystemTime(Date.now() + SCHEDULE_REFOCUS_INTERVAL_MS);
     const toastSeq = toastStore.getState().seq;
     getWithRoute.mockResolvedValueOnce({
       ...withAppointments(appointment('鈴木 一郎', '13:00')),
@@ -341,6 +365,7 @@ describe('useScheduleView(前に調べた結果をすぐ出し、裏で最新を
 
     const pending = deferred<ScheduleWithRouteResponse>();
     getWithRoute.mockReturnValue(pending.promise);
+    vi.setSystemTime(Date.now() + SCHEDULE_REFOCUS_INTERVAL_MS);
     rerender({ active: false });
     rerender({ active: true });
     await waitFor(() => expect(result.current.routeLoading).toBe(true));

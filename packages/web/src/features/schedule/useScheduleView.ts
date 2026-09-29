@@ -71,8 +71,17 @@ class RouteUnavailableError extends Error {}
 /** 読めないカレンダーがあった結果のため、前の表示を置き換えなかった(お知らせは出し済み) */
 class PartialScheduleError extends Error {}
 
-/** 画面に戻ったとき(visibilitychange)の読み直しを間引く間隔。前に調べて(失敗も含む)からこれより短ければ読まない */
-export const SCHEDULE_REFOCUS_INTERVAL_MS = 60_000;
+/**
+ * 自動の読み直しの間隔。予定タブに戻ってきた・画面に戻ってきた(visibilitychange)・通信が戻ったときは、前に調べて
+ * (失敗も含む)からこれより短ければ読まない。予定タブを開いたまま画面を見ているあいだも、この間隔で読み直す。
+ * すぐ確かめたいときは「🔄 最新にする」(いつでも調べ直す)。
+ */
+export const SCHEDULE_REFOCUS_INTERVAL_MS = 10 * 60_000;
+
+/** 前に調べて(失敗も含む)から自動の読み直しの間隔がたったか */
+function isAutoRefreshDue(state: { dataUpdatedAt: number; errorUpdatedAt: number }): boolean {
+  return Date.now() - Math.max(state.dataUpdatedAt, state.errorUpdatedAt) >= SCHEDULE_REFOCUS_INTERVAL_MS;
+}
 
 /** 前の表示と比べる予定の中身(種別・時刻・お客様・住所。所要時間・距離・経路のURLは比べない) */
 function appointmentsDigest(res: ScheduleWithRouteResponse): string {
@@ -149,8 +158,9 @@ export interface ScheduleViewOptions {
  * 1. 日付・表示するスタッフが決まったら、このブラウザに前に調べた結果があれば「HH:MM 時点」を添えてすぐ出し、
  *    同時に必ずサーバーへ最新を取りに行って差し替える(stale-while-revalidate。担当変更をすぐ出すため、
  *    ブラウザのキャッシュがあってもサーバーに問い合わせる。サーバーは予定を毎回カレンダーから読む)。
- * 2. 予定タブに戻ってきたときも最新を取りに行く。画面に戻ってきたとき(visibilitychange)・通信が戻ったときは、
- *    予定タブが前に出ていて、前に調べてから60秒以上たっていれば取りに行く(サーバーのカレンダーの読み込みを増やさない)。
+ * 2. 予定タブに戻ってきたとき・画面に戻ってきたとき(visibilitychange)・通信が戻ったときは、予定タブが前に出ていて、
+ *    前に調べてから10分以上たっていれば取りに行く(サーバーのカレンダーの読み込みを増やさない)。予定タブを開いたまま
+ *    画面を見ているあいだも10分ごとに読み直す(画面が隠れている間は読まない)。
  * 3. 最新を調べられなかったとき、前に調べた結果を出していればそのまま残し、赤いお知らせでその旨と時点を知らせる。
  *    何も出していなければ赤いお知らせを出し、ルートなしの予定だけでも出す(従来どおり。ルートなしを出している間に
  *    また読み込んでも一覧は消さない)。読めないカレンダーがあった結果(partial)は前の表示を置き換えない。
@@ -200,14 +210,13 @@ export function useScheduleView({ active = true }: ScheduleViewOptions = {}): Sc
     },
     // 開くたびに最新を取りに行く(予定はカレンダーの担当変更をすぐ出したい。地図の結果はサーバーが区間ごとに
     // キャッシュするため、読み直しても地図APIの呼び出しはほとんど増えない)。画面に戻ったとき・通信が戻ったときは
-    // 予定タブが前に出ていて、前に調べて(失敗も含む)から60秒以上たっているときだけ
+    // 予定タブが前に出ていて、前に調べて(失敗も含む)から10分以上たっているときだけ。開いたままなら10分ごと
+    // (refetchInterval は画面が隠れている間は止まる)
     staleTime: 0,
     refetchOnMount: 'always',
-    refetchOnWindowFocus: (query) =>
-      active &&
-      Date.now() - Math.max(query.state.dataUpdatedAt, query.state.errorUpdatedAt) >=
-        SCHEDULE_REFOCUS_INTERVAL_MS,
-    refetchOnReconnect: active,
+    refetchOnWindowFocus: (query) => active && isAutoRefreshDue(query.state),
+    refetchOnReconnect: (query) => active && isAutoRefreshDue(query.state),
+    refetchInterval: active ? SCHEDULE_REFOCUS_INTERVAL_MS : false,
     retry: false,
   });
 
@@ -219,11 +228,14 @@ export function useScheduleView({ active = true }: ScheduleViewOptions = {}): Sc
   );
   const shownRoute = routeQuery.data ?? storedRoute;
 
-  // 予定タブに戻ってきたら最新を取りに行く(下タブの切り替えでは画面が作り直されないため)
+  // 予定タブに戻ってきたら、前に調べてから10分以上たっていれば最新を取りに行く(下タブの切り替えでは画面が
+  // 作り直されないため)
   const wasActive = useRef(active);
   useEffect(() => {
     if (active && !wasActive.current) {
-      void queryClient.invalidateQueries({ queryKey: scheduleKeys.route(targetStaffId, date.dateStr) });
+      const key = scheduleKeys.route(targetStaffId, date.dateStr);
+      const state = queryClient.getQueryState(key);
+      if (!state || isAutoRefreshDue(state)) void queryClient.invalidateQueries({ queryKey: key });
     }
     wasActive.current = active;
   }, [active, queryClient, targetStaffId, date.dateStr]);
