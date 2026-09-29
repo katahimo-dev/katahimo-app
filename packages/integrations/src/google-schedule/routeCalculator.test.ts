@@ -32,7 +32,7 @@ const plan = {
 describe('RouteCalculator の共有キャッシュ', () => {
   it('キーは住所・座標を含まないハッシュで、テナントごとに分かれる', () => {
     const key = mapsCacheKey('tenant-1', 'geocode', HOME);
-    expect(key).toMatch(/^maps:v1:geocode:[0-9a-f]{64}$/);
+    expect(key).toMatch(/^maps:v2:geocode:[0-9a-f]{64}$/);
     expect(key).not.toContain('世田谷');
     expect(mapsCacheKey('tenant-2', 'geocode', HOME)).not.toBe(key);
   });

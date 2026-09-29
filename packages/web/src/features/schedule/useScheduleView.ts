@@ -93,8 +93,8 @@ const PARTIAL_MESSAGE = '一部のカレンダーを読み込めませんでし�
 
 /**
  * 届いた最新の結果を出すかどうか決める(自動の読み込みと 🔄 で同じ)。
- * - 読めないカレンダーがあった(partial): 前の表示があれば置き換えず(null)、端末の値も上書きしない。前の表示が無ければ
- *   欠けているかもしれない旨を添えて出す(端末には書かない)。
+ * - 読めないカレンダーがあった(partial): 欠けていない前の表示があれば置き換えず(null)、端末の値も上書きしない。
+ *   前の表示が無い・前の表示も partial なら、欠けているかもしれない旨を添えて出す(端末には書かない)。
  * - それ以外: 端末の値を上書きし、前の表示と予定の中身が違えば「最新の予定に更新しました」。
  * notify が false(切り替えた後・予定タブが隠れている)ならお知らせを出さない。
  */
@@ -107,7 +107,8 @@ function acceptLatest(
 ): CachedRoute | null {
   const ts = Date.now();
   if (res.partial) {
-    if (shown) {
+    // 前の表示が欠けていない(partial でない)ときだけ残す。前の表示も partial なら新しい方に置き換える(端末には書かない)
+    if (shown && !shown.res.partial) {
       if (notify) showToast(routeFailureMessage(PARTIAL_MESSAGE, shown), true);
       return null;
     }
@@ -231,11 +232,18 @@ export function useScheduleView({ active = true }: ScheduleViewOptions = {}): Sc
   const routeFailed = routeQuery.isError && !routeQuery.isFetching && !shownRoute;
   const plainQuery = useQuery({
     queryKey: scheduleKeys.plain(targetStaffId, date.dateStr),
-    queryFn: ({ signal }) =>
-      scheduleApi.get(request, signal).catch((error: unknown) => {
+    queryFn: async ({ signal }) => {
+      try {
+        const res = await scheduleApi.get(request, signal);
+        if (res.partial && !signal.aborted && activeRef.current) {
+          showToast(PARTIAL_WITHOUT_PREVIOUS_MESSAGE, true);
+        }
+        return res;
+      } catch (error) {
         if (!signal.aborted) console.error('GET /api/schedule failed:', error);
         throw error;
-      }),
+      }
+    },
     enabled: routeFailed,
     // ルートなしを出している間にルートつきを読み直しても、読んだ一覧は出し続ける(下の list)
     staleTime: 60_000,

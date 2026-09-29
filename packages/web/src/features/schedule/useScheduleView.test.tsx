@@ -280,6 +280,54 @@ describe('useScheduleView(前に調べた結果をすぐ出し、裏で最新を
     );
   });
 
+  it('前の表示も partial なら、新しい partial の結果で置き換える(端末には書かない)', async () => {
+    const first = { ...withAppointments(appointment('山田 花子', '10:00')), partial: true };
+    getWithRoute.mockResolvedValueOnce(first);
+    const { result, rerender } = setup();
+    await waitFor(() => expect(result.current.routeFreshness).toBe('partial'));
+    const firstAt = result.current.routeFetchedAt;
+
+    vi.setSystemTime(Date.now() + 5_000);
+    const toastSeq = toastStore.getState().seq;
+    getWithRoute.mockResolvedValueOnce({
+      ...withAppointments(appointment('鈴木 一郎', '13:00')),
+      partial: true,
+    });
+    rerender({ active: false });
+    rerender({ active: true });
+    await waitFor(() => expect(shownNames(result.current.list)).toEqual(['鈴木 一郎']));
+    expect(result.current.routeFreshness).toBe('partial');
+    expect(result.current.routeFetchedAt).toBeGreaterThan(firstAt ?? 0);
+    expect(readCachedRoute(TEST_USER.staffId, DATE)).toBeNull();
+    expect(toastStore.getState().seq).toBe(toastSeq + 1);
+    expect(toastStore.getState().message).toBe(
+      '一部のカレンダーを読み込めなかったため、予定が欠けているかもしれません',
+    );
+  });
+
+  it('ルートなしの予定が partial なら、欠けているかもしれない旨を出す(予定タブが前に出ているときだけ)', async () => {
+    getWithRoute.mockRejectedValue(new TypeError('Failed to fetch'));
+    getPlain.mockResolvedValue({
+      success: true,
+      partial: true,
+      appointments: [
+        { title: '山田 花子', eventType: 'CUSTOMER APPOINTMENT', start: '10:00', end: '12:00', address: '' },
+      ],
+    });
+    const { result } = setup();
+    await waitFor(() => expect(shownNames(result.current.list)).toEqual(['山田 花子']));
+    await waitFor(() =>
+      expect(toastStore.getState().message).toBe(
+        '一部のカレンダーを読み込めなかったため、予定が欠けているかもしれません',
+      ),
+    );
+
+    const hidden = setup({ active: false });
+    const toastSeq = toastStore.getState().seq;
+    await waitFor(() => expect(shownNames(hidden.result.current.list)).toEqual(['山田 花子']));
+    expect(toastStore.getState().seq).toBe(toastSeq);
+  });
+
   it('ルートなしの予定を出している間にルートつきを読み直しても、一覧を消さない', async () => {
     getWithRoute.mockRejectedValue(new TypeError('Failed to fetch'));
     getPlain.mockResolvedValue({

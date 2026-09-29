@@ -154,9 +154,9 @@ export class RouteCalculator {
 /**
  * 共有キャッシュのキー。住所・座標(自宅の位置など個人に結びつく値)をキーにそのまま残さないよう
  * SHA-256 にする(Memorystore 等に差し替えてキーが外から見えるようになっても読めないように)。
- * 値の形を変えたら v を上げる(古い形を読ませないため)。
+ * 値の形を変えたら v を上げる(古い形を読ませないため。v2 = 見つからなかった結果も覚えるため `{ value }` で包んだ形)。
  */
 export function mapsCacheKey(tenantId: string, kind: string, input: string): string {
   const digest = createHash('sha256').update(`${tenantId}\u0000${kind}\u0000${input}`).digest('hex');
-  return `maps:v1:${kind}:${digest}`;
+  return `maps:v2:${kind}:${digest}`;
 }
