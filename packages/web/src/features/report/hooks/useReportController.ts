@@ -2,7 +2,7 @@ import type { DailyReportAiInfo } from '@katahimo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { ApiRequestError, isUnauthenticated } from '../../../api/client';
+import { ApiRequestError, isUnauthenticated, userMessageOf } from '../../../api/client';
 import { customerQueryKeys, customersApi } from '../../../api/customers';
 import { reportsApi } from '../../../api/reports';
 import { useUiConfig } from '../../../app/uiConfig/useUiConfig';
@@ -43,8 +43,44 @@ import {
 import type { ReportSession } from '../types';
 import { useReceipts } from './useReceipts';
 
-/** AI生成・保存の見張り時間(これを過ぎても返事が無ければ、ボタンを押せる状態に戻して知らせる) */
+/**
+ * AI生成・保存の見張り時間。保存はこれを過ぎたらボタンを押せる状態に戻して知らせる。AI生成は1つのモデルへの
+ * 問い合わせをここで切り、次のモデルで試す。
+ */
 const WATCHDOG_MS = 90_000;
+
+const STOPPED_MESSAGE = 'AIを止めました。下の欄に手で書いて「保存する」を押してください。';
+
+/** AIで書けなかったときの知らせ(試したモデルと、最後の理由) */
+function failureMessage(tried: readonly string[], reason: string): string {
+  const models = tried.length > 0 ? `（試したモデル: ${tried.join(' → ')}）` : '';
+  return `AIで書けませんでした${models}。下の欄に手で書いて「保存する」を押してください。${reason ? `\n理由: ${reason}` : ''}`;
+}
+
+/** AI生成の途中の様子(いま試しているモデル。画面に出す) */
+export interface AiProgress {
+  /** いま試しているモデル(null = 設定のモデル。順番が読めなかったとき) */
+  model: string | null;
+  /** 何番目か(1から) */
+  attempt: number;
+  total: number;
+  /** ここまでに書けなかったモデル */
+  failed: string[];
+}
+
+interface GenerationRun {
+  /** 止めた理由(⏹ 止める / 開き直し。null = 動いている) */
+  stopped: 'stopped' | 'reopened' | null;
+  /** いまの問い合わせ(止めるときに切る) */
+  controller: AbortController | null;
+}
+
+type AttemptOutcome<T> =
+  | { kind: 'ok'; value: T }
+  | { kind: 'stopped' }
+  | { kind: 'reopened' }
+  | { kind: 'timeout' }
+  | { kind: 'error'; error: unknown };
 
 export const OVERWRITE_CONFIRM_TITLE = '前に保存した日報を、今の内容に書きかえますか？';
 
@@ -109,6 +145,8 @@ export function useReportController(session: ReportSession | null) {
   const writeLastAccidentTime = (value: string) =>
     writeStorage(userStorageKey(STORAGE_KEYS.lastAccidentTime, storageScope), value);
   const [generatingSince, setGeneratingSince] = useState<number | null>(null);
+  const [aiProgress, setAiProgress] = useState<AiProgress | null>(null);
+  const generationRunRef = useRef<GenerationRun | null>(null);
   const [savingSince, setSavingSince] = useState<number | null>(null);
   const [visitComplete, setVisitComplete] = useState<VisitCompleteState>({ status: 'idle' });
   const [unregisteredName, setUnregisteredName] = useState('');
@@ -175,7 +213,10 @@ export function useReportController(session: ReportSession | null) {
     standaloneFallbackRef.current = null;
     setUnregisteredName('');
     if (session.kind === 'standalone') return; // GAS版は日報の入力には触らない(隠すだけ)
+    cancelAttempt('reopened');
+    generationRunRef.current = null;
     generatingRef.current = null;
+    setAiProgress(null);
     savingRef.current = null;
     setGeneratingSince(null);
     setSavingSince(null);
@@ -311,6 +352,53 @@ export function useReportController(session: ReportSession | null) {
   };
 
   // ── AIに書いてもらう(GAS版 generateReport / onReportGenerated / onAccidentReportGenerated) ──
+  /** いまの AI への1回の問い合わせを止める(⏹ 止める・開き直し) */
+  const cancelAttempt = useCallback((reason: 'stopped' | 'reopened') => {
+    const run = generationRunRef.current;
+    if (!run) return;
+    run.stopped = reason;
+    run.controller?.abort();
+  }, []);
+
+  /**
+   * 1回の問い合わせ(見張り時間を過ぎたら切って timeout、⏹ 止めるなら stopped。ほかの失敗は error)。
+   * 止める・時間切れは通信の失敗より先に判定する(切ったことで起きた AbortError をエラーとして出さない)。
+   */
+  const runAttempt = async <T>(run: GenerationRun, call: (signal: AbortSignal) => Promise<T>) => {
+    const controller = new AbortController();
+    run.controller = controller;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, WATCHDOG_MS);
+    const outcome = (): AttemptOutcome<T> | null =>
+      run.stopped ? { kind: run.stopped } : timedOut ? { kind: 'timeout' } : null;
+    // 切ったらすぐ戻る(通信が切れるのを待たない)
+    const aborted = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true });
+    });
+    aborted.catch(() => undefined);
+    try {
+      if (run.stopped) return { kind: run.stopped } as AttemptOutcome<T>;
+      const value = await Promise.race([call(controller.signal), aborted]);
+      return outcome() ?? ({ kind: 'ok', value } as AttemptOutcome<T>);
+    } catch (error) {
+      return outcome() ?? ({ kind: 'error', error } as AttemptOutcome<T>);
+    } finally {
+      clearTimeout(timer);
+      if (run.controller === controller) run.controller = null;
+    }
+  };
+
+  /** AIで書けなかった・止めた: 知らせを出して、結果欄を手で書けるようにする */
+  const openManualEntry = (mode: ReportMode, message: string) => {
+    if (mode === 'daily') rememberAiInfo(null);
+    flushSync(() => apply({ type: 'openManualEntry', message }));
+    saveSnapshot(mode);
+    scrollTo(mode === 'daily' ? 'warnings' : 'accidentResult');
+  };
+
   const generate = async () => {
     const f = formRef.current;
     if (!f.memo.trim()) {
@@ -321,18 +409,20 @@ export function useReportController(session: ReportSession | null) {
     if (generatingRef.current !== null) return;
     const startedAt = Date.now();
     const requestNonce = nonceRef.current;
+    const run: GenerationRun = { stopped: null, controller: null };
+    generationRunRef.current = run;
     generatingRef.current = startedAt;
     setGeneratingSince(startedAt);
+    setAiProgress(null);
+    apply({ type: 'aiStarted' });
     const finish = () => {
       if (generatingRef.current !== startedAt) return;
       generatingRef.current = null;
+      if (generationRunRef.current === run) generationRunRef.current = null;
       setGeneratingSince(null);
+      setAiProgress(null);
     };
-    const watchdog = setTimeout(() => {
-      if (generatingRef.current !== startedAt) return;
-      finish();
-      showToast('時間がかかっています。少し待ってから、もう一度押してください', true);
-    }, WATCHDOG_MS);
+    const stale = () => requestNonce !== nonceRef.current || run.stopped === 'reopened';
 
     try {
       if (f.mode === 'daily') {
@@ -341,56 +431,108 @@ export function useReportController(session: ReportSession | null) {
           showToast('お客様の情報が見つかりません。画面を開きなおしてください', true);
           return;
         }
-        const { draft, ai } = await reportsApi.generateDaily({
-          text: f.memo,
-          start: formatClock(f.start),
-          end: formatClock(f.end),
-          customerId: target.id,
-          careRecipientId: dailyChildRef.current || null,
-          riskRating: f.ratings.risk || null,
-          reportDate: f.reportDate,
-        });
-        // GAS版と同じく、まずボタンを元に戻して(すぐ描画して)から結果を入れる
-        // (結果へのスクロールの位置が、下のボタンの高さで変わるため)
-        clearTimeout(watchdog);
-        flushSync(finish);
-        if (requestNonce !== nonceRef.current) return;
-        if (isDailyDraftApiError(draft.warnings)) {
-          rememberAiInfo(null);
-          apply({ type: 'showWarnings', message: draft.internal || '不明なエラーが発生しました' });
-          saveSnapshot('daily');
-          scrollTo('warnings');
+        // 試すモデルの順番(設定のモデル → Flash 系 → Flash-Lite 系)。読めなければモデルを指定せずに1回だけ試す
+        const listed = await runAttempt(run, (signal) => reportsApi.dailyModels(signal));
+        if (stale()) return;
+        if (listed.kind === 'stopped') {
+          flushSync(finish);
+          openManualEntry('daily', STOPPED_MESSAGE);
           return;
         }
-        const warnings = draft.warnings.length > 0 ? draft.warnings.join(', ') : null;
-        if (warnings !== null) {
-          // GAS版は結果欄を出す前に、足りない情報の知らせまでスクロールしていた。同じ位置で止まるよう、
-          // 先に知らせだけを出して(すぐ描画して)スクロールしてから結果を入れる。
-          flushSync(() => apply({ type: 'showWarnings', message: warnings }));
-          warningsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const models: (string | undefined)[] =
+          listed.kind === 'ok' && listed.value.models.length > 0 ? listed.value.models : [undefined];
+        const tried: string[] = [];
+        let lastReason = '';
+        for (const [index, model] of models.entries()) {
+          const label = model ?? '設定のモデル';
+          setAiProgress({
+            model: model ?? null,
+            attempt: index + 1,
+            total: models.length,
+            failed: [...tried],
+          });
+          const attempt = await runAttempt(run, (signal) =>
+            reportsApi.generateDaily(
+              {
+                text: f.memo,
+                start: formatClock(f.start),
+                end: formatClock(f.end),
+                customerId: target.id,
+                careRecipientId: dailyChildRef.current || null,
+                riskRating: f.ratings.risk || null,
+                reportDate: f.reportDate,
+                ...(model ? { model } : {}),
+              },
+              signal,
+            ),
+          );
+          if (stale() || attempt.kind === 'reopened') return;
+          if (attempt.kind === 'stopped') {
+            flushSync(finish);
+            openManualEntry('daily', STOPPED_MESSAGE);
+            return;
+          }
+          if (attempt.kind === 'error') throw attempt.error;
+          const next = models[index + 1];
+          if (attempt.kind === 'timeout') {
+            tried.push(label);
+            lastReason = '時間がかかりすぎたため、問い合わせを切りました';
+            if (next) showToast(`${label} は時間がかかっているので、${next} で試します`);
+            continue;
+          }
+          const { draft, ai } = attempt.value;
+          if (isDailyDraftApiError(draft.warnings)) {
+            tried.push(ai.model ?? label);
+            lastReason = draft.internal || '不明なエラーが発生しました';
+            if (ai.retryable && next) {
+              showToast(`${ai.model ?? label} で書けなかったので、${next} で試します`);
+              continue;
+            }
+            break;
+          }
+          // GAS版と同じく、まずボタンを元に戻して(すぐ描画して)から結果を入れる
+          // (結果へのスクロールの位置が、下のボタンの高さで変わるため)
+          flushSync(finish);
+          const warnings = draft.warnings.length > 0 ? draft.warnings.join(', ') : null;
+          if (warnings !== null) {
+            // GAS版は結果欄を出す前に、足りない情報の知らせまでスクロールしていた。同じ位置で止まるよう、
+            // 先に知らせだけを出して(すぐ描画して)スクロールしてから結果を入れる。
+            flushSync(() => apply({ type: 'showWarnings', message: warnings }));
+            warningsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          // 足りない情報が無いときはスクロールしない(GAS版は結果欄を出す前に結果欄へのスクロールを
+          // 呼んでいたため、実際には動いていなかった。同じ見え方にする)
+          rememberAiInfo(ai);
+          apply({
+            type: 'dailyGenerated',
+            internal: draft.internal,
+            customer: appendStaffSurname(draft.customer, user.name),
+            warnings,
+          });
+          if (tried.length > 0) showToast(`${ai.model ?? label} で書きました`);
+          saveSnapshot('daily');
+          return;
         }
-        // 足りない情報が無いときはスクロールしない(GAS版は結果欄を出す前に結果欄へのスクロールを
-        // 呼んでいたため、実際には動いていなかった。同じ見え方にする)
-        rememberAiInfo(ai);
-        apply({
-          type: 'dailyGenerated',
-          internal: draft.internal,
-          customer: appendStaffSurname(draft.customer, user.name),
-          warnings,
-        });
-        saveSnapshot('daily');
-      } else {
-        const { draft } = await reportsApi.generateAccident({
-          text: f.memo,
-          start: formatClock(f.start),
-          end: '',
-        });
-        clearTimeout(watchdog);
         flushSync(finish);
-        if (requestNonce !== nonceRef.current) return;
+        openManualEntry('daily', failureMessage(tried, lastReason));
+      } else {
+        const attempt = await runAttempt(run, (signal) =>
+          reportsApi.generateAccident({ text: f.memo, start: formatClock(f.start), end: '' }, signal),
+        );
+        if (stale() || attempt.kind === 'reopened') return;
+        flushSync(finish);
+        if (attempt.kind === 'stopped') {
+          openManualEntry('accident', STOPPED_MESSAGE);
+          return;
+        }
+        if (attempt.kind === 'timeout') {
+          openManualEntry('accident', failureMessage([], '時間がかかりすぎたため、問い合わせを切りました'));
+          return;
+        }
+        if (attempt.kind === 'error') throw attempt.error;
+        const { draft } = attempt.value;
         if ('error' in draft) {
-          saveSnapshot('accident');
-          showToast(draft.error, true);
+          openManualEntry('accident', failureMessage([], draft.error));
           return;
         }
         writeLastAccidentTime(draft.occurrenceTime || '');
@@ -411,9 +553,12 @@ export function useReportController(session: ReportSession | null) {
         saveSnapshot('accident');
       }
     } catch (e) {
-      if (requestNonce === nonceRef.current) showErrorToast(e);
+      if (stale()) return;
+      flushSync(finish);
+      showErrorToast(e);
+      // 上限・通信の失敗でも、手で書いて送れるようにする
+      openManualEntry(f.mode, failureMessage([], userMessageOf(e)));
     } finally {
-      clearTimeout(watchdog);
       finish();
     }
   };
@@ -581,6 +726,8 @@ export function useReportController(session: ReportSession | null) {
     receipts,
     unregisteredName,
     generatingSince,
+    aiProgress,
+    stopGenerating: () => cancelAttempt('stopped'),
     savingSince,
     visitComplete,
     hint,

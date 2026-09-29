@@ -46,6 +46,8 @@ export interface ReportFormState {
   customerText: string;
   /** 「⚠️ 足りない情報があります：」の後ろの文(null = 出さない) */
   warnings: string | null;
+  /** AIで書けなかった・止めたときの知らせ(null = 出さない)。結果欄を出して手で書けるようにする */
+  aiFailure: string | null;
   /** 日報の結果欄(事務局に送る文・保護者に送る文)を出しているか */
   dailyResultShown: boolean;
   /** 事故報告書の下書き欄を出しているか */
@@ -96,6 +98,7 @@ export function createInitialForm({ today, lastStart, lastAccidentTime }: OpenFo
     internalText: '',
     customerText: '',
     warnings: null,
+    aiFailure: null,
     dailyResultShown: false,
     accidentResultShown: false,
     accidentType: '事故報告',
@@ -123,6 +126,8 @@ export type ReportFormAction =
   | { type: 'markDirty' }
   | { type: 'dailyGenerated'; internal: string; customer: string; warnings: string | null }
   | { type: 'showWarnings'; message: string }
+  | { type: 'aiStarted' }
+  | { type: 'openManualEntry'; message: string }
   | { type: 'accidentGenerated'; draft: AccidentDraftFields }
   | { type: 'saved'; mode: ReportMode; reportId: string };
 
@@ -187,14 +192,23 @@ export function reportFormReducer(state: ReportFormState, action: ReportFormActi
         internalText: action.internal,
         customerText: action.customer,
         warnings: action.warnings,
+        aiFailure: null,
         dailyResultShown: true,
       };
     case 'showWarnings':
       return { ...state, warnings: action.message };
+    case 'aiStarted':
+      return { ...state, aiFailure: null };
+    case 'openManualEntry':
+      // AIで書けなくても送れるよう、いまの画面の結果欄(書いてあった文はそのまま)と保存ボタンを出す
+      return state.mode === 'daily'
+        ? { ...state, aiFailure: action.message, dailyResultShown: true }
+        : { ...state, aiFailure: action.message, accidentResultShown: true };
     case 'accidentGenerated':
       return {
         ...state,
         accident: { ...state.accident, ...action.draft },
+        aiFailure: null,
         accidentResultShown: true,
       };
     case 'saved':

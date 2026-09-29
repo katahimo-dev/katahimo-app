@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   AccidentReportDraft,
   AccidentReportDraftError,
@@ -7,6 +8,7 @@ import type {
   ReceiptOcrResult,
   ReportAiPort,
 } from '@katahimo/core/ports';
+import { listAvailableGeminiModels } from './listModels';
 
 const DEFAULT_MODEL_REPORT = 'gemini-2.5-flash';
 const DEFAULT_MODEL_OCR = 'gemini-2.5-flash-lite';
@@ -172,6 +174,41 @@ function toDailyDraft(value: unknown): DailyReportDraft {
   return draft;
 }
 
+/**
+ * 別のモデルで試し直す意味がある失敗か。API キーの誤り(401・403、400 の API_KEY_INVALID)はどのモデルでも
+ * 同じなので false。混雑・上限(429・5xx)、モデルが無い(404)、通信・応答の解析の失敗は true。
+ */
+function isRetryableFailure(result: Extract<GeminiCallResult, { ok: false }>): boolean {
+  if (result.httpCode === 401 || result.httpCode === 403) return false;
+  if (result.httpCode === 400 && result.rawError?.includes('API_KEY_INVALID')) return false;
+  return true;
+}
+
+/** 使えるモデルの一覧の覚えておく時間(ListModels はモデルの入れ替わりでしか変わらない)。 */
+const MODEL_LIST_TTL_MS = 6 * 60 * 60 * 1000;
+/** 一覧が読めなかったときに、次に読みに行くまでの時間。 */
+const MODEL_LIST_FAILURE_TTL_MS = 5 * 60 * 1000;
+/** API キーの SHA-256 → 一覧(null = 読めなかった)。テナントごとに鍵が違うのでキーで分ける。 */
+const modelListCache = new Map<string, { expiresAt: number; models: string[] | null }>();
+
+async function cachedModelList(apiKey: string): Promise<string[] | null> {
+  const key = createHash('sha256').update(apiKey).digest('hex');
+  const now = Date.now();
+  const hit = modelListCache.get(key);
+  if (hit && hit.expiresAt > now) return hit.models;
+  let models: string[] | null;
+  try {
+    models = (await listAvailableGeminiModels(apiKey)).map((m) => m.name);
+  } catch {
+    models = null;
+  }
+  modelListCache.set(key, {
+    expiresAt: now + (models ? MODEL_LIST_TTL_MS : MODEL_LIST_FAILURE_TTL_MS),
+    models,
+  });
+  return models;
+}
+
 export class GeminiAiPort implements ReportAiPort {
   constructor(private readonly options: GeminiAiPortOptions) {}
 
@@ -179,17 +216,26 @@ export class GeminiAiPort implements ReportAiPort {
     return this.options.reportModel || DEFAULT_MODEL_REPORT;
   }
 
+  availableModels(): Promise<string[] | null> {
+    return cachedModelList(this.options.apiKey);
+  }
+
   async generateDailyReport(input: GenerateDailyReportInput): Promise<DailyReportDraft> {
     const result = await callGemini(
       this.options.apiKey,
       [{ text: input.prompt }],
       { responseMimeType: 'application/json', responseSchema: DAILY_REPORT_RESPONSE_SCHEMA },
-      this.reportModel,
+      input.model || this.reportModel,
     );
 
     if (!result.ok) {
       const detail = result.rawError ? `${result.error}\n\n[詳細] ${result.rawError}` : result.error;
-      return { warnings: ['API Error'], internal: detail, customer: '' };
+      return {
+        warnings: ['API Error'],
+        internal: detail,
+        customer: '',
+        retryable: isRetryableFailure(result),
+      };
     }
     return toDailyDraft(result.value);
   }

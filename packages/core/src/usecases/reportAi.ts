@@ -4,13 +4,16 @@ import {
   accidentTimeInfo,
   ageInMonths,
   assembleDailyReportPrompt,
+  buildReportModelChain,
   dailyTimeInfo,
   enforceEscalationWarning,
+  invalid,
   newId,
   notFound,
   type ReportAiErrorCode,
   type ResolvedUsedKeywords,
   renderAccidentReportPrompt,
+  reportModelFamilyOf,
   resolveUsedKeywords,
   zonedBusinessDate,
 } from '../domain';
@@ -79,15 +82,36 @@ async function resolveReportAiPort(deps: ReportAiDeps, tenantId: string): Promis
   });
 }
 
-function logAiError(deps: ReportAiDeps, caller: ReportAiCaller, action: string, error: string) {
+function logAiError(
+  deps: ReportAiDeps,
+  caller: ReportAiCaller,
+  action: string,
+  error: string,
+  extra: Record<string, unknown> = {},
+) {
   return deps.appLog.write({
     tenantId: caller.tenantId,
     level: 'ERROR',
     action,
     actorStaffId: caller.staffId,
-    details: { error: error.slice(0, 300) },
+    details: { ...extra, error: error.slice(0, 300) },
     ...caller.meta,
   });
+}
+
+/** API エラーのとき試し直すモデルの順番(core/domain/reports/modelFallback.ts)。 */
+async function reportModelChainOf(reportAi: ReportAiPort): Promise<string[]> {
+  const available =
+    reportAi.reportModel && reportAi.availableModels ? await reportAi.availableModels() : null;
+  return buildReportModelChain(reportAi.reportModel, available);
+}
+
+/**
+ * 保育日報の生成で試すモデルの順番(設定のモデル → Flash 系 → Flash-Lite 系)。画面はこの順に
+ * generateDailyReportDraft の model を変えて呼び、いま試しているモデルを見せる。API キーが無ければ空。
+ */
+export async function listDailyReportModels(deps: ReportAiDeps, caller: ReportAiCaller): Promise<string[]> {
+  return reportModelChainOf(await resolveReportAiPort(deps, caller.tenantId));
 }
 
 /** テナントの上書き(版つき)か既定の文面。 */
@@ -113,6 +137,11 @@ export interface GenerateDailyReportDraftInput {
   riskRating?: number | null | undefined;
   /** 月齢を数える日('YYYY-MM-DD')。省略時はテナントの今日。 */
   reportDate?: string | undefined;
+  /**
+   * 試すモデル(listDailyReportModels の順の1つ)。省略時は設定のモデル。設定のモデルか Flash / Flash-Lite 系の
+   * 名前だけを受け付ける(それ以外は 400。値段の違うモデルを画面から選ばせない)。
+   */
+  model?: string | undefined;
 }
 
 export interface DailyReportGeneration {
@@ -125,6 +154,10 @@ export interface DailyReportGeneration {
     childAgeMonths: number | null;
     educationLevel: number;
     effectiveEducationLevel: number | null;
+    /** この生成で使ったモデル(API キーが無ければ null)。 */
+    model: string | null;
+    /** API エラーで、別のモデルで試し直す意味があるか(成功・API キー未設定・キーの誤りは false)。 */
+    retryable: boolean;
   };
 }
 
@@ -143,6 +176,9 @@ function errorCodeOf(draft: DailyReportDraft): ReportAiErrorCode | null {
  * 2. プロンプトを組み立て(core/domain/reports/promptAssembly.ts)、トランザクションの外で Gemini を呼ぶ
  * 3. 生成の記録(report_ai_generations)を別のトランザクションで書く。記録に失敗しても生成の結果は返す
  *    (ERROR `ai.daily_report.generation_log_failed`。記録の ID は null)
+ * input.model で試すモデルを変えられる(API エラーのとき、画面が listDailyReportModels の順に呼び直す。1回の呼び出しで
+ * 試すのは1つのモデルだけ)。失敗は ERROR `ai.daily_report.generate_failed`(モデル名つき)、切り替え先で書けたら
+ * WARN `ai.daily_report.model_fallback_succeeded` を残す。
  * PSI 1 は AI の答えに関わらず warnings に「管理者へ連絡」を入れる。失敗しても例外にはせず、warnings/internal に
  * その旨を詰めた同じ形を返す(GAS版と同じ)。プロンプト・メモの本文は操作ログに書かない。
  */
@@ -152,6 +188,15 @@ export async function generateDailyReportDraft(
   input: GenerateDailyReportDraftInput,
 ): Promise<DailyReportGeneration> {
   const startedAt = currentTime(deps);
+  const reportAi = await resolveReportAiPort(deps, caller.tenantId);
+  const model = input.model ?? reportAi.reportModel;
+  if (
+    input.model !== undefined &&
+    (reportAi.reportModel === null ||
+      (input.model !== reportAi.reportModel && reportModelFamilyOf(input.model) === null))
+  ) {
+    throw invalid('このモデルは使えません', { model: '使えないモデルです' }, 'model_not_allowed');
+  }
   const context = await deps.uow.run(caller.tenantId, async (r) => {
     const customer = await r.customers.findById(input.customerId);
     if (!customer) throw notFound('お客様が見つかりません', 'customer_not_found');
@@ -182,10 +227,30 @@ export async function generateDailyReportDraft(
     masters: context.masters,
   });
 
-  const reportAi = await resolveReportAiPort(deps, caller.tenantId);
-  const raw = await reportAi.generateDailyReport({ prompt: assembled.prompt });
+  const raw = await reportAi.generateDailyReport({
+    prompt: assembled.prompt,
+    ...(input.model !== undefined ? { model: input.model } : {}),
+  });
   const errorCode = errorCodeOf(raw);
-  if (errorCode) await logAiError(deps, caller, 'ai.daily_report.generate_failed', raw.internal);
+  const fallback = model !== null && model !== reportAi.reportModel;
+  if (errorCode) {
+    await logAiError(deps, caller, 'ai.daily_report.generate_failed', raw.internal, {
+      customerId: input.customerId,
+      model,
+      fallback,
+      retryable: raw.retryable === true,
+    });
+  } else if (fallback) {
+    // 設定のモデルが使えず、切り替えた先のモデルで書けた(どのモデルで書いたかを残す)
+    await deps.appLog.write({
+      tenantId: caller.tenantId,
+      level: 'WARN',
+      action: 'ai.daily_report.model_fallback_succeeded',
+      actorStaffId: caller.staffId,
+      details: { customerId: input.customerId, model, configuredModel: reportAi.reportModel },
+      ...caller.meta,
+    });
+  }
   const used = resolveUsedKeywords(
     errorCode ? [] : raw.usedKeywords,
     assembled.candidates,
@@ -206,7 +271,7 @@ export async function generateDailyReportDraft(
     promptRevision: context.template.revision,
     defaultPromptSha256: context.template.revision === null ? sha256(context.template.body) : null,
     appVersion: deps.appVersion ?? null,
-    model: reportAi.reportModel,
+    model,
     promptText: assembled.prompt,
     inputText: input.text,
     timeInfo,
@@ -234,6 +299,8 @@ export async function generateDailyReportDraft(
       childAgeMonths,
       educationLevel: adjustment.educationLevel,
       effectiveEducationLevel: adjustment.effectiveEducationLevel,
+      model,
+      retryable: errorCode === 'api_error' && raw.retryable === true,
     },
   };
 }

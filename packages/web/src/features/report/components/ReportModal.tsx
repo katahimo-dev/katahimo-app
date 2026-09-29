@@ -122,6 +122,7 @@ export function ReportModal({
                 accidentType={f.accidentType}
                 listening={voice.listening}
                 warnings={f.warnings}
+                aiFailure={f.aiFailure}
                 warningsRef={c.scrollRefs.warnings}
                 onMemoChange={c.actions.setMemo}
                 onAccidentTypeChange={c.actions.setAccidentType}
@@ -163,10 +164,12 @@ export function ReportModal({
               generateLabel={generateButtonLabel(f)}
               hasResult={hasGeneratedResult(f)}
               generatingSince={c.generatingSince}
+              aiProgress={c.aiProgress}
               saveShown={isSaveButtonShown(f)}
               savedAndClean={isSavedAndClean(f)}
               savingSince={c.savingSince}
               onGenerate={c.generate}
+              onStop={c.stopGenerating}
               onSave={c.save}
             />
           </div>

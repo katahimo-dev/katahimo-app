@@ -21,6 +21,8 @@ export interface GenerateDailyReportInput {
    * 日報AIの3軸の差し込みを入れたもの(usecases/reportAi.ts が core/domain/reports/promptAssembly.ts で組み立てる)。
    */
   prompt: string;
+  /** 使うモデル(省略時は reportModel)。API エラーのとき usecase が次のモデルを指定して呼び直す。 */
+  model?: string;
 }
 
 export interface DailyReportDraft {
@@ -32,6 +34,11 @@ export interface DailyReportDraft {
   /** AI が判定・確認した PSI・教育思考★(検証用。答えが無ければ undefined)。 */
   psi?: number;
   eduLevel?: number;
+  /**
+   * API エラー('API Error')のとき、別のモデルで試し直す意味があるか(API キーの誤り・権限は false。
+   * 混雑・上限・モデルが無い等は true)。成功時は undefined。
+   */
+  retryable?: boolean;
 }
 
 export interface GenerateAccidentReportInput {
@@ -70,6 +77,11 @@ export interface ReceiptOcrResult {
 export interface ReportAiPort {
   /** 日報・事故報告に使うモデル名(記録に残す。API キーが無い実装は null)。 */
   readonly reportModel: string | null;
+  /**
+   * この API キーで使えるモデルの名前(ListModels。日報のモデルの切り替え先を決める)。読めなければ null。
+   * 無い実装は既知の名前(core/domain/reports/modelFallback.ts)で切り替える。
+   */
+  availableModels?(): Promise<string[] | null>;
   generateDailyReport(input: GenerateDailyReportInput): Promise<DailyReportDraft>;
   generateAccidentReport(
     input: GenerateAccidentReportInput,

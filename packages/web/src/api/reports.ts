@@ -1,4 +1,5 @@
 import {
+  dailyReportModelsResponseSchema,
   type GenerateDailyReportRequest,
   type GenerateReportRequest,
   generateAccidentReportResponseSchema,
@@ -28,11 +29,14 @@ export const reportsApi = {
    * POST /api/reports/daily/generate: メモから日報の下書きを作る(失敗しても warnings に理由を入れて返る)。
    * お客様・対象のお子様・PSI で日報AIの言葉を絞り込み、生成の記録の ID(保存のときに送る)を返す
    */
-  generateDaily: (body: GenerateDailyReportRequest) =>
-    api.post('/api/reports/daily/generate', generateDailyReportResponseSchema, body),
+  generateDaily: (body: GenerateDailyReportRequest, signal?: AbortSignal) =>
+    api.post('/api/reports/daily/generate', generateDailyReportResponseSchema, body, { signal }),
+  /** GET /api/reports/daily/generate/models: API エラーのとき試すモデルの順番(Flash 系 → Flash-Lite 系) */
+  dailyModels: (signal?: AbortSignal) =>
+    api.get('/api/reports/daily/generate/models', dailyReportModelsResponseSchema, undefined, { signal }),
   /** POST /api/reports/accident/generate: メモから事故報告書の下書きを作る(失敗時は draft.error) */
-  generateAccident: (body: GenerateReportRequest) =>
-    api.post('/api/reports/accident/generate', generateAccidentReportResponseSchema, body),
+  generateAccident: (body: GenerateReportRequest, signal?: AbortSignal) =>
+    api.post('/api/reports/accident/generate', generateAccidentReportResponseSchema, body, { signal }),
   /** POST /api/reports/daily: 日報を保存する(reportId を渡すと上書き) */
   saveDaily: (body: SaveDailyReportRequest) =>
     api.post('/api/reports/daily', saveDailyReportResponseSchema, body),

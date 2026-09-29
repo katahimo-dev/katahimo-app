@@ -220,6 +220,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'customer_csv.import_review_required': '顧客CSVの取込を保留(確認が必要)',
   'customer_csv.import_failed': '顧客CSVの取込の失敗',
   'ai.daily_report.generate_failed': '日報のAI生成の失敗',
+  'ai.daily_report.model_fallback_succeeded': '日報のAI生成(切り替えたモデルで成功)',
   'ai.daily_report.generation_log_failed': '日報のAI生成の記録の失敗',
   'ai.accident_report.generate_failed': '事故報告のAI生成の失敗',
   'ai.receipt_ocr.failed': '領収書の読み取りの失敗',

@@ -4,6 +4,12 @@
 
 ### 追加
 
+- 日報の AI が API エラーのとき、自動でモデルを変えて試し直す(設定のモデル → Gemini Flash 系 → Flash-Lite 系、新しい版から)。
+  待っているあいだはボタンにいま試しているモデル(「gemini-2.0-flash で書いています（2/6）」)と書けなかったモデルを出し、
+  「⏹ 止めて手で書く」で止められる。どのモデルで失敗・成功したかは操作ログ(`ai.daily_report.generate_failed` /
+  `ai.daily_report.model_fallback_succeeded`)と生成の記録に残る。API `GET /api/reports/daily/generate/models`、
+  `POST /api/reports/daily/generate` の `model`(`doc/05_バッチ・外部連携.md` 6章)。
+
 - 宣伝用の公開デモ: 本番と別の環境に1つのデモ用テナント(`DEMO_TENANT_SLUG`、例 `public-demo`)を置き、ログイン画面の
   デモ用アカウント(管理者・コーディネーター・スタッフ、`VITE_DEMO_MODE=1` のビルド)で使ってもらう。データは架空のもの(歴史上の人物の
   名前を借りた20世帯)で、毎晩 `demo-reset`(`pnpm demo:reset -- <slug>`、api のイメージの `dist/demo-reset.js`)がテナントごと消して
@@ -126,6 +132,11 @@
   領収書の画像は `STORAGE_PROVIDER=gcs` でなければ取り込まない(開発は `--allow-local-storage`)。Drive API の一時的な失敗は読み直す。`import_runs` の `legacy_reports_sheet` /
   `legacy_receipts_sheet`、操作ログ `legacy_import.*`。Terraform で Sheets API(`sheets.googleapis.com`)を有効にする
   (`doc/05_バッチ・外部連携.md` 12章・`doc/09_移行計画.md` 2.4)。
+
+### 修正
+
+- 日報の AI が失敗すると結果欄と「保存する」が出ず、手で書いて送れなくなっていたのを直した(統合前の GAS版と同じく、失敗・止めた・
+  通信や回数制限の失敗のときも結果欄を開いて手で書いて保存できる。事故報告・ヒヤリハットも同じ)。
 
 ### 変更
 

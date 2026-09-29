@@ -10,6 +10,8 @@ interface MemoSectionProps {
   accidentType: AccidentType;
   listening: boolean;
   warnings: string | null;
+  /** AIで書けなかった・止めたときの知らせ(手で書いて保存できることを伝える) */
+  aiFailure: string | null;
   warningsRef: Ref<HTMLDivElement>;
   onMemoChange: (value: string) => void;
   onAccidentTypeChange: (value: AccidentType) => void;
@@ -34,6 +36,7 @@ export function MemoSection({
   accidentType,
   listening,
   warnings,
+  aiFailure,
   warningsRef,
   onMemoChange,
   onAccidentTypeChange,
@@ -117,6 +120,16 @@ export function MemoSection({
       >
         <strong>⚠️ 足りない情報があります：</strong> <span id="warningsList">{warnings}</span>
       </div>
+
+      {aiFailure !== null ? (
+        <div
+          id="aiFailureArea"
+          role="alert"
+          className="mt-2 p-3 bg-red-50 border border-red-200 rounded-xl text-base text-red-800 whitespace-pre-wrap"
+        >
+          {aiFailure}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -11,6 +11,7 @@ import { useReportController } from './useReportController';
 vi.mock('../../../api/reports', () => ({
   reportsApi: {
     generateDaily: vi.fn(),
+    dailyModels: vi.fn(),
     generateAccident: vi.fn(),
     saveDaily: vi.fn(),
     saveAccident: vi.fn(),
@@ -59,6 +60,14 @@ const savedReport = (id: string, customerId: string): SaveResult => ({
   } as SaveResult['report'],
 });
 
+/** AIに書いてもらう(モデルの順番を読んでから問い合わせるので、待っている答えが全部返るまで待つ) */
+async function generateNow(result: { current: ReturnType<typeof useReportController> }) {
+  await act(async () => {
+    result.current.generate();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 function renderController(initial: ReportSession | null) {
   return renderHook(({ session }) => useReportController(session), {
     initialProps: { session: initial },
@@ -71,6 +80,7 @@ describe('useReportController', () => {
     vi.clearAllMocks();
     vi.mocked(customersApi.detail).mockImplementation(() => new Promise(() => undefined));
     vi.mocked(customersApi.reportProfile).mockImplementation(() => new Promise(() => undefined));
+    vi.mocked(reportsApi.dailyModels).mockResolvedValue({ models: [] });
     toastStore.hide();
   });
 
@@ -133,8 +143,11 @@ describe('useReportController', () => {
     const pending = deferred<Awaited<ReturnType<typeof reportsApi.generateDaily>>>();
     generateDaily.mockReturnValueOnce(pending.promise);
     act(() => result.current.generate());
+    await waitFor(() => expect(generateDaily).toHaveBeenCalled());
 
     rerender({ session: sessionFor('c2', 2) });
+    // 開き直したら、待っていた問い合わせは切る
+    expect(generateDaily.mock.calls[0]?.[1]?.aborted).toBe(true);
     await act(async () => {
       pending.resolve({
         draft: { internal: '前のお客様の日報', customer: '保護者へ', warnings: [] },
@@ -178,6 +191,8 @@ describe('useReportController', () => {
       childAgeMonths: 14,
       educationLevel: 2,
       effectiveEducationLevel: null,
+      model: 'gemini-2.5-flash',
+      retryable: false,
     };
 
     it('お子様が1人なら最初から選び、PSI・お客様・訪問日と一緒に AI に送り、保存で生成の記録を結び付ける', async () => {
@@ -198,9 +213,7 @@ describe('useReportController', () => {
         draft: { internal: '社内', customer: '保護者', warnings: ['管理者へ連絡してください'] },
         ai: AI,
       });
-      await act(async () => {
-        result.current.generate();
-      });
+      await generateNow(result);
       expect(generateDaily).toHaveBeenCalledWith(
         expect.objectContaining({
           customerId: 'c1',
@@ -208,6 +221,7 @@ describe('useReportController', () => {
           riskRating: 1,
           reportDate: result.current.form.reportDate,
         }),
+        expect.any(AbortSignal),
       );
       await waitFor(() => expect(result.current.dailyAi.info?.escalationRequired).toBe(true));
       saveDaily.mockResolvedValueOnce(savedReport('r1', 'c1'));
@@ -242,12 +256,141 @@ describe('useReportController', () => {
       await waitFor(() => expect(result.current.dailyAi.educationLevel).toBe(5));
       act(() => result.current.actions.setMemo('メモ'));
       generateDaily.mockResolvedValueOnce({ draft: { internal: 'i', customer: 'c', warnings: [] }, ai: AI });
-      await act(async () => {
-        result.current.generate();
-      });
+      await generateNow(result);
       expect(generateDaily).toHaveBeenCalledWith(
         expect.objectContaining({ careRecipientId: null, riskRating: null }),
+        expect.any(AbortSignal),
       );
+    });
+  });
+
+  describe('AIのモデルの切り替え・止める・手で書く', () => {
+    const AI = {
+      generationId: null,
+      usedKeywords: [],
+      candidateCount: 0,
+      escalationRequired: false,
+      childAgeMonths: null,
+      educationLevel: 2,
+      effectiveEducationLevel: 2,
+      retryable: false,
+    };
+    const apiError = (model: string, retryable: boolean) => ({
+      draft: { warnings: ['API Error'], internal: `${model} は混み合っています`, customer: '' },
+      ai: { ...AI, model, retryable },
+    });
+    const ok = (model: string) => ({
+      draft: { warnings: [], internal: `${model} の社内文`, customer: '保護者へ' },
+      ai: { ...AI, model },
+    });
+
+    async function openWithMemo() {
+      const rendered = renderController(sessionFor('c1', 1));
+      act(() => rendered.result.current.actions.setMemo('公園で外遊び'));
+      return rendered;
+    }
+
+    it('API エラーなら次のモデル(Flash → Flash-Lite の順)を指定して試し直し、書けたモデルの結果を入れる', async () => {
+      vi.mocked(reportsApi.dailyModels).mockResolvedValue({
+        models: ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'],
+      });
+      generateDaily
+        .mockResolvedValueOnce(apiError('gemini-2.5-flash', true))
+        .mockResolvedValueOnce(apiError('gemini-2.0-flash', true))
+        .mockResolvedValueOnce(ok('gemini-2.5-flash-lite'));
+      const { result } = await openWithMemo();
+      await generateNow(result);
+      expect(generateDaily.mock.calls.map(([body]) => body.model)).toEqual([
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-2.5-flash-lite',
+      ]);
+      expect(result.current.form.internalText).toBe('gemini-2.5-flash-lite の社内文');
+      expect(result.current.form.aiFailure).toBeNull();
+      expect(result.current.dailyAi.info?.model).toBe('gemini-2.5-flash-lite');
+      expect(result.current.generatingSince).toBeNull();
+    });
+
+    it('全部のモデルで書けなければ、試したモデルと理由を出して結果欄を開き、手で書いて保存できる', async () => {
+      vi.mocked(reportsApi.dailyModels).mockResolvedValue({
+        models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+      });
+      generateDaily
+        .mockResolvedValueOnce(apiError('gemini-2.5-flash', true))
+        .mockResolvedValueOnce(apiError('gemini-2.5-flash-lite', true));
+      const { result } = await openWithMemo();
+      await generateNow(result);
+      expect(generateDaily).toHaveBeenCalledTimes(2);
+      expect(result.current.form.dailyResultShown).toBe(true);
+      expect(result.current.form.aiFailure).toContain('gemini-2.5-flash → gemini-2.5-flash-lite');
+      expect(result.current.form.aiFailure).toContain('gemini-2.5-flash-lite は混み合っています');
+      expect(result.current.dailyAi.info).toBeNull();
+
+      act(() => {
+        result.current.actions.setDailyText('internalText', '手で書いた社内文');
+        result.current.actions.setDailyText('customerText', '手で書いた保護者向け');
+      });
+      saveDaily.mockResolvedValueOnce(savedReport('r1', 'c1'));
+      await act(async () => {
+        result.current.save();
+      });
+      expect(saveDaily).toHaveBeenCalledWith(
+        expect.objectContaining({ internalText: '手で書いた社内文', aiGenerationId: undefined }),
+      );
+    });
+
+    it('試し直しても変わらない失敗(API キーの誤り)は次のモデルを試さない', async () => {
+      vi.mocked(reportsApi.dailyModels).mockResolvedValue({
+        models: ['gemini-2.5-flash', 'gemini-2.0-flash'],
+      });
+      generateDaily.mockResolvedValueOnce(apiError('gemini-2.5-flash', false));
+      const { result } = await openWithMemo();
+      await generateNow(result);
+      expect(generateDaily).toHaveBeenCalledTimes(1);
+      expect(result.current.form.dailyResultShown).toBe(true);
+      expect(result.current.form.aiFailure).toContain('gemini-2.5-flash');
+    });
+
+    it('モデルの順番が読めなければ、モデルを指定せずに1回だけ試す', async () => {
+      vi.mocked(reportsApi.dailyModels).mockRejectedValue(new Error('network'));
+      generateDaily.mockResolvedValueOnce(ok('gemini-2.5-flash'));
+      const { result } = await openWithMemo();
+      await generateNow(result);
+      expect(generateDaily).toHaveBeenCalledTimes(1);
+      expect(generateDaily.mock.calls[0]?.[0].model).toBeUndefined();
+      expect(result.current.form.internalText).toBe('gemini-2.5-flash の社内文');
+    });
+
+    it('いま試しているモデルを見せ、⏹ 止めると問い合わせを切って手で書けるようにする', async () => {
+      vi.mocked(reportsApi.dailyModels).mockResolvedValue({
+        models: ['gemini-2.5-flash', 'gemini-2.0-flash'],
+      });
+      const pending = deferred<Awaited<ReturnType<typeof reportsApi.generateDaily>>>();
+      generateDaily
+        .mockResolvedValueOnce(apiError('gemini-2.5-flash', true))
+        .mockReturnValueOnce(pending.promise);
+      const { result } = await openWithMemo();
+      act(() => result.current.generate());
+      await waitFor(() => expect(generateDaily).toHaveBeenCalledTimes(2));
+      expect(result.current.aiProgress).toEqual({
+        model: 'gemini-2.0-flash',
+        attempt: 2,
+        total: 2,
+        failed: ['gemini-2.5-flash'],
+      });
+
+      act(() => result.current.stopGenerating());
+      expect(generateDaily.mock.calls[1]?.[1]?.aborted).toBe(true);
+      await waitFor(() => expect(result.current.generatingSince).toBeNull());
+      expect(result.current.aiProgress).toBeNull();
+      expect(result.current.form.dailyResultShown).toBe(true);
+      expect(result.current.form.aiFailure).toContain('AIを止めました');
+      // 止めたあとに届いた答えは入れない
+      await act(async () => {
+        pending.resolve(ok('gemini-2.0-flash'));
+        await pending.promise;
+      });
+      expect(result.current.form.internalText).toBe('');
     });
   });
 });
