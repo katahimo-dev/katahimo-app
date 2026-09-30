@@ -69,15 +69,15 @@ describe('保存するときに送る列', () => {
       AC: '14:00',
     });
   });
-  it('出ていない区間の欄は空で送る(GAS版と同じ)', () => {
+  it('出ていない区間の欄は空で送る(GAS版と同じ)。天候は消さずに今の値のまま送る', () => {
     const record = toDayRecord({ ...threeVisits, M: '', N: '', V: '', W: '' });
     const shown = shownDetailFields(buildMoveGroups(record));
     expect(detailPatch(record.detail, shown)).toEqual({
       AI: '6.2',
-      I: '',
+      I: '晴れ',
       H: '',
       AG: '',
-      R: '',
+      R: '雨',
       Q: '',
       AH: '',
       AJ: '12.8',
@@ -96,11 +96,12 @@ describe('雪・買い物代行', () => {
     expect(snowWeatherValue(true)).toBe('雪');
     expect(snowWeatherValue(false)).toBe('');
   });
-  it('2件目までの日は 1→2 の雪(I)を送り、出ていない 2→3 の雪(R)は空で送る', () => {
+  it('2件目までの日は 2→3 の時間を空で送るが、天候(R)は今の値のまま送る', () => {
     const record = toDayRecord({ ...threeVisits, I: '雪', R: '雪', V: '', W: '' });
     const patch = detailPatch(record.detail, shownDetailFields(buildMoveGroups(record)));
     expect(patch.I).toBe('雪');
-    expect(patch.R).toBe('');
+    expect(patch.Q).toBe('');
+    expect(patch.R).toBe('雪');
   });
   it('買い物代行は空か0以上の整数', () => {
     expect(isValidShoppingCount('')).toBe(true);

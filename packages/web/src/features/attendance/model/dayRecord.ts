@@ -134,7 +134,7 @@ export function slotPatch(key: SlotKey, values: SlotValues): AttendanceRowDataIn
 /**
  * 「移動と距離・買い物代行・備考」を保存するときに送る列(GAS版 PAST_SCHEDULE_MOVE_COLS + AN + AO)。
  * GAS版と同じく、画面に出ていない区間の欄(訪問が1件の日の「1件目 → 2件目」等)は空で送る
- * (GAS版は入力欄が無い列を '' として保存していた)。
+ * (GAS版は入力欄が無い列を '' として保存していた)。天候は例外で、出ていなくても今の値のまま送る(`shownDetailFields`)。
  */
 export function detailPatch(
   values: DayDetailValues,

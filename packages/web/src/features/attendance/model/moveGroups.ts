@@ -74,9 +74,13 @@ export function buildMoveGroups(record: DayRecord): MoveGroup[] {
   return groups;
 }
 
-/** 区間に出ている項目 + 買い物代行・備考(保存時に空で送らない項目)。 */
+/**
+ * 区間に出ている項目 + 買い物代行・備考・天候(保存時に空で送らない項目)。
+ * 天候(I/R)は区間が出ていなくても今の値のまま送る: 以前はI列を「家 → 1件目」に出していたため、訪問1件の日にも
+ * 晴れ等が入っていることがあり、それを消さない(時間の列が空の区間では計算に効かない)。
+ */
 export function shownDetailFields(groups: readonly MoveGroup[]): Set<DayDetailField> {
-  const fields = new Set<DayDetailField>(['shoppingCount', 'remarks']);
+  const fields = new Set<DayDetailField>(['shoppingCount', 'remarks', 'leg12Weather', 'leg23Weather']);
   for (const g of groups) {
     for (const f of g.numberFields) fields.add(f.field);
     if (g.snow) fields.add(g.snow.field);
