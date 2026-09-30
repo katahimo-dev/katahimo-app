@@ -138,6 +138,110 @@ describe('日報・事故報告の一覧', () => {
     }
   });
 
+  describe('保存した順', () => {
+    /** 保存した順の時刻を決める(インメモリの insert は new Date() のため、テストで並びを決める)。 */
+    const setCreatedAt = (id: string, iso: string) => {
+      const row = ctx.data().careRecords.find((c) => c.id === id);
+      if (!row) throw new Error('記録がありません');
+      row.createdAt = new Date(iso);
+    };
+
+    it('最初に保存した日時の新しい順(上書き保存しても順は変わらない)。期間は訪問日で絞る', async () => {
+      const late = await saveDailyReport(ctx.deps, staff, daily({ reportDate: '2026-09-22' }));
+      const early = await saveDailyReport(ctx.deps, other, daily({ reportDate: '2026-09-20' }));
+      const outOfRange = await saveDailyReport(ctx.deps, staff, daily({ reportDate: '2026-08-01' }));
+      setCreatedAt(late.id, '2026-09-22T05:00:00.000Z');
+      // 前の日の訪問を後から書いた(保存した順では上)
+      setCreatedAt(early.id, '2026-09-23T05:00:00.000Z');
+      setCreatedAt(outOfRange.id, '2026-09-24T05:00:00.000Z');
+      // 上書き保存は同じ記録を直すだけ(新しい記録にならない)
+      await saveDailyReport(
+        ctx.deps,
+        staff,
+        daily({ reportId: late.id, reportDate: '2026-09-22', inputText: '直した' }),
+      );
+
+      const ids = async (sort: 'occurred' | 'saved' | undefined) =>
+        (await listReports(ctx.deps, coordinator, { limit: 30, sort })).reports.map((r) => r.id);
+      expect(await ids(undefined)).toEqual([late.id, early.id]);
+      expect(await ids('occurred')).toEqual([late.id, early.id]);
+      expect(await ids('saved')).toEqual([early.id, late.id]);
+      const page = await listReports(ctx.deps, coordinator, { limit: 30, sort: 'saved' });
+      expect(page.reports[0]?.createdAt).toBe('2026-09-23T05:00:00.000Z');
+      expect(ctx.data().careRecords).toHaveLength(3);
+      expect(ctx.appLog.byAction('report.list.viewed').at(-1)?.details).toMatchObject({ sort: 'saved' });
+    });
+
+    it('keyset ページングで同じ時刻も重複・抜けなく読め、別の並びの続きの位置は断る', async () => {
+      for (let i = 0; i < 5; i++) {
+        const report = await saveDailyReport(
+          ctx.deps,
+          staff,
+          daily({ reportDate: `2026-09-${String(10 + i)}`, inputText: `m${i}` }),
+        );
+        // 2件ずつ同じ時刻(id で並ぶ)
+        setCreatedAt(report.id, `2026-09-2${Math.floor(i / 2)}T00:00:00.000Z`);
+      }
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      let savedCursor: string | undefined;
+      for (let n = 0; n < 5; n++) {
+        const page = await listReports(ctx.deps, coordinator, { limit: 2, cursor, sort: 'saved' });
+        seen.push(...page.reports.map((r) => r.id));
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
+        savedCursor ??= page.nextCursor;
+      }
+      expect(new Set(seen).size).toBe(5);
+      const createdAts = seen.map(
+        (id) =>
+          ctx
+            .data()
+            .careRecords.find((c) => c.id === id)
+            ?.createdAt?.getTime() ?? 0,
+      );
+      expect([...createdAts].sort((a, b) => b - a)).toEqual(createdAts);
+
+      const occurredCursor = (await listReports(ctx.deps, coordinator, { limit: 2 })).nextCursor;
+      expect(occurredCursor).toBeTruthy();
+      const forge = (value: unknown) => Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+      const refused: [string, 'occurred' | 'saved'][] = [
+        [occurredCursor as string, 'saved'],
+        [savedCursor as string, 'occurred'],
+        ['s.xxx', 'saved'],
+        [`s.${forge(['2026-09-01T00:00:00.000Z', 'not-a-uuid'])}`, 'saved'],
+        [`s.${forge(['2026-02-30 00:00:00.123456+09', '0192f1d2-0000-7000-8000-000000000001'])}`, 'saved'],
+      ];
+      for (const [bad, sort] of refused) {
+        await expect(
+          listReports(ctx.deps, coordinator, { limit: 2, cursor: bad, sort }),
+        ).rejects.toMatchObject({
+          code: 'validation_failed',
+          reason: 'invalid_cursor',
+        });
+      }
+      // DB の created_at::text の形(マイクロ秒つき・時差つき)は読める
+      await expect(
+        listReports(ctx.deps, coordinator, {
+          limit: 2,
+          sort: 'saved',
+          cursor: `s.${forge(['2026-09-21 09:00:00.123456+09', '0192f1d2-0000-7000-8000-000000000001'])}`,
+        }),
+      ).resolves.toMatchObject({ reports: expect.any(Array) });
+    });
+
+    it('CSV も保存した順で書き出す', async () => {
+      const a = await saveDailyReport(ctx.deps, staff, daily({ reportDate: '2026-09-22' }));
+      const b = await saveDailyReport(ctx.deps, staff, daily({ reportDate: '2026-09-20' }));
+      setCreatedAt(a.id, '2026-09-22T05:00:00.000Z');
+      setCreatedAt(b.id, '2026-09-23T05:00:00.000Z');
+      const exported = await exportReports(ctx.deps, coordinator, 'daily', { sort: 'saved' });
+      expect((await collect(exported.rows())).map((r) => r.id)).toEqual([b.id, a.id]);
+      const byOccurred = await exportReports(ctx.deps, coordinator, 'daily', {});
+      expect((await collect(byOccurred.rows())).map((r) => r.id)).toEqual([a.id, b.id]);
+    });
+  });
+
   it('期間は366日まで、逆転した期間は断る', async () => {
     await expect(
       listReports(ctx.deps, coordinator, { limit: 30, from: '2025-01-01', to: '2026-09-01' }),

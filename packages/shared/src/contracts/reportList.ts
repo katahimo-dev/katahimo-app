@@ -32,6 +32,21 @@ export const REPORT_LIST_MAX_PAGE_SIZE = 100;
 /** 一覧の抜粋の最大の文字数。 */
 export const REPORT_EXCERPT_MAX_LENGTH = 60;
 
+/**
+ * 一覧・CSV の並び。
+ * - occurred: 訪問日時の新しい順(記録の日時 occurred_at DESC, id DESC。既定)
+ * - saved: 保存した順(最初に保存した日時 created_at DESC, id DESC。GAS版の「日報」シートで保存するたびに
+ *   行が足されていたのと同じく、書いたばかりの報告が上に来る。上書き保存は同じ記録を直すため順は変わらない)
+ */
+export const REPORT_LIST_SORTS = ['occurred', 'saved'] as const;
+export type ReportListSort = (typeof REPORT_LIST_SORTS)[number];
+export const reportListSortSchema = z.enum(REPORT_LIST_SORTS);
+
+export const REPORT_LIST_SORT_LABELS: Record<ReportListSort, string> = {
+  occurred: '訪問日時の新しい順',
+  saved: '保存した順',
+};
+
 const optionalId = idSchema.optional();
 
 const reportCriteriaShape = {
@@ -40,6 +55,8 @@ const reportCriteriaShape = {
   /** 書いたスタッフ(一般スタッフは送っても本人になる)。 */
   staffId: optionalId,
   customerId: optionalId,
+  /** 並び(省略は occurred)。期間はどちらの並びでも記録の日時で絞る。 */
+  sort: reportListSortSchema.default('occurred'),
 };
 
 const rangeRefine = <T extends { from?: string | undefined; to?: string | undefined }>(q: T) =>
@@ -52,7 +69,8 @@ const rangeMessage = { message: '期間の開始日は終了日より前にし�
  * - staffId: 書いたスタッフ。一般スタッフは無視して本人に固定する
  * - customerId: お客様
  * - kind: 種類(省略はすべて)
- * - cursor: 前のページの nextCursor
+ * - sort: 並び(occurred = 訪問日時の新しい順(既定)/ saved = 保存した順)
+ * - cursor: 前のページの nextCursor(同じ sort で使う。別の並びの続きの位置は 400 invalid_cursor)
  */
 export const reportListQuerySchema = z
   .object({
@@ -65,7 +83,7 @@ export const reportListQuerySchema = z
 export type ReportListQuery = z.input<typeof reportListQuerySchema>;
 
 /**
- * GET /api/reports/export.csv の条件(コーディネーター・管理者だけ)。sheet で列の形を選ぶ。
+ * GET /api/reports/export.csv の条件(コーディネーター・管理者だけ)。sheet で列の形を選ぶ。行の順は一覧と同じ sort。
  * kind は sheet に合う種類だけ(accident のシートで事故報告だけ・ヒヤリハットだけに絞る)。
  */
 export const reportCsvQuerySchema = z
@@ -102,10 +120,12 @@ export const reportListItemSchema = z.object({
   esRating: z.number().int().nullable(),
   /** 最後に保存された日時(ISO8601)。 */
   updatedAt: z.string(),
+  /** 最初に保存した日時(ISO8601。sort=saved の並びのキー)。 */
+  createdAt: z.string(),
 });
 export type ReportListItem = z.infer<typeof reportListItemSchema>;
 
-/** GET /api/reports(新しい順)。 */
+/** GET /api/reports(sort の順)。 */
 export const reportListResponseSchema = z.object({
   reports: z.array(reportListItemSchema),
   nextCursor: z.string().nullable(),
@@ -121,6 +141,8 @@ const reportDetailBase = {
   date: businessDateSchema,
   time: z.string(),
   updatedAt: z.string(),
+  /** 最初に保存した日時(ISO8601)。 */
+  createdAt: z.string(),
   staffId: idSchema,
   staffName: z.string().nullable(),
   customerId: idSchema,

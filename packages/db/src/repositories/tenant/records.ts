@@ -2,7 +2,9 @@ import { conflict, STALE_WRITE_MESSAGE } from '@katahimo/core/domain';
 import type {
   CareRecordCursor,
   CareRecordListFilter,
+  CareRecordListPosition,
   CareRecordListRow,
+  CareRecordListSort,
   CareRecordPatch,
   CareRecordRepository,
   CareRecordRow,
@@ -52,7 +54,25 @@ const careRecordColumns = {
   rowVersion: careRecords.rowVersion,
 };
 
-const careRecordListColumns = { ...careRecordColumns, updatedAt: careRecords.updatedAt };
+const careRecordListColumns = {
+  ...careRecordColumns,
+  updatedAt: careRecords.updatedAt,
+  createdAt: careRecords.createdAt,
+  // 続きの位置はマイクロ秒まで保つ(Date にするとミリ秒に丸まり、同じミリ秒の記録を飛ばす・重ねる)
+  createdAtText: sql<string>`${careRecords.createdAt}::text`,
+};
+
+/** 全員分の一覧の並びのキーの列(occurred = 記録の日時、saved = 最初に保存した日時)。 */
+function listSortColumn(sort: CareRecordListSort) {
+  return sort === 'saved' ? careRecords.createdAt : careRecords.occurredAt;
+}
+
+/** 並び (key DESC, id DESC) で after より後ろ(行の比較)。 */
+function afterListPosition(sort: CareRecordListSort, after: CareRecordListPosition | null) {
+  return after
+    ? sql`(${listSortColumn(sort)}, ${careRecords.id}) < (${after.at}::timestamptz, ${after.id}::uuid)`
+    : undefined;
+}
 
 /** 並び (occurred_at DESC, id DESC) で after より後ろ(行の比較。索引の範囲で読める)。 */
 function afterCursor(after: CareRecordCursor | null) {
@@ -114,9 +134,14 @@ export class DrizzleCareRecordRepository extends TenantBound implements CareReco
       .limit(limit);
   }
 
+  /**
+   * saved の並びは (tenant_id, occurred_at) の索引で期間の記録を読んでから並べ替える(期間は366日まで・
+   * 1テナントで年に数千件のため、created_at の索引は足さない)。
+   */
   listByPeriod(
     filter: CareRecordListFilter,
-    after: CareRecordCursor | null,
+    sort: CareRecordListSort,
+    after: CareRecordListPosition | null,
     limit: number,
   ): Promise<CareRecordListRow[]> {
     return this.tx
@@ -130,10 +155,10 @@ export class DrizzleCareRecordRepository extends TenantBound implements CareReco
           filter.authorStaffId ? eq(careRecords.authorStaffId, filter.authorStaffId) : undefined,
           filter.customerId ? eq(careRecords.customerId, filter.customerId) : undefined,
           filter.recordTypes ? inArray(careRecords.recordType, [...filter.recordTypes]) : undefined,
-          afterCursor(after),
+          afterListPosition(sort, after),
         ),
       )
-      .orderBy(desc(careRecords.occurredAt), desc(careRecords.id))
+      .orderBy(desc(listSortColumn(sort)), desc(careRecords.id))
       .limit(limit);
   }
 

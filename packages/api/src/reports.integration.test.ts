@@ -181,6 +181,58 @@ describe('API: 日報・事故報告の一覧', () => {
     expect(new Set(ids).size).toBe(3);
   });
 
+  it('sort=saved は最初に保存した順(上書き保存しても順は変わらない)。続きの位置はマイクロ秒まで保ち、別の並びの位置は 400', async () => {
+    // 上書き保存(同じ内容)。同じ記録が直るだけで、新しい記録にはならない
+    const overwrite = await post('/api/reports/daily', t.otherCookie, {
+      reportId: otherReportId,
+      customerId: t.customerId,
+      reportDate: today(),
+      startTime: '09:00',
+      endTime: '12:00',
+      inputText: '次郎の日報',
+      internalText: '社内向け 次郎の日報',
+      customerText: '保護者向け',
+      riskRating: 2,
+      esRating: 4,
+    });
+    expect(overwrite.status).toBe(200);
+    const all = (await (
+      await get('/api/reports?sort=saved', t.coordinatorCookie)
+    ).json()) as ReportListResponse;
+    const accidentId = all.reports.find((r) => r.kind === 'near_miss')?.id;
+    expect(all.reports.map((r) => r.id)).toEqual([accidentId, otherReportId, staffReportId]);
+    const createdAts = all.reports.map((r) => r.createdAt);
+    expect([...createdAts].sort().reverse()).toEqual(createdAts);
+
+    const seen: string[] = [];
+    let cursor = '';
+    let savedCursor = '';
+    for (let n = 0; n < 4; n++) {
+      const page = (await (
+        await get(
+          `/api/reports?sort=saved&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+          t.coordinatorCookie,
+        )
+      ).json()) as ReportListResponse;
+      seen.push(...page.reports.map((r) => r.id));
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+      savedCursor ||= page.nextCursor;
+    }
+    expect(seen).toEqual([accidentId, otherReportId, staffReportId]);
+
+    const occurred = (await (
+      await get('/api/reports?limit=1', t.coordinatorCookie)
+    ).json()) as ReportListResponse;
+    for (const path of [
+      `/api/reports?sort=saved&cursor=${encodeURIComponent(occurred.nextCursor ?? '')}`,
+      `/api/reports?cursor=${encodeURIComponent(savedCursor)}`,
+      '/api/reports?sort=newest',
+    ]) {
+      expect((await get(path, t.coordinatorCookie)).status, path).toBe(400);
+    }
+  });
+
   it('書き換えた続きの位置(UUID でない ID・範囲外の日時)は一覧・これまでの記録・操作ログとも 400(500 にしない)', async () => {
     const forge = (value: unknown) =>
       encodeURIComponent(Buffer.from(JSON.stringify(value), 'utf8').toString('base64url'));
@@ -292,6 +344,13 @@ describe('API: 日報・事故報告の一覧', () => {
     expect(accidentRows).toHaveLength(2);
     expect(accidentRows[1]).toContain(',ヒヤリハット,');
 
+    // sort=saved は保存した順(次郎の日報を後から保存した)
+    const saved = await get('/api/reports/export.csv?sheet=daily&sort=saved', t.adminCookie);
+    const savedRows = (await saved.text()).trimEnd().split('\r\n').slice(1);
+    expect(savedRows).toHaveLength(2);
+    expect(savedRows[0]).toContain('次郎の日報');
+    expect(savedRows[1]).toContain('はなさんと公園');
+
     expect((await get('/api/reports/export.csv?sheet=daily', t.staffCookie)).status).toBe(403);
     expect((await get('/api/reports/export.csv', t.coordinatorCookie)).status).toBe(400);
     expect((await get('/api/reports/export.csv?sheet=daily&kind=accident', t.coordinatorCookie)).status).toBe(
@@ -307,7 +366,7 @@ describe('API: 日報・事故報告の一覧', () => {
     expect(actions).toContain('report.detail.view_denied');
     expect(actions).toContain('report.list.export.access_denied');
     const exported = logs.entries.filter((e) => e.action === 'report.list.exported');
-    expect(exported).toHaveLength(2);
+    expect(exported).toHaveLength(3);
     expect(exported.every((e) => e.level === 'SECURITY')).toBe(true);
   });
 });

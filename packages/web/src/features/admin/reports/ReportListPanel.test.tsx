@@ -52,6 +52,7 @@ function item(overrides: Partial<ReportListItem> = {}): ReportListItem {
     riskRating: 2,
     esRating: 4,
     updatedAt: '2026-09-20T05:00:00.000Z',
+    createdAt: '2026-09-20T04:00:00.000Z',
     ...overrides,
   };
 }
@@ -104,7 +105,9 @@ describe('報告一覧', () => {
     expect(within(list).getByText('公園で遊びました')).toBeTruthy();
     // PSI 2 以下(管理者に知らせた日報)には印を付ける
     expect(within(list).getByText('⚠ PSI 2')).toBeTruthy();
-    expect(screen.getByText('2026-08-27 〜 2026-09-26(新しい順)')).toBeTruthy();
+    expect(screen.getByText('2026-08-27 〜 2026-09-26(訪問日時の新しい順)')).toBeTruthy();
+    // 訪問日時の順では保存した日時は出さない
+    expect(within(list).queryByText(/^保存 /)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'もっと見る' }));
     expect(await within(list).findByText('ヒヤリハット')).toBeTruthy();
     expect(listApi).toHaveBeenLastCalledWith(expect.any(Object), 'next-1', expect.anything());
@@ -149,6 +152,51 @@ describe('報告一覧', () => {
     fireEvent.click(screen.getByRole('button', { name: '⬇ 事故報告・ヒヤリハットのCSV' }));
     await waitFor(() => expect(showErrorToast).toHaveBeenCalledWith(refused));
     expect(saveBlobAsFile).not.toHaveBeenCalled();
+  });
+
+  it('並びを「保存した順」にするとすぐ読み直し、保存した日時を出す(入力中の他の条件はまだ使わない)。CSV も同じ並び', async () => {
+    listApi.mockResolvedValue(page([item()]));
+    renderPanel();
+    await screen.findByRole('list', { name: '報告一覧' });
+    expect(listApi).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sort: 'occurred' }),
+      undefined,
+      expect.anything(),
+    );
+    await screen.findByRole('option', { name: '佐藤 はな' });
+    fireEvent.change(screen.getByLabelText('お客様'), { target: { value: CUSTOMER } });
+    fireEvent.change(screen.getByLabelText('並び'), { target: { value: 'saved' } });
+    await waitFor(() =>
+      expect(listApi).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sort: 'saved' }),
+        undefined,
+        expect.anything(),
+      ),
+    );
+    expect(listApi.mock.lastCall?.[0].customerId).toBeUndefined();
+    expect(await screen.findByText('2026-08-27 〜 2026-09-26(保存した順)')).toBeTruthy();
+    const list = screen.getByRole('list', { name: '報告一覧' });
+    // 2026-09-20T04:00Z = 日本時間 13:00
+    expect(within(list).getByText('保存 09/20 13:00')).toBeTruthy();
+
+    vi.mocked(reportsApi.downloadCsv).mockResolvedValueOnce({ blob: new Blob(['x']), filename: 'r.csv' });
+    fireEvent.click(screen.getByRole('button', { name: '⬇ 日報のCSV' }));
+    await waitFor(() =>
+      expect(vi.mocked(reportsApi.downloadCsv)).toHaveBeenLastCalledWith(
+        'daily',
+        expect.objectContaining({ sort: 'saved' }),
+      ),
+    );
+
+    // 絞り込むと入力中の条件も使い、並びはそのまま
+    fireEvent.click(screen.getByRole('button', { name: '絞り込む' }));
+    await waitFor(() =>
+      expect(listApi).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sort: 'saved', customerId: CUSTOMER }),
+        undefined,
+        expect.anything(),
+      ),
+    );
   });
 
   it('条件の誤りはサーバーの理由を出し、CSV は押せない', async () => {
