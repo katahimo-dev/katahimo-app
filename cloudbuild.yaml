@@ -1,15 +1,18 @@
 # Cloud Build: イメージのビルド・push → マイグレーション(Cloud Run Job)→ デプロイ。
-# 前提: infra/gcp(Terraform)を deploy_workloads=true で apply 済み。手順は doc/07_インフラ・運用.md。
+# 前提: infra/gcp(Terraform)を deploy_workloads=true で apply 済み。手順は doc/07_インフラ・運用.md 4章。
 #
-# 実行SAは katahimo-deployer(infra/gcp/iam.tf)。GitHub トリガー(main への push)ならトリガーの
-# 「サービスアカウント」に指定し、手元から実行する場合は:
+# 実行SAは katahimo-deployer(infra/gcp/iam.tf)。本番はタグ(vX.Y.Z)の push で動く GitHub トリガー(承認必須・
+# _TRAFFIC=canary)から動かす。手元から実行する場合は:
 #   gcloud builds submit --region=asia-northeast1 --config=cloudbuild.yaml \
 #     --gcs-source-staging-dir="gs://${PROJECT_ID}-katahimo-build/source" \
 #     --service-account="projects/${PROJECT_ID}/serviceAccounts/katahimo-deployer@${PROJECT_ID}.iam.gserviceaccount.com" \
-#     --substitutions=_TAG="$(git rev-parse --short HEAD)"
+#     --substitutions=_TAG="$(git rev-parse --short HEAD)",_TRAFFIC=canary
 #
-# マイグレーションは新しいイメージのデプロイ前に流す。そのため、マイグレーションは旧バージョンのアプリでも
-# 動く形(列の追加→アプリ更新→旧列の削除は次のリリース、の2段階)で書くこと。
+# _TRAFFIC=canary では API の新しいリビジョンを利用者に向けずに(タグ canary の URL だけで)出し、ジョブのイメージは
+# 変えない。確かめたら cloudbuild.promote.yaml で利用者を切り替え、ジョブを同じイメージにする。
+#
+# マイグレーションは新しいイメージのデプロイ前に流す(canary でも本番の DB に当たる)。そのため、マイグレーションは
+# 旧バージョンのアプリでも動く形(列の追加→アプリ更新→旧列の削除は次のリリース、の2段階)で書くこと。
 
 substitutions:
   _REGION: asia-northeast1
@@ -18,6 +21,9 @@ substitutions:
   _TAG: ${SHORT_SHA}
   # false ならビルドと push だけ行う(マイグレーション・デプロイをしない)
   _DEPLOY: 'true'
+  # latest: API をすぐ利用者に向け、ジョブも差し替える。canary: API は利用者に向けずタグ canary の URL だけで出し、
+  # ジョブは変えない(cloudbuild.promote.yaml で切り替える)。本番のタグのトリガーは canary にする
+  _TRAFFIC: latest
 
 options:
   # 既定以外のサービスアカウントで動かすビルドはログの出力先の指定が必須
@@ -91,7 +97,24 @@ steps:
       - -c
       - |
         [ "${_DEPLOY}" = true ] || exit 0
-        gcloud run services update katahimo-api --region=${_REGION} --image=${_REGISTRY}/api:${_TAG}
+        case "${_TRAFFIC}" in
+          latest)
+            gcloud run services update katahimo-api --region=${_REGION} --image=${_REGISTRY}/api:${_TAG}
+            ;;
+          canary)
+            # 利用者は今のリビジョンのまま。タグ canary を新しいリビジョンに付け直す
+            gcloud run services update katahimo-api --region=${_REGION} --image=${_REGISTRY}/api:${_TAG} \
+              --no-traffic --tag=canary
+            echo "確かめる URL:"
+            gcloud run services describe katahimo-api --region=${_REGION} \
+              --format='value(status.traffic[].url)' | tr ';' '\n' | grep 'canary---' || true
+            echo "確かめたら cloudbuild.promote.yaml を _TAG=${_TAG} で実行する(doc/07 4章)"
+            ;;
+          *)
+            echo "_TRAFFIC は latest か canary: ${_TRAFFIC}" >&2
+            exit 1
+            ;;
+        esac
     waitFor: [push-api, migrate]
 
   - id: deploy-worker
@@ -103,6 +126,8 @@ steps:
       - -c
       - |
         [ "${_DEPLOY}" = true ] || exit 0
+        # canary ではジョブを変えない(利用者に向けていない版で夜間ジョブ・outbox を処理しないため)
+        [ "${_TRAFFIC}" = latest ] || { echo "_TRAFFIC=${_TRAFFIC}: ジョブは cloudbuild.promote.yaml で差し替えます"; exit 0; }
         for job in outbox-drain route-notice nightly-calendar-sync csv-import maintenance sync-busy-blocks; do
           gcloud run jobs update "katahimo-$${job}" --region=${_REGION} --image=${_REGISTRY}/worker:${_TAG}
         done

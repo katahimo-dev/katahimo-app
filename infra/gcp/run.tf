@@ -247,7 +247,8 @@ resource "google_cloud_run_v2_service" "api" {
   }
 
   lifecycle {
-    ignore_changes = [template[0].containers[0].image, client, client_version]
+    # イメージと利用者の向き先(traffic。cloudbuild の canary・切り替えが変える)は Cloud Build が管理する
+    ignore_changes = [template[0].containers[0].image, client, client_version, traffic]
   }
 
   depends_on = [google_secret_manager_secret_iam_member.accessor, google_project_iam_member.cloudsql_client]
