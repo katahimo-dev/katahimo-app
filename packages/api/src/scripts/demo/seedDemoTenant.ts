@@ -25,7 +25,7 @@ import { DEMO_ACCOUNTS, DEMO_PASSWORD } from '@katahimo/shared';
 import type { Container } from '../../container';
 import { DEMO_FIGURES, figureToCustomerSnapshot } from './figures';
 import { demoReceiptImageDataUrl } from './receiptImages';
-import { areaFigureIndexes, DEMO_STAFF_HOMES } from './staffAreas';
+import { areaFigureIndexes, DEMO_STAFF_AREAS } from './staffAreas';
 import { hashString, planVisitsForDate, recentBusinessDates, toJstDateIso } from './visitPlan';
 
 /** 訪問履歴・出勤簿を作る期間(日、当日を含めるとこの日数+1)。 */
@@ -172,7 +172,7 @@ export async function seedDemoTenant(
     staffByRole.set(account.role, staff);
     // 自宅(関西圏。staffAreas.ts)の緯度経度を直接入れる(スタッフの更新の usecase は地図APIで住所を探すため。
     // デモには地図APIが無い)
-    const home = DEMO_STAFF_HOMES[account.role];
+    const home = DEMO_STAFF_AREAS[account.role];
     const geo = { lat: home.lat, lng: home.lng };
     await container.uow.run(tenant.id, (r) =>
       r.staff.update(staff.id, { home: { address: home.address, geo, geoCell: geoCellOf(geo) } }),
@@ -206,13 +206,13 @@ export async function seedDemoTenant(
     return figure ? `${figure.familyName} ${figure.givenName}` : '';
   };
 
-  // ── 家庭の教育思考★(5世帯だけ、GAS版に無い機能なので触れておく) ──────────
+  // ── 家庭の教育思考★(5世帯だけ、GAS版に無い機能なので触れておく。日報を書くスタッフの担当の世帯に★1〜5) ──────
   const adminActor = actorOfStaff(tenant.id, staffByRole.get('admin') ?? visitingStaff);
   let reportProfileCount = 0;
-  for (let i = 0; i < Math.min(5, customerIdByFigureIndex.length); i++) {
-    const customerId = customerIdByFigureIndex[i];
+  for (const [i, figureIndex] of areaFigureIndexes(visitingStaff.role).slice(0, 5).entries()) {
+    const customerId = customerIdByFigureIndex[figureIndex];
     if (!customerId) continue;
-    await saveCustomerReportProfile(container, adminActor, customerId, { educationLevel: (i % 5) + 1 });
+    await saveCustomerReportProfile(container, adminActor, customerId, { educationLevel: i + 1 });
     reportProfileCount++;
   }
 
@@ -354,7 +354,7 @@ export async function seedDemoTenant(
     {
       date: previousMonthDate(today, 10),
       amount: 1500,
-      storeName: 'コインパーキング京都',
+      storeName: 'コインパーキング本町',
       companyPaid: true,
       customerIndex: null,
     },
