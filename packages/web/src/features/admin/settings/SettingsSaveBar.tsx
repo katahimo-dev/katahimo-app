@@ -6,10 +6,13 @@ export function SettingsSaveBar({
   form,
   saving,
   onSave,
+  savingLabel = '保存中...',
 }: {
   form: AdminSettingsForm;
   saving: boolean;
   onSave: () => void;
+  /** 保存中のボタンの文言(APIキーはサーバーが Gemini で確かめるので「確認中...」)。 */
+  savingLabel?: string;
 }) {
   return (
     <div className="flex justify-end gap-2 pt-1">
@@ -27,7 +30,7 @@ export function SettingsSaveBar({
         {form.dirty ? '元に戻す' : '🔄 読み込み直す'}
       </button>
       <button type="button" onClick={onSave} disabled={saving || !form.dirty} className={PRIMARY_BUTTON}>
-        {saving ? '保存中...' : '保存する'}
+        {saving ? savingLabel : '保存する'}
       </button>
     </div>
   );

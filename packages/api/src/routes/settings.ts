@@ -17,6 +17,7 @@ import {
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { Container } from '../container';
+import { enforceStaffQuota } from '../http/quota';
 import { apiError, jsonOk, parseJsonBody } from '../http/responses';
 import type { SessionEnv } from '../session';
 import { actorOf, requireAdmin } from '../session';
@@ -40,9 +41,20 @@ export function createSettingsRoutes(container: Container) {
     });
   });
 
+  /**
+   * 新しいキーは保存の前に Gemini で確かめる。確かめられなかったときは何も保存せず、usecase が投げる DomainError を
+   * onApiError が返す(キーを断られた・モデルが無い → 400 validation_failed + fields.apiKey、つながらない等 → 502)。
+   */
   app.post('/admin/gemini-key', requireAdmin(container, 'settings.gemini_api_key.save'), async (c) => {
     const body = await parseJsonBody(c, saveGeminiApiKeyRequestSchema);
     if (!body.ok) return body.response;
+    const limited = await enforceStaffQuota(
+      c,
+      container,
+      container.rateLimits.geminiKeySaveStaff,
+      'APIキーの保存の回数が上限に達しました。しばらく待ってから再度お試しください。',
+    );
+    if (limited) return limited;
     return respondSave(c, await saveGeminiApiKey(container, actorOf(c), body.data.apiKey));
   });
 

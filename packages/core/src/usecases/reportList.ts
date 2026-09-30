@@ -4,12 +4,14 @@ import {
   REPORT_LIST_DEFAULT_RANGE_DAYS,
   REPORT_LIST_MAX_RANGE_DAYS,
   type ReportCsvSheet,
+  type ReportListSort,
 } from '@katahimo/shared';
 import {
   addDays,
   canActForOthers,
   countDaysInclusive,
   decodeHistoryCursor,
+  decodeKeysetCursor,
   encodeHistoryCursor,
   forbidden,
   invalid,
@@ -23,7 +25,7 @@ import {
 import type { CareRecordType } from '../domain/model';
 import type { AccidentReportContent, DailyReportContent } from '../domain/reports/types';
 import type { AppLogPort } from '../ports/appLog';
-import type { CareRecordCursor, CareRecordListFilter, CareRecordListRow } from '../ports/records';
+import type { CareRecordListFilter, CareRecordListPosition, CareRecordListRow } from '../ports/records';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
 import type { Actor, Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
@@ -41,6 +43,8 @@ export interface ReportCriteria {
   staffId?: string | undefined;
   customerId?: string | undefined;
   kind?: CareRecordType | undefined;
+  /** 並び(省略は occurred = 訪問日時の新しい順。saved = 保存した順)。 */
+  sort?: ReportListSort | undefined;
 }
 
 export interface ReportRange {
@@ -56,6 +60,7 @@ interface ReportViewBase {
   date: string;
   time: string;
   updatedAt: string;
+  createdAt: string;
   staffId: string;
   staffName: string | null;
   customerId: string;
@@ -153,16 +158,44 @@ async function resolveCriteria(
   };
 }
 
-function decodeCursor(cursor: string): CareRecordCursor {
-  const decoded = decodeHistoryCursor(cursor);
-  if (!decoded) {
+/**
+ * 保存した順の続きの位置の印。訪問日時の順の続きの位置(印なしの base64url)と見分け、別の並びの続きの位置を
+ * 断る(base64url の文字に '.' は無いため、印つきの文字列が訪問日時の順の位置として読めることはない)。
+ */
+const SAVED_CURSOR_PREFIX = 's.';
+
+/** 並びの位置を続きの位置(不透明な文字列)にする。 */
+export function encodeReportListCursor(sort: ReportListSort, row: CareRecordListRow): string {
+  if (sort === 'occurred') return encodeHistoryCursor({ occurredAt: row.occurredAt, id: row.id });
+  // created_at は DB の文字列のまま(マイクロ秒まで保つ)
+  return `${SAVED_CURSOR_PREFIX}${Buffer.from(JSON.stringify([row.createdAtText, row.id]), 'utf8').toString('base64url')}`;
+}
+
+/** 続きの位置を読む。壊れた文字列・別の並びの続きの位置は 400 invalid_cursor(DB の型変換の 500 にしない)。 */
+export function decodeReportListCursor(sort: ReportListSort, cursor: string): CareRecordListPosition {
+  const saved = cursor.startsWith(SAVED_CURSOR_PREFIX);
+  let position: CareRecordListPosition | null = null;
+  if (sort === 'saved' && saved) {
+    const decoded = decodeKeysetCursor(cursor.slice(SAVED_CURSOR_PREFIX.length));
+    position = decoded ? { at: decoded.atText, id: decoded.id } : null;
+  } else if (sort === 'occurred' && !saved) {
+    const decoded = decodeHistoryCursor(cursor);
+    position = decoded ? { at: decoded.occurredAt.toISOString(), id: decoded.id } : null;
+  }
+  if (!position) {
     throw invalid(
       '続きの位置の指定が正しくありません。最初から読み込み直してください',
       undefined,
       'invalid_cursor',
     );
   }
-  return decoded;
+  return position;
+}
+
+function positionOf(sort: ReportListSort, row: CareRecordListRow): CareRecordListPosition {
+  return sort === 'saved'
+    ? { at: row.createdAtText, id: row.id }
+    : { at: row.occurredAt.toISOString(), id: row.id };
 }
 
 async function staffNames(r: TenantRepositories): Promise<Map<string, string>> {
@@ -208,6 +241,7 @@ function baseView(
     date: zonedBusinessDate(row.occurredAt, timeZone),
     time: reportTimeLabel(body, hhmm(row.occurredAt, timeZone)),
     updatedAt: row.updatedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
     staffId: row.authorStaffId,
     staffName: names.get(row.authorStaffId) ?? null,
     customerId: row.customerId,
@@ -260,10 +294,16 @@ function readsOthers(actor: Actor, authorStaffId: string | undefined): boolean {
   return authorStaffId !== actor.staffId;
 }
 
-function criteriaDetails(range: ReportRange, filter: CareRecordListFilter, extra: Record<string, unknown>) {
+function criteriaDetails(
+  range: ReportRange,
+  filter: CareRecordListFilter,
+  sort: ReportListSort,
+  extra: Record<string, unknown>,
+) {
   return {
     from: range.from,
     to: range.to,
+    ...(sort === 'saved' ? { sort } : {}),
     ...(filter.customerId ? { customerId: filter.customerId } : {}),
     ...(filter.recordTypes ? { kinds: [...filter.recordTypes] } : {}),
     ...extra,
@@ -271,7 +311,7 @@ function criteriaDetails(range: ReportRange, filter: CareRecordListFilter, extra
 }
 
 /**
- * 日報・事故報告・ヒヤリハットの一覧(新しい順、keyset ページング。GAS版で管理者が「日報」「事故報告」
+ * 日報・事故報告・ヒヤリハットの一覧(sort の順(既定は訪問日時の新しい順)、keyset ページング。GAS版で管理者が「日報」「事故報告」
  * シートを見ていたことの置き換え)。コーディネーター・管理者は全員分(staffId で絞れる)、一般スタッフは
  * 本人の記録だけ。他のスタッフの記録を含むページを開いたことを、続きのページも含めて1ページごとに操作ログに残す。
  */
@@ -280,10 +320,11 @@ export async function listReports(
   actor: Actor,
   query: ReportCriteria & { cursor?: string | undefined; limit: number },
 ): Promise<ReportListPage> {
-  const after = query.cursor ? decodeCursor(query.cursor) : null;
+  const sort = query.sort ?? 'occurred';
+  const after = query.cursor ? decodeReportListCursor(sort, query.cursor) : null;
   const page = await deps.uow.run(actor.tenantId, async (r) => {
     const { range, filter } = await resolveCriteria(deps, r, actor, query, undefined);
-    const rows = await r.careRecords.listByPeriod(filter, after, query.limit + 1);
+    const rows = await r.careRecords.listByPeriod(filter, sort, after, query.limit + 1);
     const shown = rows.slice(0, query.limit);
     const names = await staffNames(r);
     const customers = new Map<string, CustomerRef>();
@@ -298,10 +339,7 @@ export async function listReports(
       range,
       filter,
       reports: shown.map((row) => toListItem(row, range.timeZone, names, customers)),
-      nextCursor:
-        rows.length > query.limit && last
-          ? encodeHistoryCursor({ occurredAt: last.occurredAt, id: last.id })
-          : null,
+      nextCursor: rows.length > query.limit && last ? encodeReportListCursor(sort, last) : null,
     };
   });
   // 他のスタッフの記録を含むページは続きのページも毎回残す(続きの位置は書き換えられるため、最初のページだけでは
@@ -313,7 +351,7 @@ export async function listReports(
       action: 'report.list.viewed',
       actorStaffId: actor.staffId,
       targetStaffId: page.filter.authorStaffId ?? null,
-      details: criteriaDetails(page.range, page.filter, {
+      details: criteriaDetails(page.range, page.filter, sort, {
         count: page.reports.length,
         continued: after !== null,
       }),
@@ -403,7 +441,7 @@ const EXPORT_BATCH_SIZE = 500;
 export interface ReportExport {
   sheet: ReportCsvSheet;
   range: ReportRange;
-  /** 条件に合う全件(新しい順)。500件ずつ別のトランザクションで読む(長いトランザクションを開けない)。 */
+  /** 条件に合う全件(一覧と同じ sort の順)。500件ずつ別のトランザクションで読む(長いトランザクションを開けない)。 */
   rows(): AsyncGenerator<ReportExportRow[]>;
 }
 
@@ -418,6 +456,7 @@ export async function exportReports(
   criteria: ReportCriteria,
 ): Promise<ReportExport> {
   if (!canActForOthers(actor.role)) throw forbidden('権限がありません。', 'forbidden');
+  const sort = criteria.sort ?? 'occurred';
   const { range, filter } = await deps.uow.run(actor.tenantId, (r) =>
     resolveCriteria(deps, r, actor, criteria, SHEET_RECORD_TYPES[sheet]),
   );
@@ -427,7 +466,7 @@ export async function exportReports(
     action: 'report.list.exported',
     actorStaffId: actor.staffId,
     targetStaffId: filter.authorStaffId ?? null,
-    details: criteriaDetails(range, filter, { sheet }),
+    details: criteriaDetails(range, filter, sort, { sheet }),
     ...actor.meta,
   });
   return {
@@ -437,12 +476,12 @@ export async function exportReports(
       // 氏名は最初に1回だけ読む。お客様は書き出しの間ずっと使い回す(同じお客様は1回だけ読む)
       const names = await deps.uow.run(actor.tenantId, staffNames);
       const customers = new Map<string, CustomerRef>();
-      let after: CareRecordCursor | null = null;
+      let after: CareRecordListPosition | null = null;
       while (true) {
-        const batch: { rows: ReportExportRow[]; last: CareRecordCursor | null } = await deps.uow.run(
+        const batch: { rows: ReportExportRow[]; last: CareRecordListPosition | null } = await deps.uow.run(
           actor.tenantId,
           async (r) => {
-            const records = await r.careRecords.listByPeriod(filter, after, EXPORT_BATCH_SIZE);
+            const records = await r.careRecords.listByPeriod(filter, sort, after, EXPORT_BATCH_SIZE);
             await loadCustomers(
               r,
               records.map((row) => row.customerId),
@@ -452,7 +491,7 @@ export async function exportReports(
             const last = records.at(-1);
             return {
               rows: records.map((row) => toExportRow(row, range.timeZone, names, customers)),
-              last: last ? { occurredAt: last.occurredAt, id: last.id } : null,
+              last: last ? positionOf(sort, last) : null,
             };
           },
         );

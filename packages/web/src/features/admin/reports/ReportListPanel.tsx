@@ -1,12 +1,16 @@
 import {
+  formatZonedDateTime,
   isPsiAlert,
   REPORT_KIND_LABELS,
   REPORT_KINDS,
   REPORT_LIST_DEFAULT_RANGE_DAYS,
   REPORT_LIST_MAX_RANGE_DAYS,
+  REPORT_LIST_SORT_LABELS,
+  REPORT_LIST_SORTS,
   type ReportCsvSheet,
   type ReportKind,
   type ReportListItem,
+  type ReportListSort,
 } from '@katahimo/shared';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -19,7 +23,7 @@ import { useFileDownload } from '../../../lib/useFileDownload';
 import { EmptyState, ErrorState, Loading } from '../../../ui/StatusViews';
 import { useCustomerList } from '../../customers';
 import { adminQueryKeys } from '../adminQueryKeys';
-import { INPUT_CLASS } from '../components/FormField';
+import { FormField, INPUT_CLASS } from '../components/FormField';
 import { useFollowDefaultRange } from '../useFollowDefaultRange';
 import { ReportDetailModal } from './ReportDetailModal';
 import { csvSheetsFor, DELETED_STAFF, REPORT_KIND_BADGE, UNKNOWN_CUSTOMER } from './reportFormat';
@@ -29,7 +33,7 @@ function defaultRange(today: string): { from: string; to: string } {
 }
 
 function defaultFilters(): ReportListFilters {
-  return defaultRange(todayJst());
+  return { ...defaultRange(todayJst()), sort: 'occurred' };
 }
 
 const CSV_LABELS: Record<ReportCsvSheet, string> = {
@@ -37,7 +41,16 @@ const CSV_LABELS: Record<ReportCsvSheet, string> = {
   accident: '⬇ 事故報告・ヒヤリハットのCSV',
 };
 
-function ReportItem({ report, onOpen }: { report: ReportListItem; onOpen: () => void }) {
+function ReportItem({
+  report,
+  savedAtIn,
+  onOpen,
+}: {
+  report: ReportListItem;
+  /** 保存した順のときだけ、最初に保存した日時をこのタイムゾーンで出す。 */
+  savedAtIn: string | null;
+  onOpen: () => void;
+}) {
   return (
     <li>
       <button
@@ -58,6 +71,11 @@ function ReportItem({ report, onOpen }: { report: ReportListItem; onOpen: () => 
               {`⚠ PSI ${report.riskRating}`}
             </span>
           ) : null}
+          {savedAtIn ? (
+            <span className="text-sm text-gray-600">
+              {`保存 ${formatZonedDateTime(report.createdAt, savedAtIn).slice(5, 16).replace('-', '/')}`}
+            </span>
+          ) : null}
         </span>
         <span className="block font-bold text-gray-800 text-sm">
           {report.customerName ?? UNKNOWN_CUSTOMER}
@@ -72,9 +90,10 @@ function ReportItem({ report, onOpen }: { report: ReportListItem; onOpen: () => 
 }
 
 /**
- * 「報告一覧」(管理者・コーディネーター)。全員分の日報・事故報告・ヒヤリハットを条件で絞って新しい順に見る
- * (GAS版で「日報」「事故報告」シートを見ていたことの置き換え)。押すと中身を読むだけのダイアログを開く。
- * CSV はシートと同じ列で、絞り込んだ条件の全件。
+ * 「報告一覧」(管理者・コーディネーター)。全員分の日報・事故報告・ヒヤリハットを条件で絞って見る
+ * (GAS版で「日報」「事故報告」シートを見ていたことの置き換え)。並びは訪問日時の新しい順(既定)か保存した順
+ * (書いたばかりの報告が上。シートの下に行が足されていたのと同じ順)で、選んだらすぐ読み直す。
+ * 押すと中身を読むだけのダイアログを開く。CSV はシートと同じ列で、絞り込んだ条件の全件(一覧と同じ並び)。
  */
 export function ReportListPanel() {
   const [form, setForm] = useState<ReportListFilters>(defaultFilters);
@@ -100,6 +119,12 @@ export function ReportListPanel() {
 
   const set = <K extends keyof ReportListFilters>(key: K, value: ReportListFilters[K]) =>
     setForm((f) => ({ ...f, [key]: value || undefined }));
+  // 並びは絞り込みの条件と違い、選んだらすぐ一覧に使う(入力中の他の条件はまだ使わない)
+  const setSort = (sort: ReportListSort) => {
+    setForm((f) => ({ ...f, sort }));
+    setApplied((f) => ({ ...f, sort }));
+  };
+  const sort = applied.sort ?? 'occurred';
   const items = reports.data?.pages.flatMap((p) => p.reports) ?? [];
   const firstPage = reports.data?.pages[0];
   const sortedCustomers = [...(customers.data?.customers ?? [])].sort((a, b) =>
@@ -201,6 +226,20 @@ export function ReportListPanel() {
             ))}
           </select>
         </div>
+        <FormField id="reportListSort" label="並び">
+          <select
+            id="reportListSort"
+            value={form.sort ?? 'occurred'}
+            onChange={(e) => setSort(e.target.value as ReportListSort)}
+            className={INPUT_CLASS}
+          >
+            {REPORT_LIST_SORTS.map((s) => (
+              <option key={s} value={s}>
+                {REPORT_LIST_SORT_LABELS[s]}
+              </option>
+            ))}
+          </select>
+        </FormField>
         <button
           type="submit"
           className="w-full min-h-9 py-1.5 bg-blue-600 text-white text-sm font-bold rounded-lg"
@@ -235,14 +274,19 @@ export function ReportListPanel() {
       ) : (
         <>
           {firstPage ? (
-            <p className="text-sm text-gray-700">{`${firstPage.range.from} 〜 ${firstPage.range.to}(新しい順)`}</p>
+            <p className="text-sm text-gray-700">{`${firstPage.range.from} 〜 ${firstPage.range.to}(${REPORT_LIST_SORT_LABELS[sort]})`}</p>
           ) : null}
           {items.length === 0 ? (
             <EmptyState icon="📋" title="この条件の報告はありません" />
           ) : (
             <ul className="space-y-2" aria-label="報告一覧">
               {items.map((report) => (
-                <ReportItem key={report.id} report={report} onOpen={() => setOpenId(report.id)} />
+                <ReportItem
+                  key={report.id}
+                  report={report}
+                  savedAtIn={sort === 'saved' ? (firstPage?.timeZone ?? null) : null}
+                  onOpen={() => setOpenId(report.id)}
+                />
               ))}
             </ul>
           )}

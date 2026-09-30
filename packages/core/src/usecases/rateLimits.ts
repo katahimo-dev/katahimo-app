@@ -48,6 +48,11 @@ export interface RateLimitPolicy {
    * 自宅住所の変わる行ごとに地図API(従量課金)を呼ぶため。確かめる(dryRun)だけは数えない。
    */
   staffImportApplyStaff: RateLimitRule;
+  /**
+   * Gemini API キーの保存(管理者単位の1時間の上限)。保存ごとに Gemini へ確かめの問い合わせをするため
+   * (公開デモでは誰でも管理者でログインできる)。
+   */
+  geminiKeySaveStaff: RateLimitRule;
 }
 
 export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
@@ -76,6 +81,7 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   },
   attendanceExportStaff: { name: 'attendance_export_staff', limit: 30, windowMs: HOUR_MS },
   staffImportApplyStaff: { name: 'staff_import_apply_staff', limit: 5, windowMs: 10 * MINUTE_MS },
+  geminiKeySaveStaff: { name: 'gemini_key_save_staff', limit: 20, windowMs: HOUR_MS },
 };
 
 /** 回数だけを差し替えた規則一式を作る(環境変数での調整用。0以下・未指定は既定値のまま)。 */

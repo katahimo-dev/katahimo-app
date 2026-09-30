@@ -53,9 +53,27 @@ export interface CareRecordListFilter {
   recordTypes?: readonly CareRecordType[] | undefined;
 }
 
-/** 一覧・詳細で読む記録(最後に保存された日時つき)。 */
+/**
+ * 全員分の一覧・CSV の並び。occurred = (occurred_at DESC, id DESC)、saved = (created_at DESC, id DESC)
+ * (最初に保存した順。上書き保存は同じ行を直すため created_at は変わらない)。
+ */
+export type CareRecordListSort = 'occurred' | 'saved';
+
+/**
+ * 並びの中の位置(キーセットページング)。at は並びのキーの時刻の文字列(saved は DB の created_at を
+ * マイクロ秒まで保った文字列。occurred は ISO8601)。
+ */
+export interface CareRecordListPosition {
+  at: string;
+  id: string;
+}
+
+/** 一覧・詳細で読む記録(最初・最後に保存された日時つき)。 */
 export interface CareRecordListRow extends CareRecordRow {
   updatedAt: Date;
+  createdAt: Date;
+  /** created_at を DB の文字列のまま(マイクロ秒まで。saved の並びの続きの位置に使う)。 */
+  createdAtText: string;
 }
 
 export interface CareRecordRepository {
@@ -65,10 +83,11 @@ export interface CareRecordRepository {
   update(id: string, patch: CareRecordPatch, expectedVersion?: number): Promise<CareRecordRow>;
   /** 顧客の記録を新しい順に limit 件(after より後ろ)。 */
   listByCustomer(customerId: string, after: CareRecordCursor | null, limit: number): Promise<CareRecordRow[]>;
-  /** 条件に合う記録を (occurred_at DESC, id DESC) の順に limit 件(after より後ろ)。 */
+  /** 条件に合う記録を sort の順に limit 件(after より後ろ。after は同じ sort の位置)。 */
   listByPeriod(
     filter: CareRecordListFilter,
-    after: CareRecordCursor | null,
+    sort: CareRecordListSort,
+    after: CareRecordListPosition | null,
     limit: number,
   ): Promise<CareRecordListRow[]>;
   /** 1件を最後に保存された日時つきで読む。 */

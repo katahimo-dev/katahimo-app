@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { provisionTenant, registerStaff } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import { DrizzleTenantDirectory, DrizzleTenantProvisioning } from '@katahimo/db/repositories';
+import { NoopAiApiKeyVerifier } from '@katahimo/integrations';
 import { DEMO_ACCOUNTS, DEMO_AI_USES_PER_SESSION, DEMO_PASSWORD, type DemoAccount } from '@katahimo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
@@ -27,7 +28,8 @@ const env = loadEnv({
 });
 const appDb = createDatabase(env.DATABASE_URL, { max: 4 });
 const ownerDb = createDatabase(process.env.MIGRATION_DATABASE_URL ?? '', { max: 1, onnotice: () => {} });
-const container = createContainer(env, appDb);
+// Gemini API キーの保存の前の確認は実際の Gemini につながない(常に使えるキーとして扱う)
+const container = { ...createContainer(env, appDb), aiKeyVerifier: new NoopAiApiKeyVerifier() };
 const app = createApp({ env, container });
 
 function demoAccount(role: DemoAccount['role']): DemoAccount {

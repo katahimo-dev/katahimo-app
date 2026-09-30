@@ -73,6 +73,7 @@ import type {
 } from '../ports/push';
 import type { RateLimiterPort } from '../ports/rateLimiter';
 import type {
+  CareRecordListRow,
   CareRecordRow,
   ReceiptListFilter,
   ReceiptListRow,
@@ -153,8 +154,11 @@ export interface TenantData extends ReportAiFakeData {
   segments: (WorkSegmentRow & { staffId: string; businessDate: string })[];
   legs: (TravelLegRow & { staffId: string; businessDate: string })[];
   lockedPeriods: { staffId: string; yearMonth: string }[];
-  /** updatedAt は DB の set_updated_at() トリガーの代わり(直接 push した行は occurredAt を使う)。 */
-  careRecords: (CareRecordRow & { updatedAt?: Date })[];
+  /**
+   * updatedAt は DB の set_updated_at() トリガーの代わり、createdAt は DB の既定値 now() の代わり
+   * (直接 push した行はどちらも occurredAt を使う)。
+   */
+  careRecords: (CareRecordRow & { updatedAt?: Date; createdAt?: Date })[];
   careRecordRevisions: { careRecordId: string; body: CareRecordContent; changedBy: string | null }[];
   uploads: ReceiptUploadRow[];
   receipts: ReceiptRow[];
@@ -229,6 +233,17 @@ const sameBytes = (a: Uint8Array | null, b: Uint8Array | null) =>
   a !== null && b !== null && Buffer.from(a).equals(Buffer.from(b));
 
 /** 領収書の一覧の条件に合う行(領収書日時・ID の新しい順)。 */
+/** 一覧の1行(createdAtText は DB の created_at::text の代わりに ISO8601)。 */
+function toCareRecordListRow(c: TenantData['careRecords'][number]): CareRecordListRow {
+  const createdAt = c.createdAt ?? c.occurredAt;
+  return {
+    ...c,
+    updatedAt: c.updatedAt ?? c.occurredAt,
+    createdAt,
+    createdAtText: createdAt.toISOString(),
+  };
+}
+
 function matchingReceipts(data: TenantData, filter: ReceiptListFilter): ReceiptRow[] {
   return data.receipts
     .filter(
@@ -847,17 +862,19 @@ export function fakeRepositories(
       async findById(id) {
         const c = d().careRecords.find((x) => x.id === id);
         if (!c) return null;
-        const { updatedAt: _updatedAt, ...row } = c;
+        const { updatedAt: _updatedAt, createdAt: _createdAt, ...row } = c;
         return structuredClone(row);
       },
       async insert(input) {
-        const row: CareRecordRow & { updatedAt?: Date } = {
+        const now = new Date();
+        const row: CareRecordRow & { updatedAt?: Date; createdAt?: Date } = {
           ...structuredClone(input),
           rowVersion: 1,
-          updatedAt: new Date(),
+          updatedAt: now,
+          createdAt: now,
         };
         d().careRecords.push(row);
-        const { updatedAt: _updatedAt, ...saved } = row;
+        const { updatedAt: _updatedAt, createdAt: _createdAt, ...saved } = row;
         return structuredClone(saved);
       },
       async update(id, patch, expectedVersion) {
@@ -876,7 +893,7 @@ export function fakeRepositories(
           d().careRecordRevisions.push({ careRecordId: id, body: structuredClone(c.body), changedBy: null });
         }
         Object.assign(c, structuredClone(patch), { rowVersion: c.rowVersion + 1, updatedAt: new Date() });
-        const { updatedAt: _updatedAt, ...saved } = c;
+        const { updatedAt: _updatedAt, createdAt: _createdAt, ...saved } = c;
         return structuredClone(saved);
       },
       async listByCustomer(customerId, after, limit) {
@@ -893,7 +910,9 @@ export function fakeRepositories(
             .slice(0, limit),
         );
       },
-      async listByPeriod(filter, after, limit) {
+      async listByPeriod(filter, sort, after, limit) {
+        const keyOf = (c: CareRecordListRow) => (sort === 'saved' ? c.createdAt : c.occurredAt).getTime();
+        const afterAt = after ? new Date(after.at).getTime() : 0;
         return structuredClone(
           d()
             .careRecords.filter(
@@ -904,20 +923,15 @@ export function fakeRepositories(
                 (!filter.customerId || c.customerId === filter.customerId) &&
                 (!filter.recordTypes || filter.recordTypes.includes(c.recordType)),
             )
-            .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime() || (a.id < b.id ? 1 : -1))
-            .filter(
-              (c) =>
-                !after ||
-                c.occurredAt.getTime() < after.occurredAt.getTime() ||
-                (c.occurredAt.getTime() === after.occurredAt.getTime() && c.id < after.id),
-            )
-            .slice(0, limit)
-            .map((c) => ({ ...c, updatedAt: c.updatedAt ?? c.occurredAt })),
+            .map(toCareRecordListRow)
+            .sort((a, b) => keyOf(b) - keyOf(a) || (a.id < b.id ? 1 : -1))
+            .filter((c) => !after || keyOf(c) < afterAt || (keyOf(c) === afterAt && c.id < after.id))
+            .slice(0, limit),
         );
       },
       async findListRowById(id) {
         const c = d().careRecords.find((x) => x.id === id);
-        return c ? structuredClone({ ...c, updatedAt: c.updatedAt ?? c.occurredAt }) : null;
+        return c ? structuredClone(toCareRecordListRow(c)) : null;
       },
       async countRevisions(id) {
         return d().careRecordRevisions.filter((x) => x.careRecordId === id).length;

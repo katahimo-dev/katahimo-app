@@ -52,7 +52,7 @@ export const reportsApi = {
   /** POST /api/reports/visit-complete: 「訪問終わりました」を事務局に知らせる */
   visitComplete: (body: VisitCompleteRequest) =>
     api.post('/api/reports/visit-complete', visitCompleteResponseSchema, body),
-  /** GET /api/reports: 日報・事故報告の一覧(新しい順。コーディネーター・管理者は全員分) */
+  /** GET /api/reports: 日報・事故報告の一覧(filters.sort の順。コーディネーター・管理者は全員分) */
   list: (filters: ReportListFilters, cursor: string | undefined, signal?: AbortSignal) =>
     api.get('/api/reports', reportListResponseSchema, { ...filters, cursor, limit: 30 }, { signal }),
   /** GET /api/reports/:id: 記録1件の中身(読むだけ) */

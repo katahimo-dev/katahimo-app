@@ -1,6 +1,9 @@
 import { SECRET_MASK_CHAR } from '@katahimo/shared';
+import { DomainError, invalid } from '../domain/errors/domainError';
 import type { TenantSecretName } from '../domain/model';
 import { isGoogleChatWebhookUrl } from '../domain/notifications';
+import { reportModelFamilyOf } from '../domain/reports/modelFallback';
+import type { AiApiKeyVerification, AiApiKeyVerifierPort } from '../ports/ai';
 import type { AppLogPort } from '../ports/appLog';
 import type { SecretBoxPort } from '../ports/secretBox';
 import type { UnitOfWorkPort } from '../ports/unitOfWork';
@@ -14,7 +17,10 @@ export interface TenantSecretDeps {
   appLog: AppLogPort;
 }
 
-export type SettingsDeps = TenantSecretDeps;
+export interface SettingsDeps extends TenantSecretDeps {
+  /** 新しい Gemini API キーを保存する前に Gemini に問い合わせて確かめる。 */
+  aiKeyVerifier: AiApiKeyVerifierPort;
+}
 
 /** 設定を操作した管理者(ログ記録用。権限確認はAPIルート側で済ませてから呼ぶ)。 */
 export type SettingsActor = Actor;
@@ -183,9 +189,49 @@ export async function getAdminSettings(deps: SettingsDeps, actor: SettingsActor)
   };
 }
 
+/** キーを断られた・日報に使うモデルが無いときの入力欄(リクエストの項目名)。 */
+const GEMINI_API_KEY_FIELD = 'apiKey';
+
+export const GEMINI_KEY_REJECTED_MESSAGE =
+  'Gemini API キーを確認できませんでした。キーが正しいか確認して、入力し直してください(キーは保存していません)。';
+export const GEMINI_KEY_NO_MODEL_MESSAGE =
+  'この Gemini API キーでは、日報・事故報告に使うモデル(Gemini Flash / Flash-Lite)が使えません。キーを発行したプロジェクトで Gemini API が使えるか確認して、別のキーを入力してください(キーは保存していません)。';
+export const GEMINI_KEY_UNVERIFIED_MESSAGE =
+  'Gemini に接続できず、API キーを確認できませんでした(キーは保存していません)。しばらくしてから、もう一度保存してください。';
+
+/**
+ * 確認の結果を、保存を止める DomainError にする(問題が無ければ null)。
+ * キーを断られた・日報に使うモデル(Flash / Flash-Lite 系)が一覧に1つも無い → 400(入力欄のエラー)。
+ * つながらない・時間切れ・回数の上限 → 502(確かめられなかったので保存しない)。
+ */
+function verificationError(result: AiApiKeyVerification): { error: DomainError; reason: string } | null {
+  if (result.ok) {
+    if (result.models.some((name) => reportModelFamilyOf(name) !== null)) return null;
+    return {
+      reason: 'no_report_model',
+      error: invalid(GEMINI_KEY_NO_MODEL_MESSAGE, { [GEMINI_API_KEY_FIELD]: GEMINI_KEY_NO_MODEL_MESSAGE }),
+    };
+  }
+  if (result.reason === 'key_rejected') {
+    return {
+      reason: result.reason,
+      error: invalid(GEMINI_KEY_REJECTED_MESSAGE, { [GEMINI_API_KEY_FIELD]: GEMINI_KEY_REJECTED_MESSAGE }),
+    };
+  }
+  return {
+    reason: result.reason,
+    error: new DomainError('upstream_unavailable', GEMINI_KEY_UNVERIFIED_MESSAGE, undefined, result.reason),
+  };
+}
+
 /**
  * Gemini APIキーを保存する。GAS版saveGeminiApiKeyForAdminと同じく、空文字での保存は既存キーの
  * 意図しない消失を防ぐため拒否し、同じ値・伏せ字のままの値なら何もしない。今の値が開けないときは入力された値で上書きする。
+ *
+ * GAS版と違い、新しいキーは保存の前に Gemini に問い合わせて確かめる(ListModels。誤ったキーに気づくのが日報の生成の
+ * ときにならないように)。確かめられなかったときは何も保存せず、WARN `settings.gemini_key.verify_failed`(理由コード
+ * だけ。キーは残さない)を残して DomainError を投げる(キーを断られた・モデルが無い → 400 validation_failed、
+ * つながらない等 → 502 upstream_unavailable)。問い合わせはトランザクションの外で行う。
  */
 export async function saveGeminiApiKey(
   deps: SettingsDeps,
@@ -212,6 +258,20 @@ export async function saveGeminiApiKey(
   // 今の値が開けないときは比べられないため、入力された値で上書きする
   if (input.kind === 'unchanged' || (stored.state === 'set' && input.value === stored.value)) {
     return { ok: true, changed: false, message: 'Gemini APIキーは変更ありません。' };
+  }
+  // 実装は例外を投げない約束だが、投げたときも「確かめられなかった」として保存しない
+  const verification: AiApiKeyVerification = await deps.aiKeyVerifier
+    .verifyApiKey(input.value)
+    .catch(() => ({ ok: false, reason: 'unreachable' }) as const);
+  const failure = verificationError(verification);
+  if (failure) {
+    await writeLog(deps, actor, 'WARN', 'settings.gemini_key.verify_failed', {
+      reason: failure.reason,
+      ...(!verification.ok && verification.httpStatus !== undefined
+        ? { httpStatus: verification.httpStatus }
+        : {}),
+    });
+    throw failure.error;
   }
   await writeTenantSecrets(deps, actor, { gemini_api_key: trimmed });
   await writeLog(deps, actor, 'SECURITY', 'settings.gemini_api_key.changed');

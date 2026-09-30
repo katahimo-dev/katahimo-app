@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ApiRequestError, userMessageOf } from '../../../api/client';
 import { settingsApi } from '../../../api/settings';
 import { showErrorToast, showToast } from '../../../ui/toast';
 import { type AdminSettingsValues, planSettingsSave } from './saveSettingsPlan';
@@ -38,6 +39,11 @@ export function useAdminSettingsForm() {
   const [status, setStatus] = useState<AdminSettingsLoadStatus>('loading');
   const [loaded, setLoaded] = useState<AdminSettingsValues | null>(null);
   const [values, setValues] = useState<AdminSettingsValues>(EMPTY_VALUES);
+  /**
+   * 入力欄の下に出すエラー(今は APIキーだけ。サーバーが保存の前の確認でキーを断った・確かめられなかったときの文言)。
+   * 入力はそのまま残し、入力し直したら消す。
+   */
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof AdminSettingsValues, string>>>({});
   // 開き直したあとに古い読み込みの結果が届いても無視するための世代番号
   const loadSeq = useRef(0);
 
@@ -49,6 +55,7 @@ export function useAdminSettingsForm() {
     setStatus('loading');
     setLoaded(null);
     setValues(EMPTY_VALUES);
+    setFieldErrors({});
     settingsApi
       .get()
       .then(({ settings }) => {
@@ -75,6 +82,11 @@ export function useAdminSettingsForm() {
   const setValue = useCallback(
     <K extends keyof AdminSettingsValues>(key: K, value: AdminSettingsValues[K]) => {
       setValues((v) => ({ ...v, [key]: value }));
+      setFieldErrors((errors) => {
+        if (!(key in errors)) return errors;
+        const { [key]: _cleared, ...rest } = errors;
+        return rest;
+      });
     },
     [],
   );
@@ -82,6 +94,8 @@ export function useAdminSettingsForm() {
   /**
    * 保存する。保存できた(または変更が無かった)ら true。
    * 変更のあった設定だけを、APIキー → Webhook の順に保存する(GAS版と同じ順)。
+   * 新しい APIキーはサーバーが保存の前に Gemini で確かめ、確かめられなければ何も保存せずエラーを返す。そのときは
+   * 後ろの Webhook も送らず(同じ「保存する」の中で一部だけ保存しない)、入力を残して入力欄の下に文言を出す。
    */
   const save = useCallback(async (): Promise<boolean> => {
     const plan = planSettingsSave(status === 'loaded' ? loaded : null, values);
@@ -94,7 +108,14 @@ export function useAdminSettingsForm() {
     const v = plan.values;
     try {
       if (plan.keyChanged) {
-        await settingsApi.saveGeminiApiKey(v.geminiApiKey);
+        try {
+          await settingsApi.saveGeminiApiKey(v.geminiApiKey);
+        } catch (e) {
+          if (e instanceof ApiRequestError) {
+            setFieldErrors((errors) => ({ ...errors, geminiApiKey: e.fields?.apiKey ?? userMessageOf(e) }));
+          }
+          throw e;
+        }
         setLoaded((l) => (l ? { ...l, geminiApiKey: v.geminiApiKey } : l));
       }
       if (plan.webhooksChanged) {
@@ -120,6 +141,7 @@ export function useAdminSettingsForm() {
   return {
     status,
     values,
+    fieldErrors,
     dirty,
     reload,
     setValue,
