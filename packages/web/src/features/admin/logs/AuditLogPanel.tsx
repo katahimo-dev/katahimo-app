@@ -48,8 +48,8 @@ function AuditLogItem({ entry, timeZone }: { entry: AuditLogEntry; timeZone: str
   const details = formatAuditDetails(entry.details);
   const target = entry.targetStaffId ? (entry.targetName ?? DELETED_STAFF) : null;
   return (
-    <li className="bg-white p-3 rounded-xl border border-gray-200 space-y-1">
-      <div className="flex items-center gap-2 flex-wrap">
+    <li className="bg-white p-3 rounded-xl border border-gray-200 space-y-1 lg:flex lg:items-start lg:gap-4 lg:space-y-0 lg:py-2">
+      <div className="flex items-center gap-2 flex-wrap lg:w-64 lg:shrink-0">
         <span className={`px-2 py-0.5 rounded-full text-sm font-bold ${LEVEL_BADGE[entry.level]}`}>
           {APP_LOG_LEVEL_LABELS[entry.level]}
         </span>
@@ -57,16 +57,20 @@ function AuditLogItem({ entry, timeZone }: { entry: AuditLogEntry; timeZone: str
           {formatZonedDateTime(entry.createdAt, timeZone)}
         </time>
       </div>
-      <p className="font-bold text-gray-800 text-sm">{auditActionLabel(entry.action)}</p>
-      <p className="text-sm text-gray-800">
-        {actorText(entry)}
-        {target ? ` → ${target}` : ''}
-      </p>
-      {details ? <p className="text-sm text-gray-600 break-all">{details}</p> : null}
-      <p className="text-xs text-gray-500 break-all">
-        {entry.action}
-        {entry.ip ? ` ・ ${entry.ip}` : ''}
-      </p>
+      <div className="space-y-1 lg:w-72 lg:shrink-0">
+        <p className="font-bold text-gray-800 text-sm">{auditActionLabel(entry.action)}</p>
+        <p className="text-sm text-gray-800">
+          {actorText(entry)}
+          {target ? ` → ${target}` : ''}
+        </p>
+      </div>
+      <div className="space-y-1 lg:flex-1 lg:min-w-0">
+        {details ? <p className="text-sm text-gray-600 [overflow-wrap:anywhere]">{details}</p> : null}
+        <p className="text-xs text-gray-500 break-all">
+          {entry.action}
+          {entry.ip ? ` ・ ${entry.ip}` : ''}
+        </p>
+      </div>
     </li>
   );
 }
@@ -74,6 +78,7 @@ function AuditLogItem({ entry, timeZone }: { entry: AuditLogEntry; timeZone: str
 /**
  * 管理画面「操作ログ」(GAS版の Drive の CSV ログの置き換え)。条件を決めて「絞り込む」で読み、
  * 「もっと見る」で続きを読む。CSV は同じ条件の全件。
+ * パソコンの幅(lg 以上)では、左に条件・右に一覧を並べ、1件を1行(日時 | 操作・人 | 詳しく)で出す。
  */
 export function AuditLogPanel() {
   const staff = useAdminStaffList();
@@ -96,7 +101,10 @@ export function AuditLogPanel() {
   const firstPage = logs.data?.pages[0];
 
   return (
-    <section aria-labelledby="adminLogsHeading" className="space-y-4">
+    <section
+      aria-labelledby="adminLogsHeading"
+      className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-[20rem_minmax(0,1fr)] lg:gap-4 lg:items-start"
+    >
       <h2 id="adminLogsHeading" className="sr-only">
         操作ログ
       </h2>
@@ -212,40 +220,42 @@ export function AuditLogPanel() {
         <p className="text-sm text-gray-600">期間は93日まで指定できます。CSVは絞り込んだ条件の全件です。</p>
       </form>
 
-      {logs.isPending ? (
-        <Loading />
-      ) : logs.isError ? (
-        <ErrorState message={userMessageOf(logs.error)} />
-      ) : (
-        <>
-          {firstPage ? (
-            <p className="text-sm text-gray-700">{`${firstPage.range.from} 〜 ${firstPage.range.to}(新しい順)`}</p>
-          ) : null}
-          {entries.length === 0 ? (
-            <EmptyState icon="📄" title="この条件の操作ログはありません" />
-          ) : (
-            <ul className="space-y-2" aria-label="操作ログ">
-              {entries.map((entry) => (
-                <AuditLogItem
-                  key={entry.id}
-                  entry={entry}
-                  timeZone={firstPage?.timeZone ?? BUSINESS_TIME_ZONE}
-                />
-              ))}
-            </ul>
-          )}
-          {logs.hasNextPage ? (
-            <button
-              type="button"
-              onClick={() => void logs.fetchNextPage()}
-              disabled={logs.isFetchingNextPage}
-              className="w-full min-h-9 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg border border-gray-300"
-            >
-              {logs.isFetchingNextPage ? '読み込んでいます…' : 'もっと見る'}
-            </button>
-          ) : null}
-        </>
-      )}
+      <div className="space-y-4 min-w-0">
+        {logs.isPending ? (
+          <Loading />
+        ) : logs.isError ? (
+          <ErrorState message={userMessageOf(logs.error)} />
+        ) : (
+          <>
+            {firstPage ? (
+              <p className="text-sm text-gray-700">{`${firstPage.range.from} 〜 ${firstPage.range.to}(新しい順)`}</p>
+            ) : null}
+            {entries.length === 0 ? (
+              <EmptyState icon="📄" title="この条件の操作ログはありません" />
+            ) : (
+              <ul className="space-y-2" aria-label="操作ログ">
+                {entries.map((entry) => (
+                  <AuditLogItem
+                    key={entry.id}
+                    entry={entry}
+                    timeZone={firstPage?.timeZone ?? BUSINESS_TIME_ZONE}
+                  />
+                ))}
+              </ul>
+            )}
+            {logs.hasNextPage ? (
+              <button
+                type="button"
+                onClick={() => void logs.fetchNextPage()}
+                disabled={logs.isFetchingNextPage}
+                className="w-full min-h-9 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg border border-gray-300"
+              >
+                {logs.isFetchingNextPage ? '読み込んでいます…' : 'もっと見る'}
+              </button>
+            ) : null}
+          </>
+        )}
+      </div>
     </section>
   );
 }

@@ -95,7 +95,7 @@ export function SectionTabs<K extends string>({
             aria-label={t.icon ? `${t.icon} ${t.label}` : undefined}
             className={
               variant === 'underline'
-                ? `min-w-0 flex flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-1.5 text-xs font-bold border-b-2 -mb-px transition-colors ${
+                ? `min-w-0 flex flex-col lg:flex-row items-center justify-center gap-0.5 lg:gap-2 min-h-12 px-1 py-1.5 text-xs lg:text-sm font-bold border-b-2 -mb-px transition-colors ${
                     isSelected
                       ? 'text-blue-600 border-blue-600'
                       : 'text-gray-600 border-transparent hover:text-gray-800'

@@ -56,9 +56,9 @@ function ReportItem({
       <button
         type="button"
         onClick={onOpen}
-        className="w-full text-left bg-white p-3 rounded-xl border border-gray-200 space-y-1 active:bg-gray-50"
+        className="w-full text-left bg-white p-3 rounded-xl border border-gray-200 space-y-1 active:bg-gray-50 lg:flex lg:items-center lg:gap-4 lg:space-y-0 lg:py-2 lg:hover:bg-gray-50"
       >
-        <span className="flex items-center gap-2 flex-wrap">
+        <span className="flex items-center gap-2 flex-wrap lg:w-80 lg:shrink-0">
           <span
             className={`text-sm font-bold text-white px-2 py-0.5 rounded ${REPORT_KIND_BADGE[report.kind]}`}
           >
@@ -77,12 +77,14 @@ function ReportItem({
             </span>
           ) : null}
         </span>
-        <span className="block font-bold text-gray-800 text-sm">
+        <span className="block font-bold text-gray-800 text-sm lg:w-64 lg:shrink-0 lg:truncate">
           {report.customerName ?? UNKNOWN_CUSTOMER}
           <span className="ml-2 text-sm font-normal text-gray-700">{report.staffName ?? DELETED_STAFF}</span>
         </span>
         {report.excerpt ? (
-          <span className="block text-sm text-gray-600 break-all">{report.excerpt}</span>
+          <span className="block text-sm text-gray-600 break-all lg:flex-1 lg:min-w-0 lg:truncate">
+            {report.excerpt}
+          </span>
         ) : null}
       </button>
     </li>
@@ -94,6 +96,7 @@ function ReportItem({
  * (GAS版で「日報」「事故報告」シートを見ていたことの置き換え)。並びは訪問日時の新しい順(既定)か保存した順
  * (書いたばかりの報告が上。シートの下に行が足されていたのと同じ順)で、選んだらすぐ読み直す。
  * 押すと中身を読むだけのダイアログを開く。CSV はシートと同じ列で、絞り込んだ条件の全件(一覧と同じ並び)。
+ * パソコンの幅(lg 以上)では、左に条件・右に一覧を並べ、1件を1行で出す。
  */
 export function ReportListPanel() {
   const [form, setForm] = useState<ReportListFilters>(defaultFilters);
@@ -132,7 +135,10 @@ export function ReportListPanel() {
   );
 
   return (
-    <section aria-labelledby="adminReportsHeading" className="space-y-4">
+    <section
+      aria-labelledby="adminReportsHeading"
+      className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-[20rem_minmax(0,1fr)] lg:gap-4 lg:items-start"
+    >
       <h2 id="adminReportsHeading" className="sr-only">
         報告一覧
       </h2>
@@ -267,41 +273,43 @@ export function ReportListPanel() {
         </p>
       </form>
 
-      {reports.isPending ? (
-        <Loading />
-      ) : reports.isError ? (
-        <ErrorState message={userMessageOf(reports.error)} />
-      ) : (
-        <>
-          {firstPage ? (
-            <p className="text-sm text-gray-700">{`${firstPage.range.from} 〜 ${firstPage.range.to}(${REPORT_LIST_SORT_LABELS[sort]})`}</p>
-          ) : null}
-          {items.length === 0 ? (
-            <EmptyState icon="📋" title="この条件の報告はありません" />
-          ) : (
-            <ul className="space-y-2" aria-label="報告一覧">
-              {items.map((report) => (
-                <ReportItem
-                  key={report.id}
-                  report={report}
-                  savedAtIn={sort === 'saved' ? (firstPage?.timeZone ?? null) : null}
-                  onOpen={() => setOpenId(report.id)}
-                />
-              ))}
-            </ul>
-          )}
-          {reports.hasNextPage ? (
-            <button
-              type="button"
-              onClick={() => void reports.fetchNextPage()}
-              disabled={reports.isFetchingNextPage}
-              className="w-full min-h-9 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg border border-gray-300"
-            >
-              {reports.isFetchingNextPage ? '読み込んでいます…' : 'もっと見る'}
-            </button>
-          ) : null}
-        </>
-      )}
+      <div className="space-y-4 min-w-0">
+        {reports.isPending ? (
+          <Loading />
+        ) : reports.isError ? (
+          <ErrorState message={userMessageOf(reports.error)} />
+        ) : (
+          <>
+            {firstPage ? (
+              <p className="text-sm text-gray-700">{`${firstPage.range.from} 〜 ${firstPage.range.to}(${REPORT_LIST_SORT_LABELS[sort]})`}</p>
+            ) : null}
+            {items.length === 0 ? (
+              <EmptyState icon="📋" title="この条件の報告はありません" />
+            ) : (
+              <ul className="space-y-2" aria-label="報告一覧">
+                {items.map((report) => (
+                  <ReportItem
+                    key={report.id}
+                    report={report}
+                    savedAtIn={sort === 'saved' ? (firstPage?.timeZone ?? null) : null}
+                    onOpen={() => setOpenId(report.id)}
+                  />
+                ))}
+              </ul>
+            )}
+            {reports.hasNextPage ? (
+              <button
+                type="button"
+                onClick={() => void reports.fetchNextPage()}
+                disabled={reports.isFetchingNextPage}
+                className="w-full min-h-9 py-1.5 bg-white text-gray-800 text-sm font-bold rounded-lg border border-gray-300"
+              >
+                {reports.isFetchingNextPage ? '読み込んでいます…' : 'もっと見る'}
+              </button>
+            ) : null}
+          </>
+        )}
+      </div>
       <ReportDetailModal reportId={openId} onClose={() => setOpenId(null)} />
     </section>
   );

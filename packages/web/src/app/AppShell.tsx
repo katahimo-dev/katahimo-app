@@ -49,6 +49,7 @@ function ShellLayout() {
   useScheduleLinkNavigation();
   useUiConfig(); // 日報ダイアログを開く前に読み始めておく(GAS版 loadUiConfig)
   useEffect(() => runWhenIdle(() => void loadAttendance()), []);
+  useWideLayoutFor('admin');
 
   return (
     <div className="min-h-screen flex flex-col relative bg-white shadow-xl overflow-hidden">
@@ -105,4 +106,21 @@ function TabPanel({ tab, id, children }: { tab: HomeTab; id: string; children: R
       <SectionErrorBoundary>{children}</SectionErrorBoundary>
     </div>
   );
+}
+
+/**
+ * 指定のタブを開いている間だけ、アプリの幅を広げる(html の data-layout="wide"。幅は styles/index.css の app-width)。
+ * 管理タブはパソコンで見ることが多いので広く使い、スタッフが使うほかのタブはスマホの幅のままにする。
+ */
+function useWideLayoutFor(tab: HomeTab) {
+  const { activeTab } = useHomeTabs();
+  const wide = activeTab === tab;
+  useEffect(() => {
+    if (!wide) return;
+    const root = document.documentElement;
+    root.dataset.layout = 'wide';
+    return () => {
+      delete root.dataset.layout;
+    };
+  }, [wide]);
 }
