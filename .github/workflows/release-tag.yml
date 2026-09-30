@@ -1,0 +1,106 @@
+# リリースのタグ vX.Y.Z を付ける(手で実行する。doc/07_インフラ・運用.md 4.2)。
+# タグの push で Cloud Build のトリガー katahimo-release が本番に canary で出す。手元に git の書き込みの権限が
+# 無い環境(Claude のクラウドのセッション等)からも `gh workflow run release-tag.yml -f version=X.Y.Z` で付けられる。
+#
+# 付ける前に確かめること(どれか1つでも満たさなければタグを付けずに失敗する):
+#   - version が X.Y.Z の形で、タグ vX.Y.Z がまだ無い
+#   - 付けるコミットが main に含まれている(ブランチの途中のコミットを本番に出さない)
+#   - そのコミットの CHANGELOG.md に `## [Ver. X.Y.Z]` があり、ルートと全ワークスペースの package.json の version が X.Y.Z
+#     (CHANGELOG の「未リリース」を版にする PR をマージしてから付ける)
+#   - そのコミットで CI の「lint・型検査・テスト・ビルド」が成功している
+name: release-tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 付ける版(X.Y.Z。タグは vX.Y.Z)
+        required: true
+        type: string
+      ref:
+        description: タグを付けるコミット(SHA か main。既定は main の先頭)
+        required: false
+        default: main
+        type: string
+
+# 同時に2つ付けない(同じ版を二重に付けようとしたときに後の方が確かめ直して止まるように、止めずに待たせる)
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    name: リリースのタグを付ける
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      # タグの push
+      contents: write
+      # CI の結果(check runs)を読む
+      checks: read
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          # タグの push に使う(GITHUB_TOKEN)
+          persist-credentials: true
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: 確かめる
+        id: check
+        env:
+          # 入力は式に直接埋め込まず環境変数で渡す(スクリプトへの差し込みを防ぐ)
+          VERSION: ${{ inputs.version }}
+          REF: ${{ inputs.ref }}
+          GH_TOKEN: ${{ github.token }}
+          CI_CHECK: lint・型検査・テスト・ビルド
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "version は X.Y.Z の形にしてください: $VERSION"
+          tag="v$VERSION"
+          [ -z "$(git ls-remote --tags origin "refs/tags/$tag")" ] || fail "タグ $tag はもうあります"
+
+          commit="$(git rev-parse --verify --quiet "$REF^{commit}")" || fail "コミットが見つかりません: $REF"
+          git merge-base --is-ancestor "$commit" origin/main || fail "$commit は main に含まれていません"
+
+          git show "$commit:CHANGELOG.md" | grep -Fq "## [Ver. $VERSION] " \
+            || fail "CHANGELOG.md に「## [Ver. $VERSION] - 日付」がありません(「未リリース」を版にする PR を先にマージする)"
+          # ルートと全ワークスペース(packages/*・tools/*)。画面の「Ver.」は packages/web の version
+          mismatched=""
+          while read -r file; do
+            pkg="$(git show "$commit:$file" | jq -r .version)"
+            [ "$pkg" = "$VERSION" ] || mismatched="$mismatched $file($pkg)"
+          done < <(git ls-tree -r --name-only "$commit" | grep -E '^((packages|tools)/[^/]+/)?package\.json$')
+          [ -z "$mismatched" ] || fail "version が $VERSION ではない package.json があります:$mismatched"
+
+          conclusion="$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit/check-runs" \
+            -X GET -f check_name="$CI_CHECK" -f filter=latest --jq '.check_runs[0].conclusion // "none"')"
+          [ "$conclusion" = success ] || fail "$commit の「$CI_CHECK」が成功していません($conclusion)"
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: タグを付けて push する
+        env:
+          TAG: ${{ steps.check.outputs.tag }}
+          COMMIT: ${{ steps.check.outputs.commit }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898283+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "Ver. ${TAG#v}" "$COMMIT"
+          git push origin "refs/tags/$TAG"
+          {
+            echo "### $TAG を付けました"
+            echo
+            echo "- コミット: \`${COMMIT:0:7}\`"
+            echo "- Cloud Build のトリガー katahimo-release が本番に canary で出します(利用者はまだ前の版)。"
+            echo "- 確かめてから cloudbuild.promote.yaml で切り替えます(doc/07_インフラ・運用.md 4.2)。"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,5 +1,19 @@
 # 更新履歴 (katahimo-app)
 
+## [未リリース]
+
+### 追加
+
+- GitHub Actions に手で実行する「リリースのタグを付ける」(`release-tag.yml`、入力 `version`・`ref`)を追加。CHANGELOG に
+  `## [Ver. X.Y.Z]` があること、ルートと全ワークスペースの package.json の version、main に含まれること、CI の「lint・型検査・テスト・ビルド」の成功を
+  確かめてからタグ `vX.Y.Z` を push する。手元に git の書き込みの権限が無い環境からも `gh workflow run` でリリースできる
+  (`doc/07_インフラ・運用.md` 4.2)。
+
+### 変更
+
+- 本番のリリースのトリガー `katahimo-release` の実行前の承認を外した(タグの push と canary の確認が歯止め)。`doc/07_インフラ・運用.md` 4章を
+  今の運用(接続・トリガーの作り方、承認を戻す手順)に合わせた。
+
 ## [Ver. 1.2.0] - 2026-09-30
 
 ### 変更
