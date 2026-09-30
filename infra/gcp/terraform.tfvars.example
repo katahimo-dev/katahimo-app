@@ -25,9 +25,9 @@ mirror_to_google_sheets = false
 app_public_url = "https://app.example.jp"
 
 smtp = {
-  host = "smtp.gmail.com"
+  host = "smtp-relay.gmail.com" # Google Workspace の SMTP リレー(doc/07 3.4「メールの送信」)
   port = 587
-  user = "noreply@example.com"
+  user = "system@example.com"    # リレーにログインする送信専用のユーザー
   from = "保育日報 <noreply@example.com>"
 }
 
