@@ -1,0 +1,49 @@
+# Cloud Build: cloudbuild.yaml を _TRAFFIC=canary で出した版を利用者に向ける(API の切り替え + ジョブのイメージの差し替え)。
+# 手順は doc/07_インフラ・運用.md 4章。ソースは要らない:
+#   gcloud builds submit --no-source --region=asia-northeast1 --config=cloudbuild.promote.yaml \
+#     --service-account="projects/${PROJECT_ID}/serviceAccounts/katahimo-deployer@${PROJECT_ID}.iam.gserviceaccount.com" \
+#     --substitutions=_TAG=<canary で出したときの _TAG(コミットの短いSHA)>
+#
+# API の最新のリビジョン(canary)が _TAG のイメージでなければ何もせずに止まる(別の版を誤って切り替えないため)。
+
+substitutions:
+  _REGION: asia-northeast1
+  _REGISTRY: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/katahimo
+  # 切り替える版(cloudbuild.yaml の _TAG と同じ値。必須)
+  _TAG: ''
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  dynamicSubstitutions: true
+
+steps:
+  - id: promote-api
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        [ -n "${_TAG}" ] || { echo "_TAG を指定してください" >&2; exit 1; }
+        image="$(gcloud run services describe katahimo-api --region=${_REGION} \
+          --format='value(spec.template.spec.containers[0].image)')"
+        [ "$${image}" = "${_REGISTRY}/api:${_TAG}" ] || {
+          echo "最新のリビジョンのイメージが $${image} で、${_REGISTRY}/api:${_TAG} ではありません。切り替えません" >&2
+          exit 1
+        }
+        gcloud run services update-traffic katahimo-api --region=${_REGION} --to-latest
+        gcloud run services update-traffic katahimo-api --region=${_REGION} --remove-tags=canary
+
+  - id: promote-worker
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        for job in outbox-drain route-notice nightly-calendar-sync csv-import maintenance sync-busy-blocks; do
+          gcloud run jobs update "katahimo-$${job}" --region=${_REGION} --image=${_REGISTRY}/worker:${_TAG}
+        done
+    waitFor: [promote-api]
