@@ -29,6 +29,18 @@ body button {
   font-weight: 700;
 }
 
+/* アプリの幅。スタッフの画面はスマホの幅(GAS版と同じ 480px)で中央に置く。
+   管理タブはパソコンで見ることが多いため、開いている間だけ広げる(AppShell が html に data-layout="wide" を付ける)。
+   #root と下タブ(position: fixed)の両方に付けて幅をそろえる。 */
+.app-width {
+  width: 100%;
+  max-width: 480px;
+}
+
+html[data-layout="wide"] .app-width {
+  max-width: 1280px;
+}
+
 .loading-spinner {
   border-top-color: #3b82f6;
   border-left-color: #3b82f6;

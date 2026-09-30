@@ -102,7 +102,7 @@ export function ReportDetailModal({ reportId, onClose }: { reportId: string | nu
       onClose={onClose}
       className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-3 transition-opacity duration-300"
     >
-      <div className="bg-white w-full max-w-md rounded-xl border border-gray-200 flex flex-col max-h-[90vh]">
+      <div className="bg-white w-full max-w-md lg:max-w-2xl rounded-xl border border-gray-200 flex flex-col max-h-[90vh]">
         <ModalHeader title="報告の中身" titleId="reportDetailTitle" onClose={onClose} />
         <div className="p-3 overflow-y-auto">
           {detail.isPending ? (

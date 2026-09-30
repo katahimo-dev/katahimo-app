@@ -101,6 +101,10 @@ src/
   各画面が `useReportUnsavedChanges(dirty)` で知らせ、切り替える側が `useConfirmLeave()` で確かめる(`unsavedChanges.tsx`)。
   管理タブは管理者・コーディネーター向けなので、スタッフの画面より小さい入力欄・ボタン(`components/FormField.tsx` の `INPUT_CLASS`・
   `PRIMARY_BUTTON`・`SECONDARY_BUTTON`・`ICON_BUTTON`)を使い、一覧は1件1行にする(スタッフの画面の「大きく押しやすく」の決まりは当てない)。
+  画面の幅は `#root` と下タブに付けた `app-width`(`styles/index.css`)で決める。ふだんはスマホの幅(480px)で、管理タブを開いている間だけ
+  `AppShell` の `useWideLayoutFor('admin')` が `html[data-layout="wide"]` を付けて 1280px まで広げる(管理者はパソコンで見ることが多いため)。
+  管理タブの中は Tailwind の `lg:`(1024px 以上)でパソコン向けに並べ替える: 報告一覧・操作ログは左に条件・右に一覧の2列、
+  一覧の各件・スタッフの行は横1行、設定のカードは `lg:max-w-3xl`、詳細・編集のダイアログは `lg:max-w-2xl`。スマホの幅では今までどおり。
   クエリキーは `features/admin/adminQueryKeys.ts`。スタッフを書き換えたら「表示するスタッフ」(`queryKeys.activeStaff`)と操作ログ、
   AIプロンプトを保存したら `queryKeys.uiConfig` も読み直す。日報AIの調整で行を保存・取り込んだら `adminQueryKeys.reportAi` と操作ログ、
   `queryKeys.uiConfig`(PSI の定義は日報の画面の評価の説明にも出る)を読み直す。

@@ -129,7 +129,7 @@ export function RowEditorModal({
           e.preventDefault();
           void submit();
         }}
-        className="bg-white w-full max-w-lg max-h-[90vh] rounded-xl shadow-2xl flex flex-col"
+        className="bg-white w-full max-w-lg lg:max-w-2xl max-h-[90vh] rounded-xl shadow-2xl flex flex-col"
       >
         <ModalHeader
           title={target.title}

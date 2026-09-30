@@ -16,7 +16,7 @@ export function NotificationTargetsPanel() {
   useReportUnsavedChanges(form.dirty);
 
   return (
-    <section aria-labelledby="notificationTargetsHeading" className={`${CARD_CLASS} space-y-3`}>
+    <section aria-labelledby="notificationTargetsHeading" className={`${CARD_CLASS} space-y-3 lg:max-w-3xl`}>
       <h2 id="notificationTargetsHeading" className="text-sm font-bold text-gray-800">
         Google Chat の通知先(Webhook URL)
       </h2>

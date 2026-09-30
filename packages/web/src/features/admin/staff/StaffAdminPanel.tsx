@@ -31,7 +31,7 @@ function Badge({ tone, children }: { tone: 'blue' | 'gray' | 'amber' | 'red' | '
   );
 }
 
-/** 一覧の1行(氏名・メール・状態のバッジ、右に編集・案内メールのアイコン)。 */
+/** 一覧の1行(氏名・メール・状態のバッジ、右に編集・案内メールのアイコン)。パソコンの幅ではバッジを氏名の右に並べる。 */
 function StaffRow({
   staff,
   onEdit,
@@ -46,13 +46,13 @@ function StaffRow({
   const canSendGuide = !staff.isRetired && staff.passwordStatus !== 'set';
   return (
     <li className={`flex items-center gap-2 px-3 py-2 ${staff.isRetired ? 'bg-gray-50 text-gray-500' : ''}`}>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 flex-wrap">
+      <div className="flex-1 min-w-0 lg:flex lg:items-center lg:gap-4">
+        <div className="flex items-baseline gap-2 flex-wrap lg:w-[30rem] lg:shrink-0">
           <h3 className="font-bold text-gray-800 text-sm">{staff.name}</h3>
           {staff.kana ? <span className="text-xs text-gray-500">{staff.kana}</span> : null}
           <span className="text-xs text-gray-600 break-all">{staff.email}</span>
         </div>
-        <div className="flex flex-wrap gap-1 mt-0.5">
+        <div className="flex flex-wrap gap-1 mt-0.5 lg:mt-0">
           {staff.role !== 'staff' ? <Badge tone="blue">{ROLE_LABELS[staff.role]}</Badge> : null}
           {staff.isRetired ? <Badge tone="gray">{`退職（${staff.retiredOn}）`}</Badge> : null}
           {!staff.isRetired && staff.retiredOn ? (

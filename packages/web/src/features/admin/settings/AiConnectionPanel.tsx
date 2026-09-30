@@ -19,7 +19,7 @@ export function AiConnectionPanel() {
   useReportUnsavedChanges(form.dirty);
 
   return (
-    <section aria-labelledby="aiConnectionHeading" className={`${CARD_CLASS} space-y-3`}>
+    <section aria-labelledby="aiConnectionHeading" className={`${CARD_CLASS} space-y-3 lg:max-w-3xl`}>
       <h3 id="aiConnectionHeading" className="text-sm font-bold text-gray-800">
         Gemini の APIキー
       </h3>
