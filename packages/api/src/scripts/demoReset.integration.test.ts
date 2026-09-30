@@ -14,6 +14,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createContainer } from '../container';
 import { loadEnv } from '../env';
 import { DEMO_FIGURES } from './demo/figures';
+import { areaFigureIndexes } from './demo/staffAreas';
 import { planVisitsForDate, toJstDateIso } from './demo/visitPlan';
 import { resetDemoTenant } from './demoReset';
 
@@ -90,7 +91,7 @@ describe('resetDemoTenant(実DB)', () => {
     const tomorrow = toJstDateIso(new Date(now.getTime() + 24 * 60 * 60 * 1000));
     let expectedReservations = 0;
     for (const date of [toJstDateIso(now), tomorrow]) {
-      const planned = planVisitsForDate(date, staffRecord.displayName, DEMO_FIGURES.length);
+      const planned = planVisitsForDate(date, staffRecord.displayName, areaFigureIndexes('staff'));
       const result = await schedule.getScheduleWithRoute(
         { staffId: staffRecord.id, staffName: staffRecord.displayName },
         date,
@@ -112,7 +113,7 @@ describe('resetDemoTenant(実DB)', () => {
     for (const account of DEMO_ACCOUNTS) {
       const name = account.name;
       for (const date of [toJstDateIso(now), tomorrow]) {
-        expectedReservations += planVisitsForDate(date, name, DEMO_FIGURES.length).length;
+        expectedReservations += planVisitsForDate(date, name, areaFigureIndexes(account.role)).length;
       }
     }
     expect(first.summary.reservationCount).toBe(expectedReservations);

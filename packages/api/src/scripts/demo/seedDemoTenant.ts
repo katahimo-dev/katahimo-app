@@ -25,6 +25,7 @@ import { DEMO_ACCOUNTS, DEMO_PASSWORD } from '@katahimo/shared';
 import type { Container } from '../../container';
 import { DEMO_FIGURES, figureToCustomerSnapshot } from './figures';
 import { demoReceiptImageDataUrl } from './receiptImages';
+import { areaFigureIndexes, DEMO_STAFF_HOMES } from './staffAreas';
 import { hashString, planVisitsForDate, recentBusinessDates, toJstDateIso } from './visitPlan';
 
 /** 訪問履歴・出勤簿を作る期間(日、当日を含めるとこの日数+1)。 */
@@ -131,16 +132,6 @@ function attendancePatchForVisits(
 }
 
 /**
- * デモのスタッフの自宅(架空の住所。大阪市内。出勤・退勤の区間の起点・終点)。SCHEDULE_PROVIDER=database は住所を
- * ジオコーディングしないので緯度経度も入れる(無いと「予定から反映」で出勤・退勤の距離が空欄になる)。
- */
-const DEMO_STAFF_HOMES: Readonly<Record<string, { address: string; lat: number; lng: number }>> = {
-  admin: { address: '大阪府大阪市北区梅田1-1-1', lat: 34.7025, lng: 135.4959 },
-  coordinator: { address: '大阪府大阪市天王寺区上本町6-1-1', lat: 34.6655, lng: 135.5205 },
-  staff: { address: '大阪府大阪市西区靱本町1-1-1', lat: 34.6853, lng: 135.4935 },
-};
-
-/**
  * 公開デモ用のテナントにデータを一式投入する。全て本番の usecase 経由で書く(SQLを直接流し込まない。
  * outbox・RLS・ミラー判定など本番と同じ経路を通す)。
  *
@@ -179,14 +170,13 @@ export async function seedDemoTenant(
       staff = { id: created.id, role: created.role, name: created.displayName };
     }
     staffByRole.set(account.role, staff);
+    // 自宅(関西圏。staffAreas.ts)の緯度経度を直接入れる(スタッフの更新の usecase は地図APIで住所を探すため。
+    // デモには地図APIが無い)
     const home = DEMO_STAFF_HOMES[account.role];
-    if (home) {
-      // 自宅の緯度経度を直接入れる(スタッフの更新の usecase は地図APIで住所を探すため。デモには地図APIが無い)
-      const geo = { lat: home.lat, lng: home.lng };
-      await container.uow.run(tenant.id, (r) =>
-        r.staff.update(staff.id, { home: { address: home.address, geo, geoCell: geoCellOf(geo) } }),
-      );
-    }
+    const geo = { lat: home.lat, lng: home.lng };
+    await container.uow.run(tenant.id, (r) =>
+      r.staff.update(staff.id, { home: { address: home.address, geo, geoCell: geoCellOf(geo) } }),
+    );
   }
   const visitingStaff = staffByRole.get('staff');
   if (!visitingStaff) throw new Error('デモ用のスタッフ役割アカウントの作成に失敗しました');
@@ -234,7 +224,7 @@ export async function seedDemoTenant(
   const staffActor = actorOfStaff(tenant.id, visitingStaff);
   let dailyReportCount = 0;
   for (const date of businessDates) {
-    const visits = planVisitsForDate(date, visitingStaff.name, DEMO_FIGURES.length).filter(
+    const visits = planVisitsForDate(date, visitingStaff.name, areaFigureIndexes(visitingStaff.role)).filter(
       (visit) => date !== today || visit.end <= nowHHmm,
     );
     for (const visit of visits) {
@@ -290,7 +280,7 @@ export async function seedDemoTenant(
       rowNumber: i + 1,
       businessDate: date,
       rowData: attendancePatchForVisits(
-        planVisitsForDate(date, staff.name, DEMO_FIGURES.length),
+        planVisitsForDate(date, staff.name, areaFigureIndexes(staff.role)),
         customerNameOf,
       ),
     }));
@@ -305,7 +295,7 @@ export async function seedDemoTenant(
     let count = 0;
     for (const staff of staffByRole.values()) {
       for (const date of scheduleDates) {
-        for (const visit of planVisitsForDate(date, staff.name, DEMO_FIGURES.length)) {
+        for (const visit of planVisitsForDate(date, staff.name, areaFigureIndexes(staff.role))) {
           const customerId = customerIdByFigureIndex[visit.figureIndex];
           if (!customerId) continue;
           const period = { start: jstInstant(date, visit.start), end: jstInstant(date, visit.end) };
