@@ -1,9 +1,10 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { customersApi } from '../../../api/customers';
+import { queryKeys } from '../../../api/queryKeys';
 import { reportsApi } from '../../../api/reports';
 import { STORAGE_KEYS, userStorageKey } from '../../../lib/storage';
-import { createWrapper, deferred, TEST_USER } from '../../../test/providers';
+import { createTestQueryClient, createWrapper, deferred, TEST_USER } from '../../../test/providers';
 import { toastStore } from '../../../ui/toast/toastStore';
 import type { ReportSession } from '../types';
 import { useReportController } from './useReportController';
@@ -101,6 +102,28 @@ describe('useReportController', () => {
     expect(
       JSON.parse(localStorage.getItem(userStorageKey(STORAGE_KEYS.recentCustomers, SCOPE)) ?? '[]'),
     ).toEqual(['c1']);
+  });
+
+  it('保存できたら報告一覧(管理タブ)を読み直させる。失敗したら読み直させない', async () => {
+    const queryClient = createTestQueryClient();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHook(() => useReportController(sessionFor('c1', 1)), {
+      wrapper: createWrapper({ queryClient }),
+    });
+    act(() => result.current.actions.setMemo('公園で外遊び'));
+
+    saveDaily.mockRejectedValueOnce(new Error('offline'));
+    await act(async () => {
+      result.current.save();
+    });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.reports.all });
+
+    saveDaily.mockResolvedValueOnce(savedReport('r1', 'c1'));
+    await act(async () => {
+      result.current.save();
+    });
+    await waitFor(() => expect(result.current.form.saved.daily.reportId).toBe('r1'));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.reports.all });
   });
 
   it('戻した書きかけは、お知らせの「破棄する」で消して空の入力に戻せる(確かめて断れば残す)', async () => {
