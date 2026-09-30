@@ -522,28 +522,48 @@ async function runJourney() {
       return message;
     });
 
-    await step(page, 'attendance-weather', async () => {
+    await step(page, 'attendance-slot2-save', async () => {
       await wait(page, 800);
-      const panel = page.locator('#pastScheduleDetailPanel');
-      // 選ばれているボタンをもう一度押すと外れるため、選ばれていないほうを押す(何度流しても同じ結果にする)
-      const sunny = panel.getByRole('button', { name: '晴れ', exact: true }).first();
-      const target =
-        (await sunny.getAttribute('aria-pressed')) === 'true'
-          ? panel.getByRole('button', { name: '曇り', exact: true }).first()
-          : sunny;
-      await target.click();
-      await wait(page, 200);
-      const pressed = await target.getAttribute('aria-pressed');
-      assert(pressed === 'true', `天候のボタンが選ばれない: aria-pressed=${pressed}`);
+      await button(page, '✏️ 記録を直す・足す').click();
+      await wait(page, 300);
+      await button(page, /^[✅➕]\s*2件目の訪問/).click();
+      const dialog = page
+        .getByRole('dialog')
+        .filter({ has: page.getByRole('button', { name: '保存する' }) })
+        .last();
+      await dialog.getByLabel('お客様・内容').fill('鈴木 一郎(e2e)');
+      await dialog.getByLabel('始め').fill('12:00');
+      await dialog.getByLabel('終わり').fill('13:00');
       const { message } = await clickForResponse<{ message: string }>(
         page,
         'PUT',
         '/api/attendance/day',
-        () => panel.getByRole('button', { name: '保存する' }).click(),
+        () => dialog.getByRole('button', { name: '保存する' }).click(),
       );
-      assert(message === '修正しました。', `天候を変えたのに保存されない: ${message}`);
       await expectToast(page, message);
-      return `aria-pressed=${pressed} / ${message}`;
+      return message;
+    });
+
+    await step(page, 'attendance-snow', async () => {
+      await wait(page, 800);
+      const panel = page.locator('#pastScheduleDetailPanel');
+      // 雪のチェックは「1件目 → 2件目」の区間(その区間の移動時間を1.3倍にする)。家 → 1件目には出さない
+      const snow = panel.getByRole('checkbox', { name: /雪/ });
+      assert((await snow.count()) === 1, `雪のチェックの数が違う(訪問2件の日は1つ): ${await snow.count()}`);
+      await panel.getByLabel('時間（分）').first().fill('20');
+      // 何度流しても値が変わるよう、今の状態の逆にする
+      const wasChecked = await snow.isChecked();
+      await snow.setChecked(!wasChecked);
+      const { message, attendance } = await clickForResponse<{
+        message: string;
+        attendance: { derived: { leg1WeatherAdjustedMoveMin: number | '' } };
+      }>(page, 'PUT', '/api/attendance/day', () => panel.getByRole('button', { name: '保存する' }).click());
+      assert(message === '修正しました。', `雪を変えたのに保存されない: ${message}`);
+      const moveMin = attendance.derived.leg1WeatherAdjustedMoveMin;
+      const expected = wasChecked ? 20 : 26;
+      assert(moveMin === expected, `雪の移動時間が違う: ${moveMin}(期待 ${expected})`);
+      await expectToast(page, message);
+      return `雪=${!wasChecked} / 移動時間 ${moveMin}分 / ${message}`;
     });
 
     await step(page, 'attendance-monthly', async () => {

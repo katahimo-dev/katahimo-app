@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { detailPatch, slotPatch, toDayRecord } from './dayRecord';
-import { buildMoveGroups, isValidShoppingCount, shownDetailFields, toggleWeather } from './moveGroups';
+import {
+  buildMoveGroups,
+  isSnow,
+  isValidShoppingCount,
+  shownDetailFields,
+  snowWeatherValue,
+} from './moveGroups';
 
 const threeVisits = {
   C: '田中',
@@ -25,7 +31,7 @@ const threeVisits = {
 };
 
 describe('移動と距離の区間(buildPastScheduleMoveGroups_)', () => {
-  it('訪問3件: 家→1件目(距離・天候I)、1→2(時間・距離・天候R)、2→3(時間・距離)、3件目→家(距離)', () => {
+  it('訪問3件: 家→1件目(距離)、1→2(時間・距離・雪I)、2→3(時間・距離・雪R)、3件目→家(距離)', () => {
     const groups = buildMoveGroups(toDayRecord(threeVisits));
     expect(groups.map((g) => g.title)).toEqual([
       '🏠 家 → 田中',
@@ -39,12 +45,8 @@ describe('移動と距離の区間(buildPastScheduleMoveGroups_)', () => {
       ['leg23Minutes', 'leg23Km'],
       ['leavingKm'],
     ]);
-    expect(groups.map((g) => g.weather?.field)).toEqual([
-      'visit1Weather',
-      'visit2Weather',
-      undefined,
-      undefined,
-    ]);
+    // 雪のチェックは1.3倍になる移動時間と同じ区間に出す(I は H、R は Q に掛かる)
+    expect(groups.map((g) => g.snow?.field)).toEqual([undefined, 'leg12Weather', 'leg23Weather', undefined]);
   });
   it('訪問1件: 家→1件目 と 1件目→家 だけ。名前が空なら #1', () => {
     const groups = buildMoveGroups(toDayRecord({ D: '10:00', E: '12:00' }));
@@ -72,7 +74,7 @@ describe('保存するときに送る列', () => {
     const shown = shownDetailFields(buildMoveGroups(record));
     expect(detailPatch(record.detail, shown)).toEqual({
       AI: '6.2',
-      I: '晴れ',
+      I: '',
       H: '',
       AG: '',
       R: '',
@@ -85,11 +87,20 @@ describe('保存するときに送る列', () => {
   });
 });
 
-describe('天候・買い物代行', () => {
-  it('同じボタンをもう一度押すと外れる', () => {
-    expect(toggleWeather('', '雪')).toBe('雪');
-    expect(toggleWeather('雪', '雪')).toBe('');
-    expect(toggleWeather('雨', '雪')).toBe('雪');
+describe('雪・買い物代行', () => {
+  it('チェックが付くのは「雪」のときだけ(晴れ・曇り・雨・空は付かない)', () => {
+    expect(isSnow('雪')).toBe(true);
+    for (const w of ['', '晴れ', '曇り', '雨']) expect(isSnow(w)).toBe(false);
+  });
+  it('付ければ「雪」、外せば空', () => {
+    expect(snowWeatherValue(true)).toBe('雪');
+    expect(snowWeatherValue(false)).toBe('');
+  });
+  it('2件目までの日は 1→2 の雪(I)を送り、出ていない 2→3 の雪(R)は空で送る', () => {
+    const record = toDayRecord({ ...threeVisits, I: '雪', R: '雪', V: '', W: '' });
+    const patch = detailPatch(record.detail, shownDetailFields(buildMoveGroups(record)));
+    expect(patch.I).toBe('雪');
+    expect(patch.R).toBe('');
   });
   it('買い物代行は空か0以上の整数', () => {
     expect(isValidShoppingCount('')).toBe(true);
