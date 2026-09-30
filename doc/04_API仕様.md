@@ -83,6 +83,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `schedule_force_refresh_staff` | テナント + スタッフ | 1時間30回 | 429 | `RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR` |
 | `push_test_staff` | テナント + スタッフ | 1時間10回 | 429 | — |
 | `push_subscribe_staff` | テナント + スタッフ | 1時間30回 | 429 | — |
+| `gemini_key_save_staff` | テナント + スタッフ | 1時間20回(Gemini API キーの保存。保存ごとに Gemini へ確かめるため) | 429 | — |
 | `integration_customers_key` | テナント + 外部連携の API キー | 1時間120回 | 429 | — |
 | `integration_auth_failure_ip` | 送信元IP(`/api/integrations/*` の認証の失敗) | 15分に30回 → 15分ロック(ロック中は認証もしない) | 429 | — |
 | `attendance_export_staff` | テナント + スタッフ | 1時間30回(出勤簿の Excel の書き出し。1人分・全員分の合計) | 429 | — |

@@ -27,9 +27,14 @@ describe('続きの位置(keyset カーソル)の検証', () => {
     );
     expect(parseCursorTimestamp('2026-09-25 01:02:03+00')?.toISOString()).toBe('2026-09-25T01:02:03.000Z');
     expect(parseCursorTimestamp('2026-09-25T10:02:03+09:00')?.toISOString()).toBe('2026-09-25T01:02:03.000Z');
+    expect(parseCursorTimestamp('2026-09-25 10:02:03-15:59')?.toISOString()).toBe('2026-09-26T02:01:03.000Z');
     for (const bad of [
       '2026-09-25',
       '2026-09-25T01:02:03',
+      // 時差は PostgreSQL が受け付ける ±15:59 まで(JS の Date は受け付けるが DB で 500 になる)
+      '2026-09-25 10:00:00+20',
+      '2026-09-25T10:00:00+16:00',
+      '2026-09-25T10:00:00+09:60',
       // 0000年は PostgreSQL の timestamptz が受け付けない。5桁以上・紀元前は toISOString が ±6桁で書く
       '0000-01-01T00:00:00Z',
       '0000-12-31 23:59:59+00',

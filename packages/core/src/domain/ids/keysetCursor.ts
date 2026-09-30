@@ -15,7 +15,7 @@ export function isUuid(value: unknown): value is string {
  * (`2026-09-25 10:02:03.456789+09`)。時差は必ず付ける。
  */
 const TIMESTAMP_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::?\d{2})?)$/;
+  /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|[+-](\d{2})(?::?(\d{2}))?)$/;
 
 /**
  * 続きの位置に入りうる年の範囲: サーバーが toISOString() で4桁に書け、PostgreSQL の timestamptz が受け付ける年
@@ -39,6 +39,10 @@ export function parseCursorTimestamp(value: unknown): Date | null {
   ];
   if (year < MIN_YEAR || year > MAX_YEAR || month < 1 || month > 12 || day < 1 || day > 31) return null;
   if (hour > 23 || minute > 59 || second > 59) return null;
+  // 時差は PostgreSQL の timestamptz が受け付ける ±15:59 まで(JS の Date は +20:00 等も受け付けるため)
+  const offsetHour = match[7] === undefined ? 0 : Number(match[7]);
+  const offsetMinute = match[8] === undefined ? 0 : Number(match[8]);
+  if (offsetHour > 15 || offsetMinute > 59) return null;
   const at = new Date(value.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00'));
   if (Number.isNaN(at.getTime())) return null;
   // 2月30日等の存在しない日は Date が翌月に繰り上げるため、書かれた年月日がその月にあるかを確かめる
