@@ -5,7 +5,7 @@
 # 付ける前に確かめること(どれか1つでも満たさなければタグを付けずに失敗する):
 #   - version が X.Y.Z の形で、タグ vX.Y.Z がまだ無い
 #   - 付けるコミットが main に含まれている(ブランチの途中のコミットを本番に出さない)
-#   - そのコミットの CHANGELOG.md に `## [Ver. X.Y.Z]` があり、package.json の version が X.Y.Z
+#   - そのコミットの CHANGELOG.md に `## [Ver. X.Y.Z]` があり、ルートと全ワークスペースの package.json の version が X.Y.Z
 #     (CHANGELOG の「未リリース」を版にする PR をマージしてから付ける)
 #   - そのコミットで CI の「lint・型検査・テスト・ビルド」が成功している
 name: release-tag
@@ -72,8 +72,13 @@ jobs:
 
           git show "$commit:CHANGELOG.md" | grep -Fq "## [Ver. $VERSION] " \
             || fail "CHANGELOG.md に「## [Ver. $VERSION] - 日付」がありません(「未リリース」を版にする PR を先にマージする)"
-          pkg="$(git show "$commit:package.json" | jq -r .version)"
-          [ "$pkg" = "$VERSION" ] || fail "package.json の version が $pkg です($VERSION にそろえる)"
+          # ルートと全ワークスペース(packages/*・tools/*)。画面の「Ver.」は packages/web の version
+          mismatched=""
+          while read -r file; do
+            pkg="$(git show "$commit:$file" | jq -r .version)"
+            [ "$pkg" = "$VERSION" ] || mismatched="$mismatched $file($pkg)"
+          done < <(git ls-tree -r --name-only "$commit" | grep -E '^((packages|tools)/[^/]+/)?package\.json$')
+          [ -z "$mismatched" ] || fail "version が $VERSION ではない package.json があります:$mismatched"
 
           conclusion="$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit/check-runs" \
             -X GET -f check_name="$CI_CHECK" -f filter=latest --jq '.check_runs[0].conclusion // "none"')"
