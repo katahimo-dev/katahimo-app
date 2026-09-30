@@ -284,6 +284,9 @@
 
 ### 資料
 
+- `doc/07_インフラ・運用.md` 3.4 に、再設定メールを Google Workspace の SMTP リレーで送る手順を追加(送信専用のユーザー
+  `system@cutest.biz` でログインし、送信元は `noreply@cutest.biz`。アプリパスワード・リレーの設定・SPF / DKIM / DMARC・確かめ方)。
+  8.3 に `smtp-pass` の替え方、`infra/gcp/terraform.tfvars.example` の `smtp` をリレーの例にした。
 - `doc/11_GAS版との機能比較.md`: GAS版でできたこと全てと新アプリの判定(同等・改善・変更・GAS版のみと理由)、上位互換の状況、
   切替の日の運用に残っていること。
 - キューテスト様向けのご説明資料(`doc/partner/`)を、スマホへの通知・管理者の画面・シートは見るだけの写しになることに合わせて
