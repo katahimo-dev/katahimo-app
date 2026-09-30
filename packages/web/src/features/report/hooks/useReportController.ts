@@ -1,9 +1,10 @@
 import type { DailyReportAiInfo } from '@katahimo/shared';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { ApiRequestError, isUnauthenticated, userMessageOf } from '../../../api/client';
 import { customerQueryKeys, customersApi } from '../../../api/customers';
+import { queryKeys } from '../../../api/queryKeys';
 import { reportsApi } from '../../../api/reports';
 import { useUiConfig } from '../../../app/uiConfig/useUiConfig';
 import { jstHHmm, todayJst } from '../../../lib/date';
@@ -133,6 +134,7 @@ function lastStartTime(scope: UserStorageScope): ClockTime {
  */
 export function useReportController(session: ReportSession | null) {
   const { user, storageScope } = useSession();
+  const queryClient = useQueryClient();
   const confirm = useConfirmModal();
   const { data: uiConfig } = useUiConfig();
   // 開いたまま日付をまたいだら描き直す(▶ 次の日へ の押せる/押せないを今日で決め直す。書いている日付は変えない)
@@ -708,6 +710,8 @@ export function useReportController(session: ReportSession | null) {
       }
       pushRecentCustomer(target.id, storageScope);
       showToast(message);
+      // 管理タブの報告一覧は開いたまま隠れて残るため、保存したばかりの報告が出るように読み直させる
+      void queryClient.invalidateQueries({ queryKey: queryKeys.reports.all });
       // 待つ間にダイアログを開き直していたら(別のお客様かもしれない)、いまの入力の「保存しました」・
       // 上書き用の報告ID・書きかけの退避には触らない(次の保存が前のお客様の報告を上書きしないように)
       if (requestNonce !== nonceRef.current) return;
