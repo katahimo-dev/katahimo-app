@@ -54,18 +54,25 @@ export function visitCountForDate(dateIso: string): number {
 
 /**
  * 指定日・指定スタッフの訪問予定を返す(同じ日に同じ世帯を二重に入れない)。
- * @param figureCount 選択対象の世帯数(DEMO_FIGURES.length)
+ * @param candidates 選ぶ候補の世帯(DEMO_FIGURES の index。スタッフの担当の地域。staffAreas.ts)
  */
-export function planVisitsForDate(dateIso: string, staffName: string, figureCount: number): PlannedVisit[] {
+export function planVisitsForDate(
+  dateIso: string,
+  staffName: string,
+  candidates: readonly number[],
+): PlannedVisit[] {
   const visitCount = visitCountForDate(dateIso);
-  if (visitCount === 0 || figureCount === 0) return [];
+  if (visitCount === 0 || candidates.length === 0) return [];
 
-  const seed = hashString(`${dateIso}|${staffName}`);
-  const chosen: number[] = [];
-  for (let attempt = 0; chosen.length < visitCount && attempt < figureCount * 3; attempt++) {
-    const index = (seed + attempt * 7919) % figureCount;
-    if (!chosen.includes(index)) chosen.push(index);
+  // 日付・スタッフ名を種に候補を並べ替え(Fisher–Yates)、先頭から訪問の件数だけ取る(組み合わせ・順番とも偏らないように)
+  const shuffled = [...new Set(candidates)];
+  let state = hashString(`${dateIso}|${staffName}`);
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    state = hashString(`${state}`);
+    const j = state % (i + 1);
+    [shuffled[i], shuffled[j]] = [shuffled[j] as number, shuffled[i] as number];
   }
+  const chosen = shuffled.slice(0, visitCount);
 
   return chosen.map((figureIndex, i) => {
     const slot = DEMO_VISIT_SLOTS[i];

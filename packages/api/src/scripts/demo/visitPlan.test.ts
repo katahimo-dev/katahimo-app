@@ -7,6 +7,9 @@ import {
   visitCountForDate,
 } from './visitPlan';
 
+/** 全20世帯を候補にする */
+const ALL_20 = Array.from({ length: 20 }, (_, i) => i);
+
 describe('visitCountForDate', () => {
   it('平日は3件、土曜は2件、日曜は1件', () => {
     expect(visitCountForDate('2026-09-28')).toBe(3); // 月曜
@@ -17,25 +20,25 @@ describe('visitCountForDate', () => {
 
 describe('planVisitsForDate', () => {
   it('同じ日付・スタッフなら常に同じ結果になる(決定論的)', () => {
-    const a = planVisitsForDate('2026-09-28', '鈴木 一郎', 20);
-    const b = planVisitsForDate('2026-09-28', '鈴木 一郎', 20);
+    const a = planVisitsForDate('2026-09-28', '鈴木 一郎', ALL_20);
+    const b = planVisitsForDate('2026-09-28', '鈴木 一郎', ALL_20);
     expect(a).toEqual(b);
   });
 
   it('同じ日に同じ世帯を二重に入れない', () => {
-    const visits = planVisitsForDate('2026-09-28', '鈴木 一郎', 20);
+    const visits = planVisitsForDate('2026-09-28', '鈴木 一郎', ALL_20);
     const indexes = visits.map((v) => v.figureIndex);
     expect(new Set(indexes).size).toBe(indexes.length);
   });
 
   it('スタッフが違えば訪問先が変わりうる', () => {
-    const a = planVisitsForDate('2026-09-28', '鈴木 一郎', 20);
-    const b = planVisitsForDate('2026-09-28', '佐藤 美咲', 20);
+    const a = planVisitsForDate('2026-09-28', '鈴木 一郎', ALL_20);
+    const b = planVisitsForDate('2026-09-28', '佐藤 美咲', ALL_20);
     expect(a).not.toEqual(b);
   });
 
   it('件数が曜日どおり(平日3件)で、時間帯が重ならない', () => {
-    const visits = planVisitsForDate('2026-09-28', '鈴木 一郎', 20);
+    const visits = planVisitsForDate('2026-09-28', '鈴木 一郎', ALL_20);
     expect(visits).toHaveLength(3);
     for (let i = 0; i < visits.length - 1; i++) {
       const current = visits[i];
@@ -45,7 +48,7 @@ describe('planVisitsForDate', () => {
   });
 
   it('世帯数が0なら空', () => {
-    expect(planVisitsForDate('2026-09-28', '鈴木 一郎', 0)).toEqual([]);
+    expect(planVisitsForDate('2026-09-28', '鈴木 一郎', [])).toEqual([]);
   });
 });
 
