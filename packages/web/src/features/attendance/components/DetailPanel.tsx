@@ -6,14 +6,14 @@ import { showErrorToast, showToast } from '../../../ui/toast';
 import { type DayDetailField, type DayDetailValues, detailPatch, toDayRecord } from '../model/dayRecord';
 import {
   buildMoveGroups,
+  isSnow,
   isValidShoppingCount,
   type MoveGroup,
   shownDetailFields,
-  toggleWeather,
-  weatherOptionsOrDefault,
+  snowWeatherValue,
 } from '../model/moveGroups';
 import { savedMessage } from '../model/saveMessage';
-import { WeatherToggle } from './WeatherToggle';
+import { SnowCheckbox } from './SnowCheckbox';
 
 /**
  * 「移動と距離・買い物代行・備考」パネル(GAS版 #pastScheduleDetailPanel / savePastScheduleDetail)。
@@ -65,8 +65,6 @@ export function DetailPanel({
     save.mutate();
   };
 
-  const weatherOptions = { visit1: day.optionsI, visit2: day.optionsR };
-
   return (
     <div id="pastScheduleDetailPanel" className="bg-white rounded-2xl border border-gray-200 p-3 mb-4">
       <div className="text-base font-bold text-gray-800 mb-2">移動と距離・買い物代行・備考</div>
@@ -81,9 +79,6 @@ export function DetailPanel({
               values={values}
               disabled={disabled}
               idPrefix={idPrefix}
-              weatherOptions={
-                group.weather ? weatherOptionsOrDefault(weatherOptions[group.weather.options]) : []
-              }
               onChange={set}
             />
           ))
@@ -138,17 +133,15 @@ function MoveGroupFields({
   values,
   disabled,
   idPrefix,
-  weatherOptions,
   onChange,
 }: {
   group: MoveGroup;
   values: DayDetailValues;
   disabled: boolean;
   idPrefix: string;
-  weatherOptions: readonly string[];
   onChange: (field: DayDetailField, value: string) => void;
 }) {
-  const weather = group.weather;
+  const snow = group.snow;
   return (
     <div className="bg-gray-50 rounded-lg p-2">
       <div className="text-base font-bold text-gray-800 mb-1.5">{group.title}</div>
@@ -170,13 +163,13 @@ function MoveGroupFields({
           </div>
         ))}
       </div>
-      {weather ? (
+      {snow ? (
         <div className="mt-2">
-          <WeatherToggle
-            value={values[weather.field]}
-            options={weatherOptions}
+          <SnowCheckbox
+            id={`${idPrefix}-${snow.field}`}
+            checked={isSnow(values[snow.field])}
             disabled={disabled}
-            onChange={(pressed) => onChange(weather.field, toggleWeather(values[weather.field], pressed))}
+            onChange={(checked) => onChange(snow.field, snowWeatherValue(checked))}
           />
         </div>
       ) : null}

@@ -51,19 +51,19 @@ const SLOT_COLUMNS: Record<SlotKey, Record<keyof SlotValues, AttendanceColumnKey
 
 /**
  * 「移動と距離・買い物代行・備考」パネルの項目(予定に付かない、その日全体の値)。
- * 天候は GAS版と同じく、I列を「家 → 1件目」、R列を「1件目 → 2件目」の区間に出す。
+ * 天候は I列が「1件目 → 2件目」、R列が「2件目 → 3件目」の移動時間に掛かる(「雪」なら1.3倍)。
  */
 export interface DayDetailValues {
   /** 家 → 1件目の距離(km) */
   commuteKm: string;
-  /** 1件目の後の天候 */
-  visit1Weather: string;
+  /** 1件目 → 2件目の天候(「雪」なら移動時間 × 1.3) */
+  leg12Weather: string;
   /** 1件目 → 2件目の移動時間(分) */
   leg12Minutes: string;
   /** 1件目 → 2件目の距離(km) */
   leg12Km: string;
-  /** 2件目の後の天候 */
-  visit2Weather: string;
+  /** 2件目 → 3件目の天候(「雪」なら移動時間 × 1.3) */
+  leg23Weather: string;
   /** 2件目 → 3件目の移動時間(分) */
   leg23Minutes: string;
   /** 2件目 → 3件目の距離(km) */
@@ -80,10 +80,10 @@ export type DayDetailField = keyof DayDetailValues;
 
 const DETAIL_COLUMNS: Record<DayDetailField, AttendanceColumnKey> = {
   commuteKm: 'AI',
-  visit1Weather: 'I',
+  leg12Weather: 'I',
   leg12Minutes: 'H',
   leg12Km: 'AG',
-  visit2Weather: 'R',
+  leg23Weather: 'R',
   leg23Minutes: 'Q',
   leg23Km: 'AH',
   leavingKm: 'AJ',
@@ -134,7 +134,7 @@ export function slotPatch(key: SlotKey, values: SlotValues): AttendanceRowDataIn
 /**
  * 「移動と距離・買い物代行・備考」を保存するときに送る列(GAS版 PAST_SCHEDULE_MOVE_COLS + AN + AO)。
  * GAS版と同じく、画面に出ていない区間の欄(訪問が1件の日の「1件目 → 2件目」等)は空で送る
- * (GAS版は入力欄が無い列を '' として保存していた)。
+ * (GAS版は入力欄が無い列を '' として保存していた)。天候は例外で、出ていなくても今の値のまま送る(`shownDetailFields`)。
  */
 export function detailPatch(
   values: DayDetailValues,
