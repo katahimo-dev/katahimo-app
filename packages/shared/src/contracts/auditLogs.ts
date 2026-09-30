@@ -152,6 +152,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'settings.ai_prompts.update_rejected': 'AIプロンプトの変更を断った',
   'settings.gemini_api_key.changed': 'Gemini APIキーの変更',
   'settings.gemini_api_key.save_rejected': 'Gemini APIキーの保存を断った',
+  'settings.gemini_key.verify_failed': 'Gemini APIキーを確かめられず保存しなかった',
   // モデルの設定は無くなった(自動で選ぶ)。以前の版が残した行の表示のために名前だけ残す
   'settings.gemini_models.changed': 'Geminiモデルの変更',
   'settings.gemini_models.save_rejected': 'Geminiモデルの保存を断った',

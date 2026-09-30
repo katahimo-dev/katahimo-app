@@ -1,4 +1,5 @@
 import type {
+  AiApiKeyVerifierPort,
   AppLogPort,
   CustomerCsvSourcePort,
   MapsPort,
@@ -35,6 +36,7 @@ import {
   createSecretBox,
   createStoragePort,
   GeminiAiPort,
+  GeminiApiKeyVerifier,
   InMemoryTtlCache,
   NoopReportAiPort,
   outboxTopicPolicyOf,
@@ -71,6 +73,8 @@ export interface Container {
   /** テナントが独自の Gemini API キーを設定していない場合のフォールバック(.env の設定か Noop)。 */
   reportAi: ReportAiPort;
   reportAiFactory: ReportAiPortFactory;
+  /** 管理者が保存する Gemini API キーの確認(保存の前に ListModels で問い合わせる。結合テストは Noop に差し替える)。 */
+  aiKeyVerifier: AiApiKeyVerifierPort;
   /** AI 生成の記録に残すアプリの版(Cloud Run のリビジョン)。 */
   appVersion: string | null;
   /** 「今日/明日の予定」(SCHEDULE_PROVIDER で Google / GAS Bridge / Noop を切り替える)。 */
@@ -171,6 +175,7 @@ export function createContainer(env: Env, db: Database): Container {
     rateLimits: rateLimitPolicyOf(env),
     reportAi: env.GEMINI_API_KEY ? new GeminiAiPort({ apiKey: env.GEMINI_API_KEY }) : new NoopReportAiPort(),
     reportAiFactory: { create: (options) => new GeminiAiPort(options) },
+    aiKeyVerifier: new GeminiApiKeyVerifier(),
     appVersion: env.K_REVISION ?? null,
     schedule: scheduleServices.schedule,
     scheduleProvider: scheduleServices.provider,

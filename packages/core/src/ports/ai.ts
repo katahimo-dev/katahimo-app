@@ -118,3 +118,29 @@ export interface ReportAiPortOptions {
 export interface ReportAiPortFactory {
   create(options: ReportAiPortOptions): ReportAiPort;
 }
+
+/**
+ * API キーの確認の結果。成功なら、そのキーで generateContent に使えるモデルの名前(ListModels)。
+ * 失敗の理由:
+ * - `key_rejected`: Gemini がキーを断った(HTTP 400・401・403。キーの誤り・無効・API が有効でない等)
+ * - `rate_limited`: 回数の上限(HTTP 429)
+ * - `unreachable`: つながらない・Gemini 側のエラー(5xx 等)・応答の形が違う
+ * - `timeout`: 時間内に応答が無かった
+ */
+export type AiApiKeyVerification =
+  | { ok: true; models: string[] }
+  | {
+      ok: false;
+      reason: 'key_rejected' | 'rate_limited' | 'unreachable' | 'timeout';
+      /** Gemini の HTTP ステータス(応答があったときだけ。ログ用) */
+      httpStatus?: number;
+    };
+
+/**
+ * 管理者が保存しようとしている Gemini API キーを、保存の前に Gemini に問い合わせて確かめる
+ * (本番は integrations/src/gemini の GeminiApiKeyVerifier: ListModels を1回。生成はしないので課金されない)。
+ * 開発・テスト用の実装(NoopAiApiKeyVerifier 等)は問い合わせずに成功を返す。
+ */
+export interface AiApiKeyVerifierPort {
+  verifyApiKey(apiKey: string): Promise<AiApiKeyVerification>;
+}

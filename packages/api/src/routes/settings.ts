@@ -40,6 +40,10 @@ export function createSettingsRoutes(container: Container) {
     });
   });
 
+  /**
+   * 新しいキーは保存の前に Gemini で確かめる。確かめられなかったときは何も保存せず、usecase が投げる DomainError を
+   * onApiError が返す(キーを断られた・モデルが無い → 400 validation_failed + fields.apiKey、つながらない等 → 502)。
+   */
   app.post('/admin/gemini-key', requireAdmin(container, 'settings.gemini_api_key.save'), async (c) => {
     const body = await parseJsonBody(c, saveGeminiApiKeyRequestSchema);
     if (!body.ok) return body.response;

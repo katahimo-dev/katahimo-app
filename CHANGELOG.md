@@ -4,6 +4,10 @@
 
 ### 追加
 
+- 🛠 管理 → 🤖 AI → APIキー・モデルで Gemini API キーを保存するとき、保存の前に Gemini のモデル一覧(ListModels、課金なし)で
+  キーが使えるか確かめる。キーを断られた・日報に使う Flash / Flash-Lite 系が一覧に無いときは 400、Gemini につながらないときは 502 で、
+  どちらも保存せず、入力欄の下にキーの確認・入力し直しを促す文言を出す(確認中の保存ボタンは「確認中...」)。失敗は WARN
+  `settings.gemini_key.verify_failed`(理由コードのみ。`doc/02_機能仕様.md` 10.3、`doc/05_バッチ・外部連携.md` 6章)。
 - 予定の取得元 `SCHEDULE_PROVIDER=database`: DB の予約(`reservations` と、スタッフの確定した割当 `reservation_assignments`)を
   「今日/明日の予定」として返す(予定タブ・出勤簿への反映・翌日の予定のお知らせ)。Google カレンダー・地図 API を使わず、区間の距離・時間は
   緯度経度から見積もった目安(直線距離 × 1.3、移動手段ごとの平均の速さ)。公開デモの `demo:reset` が3人全員の今日・明日の予定を

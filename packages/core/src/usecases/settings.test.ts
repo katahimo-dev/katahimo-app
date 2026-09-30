@@ -1,11 +1,19 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { isDomainError } from '../domain/errors/domainError';
 import type { TenantSecretName } from '../domain/model';
-import type { ReportAiPort } from '../ports/ai';
+import type { AiApiKeyVerification, ReportAiPort } from '../ports/ai';
 import { notifyWithLog } from './notify';
 import type { ReportAiDeps } from './reportAi';
 import { generateDailyReportDraft } from './reportAi';
 import type { SettingsActor, SettingsDeps } from './settings';
-import { getAdminSettings, saveGeminiApiKey, saveGoogleChatWebhookSettings } from './settings';
+import {
+  GEMINI_KEY_NO_MODEL_MESSAGE,
+  GEMINI_KEY_REJECTED_MESSAGE,
+  GEMINI_KEY_UNVERIFIED_MESSAGE,
+  getAdminSettings,
+  saveGeminiApiKey,
+  saveGoogleChatWebhookSettings,
+} from './settings';
 import type { TestContext } from './testContext';
 import { createTestContext } from './testContext';
 import type { FakeAppLogPort } from './testDoubles';
@@ -16,13 +24,28 @@ describe('管理者設定(app_settings)', () => {
   let ctx: TestContext;
   let actor: SettingsActor;
   let otherTenantId: string;
+  /** Gemini での確認の結果(既定は使えるキー)と、確認したキー。 */
+  let verification: AiApiKeyVerification;
+  let verifiedKeys: string[];
 
   beforeEach(() => {
+    verification = { ok: true, models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] };
+    verifiedKeys = [];
     ctx = createTestContext();
     otherTenantId = ctx.db.addTenant({ slug: 'other' }).id;
     actor = { tenantId: ctx.tenantId, staffId: '00000000-0000-7000-8000-0000000000aa', role: 'admin' };
     appLog = ctx.appLog;
-    deps = { uow: ctx.uow, secretBox: ctx.secretBox, appLog };
+    deps = {
+      uow: ctx.uow,
+      secretBox: ctx.secretBox,
+      appLog,
+      aiKeyVerifier: {
+        async verifyApiKey(apiKey) {
+          verifiedKeys.push(apiKey);
+          return verification;
+        },
+      },
+    };
   });
 
   /** 保存済みの値(tenant_secrets の暗号文を開いたもの)。 */
@@ -71,6 +94,97 @@ describe('管理者設定(app_settings)', () => {
     expect(await saveGeminiApiKey(deps, actor, 'sk-test-key')).toMatchObject({ ok: true, changed: true });
     expect((await stored()).geminiApiKey).toBe('sk-test-key');
     expect(appLog.actions()).toContain('settings.gemini_api_key.changed');
+  });
+
+  describe('新しいAPIキーは保存の前に Gemini で確かめる', () => {
+    /** 投げられた DomainError(投げなければ失敗)。 */
+    const rejection = async (apiKey: string) => {
+      const error = await saveGeminiApiKey(deps, actor, apiKey).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      if (!isDomainError(error)) throw new Error('DomainError が投げられていない');
+      return error;
+    };
+
+    it('使えるキーなら(前後の空白を除いた値で)確かめてから保存する', async () => {
+      expect(await saveGeminiApiKey(deps, actor, ' AIza-valid-key ')).toMatchObject({
+        ok: true,
+        changed: true,
+      });
+      expect(verifiedKeys).toEqual(['AIza-valid-key']);
+      expect((await stored()).geminiApiKey).toBe('AIza-valid-key');
+      expect(appLog.actions()).not.toContain('settings.gemini_key.verify_failed');
+    });
+
+    it('キーを断られたら 400(入力欄のエラー)で、何も保存せず理由コードだけを WARN に残す', async () => {
+      await saveGeminiApiKey(deps, actor, 'AIza-old-key');
+      verification = { ok: false, reason: 'key_rejected', httpStatus: 400 };
+      const error = await rejection('AIza-wrong-key');
+      expect(error).toMatchObject({
+        code: 'validation_failed',
+        message: GEMINI_KEY_REJECTED_MESSAGE,
+        fields: { apiKey: GEMINI_KEY_REJECTED_MESSAGE },
+      });
+      expect((await stored()).geminiApiKey).toBe('AIza-old-key');
+      const log = appLog.entries.at(-1);
+      expect(log).toMatchObject({
+        level: 'WARN',
+        action: 'settings.gemini_key.verify_failed',
+        details: { reason: 'key_rejected', httpStatus: 400 },
+      });
+      expect(JSON.stringify(appLog.entries)).not.toContain('AIza-wrong-key');
+      expect(appLog.actions().filter((a) => a === 'settings.gemini_api_key.changed')).toHaveLength(1);
+    });
+
+    it('一覧に日報に使うモデル(Flash / Flash-Lite)が無ければ、モデルの文言で 400 にして保存しない', async () => {
+      verification = { ok: true, models: ['gemini-embedding-001', 'gemini-2.5-pro'] };
+      expect(await rejection('AIza-no-flash')).toMatchObject({
+        code: 'validation_failed',
+        message: GEMINI_KEY_NO_MODEL_MESSAGE,
+        fields: { apiKey: GEMINI_KEY_NO_MODEL_MESSAGE },
+      });
+      expect((await stored()).geminiApiKey).toBe('');
+      expect(appLog.entries.at(-1)).toMatchObject({ details: { reason: 'no_report_model' } });
+    });
+
+    it.each([
+      { reason: 'unreachable', httpStatus: 503 },
+      { reason: 'timeout' },
+      { reason: 'rate_limited', httpStatus: 429 },
+    ] as const)('Gemini で確かめられない($reason)ときは 502 にして保存しない', async (failure) => {
+      verification = { ok: false, ...failure };
+      const error = await rejection('AIza-maybe-valid');
+      expect(error).toMatchObject({ code: 'upstream_unavailable', message: GEMINI_KEY_UNVERIFIED_MESSAGE });
+      expect(error.fields).toBeUndefined();
+      expect((await stored()).geminiApiKey).toBe('');
+      expect(appLog.entries.at(-1)).toMatchObject({
+        level: 'WARN',
+        action: 'settings.gemini_key.verify_failed',
+        details: { reason: failure.reason },
+      });
+    });
+
+    it('確認が例外を投げても、確かめられなかったとして保存しない', async () => {
+      deps.aiKeyVerifier = {
+        verifyApiKey: async () => {
+          throw new Error('boom');
+        },
+      };
+      expect((await rejection('AIza-throw')).code).toBe('upstream_unavailable');
+      expect((await stored()).geminiApiKey).toBe('');
+    });
+
+    it('変更の無い値・伏せ字のまま・空・伏せ字の一部の書き換えは確かめない', async () => {
+      await saveGeminiApiKey(deps, actor, 'AIza-current-1234');
+      verifiedKeys = [];
+      const masked = (await getAdminSettings(deps, actor)).geminiApiKey;
+      await saveGeminiApiKey(deps, actor, masked);
+      await saveGeminiApiKey(deps, actor, 'AIza-current-1234');
+      await saveGeminiApiKey(deps, actor, '  ');
+      await saveGeminiApiKey(deps, actor, `x${masked}`);
+      expect(verifiedKeys).toEqual([]);
+    });
   });
 
   it('伏せ字のままのAPIキーを保存しても変更しない(画面の初期値をそのまま保存した場合)', async () => {

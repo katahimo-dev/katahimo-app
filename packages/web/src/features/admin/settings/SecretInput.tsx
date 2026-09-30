@@ -22,11 +22,14 @@ export function SecretInput({
   value,
   onChange,
   status,
+  errorId,
 }: {
   id: string;
   value: string;
   onChange: (value: string) => void;
   status: AdminSettingsLoadStatus;
+  /** 入力欄のエラーの文言の要素の id(あれば aria-invalid と aria-describedby を付ける)。 */
+  errorId?: string;
 }) {
   const visibility = useVisibilityToggle();
   return (
@@ -42,7 +45,9 @@ export function SecretInput({
         }}
         placeholder={loadingPlaceholder(status)}
         disabled={status !== 'loaded'}
-        className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+        aria-invalid={errorId ? true : undefined}
+        aria-describedby={errorId}
+        className={`flex-1 min-w-0 px-3 py-2 border ${errorId ? 'border-red-500' : 'border-gray-300'} rounded-lg text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100`}
       />
       <button
         type="button"
