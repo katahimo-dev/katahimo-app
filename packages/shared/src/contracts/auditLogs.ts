@@ -228,6 +228,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'ai.accident_report.model_fallback_succeeded': '事故報告のAI生成(切り替えたモデルで成功)',
   'ai.receipt_ocr.failed': '領収書の読み取りの失敗',
   'ai.receipt_ocr.model_fallback_succeeded': '領収書の読み取り(切り替えたモデルで成功)',
+  'ai.compare.completed': '日報AIのモデルの比較(運用)',
   'notification.gchat.failed': 'Google Chatへの通知の失敗',
   'notification.gchat.not_configured': 'Google Chatの通知先が未設定',
   'outbox.message_failed': '外部への送信の失敗',

@@ -17,6 +17,7 @@ export * from './receiptList';
 export * from './receipts';
 export * from './reportAi';
 export * from './reportAiAdmin';
+export * from './reportAiCompare';
 export * from './reportList';
 export * from './reports';
 export * from './requestMeta';

@@ -26,6 +26,31 @@ export interface GenerateDailyReportInput {
    * モデル)。API エラーのとき、画面が次のモデルを指定して呼び直す。
    */
   model?: string;
+  /**
+   * Gemini の思考の量(generationConfig.thinkingConfig.thinkingBudget)。指定したときだけ送る(アプリの生成は
+   * 指定しない。運用のモデル比較 `pnpm ai:compare --thinking-budget` だけが使う)。
+   */
+  thinkingBudget?: number;
+}
+
+/** 1回の呼び出しのトークン数(Gemini の usageMetadata。返ってきた値だけ)。 */
+export interface ReportAiTokenUsage {
+  promptTokens?: number;
+  candidatesTokens?: number;
+  thoughtsTokens?: number;
+  totalTokens?: number;
+}
+
+/**
+ * 応答の検証用の付帯情報(運用のモデル比較が読む)。usecase は画面にも生成の記録にも載せない。
+ */
+export interface DailyReportDiagnostics {
+  usage?: ReportAiTokenUsage;
+  /**
+   * 応答の JSON が日報のスキーマ(DAILY_REPORT_RESPONSE_SCHEMA)と違った点(必須の項目が無い・型が違う)。
+   * 空なら形どおり。下書きは形の違う値を落として作る。
+   */
+  shapeIssues: string[];
 }
 
 export interface DailyReportDraft {
@@ -42,6 +67,8 @@ export interface DailyReportDraft {
    * 混雑・上限・モデルが無い等は true)。成功時は undefined。
    */
   retryable?: boolean;
+  /** 応答のトークン数・形の検証(実装が分かるときだけ。DailyReportDiagnostics)。 */
+  diagnostics?: DailyReportDiagnostics;
 }
 
 export interface GenerateAccidentReportInput {

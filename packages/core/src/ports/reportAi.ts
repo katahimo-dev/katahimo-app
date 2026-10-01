@@ -6,7 +6,7 @@ import type {
   ReportPsiLevelInput,
   ReportStanceRuleInput,
 } from '@katahimo/shared';
-import type { ReportAiMasters } from '../domain/reports/reportAiMasters';
+import type { ReportAiMasters, ReportKeywordEntry } from '../domain/reports/reportAiMasters';
 
 /**
  * 日報AIの調整のマスター(report_keywords / report_age_bands / report_education_levels / report_psi_levels /
@@ -57,6 +57,11 @@ export type ReportAiLevelTable = keyof ReportAiLevelTypes;
 export interface ReportAiMasterRepository {
   /** アーカイブしていない行の一式(生成のプロンプトの組み立て)。 */
   loadActive(): Promise<ReportAiMasters>;
+  /**
+   * キーワードを ID で(アーカイブした語も含む。生成の記録の候補 candidate_keyword_ids を語に戻す。運用のモデル比較)。
+   * 無い ID は飛ばす。並びは渡した ID の順。
+   */
+  findKeywordsByIds(ids: readonly string[]): Promise<ReportKeywordEntry[]>;
   /** アーカイブしていない行を版つきで(管理画面)。 */
   listRecords(): Promise<ReportAiMasterRecords>;
   /**
@@ -166,6 +171,44 @@ export interface ReportAiGenerationRecord {
   createdAt: Date;
 }
 
+/**
+ * 運用のモデル比較(`pnpm ai:compare`)で読む生成の記録の条件。ids を渡せばその生成(成否を問わない)、無ければ
+ * 成功した生成(error_code が null)を新しい順に limit 件(since 以降)。どちらも promptKey の生成だけ。
+ */
+export interface ReportAiComparisonFilter {
+  /** AIプロンプトのキー(保育日報の daily_report.generate)。 */
+  promptKey: string;
+  ids?: readonly string[];
+  limit: number;
+  since?: Date;
+}
+
+/** 運用のモデル比較で読む生成の記録(送ったプロンプトの全文・メモ・答えを含む。操作ログには書かない)。 */
+export interface ReportAiComparisonSource {
+  id: string;
+  staffId: string;
+  customerId: string;
+  careRecipientId: string | null;
+  careRecordId: string | null;
+  model: string | null;
+  promptText: string;
+  inputText: string;
+  timeInfo: string;
+  startedAt: Date;
+  finishedAt: Date;
+  childAgeMonths: number | null;
+  educationLevel: number;
+  effectiveEducationLevel: number | null;
+  riskRating: number | null;
+  escalationRequired: boolean;
+  candidateKeywordIds: string[];
+  usedKeywordIds: string[];
+  unresolvedUsedCodes: string[];
+  output: Record<string, unknown> | null;
+  errorCode: string | null;
+  createdAt: Date;
+}
+
 /** キーワードごとの候補・使用の回数(利用状況の CSV)。 */
 export interface ReportKeywordUsageRow {
   keywordId: string;
@@ -181,6 +224,8 @@ export interface ReportAiGenerationRepository {
    * (別の日報に結び付いていれば false)。
    */
   linkToCareRecord(id: string, careRecordId: string): Promise<boolean>;
+  /** 運用のモデル比較の対象(ReportAiComparisonFilter。新しい順)。読むだけ。 */
+  listForComparison(filter: ReportAiComparisonFilter): Promise<ReportAiComparisonSource[]>;
   /** [from, to) に作った生成の、キーワードごとの候補・使用の回数。 */
   keywordUsage(from: Date, to: Date): Promise<ReportKeywordUsageRow[]>;
   /** [from, to) に作った生成の、候補に直せなかった答え(unresolved_used_codes)ごとの回数。 */
