@@ -19,7 +19,7 @@ describe('countsAsCsvImportSuccess(顧客CSVの定期取込の終了コード)',
     }
   });
 
-  it('失敗と、新しく安全装置が止めた版は失敗(Cloud Run Jobs が再試行し、アラートが出る)', () => {
+  it('失敗と、新しく安全装置が止めた版は失敗(アラートが出る。再試行は10分後の実行)', () => {
     expect(countsAsCsvImportSuccess(result({ status: 'failed' }))).toBe(false);
     expect(countsAsCsvImportSuccess(result({ status: 'review_required' }))).toBe(false);
   });

@@ -106,7 +106,8 @@ export async function importLatestCustomerCsv(
         status: 'review_required',
         message:
           `この顧客CSV(${fileName})は、消えた顧客が多すぎるため取り込みを止めています。` +
-          'CSVの内容を確認し、正しいCSVを置き直してください。',
+          'CSVの内容を確認し、正しいCSVをファイル名の日時が新しいものとして置いてください' +
+          '(同じ日時のファイル名で置き直しても読み直しません。急ぐときは管理者に取り込み直しを頼んでください)。',
         repeatedReview: true,
       };
     }
@@ -166,6 +167,7 @@ export async function importLatestCustomerCsv(
       await log('WARN', 'customer_csv.import_failed', { fileName, version, error: error.reason });
       return { ...base, fileName, version, status: 'busy', message: error.message };
     }
+    // 原因(Drive・CSV の読み取りのエラー)は操作ログだけに残し、画面には出さない(外部サービスの詳細を見せない)
     const reason = error instanceof Error ? error.message : String(error);
     await log('ERROR', 'customer_csv.import_failed', { fileName, version, error: reason });
     return {
@@ -173,7 +175,8 @@ export async function importLatestCustomerCsv(
       fileName,
       version,
       status: 'failed',
-      message: `顧客CSVの取込に失敗しました: ${reason}`,
+      message:
+        '顧客CSVの取込に失敗しました。しばらくしてからもう一度お試しください(続くときは管理者へ連絡してください)。',
     };
   }
 }

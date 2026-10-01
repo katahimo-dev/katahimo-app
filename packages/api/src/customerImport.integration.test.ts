@@ -107,7 +107,11 @@ describe('API: 顧客CSVの手動取込', () => {
     expect(((await forced.json()) as CustomerCsvImportResponse).status).toBe('imported');
   });
 
+  // 前のテストで取り込んだ顧客を前提にする(同じテナント・同じ取込元のフォルダ)
   it('安全装置で止めたら 409 で、本文はエラーの形(code・message)も満たす', async () => {
+    mkdirSync(join(csvDir, slug), { recursive: true });
+    writeFileSync(join(csvDir, slug, 'Kokyaku_202601191958_1.csv'), FIXTURE);
+    await importCsv(cookies.admin, {});
     const header = FIXTURE.toString('utf16le').split(/\r?\n/)[0] ?? '';
     const oneRow = ['new-customer-1', '新規', '顧客'].join('\t');
     writeFileSync(

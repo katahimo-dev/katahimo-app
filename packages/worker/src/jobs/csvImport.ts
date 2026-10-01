@@ -10,7 +10,7 @@ export interface CsvImportJobTenantResult extends CustomerCsvImportResult {
  * 顧客CSVの自動取込(GAS版 checkAndImportLatestCsv の定期実行)。10分ごと(infra の var.customer_csv_import_schedule。
  * 新しいお客様は初回の訪問の直前に登録されることがあり、日報を書くまでに取り込むため)。新しいCSVが無ければ
  * フォルダの一覧を見るだけで終わる。
- * 取込失敗・要確認(消失率超過)があれば失敗扱い(終了コード1。Cloud Run Jobs が再試行する)にする。ただし前の取込で
+ * 取込失敗・要確認(消失率超過)があれば失敗扱い(終了コード1。アラートが出る。ジョブの再試行は無く、10分後の実行が代わり)にする。ただし前の取込で
  * 安全装置が止めた版をもう一度見ただけ(repeatedReview)と、他の取込が実行中(busy。手動の取込・外部連携の API)は
  * 失敗にしない(次の回が取り込む。同じ原因で10分ごとに失敗を繰り返さないように)。
  */

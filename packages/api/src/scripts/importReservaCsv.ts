@@ -4,6 +4,7 @@ loadDotenv();
 
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
+import { CUSTOMER_CSV_FILE_PATTERN } from '@katahimo/core/domain';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import { applyReservaImport, parseReservaCsv } from '@katahimo/ingestion';
 import { createContainer } from '../container';
@@ -37,9 +38,13 @@ async function main() {
 
     const rows = parseReservaCsv(readFileSync(csvPath));
     console.log(`[import] CSVから ${rows.length} 件の顧客行を読みました`);
+    const fileName = basename(csvPath);
     const outcome = await applyReservaImport(container, tenant.id, rows, {
       force,
-      fileName: basename(csvPath),
+      fileName,
+      // RESERVA の名前(Kokyaku_YYYYMMDDHHmm.csv)なら版も残す。残さないと、10分ごとの定期の取込が取込元の同じ版を
+      // 「未取込」とみなして取り込み直し、この手での取込を上書きする
+      fileVersion: CUSTOMER_CSV_FILE_PATTERN.exec(fileName)?.[1] ?? null,
     });
     console.log('[import] 差分:', JSON.stringify(outcome.plan.stats));
     if (outcome.status === 'review_required') {

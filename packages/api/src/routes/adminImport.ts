@@ -6,19 +6,17 @@ import {
   customerCsvImportResponseSchema,
 } from '@katahimo/shared';
 import { Hono } from 'hono';
-import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Container } from '../container';
 import { enforceStaffQuota } from '../http/quota';
 import { requestMeta } from '../http/requestMeta';
-import { apiError, jsonOk, parseJsonBody } from '../http/responses';
+import { apiError, DOMAIN_ERROR_STATUS, jsonOk, parseJsonBody } from '../http/responses';
 import { requireCoordinator, type SessionEnv } from '../session';
 
-const FAILURE_BY_RESULT: Partial<
-  Record<CustomerCsvImportStatus, { status: ContentfulStatusCode; code: 'conflict' | 'upstream_unavailable' }>
-> = {
-  failed: { status: 502, code: 'upstream_unavailable' },
-  review_required: { status: 409, code: 'conflict' },
-  busy: { status: 409, code: 'conflict' },
+/** 失敗の結果 → エラーの code(HTTP ステータスは DOMAIN_ERROR_STATUS と同じ)。 */
+const FAILURE_CODE: Partial<Record<CustomerCsvImportStatus, 'conflict' | 'upstream_unavailable'>> = {
+  failed: 'upstream_unavailable',
+  review_required: 'conflict',
+  busy: 'conflict',
 };
 
 /**
@@ -58,9 +56,9 @@ export function createAdminImportRoutes(container: Container) {
       force: body.data.force,
       actor: { staffId: session.staffId, name: session.name },
     });
-    const failure = FAILURE_BY_RESULT[result.status];
-    if (!failure) return jsonOk(c, customerCsvImportResponseSchema, result);
-    return jsonOk(c, customerCsvImportResponseSchema, { ...result, code: failure.code }, failure.status);
+    const code = FAILURE_CODE[result.status];
+    if (!code) return jsonOk(c, customerCsvImportResponseSchema, result);
+    return jsonOk(c, customerCsvImportResponseSchema, { ...result, code }, DOMAIN_ERROR_STATUS[code]);
   });
 
   return app;

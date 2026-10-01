@@ -15,9 +15,11 @@ export function CustomerCsvImportButton() {
   const [result, setResult] = useState<string | null>(null);
   const run = useMutation({
     mutationFn: customersApi.importLatestCsv,
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
       setResult(customerCsvImportMessage(res));
       if (res.status === 'imported') {
+        // 取込の前に出た版数の確認の返事(古い版数)が後から届いて上書きしないよう、先に取り消す
+        await queryClient.cancelQueries({ queryKey: queryKeys.dataVersion });
         queryClient.setQueryData(queryKeys.dataVersion, { dataVersion: res.dataVersion });
       }
     },

@@ -25,7 +25,8 @@
   (`review_required` / `busy` は 409 `conflict`、`failed` は 502 `upstream_unavailable`)の本文に `code` を追加(`doc/04_API仕様.md` 2.9)。
 - `csv-import` ジョブの失敗の扱いを変えた。`busy`(同じテナントの別の取込が実行中)は失敗にしない(10分後の実行が取り込む)。前回の実行が既に
   止めた版への `review_required`(消える顧客が20%超)も失敗にしない(`force` なしでは CSV を読まず、`import_runs`・操作ログも残さない。
-  新しい CSV か管理者の `force` で再試行)。`failed` と、最初の `review_required` は従来どおり終了コード1(再試行・アラート)
+  新しい CSV か管理者の `force` で再試行)。`failed` と、最初の `review_required` は従来どおり終了コード1(アラート)。`csv-import` はジョブの再試行をやめた(10分後の実行が代わり)。
+  取込の失敗(`failed`)の文言は一般的なものにし、原因は操作ログだけに残す。`pnpm import:reserva` は RESERVA のファイル名なら版も残す
   (`doc/05_バッチ・外部連携.md` 3章)。
 
 - 本番のリリースのトリガー `katahimo-release` の実行前の承認を外した(タグの push と canary の確認が歯止め)。`doc/07_インフラ・運用.md` 4章を
