@@ -1162,6 +1162,12 @@ export function fakeRepositories(
           .at(-1);
         return run ? structuredClone(run) : null;
       },
+      async latestFinished(source) {
+        const run = d()
+          .importRuns.filter((x) => x.source === source && x.status !== 'running')
+          .at(-1);
+        return run ? structuredClone(run) : null;
+      },
     },
     legacyImports: {
       async lockTenantLegacyImports() {

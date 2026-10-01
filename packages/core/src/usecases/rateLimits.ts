@@ -53,6 +53,11 @@ export interface RateLimitPolicy {
    * (公開デモでは誰でも管理者でログインできる)。
    */
   geminiKeySaveStaff: RateLimitRule;
+  /**
+   * 顧客CSVの手動の取込(コーディネーター・管理者単位の1時間の上限)。押すたびに Drive のフォルダを読み、新しい版が
+   * あれば取り込むため、押し続けで取込を詰まらせない。
+   */
+  customerCsvImportStaff: RateLimitRule;
 }
 
 export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
@@ -82,6 +87,7 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   attendanceExportStaff: { name: 'attendance_export_staff', limit: 30, windowMs: HOUR_MS },
   staffImportApplyStaff: { name: 'staff_import_apply_staff', limit: 5, windowMs: 10 * MINUTE_MS },
   geminiKeySaveStaff: { name: 'gemini_key_save_staff', limit: 20, windowMs: HOUR_MS },
+  customerCsvImportStaff: { name: 'customer_csv_import_staff', limit: 30, windowMs: HOUR_MS },
 };
 
 /** 回数だけを差し替えた規則一式を作る(環境変数での調整用。0以下・未指定は既定値のまま)。 */

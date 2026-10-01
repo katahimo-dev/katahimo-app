@@ -1,6 +1,7 @@
 # Cloud Scheduler → Cloud Run Jobs(Admin API の jobs.run を OAuth トークン付きで呼ぶ)。
-# 時刻は JST。夜間反映 22:00 / 顧客CSV取込 03:00 は GAS版 Triggers.js と同じ、翌日の予定のお知らせは
-# var.route_notice_schedule(既定 19:00。GAS版 gas-root-serach の夜間 main() の置き換え)、保守 04:00。
+# 時刻は JST。夜間反映 22:00 は GAS版 Triggers.js と同じ、顧客CSV取込は var.customer_csv_import_schedule(既定 10 分ごと。
+# GAS版は毎日3時台)、翌日の予定のお知らせは var.route_notice_schedule(既定 19:00。GAS版 gas-root-serach の
+# 夜間 main() の置き換え)、保守 04:00。
 # outbox の見回り(outbox-drain)は var.outbox_sweep_schedule(既定 10 分ごと)で、scheduler_paused でも止めない。
 locals {
   scheduled_jobs = { for name, job in local.jobs : name => job if job.schedule != null && var.deploy_workloads }

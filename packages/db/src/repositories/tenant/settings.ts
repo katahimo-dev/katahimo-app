@@ -25,7 +25,7 @@ import type {
   TenantSettingsRecord,
   TenantSettingsRepository,
 } from '@katahimo/core/ports';
-import { and, asc, desc, eq, max, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, max, ne, type SQL, sql } from 'drizzle-orm';
 import { LOCK_NOT_AVAILABLE, pgErrorOf } from '../../errors';
 import {
   aiPromptRevisions,
@@ -221,6 +221,14 @@ export class DrizzleImportRunRepository extends TenantBound implements ImportRun
   }
 
   async latestApplied(source: ImportSource): Promise<ImportRunRecord | null> {
+    return this.latestWhere(source, eq(importRuns.status, 'applied'));
+  }
+
+  async latestFinished(source: ImportSource): Promise<ImportRunRecord | null> {
+    return this.latestWhere(source, ne(importRuns.status, 'running'));
+  }
+
+  private async latestWhere(source: ImportSource, condition: SQL): Promise<ImportRunRecord | null> {
     const rows = await this.tx
       .select({
         id: importRuns.id,
@@ -233,13 +241,7 @@ export class DrizzleImportRunRepository extends TenantBound implements ImportRun
         finishedAt: importRuns.finishedAt,
       })
       .from(importRuns)
-      .where(
-        and(
-          eq(importRuns.tenantId, this.tenantId),
-          eq(importRuns.source, source),
-          eq(importRuns.status, 'applied'),
-        ),
-      )
+      .where(and(eq(importRuns.tenantId, this.tenantId), eq(importRuns.source, source), condition))
       .orderBy(desc(importRuns.startedAt))
       .limit(1);
     return rows[0] ?? null;

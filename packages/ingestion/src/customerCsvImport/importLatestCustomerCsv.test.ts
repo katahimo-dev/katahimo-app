@@ -94,6 +94,35 @@ describe('importLatestCustomerCsv(GAS版 checkAndImportLatestCsv)', () => {
     expect(appLog.byAction('customer_csv.import_review_required')).toHaveLength(1);
   });
 
+  it('安全装置で止めた版は、次の定期実行ではファイルを読まず記録も残さない(新しい版か force で取り込み直す)', async () => {
+    source.put(FOLDER, 'Kokyaku_202601191958_1.csv', FIXTURE);
+    await importLatestCustomerCsv(deps, { tenant });
+    const header = FIXTURE.toString('utf16le').split(/\r?\n/)[0] ?? '';
+    const oneRow = ['new-customer-1', '新規', '顧客'].join('\t');
+    source.put(FOLDER, 'Kokyaku_202602010000_1.csv', Buffer.from(`${header}\r\n${oneRow}\r\n`, 'utf16le'));
+    expect((await importLatestCustomerCsv(deps, { tenant })).status).toBe('review_required');
+    const runs = ctx.data().importRuns.length;
+
+    const again = await importLatestCustomerCsv(deps, { tenant });
+    expect(again).toMatchObject({
+      status: 'review_required',
+      repeatedReview: true,
+      fileName: 'Kokyaku_202602010000_1.csv',
+    });
+    expect(ctx.data().importRuns).toHaveLength(runs);
+    expect(appLog.byAction('customer_csv.import_review_required')).toHaveLength(1);
+
+    // force(管理者)はもう一度確かめる。安全装置は外さない
+    const forced = await importLatestCustomerCsv(deps, { tenant, force: true });
+    expect(forced.status).toBe('review_required');
+    expect(forced.repeatedReview).toBeUndefined();
+    expect(ctx.data().importRuns).toHaveLength(runs + 1);
+
+    // 正しい新しい版が置かれれば取り込む
+    source.put(FOLDER, 'Kokyaku_202602010010_1.csv', FIXTURE);
+    expect((await importLatestCustomerCsv(deps, { tenant })).status).toBe('imported');
+  });
+
   it('他の取込がロックを持ったままなら busy(API は 409)。版は進めず WARN を残す', async () => {
     source.put(FOLDER, 'Kokyaku_202601191958_1.csv', FIXTURE);
     // DB ではロックを lock_timeout まで待てなかったとき、リポジトリがこのエラーにする(55P03)

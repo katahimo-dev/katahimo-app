@@ -37,11 +37,16 @@ export interface CustomerCsvImportResult {
     missingRatio: number;
   } | null;
   dataVersion: string;
+  /**
+   * review_required のうち、前の取込で安全装置が止めた版をそのまま返したもの(ファイルを読まず、記録も残さない)。
+   * 定期実行(10分ごと)が同じCSVで失敗・警告を繰り返さないように、ジョブはこれを失敗に数えない。
+   */
+  repeatedReview?: boolean;
 }
 
 /**
  * 取込元フォルダの最新の顧客CSVを、まだ取り込んでいなければ取り込む
- * (GAS版 CsvImport.js の checkAndImportLatestCsv。毎日3時の定期実行と管理者の手動実行で使う)。
+ * (GAS版 CsvImport.js の checkAndImportLatestCsv。10分ごとの定期実行と、コーディネーター・管理者の手動実行で使う)。
  *
  * GAS版は顧客DBシートを丸ごと書き換えていたが、こちらは外部ID(RESERVA顧客ID)での差分適用
  * (applyReservaImport)を使い、CSVから消えた顧客が多すぎる場合は適用を止める安全装置もそのまま効かせる。
@@ -57,6 +62,7 @@ export async function importLatestCustomerCsv(
   const { tenant, force = false, actor = null } = request;
   const state = await deps.uow.run(tenant.id, async (r) => ({
     lastImportedVersion: (await r.importRuns.latestApplied('reserva_csv'))?.fileVersion ?? null,
+    lastFinished: await r.importRuns.latestFinished('reserva_csv'),
     dataVersion: (await r.settings.get()).customerDataVersion,
     settings: await r.customerImportSettings(),
   }));
@@ -86,6 +92,23 @@ export async function importLatestCustomerCsv(
     version = latest.version;
     if (!force && !isNewerCustomerCsvVersion(latest.version, state.lastImportedVersion)) {
       return { ...base, fileName, version, status: 'up_to_date', message: '最新の顧客CSVは取込済みです。' };
+    }
+    if (
+      !force &&
+      state.lastFinished?.status === 'review_required' &&
+      state.lastFinished.fileVersion === latest.version
+    ) {
+      // 前の取込で安全装置が止めた版。新しいCSVが置かれるか、管理者が force で取り込み直すまで同じ結果になる
+      return {
+        ...base,
+        fileName,
+        version,
+        status: 'review_required',
+        message:
+          `この顧客CSV(${fileName})は、消えた顧客が多すぎるため取り込みを止めています。` +
+          'CSVの内容を確認し、正しいCSVを置き直してください。',
+        repeatedReview: true,
+      };
     }
 
     const rows = parseReservaCsv(await deps.csvSource.readFile(location, latest.file));

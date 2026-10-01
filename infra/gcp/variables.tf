@@ -117,6 +117,16 @@ variable "outbox_sweep_schedule" {
   default     = "*/10 * * * *"
 }
 
+variable "customer_csv_import_schedule" {
+  description = <<-EOT
+    顧客CSVの取込(job:csv-import)を起動する間隔(cron、JST)。新しいお客様は初回の訪問の直前に登録されることがあり、
+    日報を書くまでに取り込むため10分ごと(outbox の見回りと同じ分にならないよう5分ずらす)。新しいCSVが無ければ
+    フォルダの一覧を見るだけで終わる。急ぐときは画面の「今すぐ取り込む」(コーディネーター・管理者)。GAS版は毎日3時台
+  EOT
+  type        = string
+  default     = "5-59/10 * * * *"
+}
+
 variable "route_notice_schedule" {
   description = "翌日の予定のお知らせ(job:route-notice)を積む時刻(cron、JST)。GAS版 gas-root-serach の夜間 main() の置き換え"
   type        = string

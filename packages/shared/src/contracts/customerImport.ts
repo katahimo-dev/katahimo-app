@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { apiErrorSchema } from './common';
 
 /**
  * 顧客CSV(RESERVA「Kokyaku_YYYYMMDDHHmm_N.csv」)の自動取込
@@ -38,10 +39,10 @@ export const tenantCustomerImportSettingsSchema = z.discriminatedUnion('provider
 ]);
 export type TenantCustomerImportSettings = z.infer<typeof tenantCustomerImportSettingsSchema>;
 
-// ── POST /api/admin/customers/import(管理者のみ) ────────────
+// ── POST /api/admin/customers/import(コーディネーター・管理者。force は管理者だけ) ────────────
 
 export const customerCsvImportRequestSchema = z.object({
-  /** true(既定)なら取込済みの版でも取り込み直す(GAS版 forceImportCsv)。 */
+  /** true(既定)なら取込済みの版でも取り込み直す(GAS版 forceImportCsv。管理者だけ)。画面の「今すぐ取り込む」は false。 */
   force: z.boolean().default(true),
 });
 
@@ -62,6 +63,11 @@ export const customerCsvImportResponseSchema = z.object({
     })
     .nullable(),
   dataVersion: z.string(),
+  /**
+   * 失敗の応答(review_required・busy は 409 `conflict`、failed は 502 `upstream_unavailable`)だけに付く。
+   * 本文がエラーの形 `{ code, message }` も満たし、画面がふつうの API のエラーとして message を出せるように。
+   */
+  code: apiErrorSchema.shape.code.optional(),
 });
 export type CustomerCsvImportResponse = z.infer<typeof customerCsvImportResponseSchema>;
 
