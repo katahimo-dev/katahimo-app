@@ -1,5 +1,4 @@
 import type { useVisibilityToggle } from '../../ui/useVisibilityToggle';
-import { DemoAccountPicker } from './DemoAccountPicker';
 
 export interface LoginFormValues {
   tenantSlug: string;
@@ -17,8 +16,6 @@ interface LoginModalProps {
   passwordVisibility: ReturnType<typeof useVisibilityToggle>;
   onSubmit: () => void;
   onForgotPassword: () => void;
-  /** 公開デモ用のビルド: デモ用アカウントの一覧を出し、「パスワードを忘れたとき」は出さない(デモでは使えない)。 */
-  demoMode?: boolean;
 }
 
 /**
@@ -34,7 +31,6 @@ export function LoginModal({
   passwordVisibility,
   onSubmit,
   onForgotPassword,
-  demoMode = false,
 }: LoginModalProps) {
   return (
     <div className="fixed inset-0 bg-gray-900 z-50 flex items-center justify-center p-4">
@@ -50,11 +46,6 @@ export function LoginModal({
           <h2 className="text-2xl font-bold text-gray-800">ログイン</h2>
           <p className="text-sm text-gray-500 mt-1">スタッフ情報を入力してください</p>
         </div>
-        {demoMode ? (
-          <DemoAccountPicker
-            onPick={(account, password) => onChange({ ...values, email: account.email, password })}
-          />
-        ) : null}
         <div className="space-y-4">
           {showTenantField ? (
             <div>
@@ -116,17 +107,15 @@ export function LoginModal({
         <div className="text-red-600 text-base text-center min-h-[1.25rem]" role="alert">
           {error}
         </div>
-        {demoMode ? null : (
-          <div className="text-center">
-            <button
-              type="button"
-              onClick={onForgotPassword}
-              className="w-full min-h-11 py-3 rounded-xl bg-gray-200 text-gray-800 text-base font-bold"
-            >
-              パスワードを忘れたときはこちら
-            </button>
-          </div>
-        )}
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={onForgotPassword}
+            className="w-full min-h-11 py-3 rounded-xl bg-gray-200 text-gray-800 text-base font-bold"
+          >
+            パスワードを忘れたときはこちら
+          </button>
+        </div>
         <button
           type="submit"
           disabled={submitting}

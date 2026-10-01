@@ -1,7 +1,15 @@
-import { conflict, notFound, type ReportAiMasters, STALE_WRITE_MESSAGE } from '@katahimo/core/domain';
+import {
+  conflict,
+  notFound,
+  type ReportAiMasters,
+  type ReportKeywordEntry,
+  STALE_WRITE_MESSAGE,
+} from '@katahimo/core/domain';
 import type {
   CustomerReportProfileRecord,
   CustomerReportProfileRepository,
+  ReportAiComparisonFilter,
+  ReportAiComparisonSource,
   ReportAiGenerationInput,
   ReportAiGenerationRecord,
   ReportAiGenerationRepository,
@@ -14,7 +22,7 @@ import type {
   ReportAiRowTypes,
   ReportKeywordUsageRow,
 } from '@katahimo/core/ports';
-import { and, asc, eq, isNull, or, type SQL, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, or, type SQL, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import {
   customerReportProfiles,
@@ -219,6 +227,22 @@ export class DrizzleReportAiMasterRepository extends TenantBound implements Repo
       educationLevels: records.educationLevels.map(({ id: _id, ...rest }) => strip(rest)),
       psiLevels: records.psiLevels.map(({ id: _id, ...rest }) => strip(rest)),
     };
+  }
+
+  async findKeywordsByIds(ids: readonly string[]): Promise<ReportKeywordEntry[]> {
+    if (ids.length === 0) return [];
+    const spec = ROW_TABLES.keywords;
+    const rows = (await this.tx
+      .select({ id: reportKeywords.id, ...columnsOf(spec) })
+      .from(reportKeywords)
+      .where(
+        and(eq(reportKeywords.tenantId, this.tenantId), inArray(reportKeywords.id, [...ids])),
+      )) as unknown as ReportKeywordEntry[];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return ids.flatMap((id) => {
+      const row = byId.get(id);
+      return row ? [row] : [];
+    });
   }
 
   async findRowByKey<T extends ReportAiRowTable>(
@@ -444,6 +468,48 @@ export class DrizzleReportAiGenerationRepository extends TenantBound implements 
       )
       .returning({ id: g.id });
     return rows.length > 0;
+  }
+
+  async listForComparison(filter: ReportAiComparisonFilter): Promise<ReportAiComparisonSource[]> {
+    const g = reportAiGenerations;
+    const selection = filter.ids
+      ? inArray(g.id, [...filter.ids])
+      : and(
+          isNull(g.errorCode),
+          isNotNull(g.output),
+          filter.since ? gte(g.createdAt, filter.since) : undefined,
+        );
+    if (filter.ids && filter.ids.length === 0) return [];
+    const rows = await this.tx
+      .select({
+        id: g.id,
+        staffId: g.staffId,
+        customerId: g.customerId,
+        careRecipientId: g.careRecipientId,
+        careRecordId: g.careRecordId,
+        model: g.model,
+        promptText: g.promptText,
+        inputText: g.inputText,
+        timeInfo: g.timeInfo,
+        startedAt: g.startedAt,
+        finishedAt: g.finishedAt,
+        childAgeMonths: g.childAgeMonths,
+        educationLevel: g.educationLevel,
+        effectiveEducationLevel: g.effectiveEducationLevel,
+        riskRating: g.riskRating,
+        escalationRequired: g.escalationRequired,
+        candidateKeywordIds: g.candidateKeywordIds,
+        usedKeywordIds: g.usedKeywordIds,
+        unresolvedUsedCodes: g.unresolvedUsedCodes,
+        output: g.output,
+        errorCode: g.errorCode,
+        createdAt: g.createdAt,
+      })
+      .from(g)
+      .where(and(eq(g.tenantId, this.tenantId), eq(g.promptKey, filter.promptKey), selection))
+      .orderBy(desc(g.createdAt), desc(g.id))
+      .limit(filter.limit);
+    return rows;
   }
 
   async keywordUsage(from: Date, to: Date): Promise<ReportKeywordUsageRow[]> {

@@ -1,6 +1,5 @@
-import { DEFAULT_DEMO_TENANT_SLUG, DEMO_ACCOUNTS, DEMO_PASSWORD } from '@katahimo/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { authApi } from '../../api/auth';
 import { STORAGE_KEYS } from '../../lib/storage';
 import { createWrapper } from '../../test/providers';
@@ -53,40 +52,5 @@ describe('ログイン画面: 届いている番号でパスワードを設定�
       }),
     );
     expect(authApi.requestPasswordReset).not.toHaveBeenCalled();
-  });
-});
-
-describe('ログイン画面: 公開デモのビルド', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-    localStorage.clear();
-    vi.stubEnv('VITE_DEMO_MODE', '1');
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('デモ用アカウントを押すとメールアドレスとパスワードが入り、デモ用テナントでログインする。再設定の案内は出さない', async () => {
-    vi.mocked(authApi.login).mockResolvedValue({
-      staff: {
-        staffId: 's',
-        tenantId: 't',
-        name: '山田 花子',
-        email: DEMO_ACCOUNTS[0]?.email ?? '',
-        role: 'admin',
-      },
-    });
-    renderLogin();
-    expect(screen.queryByRole('button', { name: 'パスワードを忘れたときはこちら' })).toBeNull();
-    expect(screen.queryByLabelText('法人ID')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'コーディネーター' }));
-    fireEvent.click(screen.getByRole('button', { name: 'ログイン' }));
-    await waitFor(() =>
-      expect(authApi.login).toHaveBeenCalledWith({
-        tenantSlug: DEFAULT_DEMO_TENANT_SLUG,
-        email: 'coordinator@demo.example.com',
-        password: DEMO_PASSWORD,
-      }),
-    );
   });
 });

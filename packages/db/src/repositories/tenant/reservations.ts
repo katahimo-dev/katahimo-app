@@ -11,7 +11,7 @@ import { TenantBound } from './base';
 const VISIBLE_RESERVATION_STATUSES = ['confirmed', 'done'] as const;
 
 /**
- * 予約とスタッフの割当(マッチング拡張の表、doc/10_マッチング拡張設計.md)。いまは公開デモの予定の登録と
+ * 予約とスタッフの割当(マッチング拡張の表、doc/10_マッチング拡張設計.md)。いまは予約の登録(テストだけが使う)と
  * SCHEDULE_PROVIDER=database の予定の取得だけ。管理者の割当のアプリを作るときにここへ足していく。
  */
 export class DrizzleReservationRepository extends TenantBound implements ReservationRepository {

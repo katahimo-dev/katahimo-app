@@ -75,7 +75,7 @@ describe('createScheduleServices', () => {
     // 夜間のジョブは Bridge の持ち主のテナントだけを処理する
     expect(b.scheduleTenantSlug).toBe(bridge.GAS_BRIDGE_TENANT);
 
-    // DB の予約を予定にする(公開デモ用)。区間は緯度経度から見積もるため地図 API は無し
+    // DB の予約を予定にする。区間は緯度経度から見積もるため地図 API は無し
     const d = createScheduleServices({ SCHEDULE_PROVIDER: 'database', ...google }, deps);
     expect(d.provider).toBe('database');
     expect(d.schedule).toBeInstanceOf(DatabaseSchedulePort);

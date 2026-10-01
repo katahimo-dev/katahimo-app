@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { AI_PROMPT_KEYS, type AiPromptKey, findAiPromptDefinition } from '@katahimo/shared';
 import {
+  type AssembledDailyReportPrompt,
   accidentTimeInfo,
   ageInMonths,
   assembleDailyReportPrompt,
@@ -12,6 +13,7 @@ import {
   newId,
   notFound,
   type ReportAiErrorCode,
+  type ReportAiMasters,
   type ResolvedUsedKeywords,
   renderAccidentReportPrompt,
   reportModelFamilyOf,
@@ -27,7 +29,8 @@ import type {
   ReportAiPortFactory,
 } from '../ports/ai';
 import type { AppLogPort } from '../ports/appLog';
-import type { ReportAiGenerationInput } from '../ports/reportAi';
+import type { CareRecipientRecord } from '../ports/customers';
+import type { CustomerReportProfileRecord, ReportAiGenerationInput } from '../ports/reportAi';
 import type { SecretBoxPort } from '../ports/secretBox';
 import type { TenantRepositories } from '../ports/unitOfWork';
 import type { AiPromptDeps } from './aiPrompts';
@@ -57,7 +60,10 @@ export interface ReportAiCaller {
  * 未設定なら Noop)にする。キーが開けないときも .env の設定に戻す(AI の下書き・読み取りは失敗しても結果の形で
  * 返す処理のため、ここで例外にしない)。モデルは自動で選ぶ(core/domain/reports/modelFallback.ts)。
  */
-async function resolveReportAiPort(deps: ReportAiDeps, tenantId: string): Promise<ReportAiPort> {
+export async function resolveReportAiPort(
+  deps: Pick<ReportAiDeps, 'uow' | 'secretBox' | 'appLog' | 'reportAi' | 'reportAiFactory'>,
+  tenantId: string,
+): Promise<ReportAiPort> {
   let apiKey: string;
   try {
     apiKey = await readTenantSecret(deps, tenantId, 'gemini_api_key');
@@ -180,7 +186,8 @@ export interface DailyReportGeneration {
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
-function errorCodeOf(draft: DailyReportDraft): ReportAiErrorCode | null {
+/** 下書きの失敗の種類(成功は null)。生成と運用のモデル比較(reportAiCompare.ts)で同じ判定。 */
+export function dailyReportErrorCodeOf(draft: DailyReportDraft): ReportAiErrorCode | null {
   if (draft.warnings.includes('API Key Missing')) return 'api_key_missing';
   if (draft.warnings.includes('API Error')) return 'api_error';
   return null;
@@ -207,41 +214,25 @@ export async function generateDailyReportDraft(
   const startedAt = currentTime(deps);
   const reportAi = await resolveReportAiPort(deps, caller.tenantId);
   const { model, firstModel } = await chooseReportModel(reportAi, input.model);
-  const context = await deps.uow.run(caller.tenantId, async (r) => {
-    const customer = await r.customers.findById(input.customerId);
-    if (!customer) throw notFound('お客様が見つかりません', 'customer_not_found');
-    const recipient = await resolveReportCareRecipient(r, input.customerId, input.careRecipientId);
-    const [profile, masters, template, companyPolicy, tenant] = await Promise.all([
-      r.customerReportProfiles.find(input.customerId),
-      r.reportAi.loadActive(),
-      resolvePrompt(r, AI_PROMPT_KEYS.DAILY_REPORT_GENERATE),
-      resolvePrompt(r, AI_PROMPT_KEYS.DAILY_REPORT_COMPANY_POLICY),
-      r.tenant(),
-    ]);
-    return { recipient, profile, masters, template, companyPolicy, timeZone: tenant.timezone };
-  });
+  const context = await deps.uow.run(caller.tenantId, (r) =>
+    loadDailyReportPromptContext(r, input.customerId, input.careRecipientId),
+  );
 
   const onDate = input.reportDate ?? zonedBusinessDate(startedAt, context.timeZone);
-  const birthDate = context.recipient?.birthDate ?? null;
-  const childAgeMonths = birthDate ? ageInMonths(birthDate, onDate) : null;
   const timeInfo = dailyTimeInfo(input.start, input.end);
   const riskRating = input.riskRating ?? null;
-  const assembled = assembleDailyReportPrompt({
-    template: context.template.body,
-    companyPolicy: context.companyPolicy.body,
-    anonymizedText: input.text,
+  const { assembled, childAgeMonths } = buildDailyReportPrompt(context, {
+    text: input.text,
     timeInfo,
-    childAgeMonths,
-    educationLevel: context.profile?.educationLevel ?? null,
+    onDate,
     riskRating,
-    masters: context.masters,
   });
 
   const raw = await reportAi.generateDailyReport({
     prompt: assembled.prompt,
     ...(model !== null ? { model } : {}),
   });
-  const errorCode = errorCodeOf(raw);
+  const errorCode = dailyReportErrorCodeOf(raw);
   const fallback = model !== null && model !== firstModel;
   if (errorCode) {
     await logAiError(deps, caller, 'ai.daily_report.generate_failed', raw.internal, {
@@ -295,7 +286,8 @@ export async function generateDailyReportDraft(
     candidateKeywordIds: assembled.candidates.map((k) => k.id),
     usedKeywordIds: used.keywordIds,
     unresolvedUsedCodes: used.unresolved,
-    output: errorCode ? null : { ...raw, warnings },
+    // 検証用の付帯情報(トークン数など)は記録に載せない
+    output: errorCode ? null : { ...withoutDiagnostics(raw), warnings },
     errorCode,
   });
 
@@ -313,6 +305,63 @@ export async function generateDailyReportDraft(
       retryable: errorCode === 'api_error' && raw.retryable === true,
     },
   };
+}
+
+function withoutDiagnostics(draft: DailyReportDraft): Omit<DailyReportDraft, 'diagnostics'> {
+  const { diagnostics: _diagnostics, ...rest } = draft;
+  return rest;
+}
+
+/** 保育日報のプロンプトを組み立てるのに読む値(お客様・対象のお子様・家庭の★・マスター・プロンプト)。 */
+export interface DailyReportPromptContext {
+  recipient: CareRecipientRecord | null;
+  profile: CustomerReportProfileRecord | null;
+  masters: ReportAiMasters;
+  template: ResolvedPrompt;
+  companyPolicy: ResolvedPrompt;
+  timeZone: string;
+}
+
+/**
+ * 保育日報のプロンプトに使う値をトランザクションの中で読む(生成と運用のモデル比較の組み立て直しで同じ読み方)。
+ * お客様が無ければ 404、対象のお子様がその世帯の子でなければ 400(resolveReportCareRecipient)。
+ */
+export async function loadDailyReportPromptContext(
+  r: TenantRepositories,
+  customerId: string,
+  careRecipientId: string | null | undefined,
+): Promise<DailyReportPromptContext> {
+  const customer = await r.customers.findById(customerId);
+  if (!customer) throw notFound('お客様が見つかりません', 'customer_not_found');
+  const recipient = await resolveReportCareRecipient(r, customerId, careRecipientId);
+  const [profile, masters, template, companyPolicy, tenant] = await Promise.all([
+    r.customerReportProfiles.find(customerId),
+    r.reportAi.loadActive(),
+    resolvePrompt(r, AI_PROMPT_KEYS.DAILY_REPORT_GENERATE),
+    resolvePrompt(r, AI_PROMPT_KEYS.DAILY_REPORT_COMPANY_POLICY),
+    r.tenant(),
+  ]);
+  return { recipient, profile, masters, template, companyPolicy, timeZone: tenant.timezone };
+}
+
+/** 読んだ値とメモ・時間情報・PSI から保育日報のプロンプトを組み立てる(月齢は onDate で数える)。 */
+export function buildDailyReportPrompt(
+  context: DailyReportPromptContext,
+  input: { text: string; timeInfo: string; onDate: string; riskRating: number | null },
+): { assembled: AssembledDailyReportPrompt; childAgeMonths: number | null } {
+  const birthDate = context.recipient?.birthDate ?? null;
+  const childAgeMonths = birthDate ? ageInMonths(birthDate, input.onDate) : null;
+  const assembled = assembleDailyReportPrompt({
+    template: context.template.body,
+    companyPolicy: context.companyPolicy.body,
+    anonymizedText: input.text,
+    timeInfo: input.timeInfo,
+    childAgeMonths,
+    educationLevel: context.profile?.educationLevel ?? null,
+    riskRating: input.riskRating,
+    masters: context.masters,
+  });
+  return { assembled, childAgeMonths };
 }
 
 /** 生成の記録を書く(失敗しても生成の結果は壊さない。false を返して ERROR を残す)。 */

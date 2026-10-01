@@ -21,7 +21,7 @@ import type {
   StoredFileRepository,
   StoredFileRow,
 } from '@katahimo/core/ports';
-import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, notExists, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
   careRecordRevisions,
@@ -200,15 +200,6 @@ export class DrizzleStoredFileRepository extends TenantBound implements StoredFi
       .from(storedFiles)
       .where(and(eq(storedFiles.tenantId, this.tenantId), eq(storedFiles.id, id)));
     return rows[0] ?? null;
-  }
-
-  listPage(afterId: string | null, limit: number): Promise<StoredFileRow[]> {
-    return this.tx
-      .select(fileColumns)
-      .from(storedFiles)
-      .where(and(eq(storedFiles.tenantId, this.tenantId), afterId ? gt(storedFiles.id, afterId) : undefined))
-      .orderBy(asc(storedFiles.id))
-      .limit(limit);
   }
 
   listUnreferenced(olderThan: Date, limit: number): Promise<StoredFileRow[]> {

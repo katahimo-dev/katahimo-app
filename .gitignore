@@ -16,3 +16,6 @@ packages/api/data/
 # 通し確認(e2e)の画面・フォントのキャッシュ
 tools/e2e/out/
 tools/e2e/.cache/
+
+# 運用のモデル比較(pnpm ai:compare)の結果。テナントのデータを含むためコミットしない
+ai-compare-*.html

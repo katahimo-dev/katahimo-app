@@ -5,7 +5,7 @@ import { summarizeLeg, UNKNOWN_LEG } from './routeLegs';
 import type { AppointmentLegs } from './scheduleView';
 
 /**
- * 地図APIを呼ばずに区間の距離・所要時間を見積もる(SCHEDULE_PROVIDER=database 用。公開デモ・Google の設定が無い環境)。
+ * 地図APIを呼ばずに区間の距離・所要時間を見積もる(SCHEDULE_PROVIDER=database 用。Google の設定が無い環境)。
  *
  * 2点の緯度経度の直線距離(大円距離)に道なりの係数を掛けて距離とし、移動手段ごとの平均の速さで所要時間にする。
  * 実際の道のりではないため、値は目安(画面の表示・出勤簿への反映の見本)にだけ使う。

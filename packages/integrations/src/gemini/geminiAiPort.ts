@@ -8,6 +8,7 @@ import type {
   GenerateDailyReportInput,
   ReceiptOcrResult,
   ReportAiPort,
+  ReportAiTokenUsage,
 } from '@katahimo/core/ports';
 import { listAvailableGeminiModels } from './listModels';
 
@@ -27,7 +28,7 @@ const GENERATE_TIMEOUT_MS = 80_000;
 const OCR_TIMEOUT_MS = 30_000;
 
 type GeminiCallResult =
-  | { ok: true; value: unknown }
+  | { ok: true; value: unknown; usage?: ReportAiTokenUsage }
   | { ok: false; error: string; httpCode?: number; rawError?: string };
 
 /** 値の中の全ての文字列に含まれる `\n`(エスケープされた改行)を実際の改行に戻す。GAS版callGeminiのunescapeNewlinesと同じ。 */
@@ -42,6 +43,22 @@ function unescapeNewlines(value: unknown): unknown {
     return result;
   }
   return value;
+}
+
+/** 応答の usageMetadata のトークン数(数で返ってきた項目だけ。無ければ undefined)。 */
+function usageOf(json: unknown): ReportAiTokenUsage | undefined {
+  const meta = (json as { usageMetadata?: Record<string, unknown> } | null)?.usageMetadata;
+  if (!meta || typeof meta !== 'object') return undefined;
+  const usage: ReportAiTokenUsage = {};
+  const pick = (key: string, field: keyof ReportAiTokenUsage) => {
+    const value = meta[key];
+    if (typeof value === 'number' && Number.isFinite(value)) usage[field] = value;
+  };
+  pick('promptTokenCount', 'promptTokens');
+  pick('candidatesTokenCount', 'candidatesTokens');
+  pick('thoughtsTokenCount', 'thoughtsTokens');
+  pick('totalTokenCount', 'totalTokens');
+  return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
 /**
@@ -98,7 +115,8 @@ async function callGemini(
         .replace(/```/g, '')
         .trim();
       const parsed = JSON.parse(cleanText);
-      return { ok: true, value: unescapeNewlines(parsed) };
+      const usage = usageOf(json);
+      return { ok: true, value: unescapeNewlines(parsed), ...(usage ? { usage } : {}) };
     } catch (_parseError) {
       return { ok: false, error: 'レスポンス解析エラー(サーバー側の問題の可能性があります)' };
     }
@@ -173,6 +191,28 @@ export const DAILY_REPORT_RESPONSE_SCHEMA = {
   },
   required: ['warnings', 'internal', 'customer'],
 } as const;
+
+/**
+ * 応答が DAILY_REPORT_RESPONSE_SCHEMA と違う点(必須の項目が無い・型が違う)。空なら形どおり。toDailyDraft は形の
+ * 違う値を落として下書きを作るため、その前の値を確かめる(運用のモデル比較 `pnpm ai:compare` の「JSON の形」)。
+ */
+export function dailyReportShapeIssues(value: unknown): string[] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return ['not_object'];
+  const v = value as Record<string, unknown>;
+  const issues: string[] = [];
+  const isStringArray = (x: unknown) => Array.isArray(x) && x.every((s) => typeof s === 'string');
+  const isInteger = (x: unknown) => typeof x === 'number' && Number.isInteger(x);
+  for (const key of DAILY_REPORT_RESPONSE_SCHEMA.required) {
+    if (!(key in v)) issues.push(`missing:${key}`);
+  }
+  if ('warnings' in v && !isStringArray(v.warnings)) issues.push('type:warnings');
+  if ('internal' in v && typeof v.internal !== 'string') issues.push('type:internal');
+  if ('customer' in v && typeof v.customer !== 'string') issues.push('type:customer');
+  if ('usedKeywords' in v && !isStringArray(v.usedKeywords)) issues.push('type:usedKeywords');
+  if ('psi' in v && !isInteger(v.psi)) issues.push('type:psi');
+  if ('eduLevel' in v && !isInteger(v.eduLevel)) issues.push('type:eduLevel');
+  return issues;
+}
 
 /** 応答を日報の下書きにする(形が違う値は落とす。warnings・internal・customer は無ければ空)。 */
 function toDailyDraft(value: unknown): DailyReportDraft {
@@ -250,7 +290,14 @@ export class GeminiAiPort implements ReportAiPort {
     const result = await callGemini(
       this.options.apiKey,
       [{ text: input.prompt }],
-      { responseMimeType: 'application/json', responseSchema: DAILY_REPORT_RESPONSE_SCHEMA },
+      {
+        responseMimeType: 'application/json',
+        responseSchema: DAILY_REPORT_RESPONSE_SCHEMA,
+        // 思考の量は指定したときだけ送る(運用のモデル比較だけ。アプリの生成はモデルの既定のまま)
+        ...(input.thinkingBudget !== undefined
+          ? { thinkingConfig: { thinkingBudget: input.thinkingBudget } }
+          : {}),
+      },
       input.model || DEFAULT_MODEL_REPORT,
     );
 
@@ -263,7 +310,11 @@ export class GeminiAiPort implements ReportAiPort {
         retryable: isRetryableFailure(result),
       };
     }
-    return toDailyDraft(result.value);
+    const diagnostics = {
+      shapeIssues: dailyReportShapeIssues(result.value),
+      ...(result.usage ? { usage: result.usage } : {}),
+    };
+    return { ...toDailyDraft(result.value), diagnostics };
   }
 
   async generateAccidentReport(

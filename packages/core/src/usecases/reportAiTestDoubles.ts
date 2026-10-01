@@ -101,6 +101,15 @@ export function fakeReportAiRepositories(d: () => ReportAiFakeData): {
         psiLevels: records.psiLevels.map(({ id: _id, rowVersion: _v, updatedAt: _u, ...rest }) => rest),
       };
     },
+    async findKeywordsByIds(ids) {
+      const all = rows('keywords');
+      return ids.flatMap((id) => {
+        const row = all.find((k) => k.id === id);
+        if (!row) return [];
+        const { rowVersion: _v, updatedAt: _u, ...entry } = strip(row);
+        return [entry];
+      });
+    },
     async findRowByKey(table, key) {
       const row = rows(table).find((r) => naturalKeyOf(table, r) === key);
       if (!row) return null;
@@ -234,6 +243,21 @@ export function fakeReportAiRepositories(d: () => ReportAiFakeData): {
       if (!g || (g.careRecordId !== null && g.careRecordId !== careRecordId)) return false;
       g.careRecordId = careRecordId;
       return true;
+    },
+    async listForComparison(filter) {
+      const { ids, since } = filter;
+      return d()
+        .reportAiGenerations.filter((g) => g.promptKey === filter.promptKey)
+        .filter((g) =>
+          ids
+            ? ids.includes(g.id)
+            : g.errorCode === null && g.output !== null && (!since || g.createdAt >= since),
+        )
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id))
+        .slice(0, filter.limit)
+        .map(({ promptKey: _k, promptRevision: _r, defaultPromptSha256: _s, appVersion: _a, ...rest }) =>
+          structuredClone(rest),
+        );
     },
     async keywordUsage(from, to) {
       const counts = new Map<string, { candidateCount: number; usedCount: number }>();

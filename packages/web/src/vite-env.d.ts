@@ -6,8 +6,6 @@ interface ImportMetaEnv {
   readonly VITE_DEFAULT_TENANT_SLUG?: string;
   /** サブドメインで法人を見分けるときのベースドメイン(src/lib/tenant.ts) */
   readonly VITE_TENANT_BASE_DOMAIN?: string;
-  /** '1' なら公開デモ用のビルド(ログイン画面にデモ用アカウントを出す。src/lib/demo.ts) */
-  readonly VITE_DEMO_MODE?: string;
 }
 
 interface ImportMeta {

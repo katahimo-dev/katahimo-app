@@ -1,8 +1,7 @@
-import { DEFAULT_DEMO_TENANT_SLUG, type SessionUser } from '@katahimo/shared';
+import type { SessionUser } from '@katahimo/shared';
 import { useMemo, useState } from 'react';
 import { authApi } from '../../api/auth';
 import { userMessageOf } from '../../api/client';
-import { isDemoMode } from '../../lib/demo';
 import { rememberTenantSlug, resolveTenantFromBrowser } from '../../lib/tenant';
 import { alertNative } from '../../ui/confirm';
 import { useVisibilityToggle } from '../../ui/useVisibilityToggle';
@@ -24,13 +23,7 @@ interface LoginScreenProps {
  * 入力した値はGAS版(DOMが残る)と同じく、ダイアログを行き来しても残る。
  */
 export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps) {
-  // 公開デモのビルドで法人IDを決めていなければ、デモ用テナントの既定の slug を使う(法人ID欄を出さない)
-  const resolvedTenant = useMemo(
-    () =>
-      resolveTenantFromBrowser() ??
-      (isDemoMode() ? { slug: DEFAULT_DEMO_TENANT_SLUG, source: 'env' as const } : null),
-    [],
-  );
+  const resolvedTenant = useMemo(() => resolveTenantFromBrowser(), []);
   const showTenantField = resolvedTenant === null;
 
   const [step, setStep] = useState<Step>('login');
@@ -163,7 +156,6 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
       passwordVisibility={passwordVisibility}
       onSubmit={doLogin}
       onForgotPassword={() => setStep('resetRequest')}
-      demoMode={isDemoMode()}
     />
   );
 }
