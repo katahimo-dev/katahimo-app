@@ -4,12 +4,30 @@
 
 ### 追加
 
+- 👪 お客様タブに「🔄 お客様の情報を今すぐ取り込む」を追加(コーディネーター・管理者)。RESERVA に登録したばかりのお客様を、初回の訪問の
+  直前でもすぐ使えるようにする(お客様が DB に無いと日報を書けない)。実行中は「取り込んでいます…」、結果は「取り込みました(新しいお客様 N件・
+  変更 M件)」「最新のお客様の情報は取り込み済みです」など。取り込めたら一覧を読み直し、他のスタッフは既存の60秒ごとの確認で1分以内に見える
+  (`doc/02_機能仕様.md` 5章)。
+
 - GitHub Actions に手で実行する「リリースのタグを付ける」(`release-tag.yml`、入力 `version`・`ref`)を追加。CHANGELOG に
   `## [Ver. X.Y.Z]` があること、ルートと全ワークスペースの package.json の version、main に含まれること、CI の「lint・型検査・テスト・ビルド」の成功を
   確かめてからタグ `vX.Y.Z` を push する。手元に git の書き込みの権限が無い環境からも `gh workflow run` でリリースできる
   (`doc/07_インフラ・運用.md` 4.2)。
 
 ### 変更
+
+- 顧客CSVの取込(`csv-import` ジョブ)を毎日 03:00 から**10分ごと**にした(Terraform の変数 `customer_csv_import_schedule`、既定
+  `5-59/10 * * * *`。outbox の見回りと5分ずらす)。新しい CSV が無いときは Drive のフォルダの一覧と DB の読み取り1回だけで終わる。
+  Cloud Run Jobs の費用は無料枠の中の見込みで、超えても月 $1 前後(約100〜200円)。夜間ジョブと重なりうるため、csv-import の DB の接続は
+  1本にした(`DB_POOL_MAX=1`。`doc/07_インフラ・運用.md` 2.1・10章)。
+- `POST /api/admin/customers/import` の権限を、管理者だけからコーディネーター・管理者にした。`force: true`(省くと true)は引き続き管理者だけ
+  (コーディネーターは 403・理由 `force_not_admin`)。回数の上限 `customer_csv_import_staff`(1人1時間30回、429)を追加。失敗の応答
+  (`review_required` / `busy` は 409 `conflict`、`failed` は 502 `upstream_unavailable`)の本文に `code` を追加(`doc/04_API仕様.md` 2.9)。
+- `csv-import` ジョブの失敗の扱いを変えた。`busy`(同じテナントの別の取込が実行中)は失敗にしない(10分後の実行が取り込む)。前回の実行が既に
+  止めた版への `review_required`(消える顧客が20%超)も失敗にしない(`force` なしでは CSV を読まず、`import_runs`・操作ログも残さない。
+  新しい CSV か管理者の `force` で再試行)。`failed` と、最初の `review_required` は従来どおり終了コード1(アラート)。`csv-import` はジョブの再試行をやめた(10分後の実行が代わり)。
+  取込の失敗(`failed`)の文言は一般的なものにし、原因は操作ログだけに残す。`pnpm import:reserva` は RESERVA のファイル名なら版も残す
+  (`doc/05_バッチ・外部連携.md` 3章)。
 
 - 本番のリリースのトリガー `katahimo-release` の実行前の承認を外した(タグの push と canary の確認が歯止め)。`doc/07_インフラ・運用.md` 4章を
   今の運用(接続・トリガーの作り方、承認を戻す手順)に合わせた。

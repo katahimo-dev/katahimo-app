@@ -35,4 +35,6 @@ export interface ImportRunRepository {
   lockTenantCustomerImports(): Promise<void>;
   /** 最後に適用した(status = 'applied')取込。 */
   latestApplied(source: ImportSource): Promise<ImportRunRecord | null>;
+  /** 最後に終わった(status が running でない)取込。安全装置で止めた版を定期実行で取り込み直さないために見る。 */
+  latestFinished(source: ImportSource): Promise<ImportRunRecord | null>;
 }

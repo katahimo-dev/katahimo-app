@@ -1,4 +1,5 @@
 import {
+  customerCsvImportResponseSchema,
   customerDetailResponseSchema,
   customerHistoryResponseSchema,
   customerListResponseSchema,
@@ -50,4 +51,10 @@ export const customersApi = {
       customerReportProfileResponseSchema,
       body,
     ),
+  /**
+   * POST /api/admin/customers/import: 取込元の最新の顧客CSVを今すぐ取り込む(コーディネーター・管理者)。
+   * 取込済みの版は取り込み直さない(force: false)。安全装置で止めた・他の取込が実行中は 409、取込の失敗は 502。
+   */
+  importLatestCsv: () =>
+    api.post('/api/admin/customers/import', customerCsvImportResponseSchema, { force: false }),
 };

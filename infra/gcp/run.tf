@@ -124,16 +124,19 @@ locals {
       schedule            = var.route_notice_schedule
       pause_until_cutover = true
     }
-    # GAS版 checkAndImportLatestCsv(Triggers.js)
+    # GAS版 checkAndImportLatestCsv(Triggers.js。GAS版は毎日3時台、こちらは10分ごと)
     csv-import = {
-      args                = ["dist/csv-import.js"]
-      service_account     = google_service_account.worker.email
-      env                 = local.worker_env
+      args            = ["dist/csv-import.js"]
+      service_account = google_service_account.worker.email
+      # 10分ごとに動き夜間ジョブと重なりうるため、接続は1本にする(テナントを1つずつ、トランザクションも1つずつ処理する)。
+      # 再試行はしない(10分後の実行が再試行の代わり)。再試行すると、安全装置で止めた直後の再試行が「止めた版をもう一度
+      # 見ただけ」で成功し、実行が成功扱いになってアラート(job_failed)が出ない
+      env                 = merge(local.worker_env, { DB_POOL_MAX = "1" })
       secret_env          = local.worker_secret_env
-      max_retries         = 1
+      max_retries         = 0
       timeout             = "1800s"
       memory              = "1Gi"
-      schedule            = "0 3 * * *"
+      schedule            = var.customer_csv_import_schedule
       pause_until_cutover = true
     }
     # 保守(操作ログのパーティション・保存期間を過ぎた行・参照されないファイルの削除)

@@ -1,11 +1,13 @@
-import type { CustomerListItem } from '@katahimo/shared';
+import { type CustomerListItem, canActForOthers } from '@katahimo/shared';
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { isDemoMode } from '../../lib/demo';
 import { readRecentCustomerIds } from '../../lib/recentCustomers';
 import { EmptyState, Loading } from '../../ui/StatusViews';
 import { showErrorToast } from '../../ui/toast';
 import { useSession } from '../auth';
 import { useReportModal } from '../report';
 import { CustomerCard } from './CustomerCard';
+import { CustomerCsvImportButton } from './CustomerCsvImportButton';
 import { CustomerDetailModal } from './CustomerDetailModal';
 import { CustomerFilters } from './CustomerFilters';
 import { CustomerHistoryModal } from './CustomerHistoryModal';
@@ -15,7 +17,8 @@ import { useCustomerList } from './useCustomerList';
 import { useModalTarget } from './useModalTarget';
 
 /**
- * 「👪 お客様」タブ(GAS版 #tabVisitors)。探す欄・地区・お客様に関係ない領収書・お客様の一覧と、
+ * 「👪 お客様」タブ(GAS版 #tabVisitors)。探す欄・地区・お客様に関係ない領収書・お客様の情報の取込
+ * (コーディネーター・管理者)・お客様の一覧と、
  * 「お客様の情報」「これまでの記録」のダイアログ。
  */
 export function CustomersTab() {
@@ -23,7 +26,7 @@ export function CustomersTab() {
   const [search, setSearch] = useCustomerSearch();
   const [city, setCity] = useState('');
   const { openReport, openStandaloneReceipt } = useReportModal();
-  const { storageScope } = useSession();
+  const { storageScope, user } = useSession();
   const detail = useModalTarget<CustomerListItem>();
   const history = useModalTarget<CustomerListItem>();
   const { open: openDetail } = detail;
@@ -77,6 +80,10 @@ export function CustomersTab() {
       >
         🧾 お客様に関係ない領収書を登録
       </button>
+
+      {/* 新しいお客様が見つからないとき、定期の取込(10分ごと)を待たずに取り込む(コーディネーター・管理者だけ。
+          公開デモは API が断るため出さない) */}
+      {canActForOthers(user.role) && !isDemoMode() ? <CustomerCsvImportButton /> : null}
 
       <div id="customerList" className="space-y-3">
         {!data ? (
