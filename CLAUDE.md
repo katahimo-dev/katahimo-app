@@ -55,6 +55,7 @@ pnpm import:staff-master -- <slug> <csv> [--dry-run]   # also kana/phone/home ad
 pnpm import:attendance -- <slug> <staff email> <csv> [--year YYYY]   # existing 出勤簿 month sheet → entities (idempotent: per-day diff)
 pnpm import:legacy-reports -- <slug> --spreadsheet <id> [--daily-sheet <name>] [--accident-sheet <name>] [--dry-run]   # GAS 日報/事故報告 sheets → care_records (all rows, idempotent)
 pnpm import:legacy-receipts -- <slug> --spreadsheet <id> (--month YYYY-MM ... | --from YYYY-MM --to YYYY-MM) [--sheet <name>] [--dry-run] [--allow-local-storage]   # GAS 領収書一覧 + Drive images → receipts
+pnpm ai:compare -- <slug> --models <m1,m2[,…]> [--generation <id> …] [--latest <N>] [--since YYYY-MM-DD] [--runs <1-3>] [--rebuild] [--thinking-budget <N>] [--blind] [--out <path>] [--dry-run]   # re-send past daily-report AI prompts to several Gemini models → one HTML (read-only; only AI_COMPARE_TENANTS slugs; doc/07 8.7)
 pnpm e2e [-- --only '<regex>']                                       # = pnpm --filter @katahimo/e2e e2e
 ```
 

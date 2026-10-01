@@ -20,7 +20,8 @@
     "import:staff-master": "tsx src/scripts/importStaffMasterCsv.ts",
     "import:attendance": "tsx src/scripts/importAttendanceCsv.ts",
     "import:legacy-reports": "tsx src/scripts/importLegacyReports.ts",
-    "import:legacy-receipts": "tsx src/scripts/importLegacyReceipts.ts"
+    "import:legacy-receipts": "tsx src/scripts/importLegacyReceipts.ts",
+    "ai:compare": "tsx src/scripts/aiCompare.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",

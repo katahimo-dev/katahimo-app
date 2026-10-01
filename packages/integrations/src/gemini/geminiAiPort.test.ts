@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { GeminiAiPort } from './geminiAiPort';
+import { dailyReportShapeIssues, GeminiAiPort } from './geminiAiPort';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -64,5 +64,58 @@ describe('GeminiAiPort(日報のモデルの切り替え)', () => {
     expect(timeout).toHaveBeenCalledWith(30_000);
     expect(result).toMatchObject({ amount: '', retryable: false });
     timeout.mockRestore();
+  });
+});
+
+describe('GeminiAiPort(運用のモデル比較の付帯情報)', () => {
+  const okResponse = (text: string, usageMetadata?: Record<string, unknown>) =>
+    new Response(
+      JSON.stringify({
+        candidates: [{ content: { parts: [{ text }] } }],
+        ...(usageMetadata ? { usageMetadata } : {}),
+      }),
+      { status: 200 },
+    );
+
+  it('思考の量は指定したときだけ送り、トークン数と形の検証を付ける', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return okResponse('{"warnings":[],"internal":"社内","customer":"保護者"}', {
+          promptTokenCount: 120,
+          candidatesTokenCount: 40,
+          thoughtsTokenCount: 30,
+          totalTokenCount: 190,
+        });
+      }),
+    );
+    const port = new GeminiAiPort({ apiKey: 'key-thinking' });
+    const plain = await port.generateDailyReport({ prompt: 'p', model: 'gemini-2.5-flash' });
+    const thinking = await port.generateDailyReport({
+      prompt: 'p',
+      model: 'gemini-2.5-flash',
+      thinkingBudget: 0,
+    });
+    const configs = bodies.map((b) => b.generationConfig as Record<string, unknown>);
+    expect(configs[0]).not.toHaveProperty('thinkingConfig');
+    expect(configs[1]).toMatchObject({ thinkingConfig: { thinkingBudget: 0 } });
+    expect(plain).toMatchObject({ internal: '社内', customer: '保護者' });
+    expect(thinking.diagnostics).toEqual({
+      shapeIssues: [],
+      usage: { promptTokens: 120, candidatesTokens: 40, thoughtsTokens: 30, totalTokens: 190 },
+    });
+  });
+
+  it('スキーマと違う応答は形の違いを残し(下書きは落として作る)、usageMetadata が無ければトークン数を付けない', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => okResponse('{"warnings":"一つ","internal":"社内","psi":"3"}')),
+    );
+    const draft = await new GeminiAiPort({ apiKey: 'key-shape' }).generateDailyReport({ prompt: 'p' });
+    expect(draft).toMatchObject({ warnings: [], internal: '社内', customer: '' });
+    expect(draft.diagnostics).toEqual({ shapeIssues: ['missing:customer', 'type:warnings', 'type:psi'] });
+    expect(dailyReportShapeIssues([1])).toEqual(['not_object']);
   });
 });

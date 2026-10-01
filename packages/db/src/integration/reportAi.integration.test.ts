@@ -1,6 +1,6 @@
 import { newId } from '@katahimo/core/domain';
 import type { ReportAiGenerationInput, TenantDirectoryPort, TenantRepositories } from '@katahimo/core/ports';
-import { FakeAppLogPort, FakeStoragePort } from '@katahimo/core/test-utils';
+import { FakeAppLogPort, FakeStoragePort, reportAiFixtureMasters } from '@katahimo/core/test-utils';
 import { runMaintenance } from '@katahimo/core/usecases';
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
@@ -262,4 +262,112 @@ describe('日報AIの調整の表', () => {
       expect(left.map((l) => l.id).sort()).toEqual([ids.recentUnlinked, ids.linkedKept].sort());
     },
   );
+});
+
+describe('運用のモデル比較の読み取り(listForComparison・findKeywordsByIds)', () => {
+  it('成功した生成を新しい順に読み、ID の指定は成否を問わない。他のテナントの記録・語は見えない', async () => {
+    const [a, b] = await Promise.all([createTenant('raicmp'), createTenant('raicmp')]);
+    const base = new Date('2026-09-20T00:00:00Z');
+    const at = (minutes: number) => new Date(base.getTime() + minutes * 60_000);
+    const ids = await uow.run(a, async (r) => {
+      const staffId = await createStaff(r);
+      const customerId = await createCustomer(r);
+      const [k1, k2] = reportAiFixtureMasters().keywords;
+      const keywordIds = [newId(), newId()];
+      for (const [i, k] of [k1, k2].entries()) {
+        const { id: _id, ...value } = k as NonNullable<typeof k1>;
+        await r.reportAi.insertRow('keywords', keywordIds[i] as string, value, staffId);
+      }
+      // アーカイブした語も ID で読める(当時の候補を語に戻す)
+      await r.reportAi.archiveRow('keywords', keywordIds[1] as string, staffId);
+      const old = generation(staffId, customerId, { startedAt: at(0), finishedAt: at(0) });
+      const failed = generation(staffId, customerId, {
+        startedAt: at(1),
+        finishedAt: at(1),
+        output: null,
+        errorCode: 'api_error',
+      });
+      const recent = generation(staffId, customerId, {
+        startedAt: at(2),
+        finishedAt: at(2),
+        candidateKeywordIds: [keywordIds[1] as string, keywordIds[0] as string],
+      });
+      const accident = generation(staffId, customerId, {
+        startedAt: at(3),
+        finishedAt: at(3),
+        promptKey: 'accident_report.generate',
+      });
+      for (const g of [old, failed, recent, accident]) await r.reportAiGenerations.insert(g);
+      return {
+        staffId,
+        customerId,
+        keywordIds,
+        old: old.id,
+        failed: failed.id,
+        recent: recent.id,
+        accident: accident.id,
+      };
+    });
+    // created_at は DB の既定(now())なので、並びを確かめるために所有者で書き換える
+    await withTenant(owner, a, async (tx) => {
+      for (const [id, minutes] of [
+        [ids.old, 0],
+        [ids.failed, 1],
+        [ids.recent, 2],
+        [ids.accident, 3],
+      ] as const) {
+        await tx.execute(
+          sql`update report_ai_generations set created_at = ${at(minutes).toISOString()}::timestamptz where id = ${id}`,
+        );
+      }
+    });
+
+    const latest = await uow.run(a, (r) =>
+      r.reportAiGenerations.listForComparison({ promptKey: 'daily_report.generate', limit: 10 }),
+    );
+    expect(latest.map((g) => g.id)).toEqual([ids.recent, ids.old]);
+    expect(latest[0]).toMatchObject({
+      promptText: 'プロンプト',
+      inputText: 'メモ',
+      output: { internal: 'i' },
+    });
+    const since = await uow.run(a, (r) =>
+      r.reportAiGenerations.listForComparison({
+        promptKey: 'daily_report.generate',
+        limit: 10,
+        since: at(2),
+      }),
+    );
+    expect(since.map((g) => g.id)).toEqual([ids.recent]);
+    const limited = await uow.run(a, (r) =>
+      r.reportAiGenerations.listForComparison({ promptKey: 'daily_report.generate', limit: 1 }),
+    );
+    expect(limited.map((g) => g.id)).toEqual([ids.recent]);
+    const byIds = await uow.run(a, (r) =>
+      r.reportAiGenerations.listForComparison({
+        promptKey: 'daily_report.generate',
+        ids: [ids.failed, ids.accident, ids.old],
+        limit: 3,
+      }),
+    );
+    expect(byIds.map((g) => g.id)).toEqual([ids.failed, ids.old]);
+    const keywords = await uow.run(a, (r) =>
+      r.reportAi.findKeywordsByIds([ids.keywordIds[1] as string, newId(), ids.keywordIds[0] as string]),
+    );
+    expect(keywords.map((k) => k.code)).toEqual(['K02', 'K01']);
+
+    const fromB = await uow.run(b, async (r) => ({
+      latest: await r.reportAiGenerations.listForComparison({
+        promptKey: 'daily_report.generate',
+        limit: 10,
+      }),
+      byIds: await r.reportAiGenerations.listForComparison({
+        promptKey: 'daily_report.generate',
+        ids: [ids.recent, ids.old],
+        limit: 2,
+      }),
+      keywords: await r.reportAi.findKeywordsByIds(ids.keywordIds),
+    }));
+    expect(fromB).toEqual({ latest: [], byIds: [], keywords: [] });
+  });
 });
