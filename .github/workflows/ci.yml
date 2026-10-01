@@ -1,4 +1,5 @@
 # CI: lint / 型検査 / マイグレーション(差分チェック含む)/ テスト / ビルド、と 実際のAPI・DBでの通し確認(e2e)。
+# ドキュメント(*.md・doc/ の下)だけの変更では check・e2e を省き、資料のリンク・図の検査(docs)だけを流す(changes ジョブ)。
 # 必要な設定(doc/07_インフラ・運用.md 9章):
 #   secrets.SUBMODULE_TOKEN … katahimo-dev/gas-childcare-visit-app を読めるトークン(fine-grained PAT の
 #                             Contents: Read-only 等)。未設定でも CI は通り、GAS版との一致テスト(gasParity)だけが
@@ -30,8 +31,68 @@ env:
   WORKER_DATABASE_URL: postgres://katahimo_worker:katahimo_worker@localhost:5432/katahimo_dev
 
 jobs:
+  # 変わったファイルがドキュメント(*.md・doc/ の下)だけなら、check・e2e を省いて docs だけを流す。
+  # 条件で省いたジョブは必須のステータスチェックでは成功と同じ扱いになるため、ブランチ保護の「lint・型検査・テスト・ビルド」で
+  # PR が止まらない。コード・設定・ワークフロー・サブモジュールが1つでも変われば全部流す(手で実行したときも全部)。
+  changes:
+    name: 変更の種類
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request) range="$PR_BASE...$PR_HEAD" ;;
+            push) range="$PUSH_BEFORE..$PUSH_AFTER" ;;
+            *) range="" ;;
+          esac
+          # 比べる相手が無い・読めない(手で実行・新しいブランチの最初の push 等)ときは全部流す
+          # core.quotePath=false: 日本語のファイル名(doc/07_インフラ・運用.md 等)を "doc/\343…" と引用符・8進数にしない
+          if [ -z "$range" ] || ! files="$(git -c core.quotePath=false diff --name-only "$range" 2>/dev/null)"; then
+            echo "code=true" >> "$GITHUB_OUTPUT"; echo "比べる範囲が無いため全部流す"; exit 0
+          fi
+          echo "$files"
+          if [ -n "$files" ] && ! grep -vE '(\.md$|^doc/)' <<< "$files" > /dev/null; then
+            echo "code=false" >> "$GITHUB_OUTPUT"; echo "ドキュメントだけの変更: check・e2e を省く"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  docs:
+    name: 資料のリンク・図
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # scripts/checkDocLinks.mjs は Node の標準モジュールだけを使う(依存のインストールは要らない)
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: pnpm docs:check
+        run: node scripts/checkDocLinks.mjs
+
   check:
     name: lint・型検査・テスト・ビルド
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
 
@@ -89,7 +150,8 @@ jobs:
 
   e2e:
     name: 通し確認(e2e)
-    needs: check
+    needs: [changes, check]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     # 実際のAPI・DBにつないだ新アプリを操作し、1手順でも失敗すれば終了コード1で終わる(失敗の一覧・画面は下の artifact)。

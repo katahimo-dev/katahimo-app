@@ -82,6 +82,9 @@ jobs:
 
           conclusion="$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit/check-runs" \
             -X GET -f check_name="$CI_CHECK" -f filter=latest --jq '.check_runs[0].conclusion // "none"')"
+          # ドキュメントだけのコミットでは CI がこのジョブを省く(skipped)。本番に出すのはテストを通ったコミットだけにする
+          [ "$conclusion" != skipped ] \
+            || fail "$commit はドキュメントだけの変更で「$CI_CHECK」が省かれています。CI が流れたコミット(コードを含むコミット)を ref に指定してください"
           [ "$conclusion" = success ] || fail "$commit の「$CI_CHECK」が成功していません($conclusion)"
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
