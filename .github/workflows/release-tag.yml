@@ -44,7 +44,7 @@ jobs:
       checks: read
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: main
           # タグの push に使う(GITHUB_TOKEN)
