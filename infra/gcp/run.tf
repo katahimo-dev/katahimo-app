@@ -250,10 +250,8 @@ resource "google_cloud_run_v2_service" "api" {
   }
 
   lifecycle {
-    # イメージと利用者の向き先(traffic。cloudbuild の canary・切り替えが変える)は Cloud Build が管理する。
-    # リビジョン名(revision)も gcloud run services update が付けるため無視する(無視しないと apply のたびに同じイメージの
-    # リビジョンが1つ増える)
-    ignore_changes = [template[0].containers[0].image, template[0].revision, client, client_version, traffic]
+    # イメージと利用者の向き先(traffic。cloudbuild の canary・切り替えが変える)は Cloud Build が管理する
+    ignore_changes = [template[0].containers[0].image, client, client_version, traffic]
   }
 
   depends_on = [google_secret_manager_secret_iam_member.accessor, google_project_iam_member.cloudsql_client]

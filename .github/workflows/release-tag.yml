@@ -7,7 +7,8 @@
 #   - 付けるコミットが main に含まれている(ブランチの途中のコミットを本番に出さない)
 #   - そのコミットの CHANGELOG.md に `## [Ver. X.Y.Z]` があり、ルートと全ワークスペースの package.json の version が X.Y.Z
 #     (CHANGELOG の「未リリース」を版にする PR をマージしてから付ける)
-#   - そのコミットで CI の「lint・型検査・テスト・ビルド」が成功している
+#   - そのコミットで CI の「lint・型検査・テスト・ビルド」が成功している(ドキュメントだけのコミットで CI が省かれていれば、
+#     CI が成功した直近の祖先からの差分がドキュメントだけであること)
 name: release-tag
 
 on:
@@ -80,12 +81,23 @@ jobs:
           done < <(git ls-tree -r --name-only "$commit" | grep -E '^((packages|tools)/[^/]+/)?package\.json$')
           [ -z "$mismatched" ] || fail "version が $VERSION ではない package.json があります:$mismatched"
 
-          conclusion="$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit/check-runs" \
-            -X GET -f check_name="$CI_CHECK" -f filter=latest --jq '.check_runs[0].conclusion // "none"')"
-          # ドキュメントだけのコミットでは CI がこのジョブを省く(skipped)。本番に出すのはテストを通ったコミットだけにする
-          [ "$conclusion" != skipped ] \
-            || fail "$commit はドキュメントだけの変更で「$CI_CHECK」が省かれています。CI が流れたコミット(コードを含むコミット)を ref に指定してください"
-          [ "$conclusion" = success ] || fail "$commit の「$CI_CHECK」が成功していません($conclusion)"
+          # ドキュメントだけのコミットでは CI がこのジョブを省く(skipped)。そのときは1つ前(first parent)へさかのぼり、
+          # CI が成功したコミットを探す。見つかったコミットから指定のコミットまでの差分がドキュメントだけなら、本番に出るコードは
+          # テストを通ったものと同じなので、指定のコミットにタグを付ける
+          tested="$commit"
+          for _ in $(seq 1 30); do
+            conclusion="$(gh api "repos/$GITHUB_REPOSITORY/commits/$tested/check-runs" \
+              -X GET -f check_name="$CI_CHECK" -f filter=latest --jq '.check_runs[0].conclusion // "none"')"
+            [ "$conclusion" = skipped ] || break
+            tested="$(git rev-parse --verify --quiet "$tested^1")" || fail "CI が流れたコミットが見つかりません"
+          done
+          [ "$conclusion" = success ] \
+            || fail "${tested:0:7} の「$CI_CHECK」が成功していません($conclusion。none は実行中か未実行。main の CI が終わってから実行する)"
+          if [ "$tested" != "$commit" ]; then
+            others="$(git -c core.quotePath=false diff --name-only --no-renames "$tested" "$commit" | grep -vE '(\.md$|^doc/)' || true)"
+            [ -z "$others" ] || fail "${tested:0:7}(CI が成功)から ${commit:0:7} までにドキュメント以外の変更があります: $(echo $others)"
+            echo "::notice::${commit:0:7} はドキュメントだけの変更のため、CI が成功した ${tested:0:7} のコードで確かめた"
+          fi
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
