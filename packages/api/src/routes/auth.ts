@@ -61,11 +61,7 @@ export function createAuthRoutes(container: Container) {
     const body = await parseJsonBody(c, loginRequestSchema);
     if (!body.ok) return body.response;
 
-    // 公開デモ用テナントはアカウント単位のロックをしない(共有のアカウントをわざと締め出させない。IP単位は残す)
-    const deps = container.demo?.isDemoSlug(body.data.tenantSlug)
-      ? { ...container, rateLimits: container.demo.loginRateLimits(container.rateLimits) }
-      : container;
-    const result = await login(deps, { ...body.data, meta: requestMeta(c) });
+    const result = await login(container, { ...body.data, meta: requestMeta(c) });
     if (!result.ok) {
       if (result.reason === 'locked') return rateLimited(c, result.retryAfterMs, LOGIN_LOCKED_MESSAGE);
       const message =

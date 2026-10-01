@@ -8,7 +8,7 @@ import { connect } from './testDb';
 
 /**
  * 予約とスタッフの割当(reservations + reservation_assignments)を実際の DB で確かめる。
- * SCHEDULE_PROVIDER=database の予定の取得(DatabaseSchedulePort)と公開デモの予定の登録が使う。
+ * SCHEDULE_PROVIDER=database の予定の取得(DatabaseSchedulePort)が使う(予約の登録は今後のマッチングのアプリが使う)。
  */
 const { app, owner, worker, uow, createTenant, createStaff, createCustomer } = connect();
 const DATE = '2026-09-29';

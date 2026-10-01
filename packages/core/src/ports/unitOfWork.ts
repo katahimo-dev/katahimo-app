@@ -64,7 +64,7 @@ export interface TenantRepositories {
   integrationApiKeys: IntegrationApiKeyRepository;
   staffCalendars: StaffCalendarRepository;
   busyBlocks: StaffBusyBlockRepository;
-  /** 予約とスタッフの割当(マッチング拡張の表。いまは公開デモの予定と SCHEDULE_PROVIDER=database だけが使う)。 */
+  /** 予約とスタッフの割当(マッチング拡張の表。いまは SCHEDULE_PROVIDER=database の予定の取得だけが使う)。 */
   reservations: ReservationRepository;
   pushSubscriptions: PushSubscriptionRepository;
   outbox: OutboxWriter;

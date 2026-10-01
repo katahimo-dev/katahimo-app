@@ -1054,10 +1054,6 @@ export function fakeRepositories(
         const f = d().files.find((x) => x.id === id);
         return f ? structuredClone(f) : null;
       },
-      async listPage(afterId, limit) {
-        const sorted = [...d().files].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-        return structuredClone(sorted.filter((f) => afterId === null || f.id > afterId).slice(0, limit));
-      },
       async listUnreferenced() {
         return structuredClone(d().files.filter((f) => !d().receipts.some((r) => r.fileId === f.id)));
       },

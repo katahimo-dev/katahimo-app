@@ -19,7 +19,6 @@
     "db:generate": "pnpm --filter @katahimo/db generate",
     "db:migrate": "pnpm --filter @katahimo/db migrate",
     "db:seed": "pnpm --filter @katahimo/api seed",
-    "demo:reset": "pnpm --filter @katahimo/api demo:reset",
     "db:studio": "pnpm --filter @katahimo/db studio",
     "db:doc": "pnpm --filter @katahimo/db doc",
     "tenant:create": "pnpm --filter @katahimo/api tenant:create",

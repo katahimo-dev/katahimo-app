@@ -61,19 +61,6 @@ const envSchema = z.object({
       .optional(),
   ),
 
-  // 公開デモ用のテナントの slug(このテナントだけ、他の訪問者を妨げる操作を断り、AI の回数を1回のログインで
-  // 10回までにする。http/demoRestrictions.ts、doc/07 の「公開デモ」)。未設定ならデモの制限は無い。
-  DEMO_TENANT_SLUG: z.preprocess(
-    emptyToUndefined,
-    z
-      .string()
-      .regex(
-        /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/,
-        'DEMO_TENANT_SLUG はテナントの slug(英小文字・数字・ハイフン)にしてください',
-      )
-      .optional(),
-  ),
-
   // X-Forwarded-For の右から何番目を送信元IPとみなすか(信頼できるプロキシの段数)。Cloud Run 直は1、
   // 外部ロードバランサを前に置く場合は2、0なら接続元のアドレス。未指定は本番1・それ以外0。
   TRUSTED_PROXY_HOPS: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(5).optional()),

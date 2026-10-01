@@ -26,7 +26,7 @@ import { type Context, Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import type { Container } from '../container';
 import { csvLine, writeCsvStream } from '../http/csv';
-import { enforceAiQuota } from '../http/quota';
+import { enforceStaffQuota } from '../http/quota';
 import { requestIdOf } from '../http/requestLog';
 import { apiError, jsonOk, parseJsonBody, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
@@ -158,7 +158,7 @@ export function createReceiptRoutes(container: Container) {
     if (!decodeReceiptImage(body.data.image, RECEIPT_IMAGE_MAX_BYTES).ok) {
       return apiError(c, 400, 'validation_failed', INVALID_IMAGE_MESSAGE);
     }
-    const limited = await enforceAiQuota(
+    const limited = await enforceStaffQuota(
       c,
       container,
       container.rateLimits.receiptOcrStaff,

@@ -2,7 +2,6 @@ import { Hono } from 'hono';
 import type { Container } from './container';
 import type { Env } from './env';
 import { trustedProxyHops } from './env';
-import { demoRestrictions } from './http/demoRestrictions';
 import { onApiError, requestLogger, writeStructuredLog } from './http/requestLog';
 import { clientIpMiddleware } from './http/requestMeta';
 import {
@@ -48,8 +47,6 @@ export function createApp(deps: AppDeps) {
   app.use('/api/*', csrfProtection());
   app.use('/api/*', requireJsonBody());
   app.use('/api/*', apiBodyLimits());
-  // 公開デモ用テナント(DEMO_TENANT_SLUG)だけ: 他の訪問者を妨げる操作・外部への送信を断る
-  app.use('/api/*', demoRestrictions(container));
 
   /** Cloud Run のヘルスチェック用。DBに触らない軽量な生存確認。 */
   app.get('/api/health', (c) => c.json({ status: 'ok' }));

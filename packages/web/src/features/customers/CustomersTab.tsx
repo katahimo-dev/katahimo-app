@@ -1,6 +1,5 @@
 import { type CustomerListItem, canActForOthers } from '@katahimo/shared';
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { isDemoMode } from '../../lib/demo';
 import { readRecentCustomerIds } from '../../lib/recentCustomers';
 import { EmptyState, Loading } from '../../ui/StatusViews';
 import { showErrorToast } from '../../ui/toast';
@@ -81,9 +80,8 @@ export function CustomersTab() {
         🧾 お客様に関係ない領収書を登録
       </button>
 
-      {/* 新しいお客様が見つからないとき、定期の取込(10分ごと)を待たずに取り込む(コーディネーター・管理者だけ。
-          公開デモは API が断るため出さない) */}
-      {canActForOthers(user.role) && !isDemoMode() ? <CustomerCsvImportButton /> : null}
+      {/* 新しいお客様が見つからないとき、定期の取込(10分ごと)を待たずに取り込む(コーディネーター・管理者だけ) */}
+      {canActForOthers(user.role) ? <CustomerCsvImportButton /> : null}
 
       <div id="customerList" className="space-y-3">
         {!data ? (
