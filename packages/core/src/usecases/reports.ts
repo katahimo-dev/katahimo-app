@@ -620,6 +620,11 @@ export interface CustomerHistoryPage {
  * 顧客の活動記録(日報+事故報告)を新しい順に取得する(GAS版 Main.js getCustomerReports)。並びは
  * (occurred_at DESC, id DESC) で、続きは cursor(前のページの nextCursor)から読む(キーセットページング。
  * 同じ時刻の記録があっても重複・抜けが無い)。
+ *
+ * 訪問の引き継ぎ(前の訪問の様子・社内向けの記録・PSI を次に訪問するスタッフが読む)のため、一般スタッフにも
+ * 他のスタッフが書いた記録を見せる(報告の一覧・中身は本人の分だけ、の意図した例外。doc/06 4章)。その代わり、
+ * 返すページに他のスタッフの記録が入っていれば、続きのページも1ページごとに INFO `report.history.viewed` を残す
+ * (ID と件数だけ。本文は残さない。読んだのは顧客の記録なので targetStaffId は null)。
  */
 export async function getCustomerHistory(
   deps: ReportDeps,
@@ -674,9 +679,26 @@ export async function getCustomerHistory(
     }
   }
   const last = page.at(-1);
-  return {
-    items,
-    nextCursor:
-      rows.length > limit && last ? encodeHistoryCursor({ occurredAt: last.occurredAt, id: last.id }) : null,
-  };
+  const nextCursor =
+    rows.length > limit && last ? encodeHistoryCursor({ occurredAt: last.occurredAt, id: last.id }) : null;
+  const othersCount = page.filter((row) => row.authorStaffId !== actor.staffId).length;
+  if (othersCount > 0) {
+    await deps.appLog.write({
+      tenantId: actor.tenantId,
+      level: 'INFO',
+      action: 'report.history.viewed',
+      actorStaffId: actor.staffId,
+      targetStaffId: null,
+      details: {
+        customerId,
+        count: items.length,
+        othersCount,
+        includesOthers: true,
+        continued: after !== null,
+        hasMore: nextCursor !== null,
+      },
+      ...actor.meta,
+    });
+  }
+  return { items, nextCursor };
 }

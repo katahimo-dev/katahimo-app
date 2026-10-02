@@ -204,6 +204,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'report.list.exported': '日報・事故報告のCSVダウンロード',
   'report.detail.viewed': '日報・事故報告の閲覧',
   'report.detail.view_denied': '他のスタッフの報告の閲覧を断った',
+  'report.history.viewed': '他のスタッフの記録を含むお客様の活動記録の閲覧',
   'report.psi_alert': 'PSI 2以下(注意・危険)の日報を管理者へ知らせた',
   'receipt.uploaded': '領収書の登録',
   'receipt.upload_refused': '締め済みの月の日付の領収書の登録を断った',

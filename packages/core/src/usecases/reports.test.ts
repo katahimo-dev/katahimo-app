@@ -156,6 +156,52 @@ describe('保育日報・事故報告', () => {
     });
   });
 
+  it('活動記録は他のスタッフの記録も見せ、他人の記録が入るページだけ(続きのページも)INFO report.history.viewed を残す', async () => {
+    await saveDailyReport(ctx.deps, staff, daily({ reportDate: '2026-09-21' }));
+    await saveDailyReport(ctx.deps, staff, daily({ reportDate: '2026-09-22' }));
+    await saveDailyReport(
+      ctx.deps,
+      other,
+      daily({ reportDate: '2026-09-25', internalText: '他人の社内向け' }),
+    );
+    await saveDailyReport(ctx.deps, other, daily({ reportDate: '2026-09-26' }));
+    // 本人(山田)が読む: 1ページ目は鈴木の記録 2件 → 残す。2ページ目は本人の記録だけ → 残さない
+    const first = await getCustomerHistory(ctx.deps, staff, customerId, null, 2);
+    expect(first.items.map((i) => i.staff)).toEqual(['鈴木 次郎', '鈴木 次郎']);
+    expect(first.items[1]?.internal).toBe('他人の社内向け');
+    const second = await getCustomerHistory(ctx.deps, staff, customerId, first.nextCursor, 2);
+    expect(second.items.map((i) => i.staff)).toEqual(['山田 太郎', '山田 太郎']);
+    expect(ctx.appLog.byAction('report.history.viewed')).toEqual([
+      expect.objectContaining({
+        level: 'INFO',
+        actorStaffId: staff.staffId,
+        targetStaffId: null,
+        details: {
+          customerId,
+          count: 2,
+          othersCount: 2,
+          includesOthers: true,
+          continued: false,
+          hasMore: true,
+        },
+      }),
+    ]);
+    // 鈴木が読む: 1ページ目は本人の記録だけ → 残さない。続きのページ(山田の記録)→ 残す
+    const own = await getCustomerHistory(ctx.deps, other, customerId, null, 2);
+    await getCustomerHistory(ctx.deps, other, customerId, own.nextCursor, 2);
+    expect(ctx.appLog.byAction('report.history.viewed')).toHaveLength(2);
+    expect(ctx.appLog.byAction('report.history.viewed')[1]).toMatchObject({
+      actorStaffId: other.staffId,
+      targetStaffId: null,
+      details: { count: 2, othersCount: 2, continued: true, hasMore: false },
+    });
+    // ログには本文を残さない
+    expect(JSON.stringify(ctx.appLog.byAction('report.history.viewed'))).not.toContain('社内向け');
+    // 他人の記録が無い顧客の履歴は残さない
+    await getCustomerHistory(ctx.deps, staff, otherCustomerId, null, 2);
+    expect(ctx.appLog.byAction('report.history.viewed')).toHaveLength(2);
+  });
+
   it('訪問完了の通知は DB の名前を使う', async () => {
     await sendVisitCompleteNotification(ctx.deps, staff, {
       customerId,
