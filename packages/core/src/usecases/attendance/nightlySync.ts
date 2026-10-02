@@ -1,4 +1,4 @@
-import { zonedBusinessDate } from '../../domain';
+import { errorLogDetails, errorMessageOf, zonedBusinessDate } from '../../domain';
 import type { TenantRecord } from '../../ports/tenants';
 import { currentTime } from '../requestMeta';
 import { syncStaffDayFromCalendar } from './calendarSync';
@@ -76,15 +76,15 @@ export async function syncDayForAllStaff(
       summary.appointmentCount += result.appointmentCount;
       if (result.changes.length > 0) summary.changedStaffCount++;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       summary.failed++;
-      summary.failures.push({ staffId: staff.id, error: message });
+      // 文はジョブの出力(プロセスのログ)にだけ。操作ログは種類・理由コードだけ
+      summary.failures.push({ staffId: staff.id, error: errorMessageOf(error) });
       await deps.appLog.write({
         tenantId: tenant.id,
         level: 'ERROR',
         action: 'attendance.nightly_sync.staff_failed',
         targetStaffId: staff.id,
-        details: { date, error: message },
+        details: { date, ...errorLogDetails(error) },
       });
     }
   }
@@ -138,12 +138,12 @@ export async function runNightlyCalendarSync(
     try {
       summaries.push(await syncDayForAllStaff(deps, tenant, date, options.shouldStop));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessageOf(error);
       await deps.appLog.write({
         tenantId: tenant.id,
         level: 'ERROR',
         action: 'attendance.nightly_sync.tenant_failed',
-        details: { date, error: message },
+        details: { date, ...errorLogDetails(error) },
       });
       summaries.push({
         tenantId: tenant.id,

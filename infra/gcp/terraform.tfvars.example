@@ -51,3 +51,6 @@ budget_amount      = 10000
 # トリガーの承認ができる人は名前で挙げる(承認する人はタグとマイグレーションの差分を見てから承認する)
 cloudbuild_github_connection = "github1"
 release_approvers            = ["user:ops@example.com"]
+
+# データアクセス監査ログ(Secret Manager・Cloud KMS・Cloud Storage の DATA_READ / DATA_WRITE。iam.tf、doc/07 2.0)。ログが多すぎるときだけ false
+data_access_audit_logs = true

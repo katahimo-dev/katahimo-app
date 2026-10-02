@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isDomainError } from '@katahimo/core/domain';
+import { errorMessageOf, errorStackOf, isDomainError } from '@katahimo/core/domain';
 import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { apiError, DOMAIN_ERROR_STATUS } from './responses';
@@ -64,6 +64,24 @@ export function requestLogger(options: { projectId?: string | undefined } = {}):
  */
 export const onApiError: ErrorHandler = (error, c) => {
   if (isDomainError(error)) {
+    if (error.cause !== undefined) {
+      // 外部サービスの失敗を一般的な文言の DomainError にしたもの: 元の例外の文はここ(プロセスのログ)にだけ出す
+      // (操作ログには例外の種類・理由コードだけ。core/domain/errors/errorLogDetails.ts)
+      const cause = error.cause;
+      writeStructuredLog({
+        severity: 'WARNING',
+        message: '外部サービスの失敗を利用者に一般的な文言で返しました',
+        requestId: requestIdOf(c),
+        method: c.req.method,
+        path: c.req.path,
+        code: error.code,
+        reason: error.reason,
+        cause:
+          cause instanceof Error
+            ? { name: cause.name, message: errorMessageOf(cause) }
+            : errorMessageOf(cause),
+      });
+    }
     return apiError(c, DOMAIN_ERROR_STATUS[error.code], error.code, error.message, error.fields);
   }
   if (error instanceof HTTPException) {
@@ -84,8 +102,8 @@ export const onApiError: ErrorHandler = (error, c) => {
     path: c.req.path,
     error:
       error instanceof Error
-        ? { name: error.name, message: error.message, stack: error.stack }
-        : String(error),
+        ? { name: error.name, message: errorMessageOf(error), stack: errorStackOf(error) }
+        : errorMessageOf(error),
   });
   return apiError(
     c,

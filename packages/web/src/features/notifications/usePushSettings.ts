@@ -61,17 +61,29 @@ export function usePushSettings(open: boolean): PushSettings {
   // 押した直後の2回目を止める(state は次の描画まで古い値のため、ref で見る)
   const busyRef = useRef(false);
 
-  /** この端末を今の鍵で購読し、本人の購読としてサーバーに登録する。 */
+  /**
+   * この端末を今の鍵で購読し、本人の購読としてサーバーに登録する。サーバーが 409(この endpoint は別のスタッフの
+   * 購読として鍵の違う登録が残っている)を返したら、端末の購読をやめて作り直し(endpoint・鍵が変わる)、1回だけ登録し直す。
+   */
   const register = useCallback(
     async (key: string) => {
+      const send = async (subscription: PushSubscription) => {
+        const request = pushSubscribeRequestSchema.safeParse(subscription.toJSON());
+        if (!request.success) {
+          await subscription.unsubscribe();
+          throw new Error('対応していないプッシュサービスです');
+        }
+        await pushApi.subscribe(request.data);
+        writeStorage(storageKey, subscription.endpoint);
+      };
       const subscription = await subscribeDevice(key);
-      const request = pushSubscribeRequestSchema.safeParse(subscription.toJSON());
-      if (!request.success) {
+      try {
+        await send(subscription);
+      } catch (e) {
+        if (!(e instanceof ApiRequestError && e.code === 'conflict')) throw e;
         await subscription.unsubscribe();
-        throw new Error('対応していないプッシュサービスです');
+        await send(await subscribeDevice(key));
       }
-      await pushApi.subscribe(request.data);
-      writeStorage(storageKey, subscription.endpoint);
     },
     [storageKey],
   );

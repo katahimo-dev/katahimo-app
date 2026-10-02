@@ -1,6 +1,7 @@
 # Cloud SQL for PostgreSQL。
 # - 接続は Cloud Run の Cloud SQL 接続(Auth Proxy、Unix ソケット /cloudsql/<接続名>)だけ。パブリックIPは
-#   持つが承認済みネットワークを登録しないため、Auth Proxy / コネクタ以外からは接続できない
+#   持つが承認済みネットワークを登録せず、connector_enforcement = REQUIRED で Auth Proxy / コネクタ以外の
+#   直接の接続は断る(運用の手順はどれも cloud-sql-proxy 経由。doc/07_インフラ・運用.md 3.2・3.6)
 #   (プライベートIPにすると VPC とサーバーレスVPCアクセス等が別途必要になる。doc/07_インフラ・運用.md 2.1)。
 # - DB・ロールは Terraform では作らない(infra/cloudsql/*.sql。google_sql_user で作ると
 #   cloudsqlsuperuser のメンバーになってしまい、パスワードも state に残るため)。
@@ -31,6 +32,11 @@ resource "google_sql_database_instance" "main" {
       # 直接の TCP 接続には TLS を必須にする(Auth Proxy 経由の接続はプロキシが暗号化する)
       ssl_mode = "ENCRYPTED_ONLY"
     }
+
+    # Cloud SQL Auth Proxy・Cloud SQL のコネクタ(Cloud Run の Cloud SQL 接続を含む)以外の接続を断る。
+    # 承認済みネットワークを誤って足しても、パスワードだけでは直接つなげない(IAM の cloudsql.client が要る)。
+    # psql を IP に直接つなぐ・gcloud sql connect(承認済みネットワークを一時的に足す)は使えない
+    connector_enforcement = "REQUIRED"
 
     backup_configuration {
       enabled                        = true

@@ -1,4 +1,4 @@
-import { DomainError } from '../domain';
+import { DomainError, errorLogDetails } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
 import type {
   MapsUsage,
@@ -168,21 +168,25 @@ async function runLogged<T extends ScheduleLightResult | ScheduleWithRouteResult
       staffName: staffRecord.displayName,
     });
     if (!result.success) {
-      await log('WARN', 'failed', { message: result.message ?? '不明なエラー' });
+      // 文(外部サービス・GAS版の文を含みうる)は画面への応答にだけ返し、操作ログは理由コードだけ
+      await log('WARN', 'failed', { reason: 'schedule_unavailable' });
     } else if (logSuccess) {
       await log('INFO', 'succeeded', { appointmentCount: result.appointments?.length ?? 0, ...details });
     }
     return result;
   } catch (e) {
     if (e instanceof DomainError) throw e;
-    // 外部サービス(カレンダー・地図)の失敗の詳細はログにだけ残し、画面には一般的な文言を返す(502)
-    await log('ERROR', 'error', { message: e instanceof Error ? e.message : String(e) });
-    throw new DomainError(
+    // 外部サービス(カレンダー・地図)の失敗は、操作ログには例外の種類・理由コードだけ、文は API の要求のログ
+    // (onApiError が cause を出す)にだけ残し、画面には一般的な文言を返す(502)
+    await log('ERROR', 'error', { ...errorLogDetails(e) });
+    const upstream = new DomainError(
       'upstream_unavailable',
       UPSTREAM_FAILURE_MESSAGE,
       undefined,
       'schedule_upstream_failed',
     );
+    upstream.cause = e;
+    throw upstream;
   }
 }
 

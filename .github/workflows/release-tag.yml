@@ -9,7 +9,7 @@
 #   - 付けるコミットが main に含まれている(ブランチの途中のコミットを本番に出さない)
 #   - そのコミットの CHANGELOG.md に `## [Ver. X.Y.Z]` があり、ルートと全ワークスペースの package.json の version が X.Y.Z
 #     (CHANGELOG の「未リリース」を版にする PR をマージしてから付ける)
-#   - そのコミットで CI の「lint・型検査・テスト・ビルド」が成功している(ドキュメントだけのコミットで CI が省かれていれば、
+#   - そのコミットで CI の「lint・型検査・テスト・ビルド」と「GAS版との一致テスト」が成功している(ドキュメントだけのコミットで CI が省かれていれば、
 #     CI が成功した直近の祖先からの差分がドキュメントだけであること)
 #
 # 誰がタグを付けられるか(doc/07 4.1・9.2、doc/06 12章):
@@ -101,7 +101,7 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: main
           # タグの push に使う(リリース用の App のトークン)
@@ -118,6 +118,8 @@ jobs:
           REF: ${{ inputs.ref }}
           GH_TOKEN: ${{ github.token }}
           CI_CHECK: lint・型検査・テスト・ビルド
+          # GAS版との一致テスト(main への push でだけ流れる。PR にはトークンを渡さないため。ci.yml の parity ジョブ)
+          PARITY_CHECK: GAS版との一致テスト
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
@@ -151,6 +153,12 @@ jobs:
           done
           [ "$conclusion" = success ] \
             || fail "${tested:0:7} の「$CI_CHECK」が成功していません($conclusion。none は実行中か未実行。main の CI が終わってから実行する)"
+          # check が流れたコミットでは parity も流れる。失敗・実行中・未実行ならタグを付けない(トークンが無く取得できないときは
+          # 警告つきで成功になる)
+          parity="$(gh api "repos/$GITHUB_REPOSITORY/commits/$tested/check-runs" \
+            -X GET -f check_name="$PARITY_CHECK" -f filter=latest --jq '.check_runs[0].conclusion // "none"')"
+          [ "$parity" = success ] \
+            || fail "${tested:0:7} の「$PARITY_CHECK」が成功していません($parity。none は実行中か未実行。main の CI が終わってから実行する)"
           if [ "$tested" != "$commit" ]; then
             others="$(git -c core.quotePath=false diff --name-only --no-renames "$tested" "$commit" | grep -vE '(\.md$|^doc/)' || true)"
             [ -z "$others" ] || fail "${tested:0:7}(CI が成功)から ${commit:0:7} までにドキュメント以外の変更があります: $(echo $others)"

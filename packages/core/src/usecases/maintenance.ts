@@ -1,4 +1,4 @@
-import { zonedBusinessDate } from '../domain';
+import { errorLogDetails, errorMessageOf, zonedBusinessDate } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
 import type { PlatformMaintenancePort } from '../ports/maintenance';
 import type { StoragePort } from '../ports/storage';
@@ -75,14 +75,14 @@ export async function runMaintenance(deps: MaintenanceDeps): Promise<Maintenance
     try {
       await step();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      summary.errors.push(`${action}: ${message}`);
+      // 文はジョブの出力(プロセスのログ)にだけ。操作ログは種類・理由コードだけ
+      summary.errors.push(`${action}: ${errorMessageOf(error)}`);
       await deps.appLog.write({
         tenantId: null,
         level: 'ERROR',
         action,
         actorType: 'system',
-        details: { error: message.slice(0, 300) },
+        details: { ...errorLogDetails(error) },
       });
     }
   };
@@ -131,14 +131,18 @@ export async function runMaintenance(deps: MaintenanceDeps): Promise<Maintenance
         details: { ...deleted, stored_files: filesDeleted },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      summary.tenants.push({ tenantId: tenant.id, deleted: {}, filesDeleted: 0, error: message });
+      summary.tenants.push({
+        tenantId: tenant.id,
+        deleted: {},
+        filesDeleted: 0,
+        error: errorMessageOf(error),
+      });
       await deps.appLog.write({
         tenantId: tenant.id,
         level: 'ERROR',
         action: 'maintenance.retention.failed',
         actorType: 'system',
-        details: { error: message.slice(0, 300) },
+        details: { ...errorLogDetails(error) },
       });
     }
   }

@@ -1,4 +1,8 @@
+import { escapeChatText as e } from '../notifications/chatText';
 import type { AccidentReportContent, DailyReportContent } from './types';
+
+// 通知の本文の利用者の入力・DB の値は escapeChatText(e)を通す(Google Chat のメンション・リンクの書式として読ませない。
+// GAS版の文と違うのは値に & < > を含むときだけ)。
 
 /** ★☆表記。GAS版Main.js saveReportのstar()と同一。 */
 function star(n: number | null): string {
@@ -25,15 +29,15 @@ export function buildDailyReportNotificationText(params: {
   }
   const visitTime =
     params.content.startTime && params.content.endTime
-      ? `${params.content.startTime}〜${params.content.endTime}`
-      : params.content.startTime || '';
+      ? `${e(params.content.startTime)}〜${e(params.content.endTime)}`
+      : e(params.content.startTime || '');
 
   return `【日報提出】
-担当: ${params.staffName}
-顧客名: ${params.customerName}
+担当: ${e(params.staffName)}
+顧客名: ${e(params.customerName)}
 訪問時間: ${visitTime}${ratingsInfo}
 
-${params.content.internalText}`;
+${e(params.content.internalText)}`;
 }
 
 /**
@@ -46,21 +50,21 @@ export function buildAccidentReportNotificationText(params: {
   reportType: string;
   content: AccidentReportContent;
 }): string {
-  const typeLabel = params.reportType || '事故報告';
+  const typeLabel = e(params.reportType || '事故報告');
   const c = params.content;
   return `【${typeLabel}】
-担当: ${params.staffName}
-顧客名: ${params.customerName}
-対象: ${c.targetName}
-生年月日: ${c.targetDob}
-発生日時: ${c.occurrenceTime}
-発生場所: ${c.location}
-事故内容: ${c.accidentContent}
-発生状況: ${c.situation}
-発生時の対応: ${c.immediateResponse}
-保護者への対応: ${c.parentCorrespondence}
-診断名および処置状況: ${c.diagnosisTreatment}
-今後の対応: ${c.prevention}`;
+担当: ${e(params.staffName)}
+顧客名: ${e(params.customerName)}
+対象: ${e(c.targetName)}
+生年月日: ${e(c.targetDob)}
+発生日時: ${e(c.occurrenceTime)}
+発生場所: ${e(c.location)}
+事故内容: ${e(c.accidentContent)}
+発生状況: ${e(c.situation)}
+発生時の対応: ${e(c.immediateResponse)}
+保護者への対応: ${e(c.parentCorrespondence)}
+診断名および処置状況: ${e(c.diagnosisTreatment)}
+今後の対応: ${e(c.prevention)}`;
 }
 
 export interface ReceiptNotificationImage {
@@ -73,8 +77,8 @@ export interface ReceiptNotificationImage {
 
 /** 領収書1枚の行(「名称: … / 金額: …円」、会社負担なら末尾に「 / 会社負担」)。 */
 function receiptLine(img: ReceiptNotificationImage): string {
-  const amountStr = img.amount ? `${img.amount}円` : '未入力';
-  const storeStr = img.storeName ? img.storeName : '未入力';
+  const amountStr = img.amount ? `${e(img.amount)}円` : '未入力';
+  const storeStr = img.storeName ? e(img.storeName) : '未入力';
   return `名称: ${storeStr} / 金額: ${amountStr}${img.companyPaid ? ' / 会社負担(お客様に請求しない)' : ''}`;
 }
 
@@ -91,8 +95,8 @@ export function buildReceiptNotificationText(params: {
   registeredImages: ReceiptNotificationImage[];
   handoffText: string;
 }): string {
-  const customerStr = params.customerName ? `顧客名: ${params.customerName}\n` : '';
-  const dateStr = params.receiptTimestamp ? params.receiptTimestamp.split(' ')[0] : '';
+  const customerStr = params.customerName ? `顧客名: ${e(params.customerName)}\n` : '';
+  const dateStr = params.receiptTimestamp ? e(params.receiptTimestamp.split(' ')[0]) : '';
 
   let receiptDetails = '';
   for (const img of params.registeredImages) {
@@ -100,9 +104,9 @@ export function buildReceiptNotificationText(params: {
   }
 
   const trimmedHandoff = params.handoffText.trim();
-  const handoffStr = trimmedHandoff ? `\n\n申し送り:\n${trimmedHandoff}` : '';
+  const handoffStr = trimmedHandoff ? `\n\n申し送り:\n${e(trimmedHandoff)}` : '';
 
-  return `【領収書登録】\n担当: ${params.staffName || '不明'}\n${customerStr}日付: ${dateStr}${receiptDetails}${handoffStr}`;
+  return `【領収書登録】\n担当: ${e(params.staffName) || '不明'}\n${customerStr}日付: ${dateStr}${receiptDetails}${handoffStr}`;
 }
 
 /**
@@ -119,10 +123,24 @@ export function buildReceiptCancelNotificationText(params: {
   image: ReceiptNotificationImage;
   reason: string | null;
 }): string {
-  const lines = ['【領収書取消】', `担当: ${params.staffName || '不明'}`];
-  if (params.cancelledByName) lines.push(`取消した人: ${params.cancelledByName}`);
-  if (params.customerName) lines.push(`顧客名: ${params.customerName}`);
-  lines.push(`日時: ${params.receiptTimestamp}`, receiptLine(params.image));
-  if (params.reason) lines.push(`取消の理由: ${params.reason}`);
+  const lines = ['【領収書取消】', `担当: ${e(params.staffName) || '不明'}`];
+  if (params.cancelledByName) lines.push(`取消した人: ${e(params.cancelledByName)}`);
+  if (params.customerName) lines.push(`顧客名: ${e(params.customerName)}`);
+  lines.push(`日時: ${e(params.receiptTimestamp)}`, receiptLine(params.image));
+  if (params.reason) lines.push(`取消の理由: ${e(params.reason)}`);
   return lines.join('\n');
+}
+
+/** 「訪問終わりました」の Google Chat 通知本文(GAS版 sendVisitComplete と同じ並び)。 */
+export function buildVisitCompleteNotificationText(params: {
+  staffName: string;
+  customerName: string;
+  /** 'YYYY-MM-DD' */
+  visitDate: string;
+  /** 'HH:mm' か空 */
+  startTime: string;
+  endTime: string;
+}): string {
+  const dateStr = params.visitDate.replaceAll('-', '/');
+  return `【訪問完了】\n担当: ${e(params.staffName)}\n顧客名: ${e(params.customerName)}\n訪問日時: ${e(dateStr)} ${e(params.startTime)}〜${e(params.endTime)}`;
 }

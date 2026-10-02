@@ -108,3 +108,28 @@ resource "google_project_iam_member" "release_approvers" {
   role     = "roles/cloudbuild.builds.approver"
   member   = each.value
 }
+
+# ── データアクセス監査ログ ─────────────────────────────────────
+# 管理アクティビティログ(鍵・シークレット・権限の変更)は何もしなくても残る。ここでは「中身を読んだ・書いた」も残す
+# (漏えいの疑いがあるときの追跡用。DB の中身は Cloud SQL のデータアクセスログには出ないため、アプリの操作ログ app_logs で追う)。
+#   secretmanager … シークレットの値の読み取り(AccessSecretVersion)・登録
+#   cloudkms      … 鍵の使用(encrypt / decrypt。テナントのシークレットの封、CMEK のサービスエージェントの利用)
+#   storage       … 領収書バケット・ビルド用バケットのオブジェクトの読み書き
+# Cloud SQL(ADMIN_READ 等)・Cloud Run の読み取りは量のわりに得るものが少ないため入れない。
+resource "google_project_iam_audit_config" "data_access" {
+  for_each = var.data_access_audit_logs ? toset([
+    "secretmanager.googleapis.com",
+    "cloudkms.googleapis.com",
+    "storage.googleapis.com",
+  ]) : toset([])
+
+  project = var.project_id
+  service = each.value
+
+  audit_log_config {
+    log_type = "DATA_READ"
+  }
+  audit_log_config {
+    log_type = "DATA_WRITE"
+  }
+}

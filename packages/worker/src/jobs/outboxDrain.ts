@@ -1,3 +1,4 @@
+import { errorMessageOf } from '@katahimo/core/domain';
 import { type DrainOutboxResult, drainOutbox } from '@katahimo/core/usecases';
 import type { WorkerContainer } from '../container';
 import { logJson } from './log';
@@ -38,7 +39,7 @@ export async function drainOutboxAfterBatch(
     await drainOutboxOnce(container, stop ? { stop } : {});
   } catch (error) {
     logJson('WARNING', `${jobName}: 積んだ outbox を送れませんでした。見回りの実行で送ります`, {
-      error: String(error),
+      error: errorMessageOf(error),
     });
   }
 }
@@ -57,7 +58,7 @@ export async function pollOutboxLocally(
       // 上限まで処理した(まだ残っている)なら待たずに続ける
       if (handledCountOf(result) >= container.outboxDrainMax) continue;
     } catch (error) {
-      logJson('ERROR', 'outbox の処理中にエラーが発生しました', { error: String(error) });
+      logJson('ERROR', 'outbox の処理中にエラーが発生しました', { error: errorMessageOf(error) });
     }
     await options.stop.sleep(options.intervalMs);
   }

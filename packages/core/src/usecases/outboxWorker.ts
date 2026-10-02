@@ -3,6 +3,8 @@ import {
   type AttendanceColumnKey,
   DEFAULT_RETRY_POLICY,
   decideOnFailure,
+  errorLogDetails,
+  errorMessageOf,
   PermanentOutboxError,
   parseCareRecordBody,
   projectDay,
@@ -222,7 +224,8 @@ async function logDead(
   deps: OutboxWorkerDeps,
   message: { id: string; tenantId: string; topic: OutboxTopic; aggregateId: string; attempts: number },
   status: 'failed' | 'dead',
-  error: string,
+  /** 操作ログに残す理由(例外の種類・理由コード。例外の文は outbox の last_error(と drain のプロセスのログ)にだけ残す)。 */
+  reason: Record<string, unknown>,
 ): Promise<void> {
   await deps.appLog.write({
     tenantId: message.tenantId,
@@ -235,7 +238,7 @@ async function logDead(
       aggregateId: message.aggregateId,
       attempts: message.attempts,
       status,
-      error: error.slice(0, 300),
+      ...reason,
     },
   });
 }
@@ -252,7 +255,7 @@ async function logDead(
 export async function processNextOutboxMessage(deps: OutboxWorkerDeps): Promise<ProcessOutcome> {
   const now = currentTime(deps);
   for (const expired of await deps.queue.expireExhaustedLeases(now, LEASE_EXHAUSTED_ERROR)) {
-    await logDead(deps, expired, 'dead', LEASE_EXHAUSTED_ERROR);
+    await logDead(deps, expired, 'dead', { reason: 'lease_exhausted' });
   }
   const message = await deps.queue.claimNext(deps.workerId, deps.leaseMs, now);
   if (!message) return 'idle';
@@ -286,7 +289,8 @@ export async function processNextOutboxMessage(deps: OutboxWorkerDeps): Promise<
     await HANDLERS[message.topic](deps, message);
     return (await deps.queue.complete(message, currentTime(deps))) ? 'done' : leaseLost();
   } catch (e) {
-    const error = e instanceof Error ? e.message : String(e);
+    // DB の失敗の文(SQL・params)を last_error に残さない
+    const error = errorMessageOf(e);
     const at = currentTime(deps);
     const policy = { ...DEFAULT_RETRY_POLICY, ...deps.retryPolicy, maxAttempts: message.maxAttempts };
     const decision =
@@ -298,7 +302,7 @@ export async function processNextOutboxMessage(deps: OutboxWorkerDeps): Promise<
     }
     const status = e instanceof PermanentOutboxError ? 'failed' : 'dead';
     if (!(await deps.queue.giveUp(message, error, status, at))) return leaseLost();
-    await logDead(deps, message, status, error);
+    await logDead(deps, message, status, { ...errorLogDetails(e) });
     return 'failed';
   }
 }

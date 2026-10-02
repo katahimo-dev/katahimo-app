@@ -75,6 +75,7 @@ export const DEMO_UNAVAILABLE_OPERATIONS: readonly string[] = [
   'パスワードの変更・再設定',
   '共有のデモ用アカウントの変更・削除',
   'スタッフのExcelの取込・パスワード設定の案内のメール',
+  '日報AIの調整（日報の言葉の表）のExcelの取込',
   'お客様の情報の取込（CSV）',
   'Google Chat の通知先の保存',
   '操作ログの閲覧',

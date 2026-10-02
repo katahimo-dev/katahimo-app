@@ -1,3 +1,4 @@
+import { errorMessageOf } from '@katahimo/core/domain';
 import { writeStructuredLog } from './requestLog';
 
 /** CSV の1行(RFC 4180。区切り文字・引用符・改行を含む値は引用符で囲む。改行は CRLF)。 */
@@ -54,7 +55,7 @@ export async function writeCsvStream<T>(
       severity: 'ERROR',
       message: options.failureMessage,
       requestId: options.requestId,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessageOf(error),
     });
     if (!out.aborted) await out.write(csvLine([exportFailedMarker(options.requestId)]));
   }

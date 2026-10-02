@@ -555,6 +555,26 @@ describe('authenticateSession / logout', () => {
     ]);
   });
 
+  it('失敗のログは failureLogGate が null を返せば書かず、書くときは間引いた件数を残す', async () => {
+    const before = ctx.appLog.entries.length;
+    const bad = `${ctx.tenantId}.${UNKNOWN_TOKEN}`;
+    await authenticateSession(ctx.deps, bad, { isInitialLoad: true, failureLogGate: () => null });
+    expect(ctx.appLog.entries.length).toBe(before);
+    await authenticateSession(ctx.deps, bad, {
+      isInitialLoad: true,
+      failureLogGate: () => ({ suppressed: 3 }),
+    });
+    expect(ctx.appLog.entries.slice(before)).toEqual([
+      expect.objectContaining({
+        action: 'auth.session.auto_login_failed',
+        details: { reason: 'unknown_token', suppressed: 3 },
+      }),
+    ]);
+    // 成功は間引かない
+    await authenticateSession(ctx.deps, cookie, { isInitialLoad: true, failureLogGate: () => null });
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({ action: 'auth.session.auto_login' });
+  });
+
   it('ログアウトでセッションが失効し、以後そのCookieは使えない', async () => {
     await logout(ctx.deps, cookie);
     expect(ctx.data().sessions[0]?.revokedAt).not.toBeNull();

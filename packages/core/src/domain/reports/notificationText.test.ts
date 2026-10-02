@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { escapeChatText } from '../notifications/chatText';
+import { buildPsiAlertChatText } from '../push/psiAlert';
 import {
   buildAccidentReportNotificationText,
   buildDailyReportNotificationText,
   buildReceiptCancelNotificationText,
   buildReceiptNotificationText,
+  buildVisitCompleteNotificationText,
 } from './notificationText';
 
 describe('buildDailyReportNotificationText', () => {
@@ -141,5 +144,83 @@ describe('buildReceiptCancelNotificationText', () => {
         reason: null,
       }),
     ).toBe('【領収書取消】\n担当: 鈴木\n日時: 2026/09/10 12:00\n名称: 未入力 / 金額: 未入力');
+  });
+});
+
+describe('Google Chat の書式の差し込み(<users/all>・<url|文字>)を防ぐ', () => {
+  const hostile = '<users/all> <https://evil.example|ここを押す> & 続き';
+  const escaped = '&lt;users/all&gt; &lt;https://evil.example|ここを押す&gt; &amp; 続き';
+
+  it('escapeChatText は & < > を文字参照にする(& を先に)', () => {
+    expect(escapeChatText(hostile)).toBe(escaped);
+    expect(escapeChatText('&lt;')).toBe('&amp;lt;');
+    expect(escapeChatText(null)).toBe('');
+    expect(escapeChatText(1200)).toBe('1200');
+  });
+
+  it('全ての通知の本文で、利用者の入力・DB の値を文字参照にし、見出しはそのまま', () => {
+    const texts = [
+      buildDailyReportNotificationText({
+        staffName: hostile,
+        customerName: hostile,
+        content: { startTime: hostile, endTime: hostile, internalText: hostile },
+        riskRating: 3,
+        esRating: null,
+      }),
+      buildAccidentReportNotificationText({
+        staffName: hostile,
+        customerName: hostile,
+        reportType: '事故報告',
+        content: {
+          targetName: hostile,
+          targetDob: hostile,
+          occurrenceTime: hostile,
+          location: hostile,
+          accidentContent: hostile,
+          situation: hostile,
+          immediateResponse: hostile,
+          parentCorrespondence: hostile,
+          diagnosisTreatment: hostile,
+          prevention: hostile,
+        } as Parameters<typeof buildAccidentReportNotificationText>[0]['content'],
+      }),
+      buildReceiptNotificationText({
+        staffName: hostile,
+        customerName: hostile,
+        receiptTimestamp: '2026/09/10 12:00:00',
+        registeredImages: [{ amount: hostile, storeName: hostile, companyPaid: false }],
+        handoffText: hostile,
+      }),
+      buildReceiptCancelNotificationText({
+        staffName: hostile,
+        cancelledByName: hostile,
+        customerName: hostile,
+        receiptTimestamp: hostile,
+        image: { amount: '100', storeName: hostile, companyPaid: true },
+        reason: hostile,
+      }),
+      buildVisitCompleteNotificationText({
+        staffName: hostile,
+        customerName: hostile,
+        visitDate: '2026-09-25',
+        startTime: '09:00',
+        endTime: '12:00',
+      }),
+      buildPsiAlertChatText({
+        recordId: '00000000-0000-7000-8000-000000000001',
+        riskRating: 1,
+        staffName: hostile,
+        customerName: hostile,
+        date: '2026-09-25',
+      }),
+    ];
+    for (const text of texts) {
+      expect(text).not.toContain('<');
+      expect(text).not.toContain('>');
+      expect(text).toContain(escaped);
+    }
+    expect(texts[4]).toBe(
+      `【訪問完了】\n担当: ${escaped}\n顧客名: ${escaped}\n訪問日時: 2026/09/25 09:00〜12:00`,
+    );
   });
 });

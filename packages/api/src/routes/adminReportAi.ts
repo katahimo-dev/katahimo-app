@@ -31,9 +31,11 @@ import { type Context, Hono } from 'hono';
 import type { z } from 'zod';
 import type { Container } from '../container';
 import { buildReportAiWorkbook, readReportAiWorkbook } from '../export/reportAiWorkbook';
+import { withXlsxReadSlot, XLSX_READ_BUSY_MESSAGE, XLSX_READ_BUSY_RETRY_MS } from '../export/xlsxSheets';
 import { csvLine, UTF8_BOM } from '../http/csv';
 import { attachmentDisposition, xlsxResponse } from '../http/download';
-import { apiError, jsonOk, parseJsonBody, parseQuery } from '../http/responses';
+import { enforceStaffQuota } from '../http/quota';
+import { apiError, jsonOk, parseJsonBody, parseQuery, rateLimited } from '../http/responses';
 import type { SessionEnv } from '../session';
 import { actorOf, requireAdmin } from '../session';
 
@@ -147,7 +149,20 @@ export function createAdminReportAiRoutes(container: Container) {
   app.post('/import', requireAdmin(container, 'settings.report_ai.import'), async (c) => {
     const body = await parseJsonBody(c, reportAiImportRequestSchema);
     if (!body.ok) return body.response;
-    const sheets = await readReportAiWorkbook(Buffer.from(body.data.fileBase64, 'base64'));
+    // 確かめる(dryRun)・反映の両方を数える(どちらも xlsx を展開して読むため)。読む前に数える
+    const limited = await enforceStaffQuota(
+      c,
+      container,
+      container.rateLimits.reportAiXlsxImportStaff,
+      '日報AIの調整の取込の回数の上限に達しました。少し時間をおいてからもう一度お試しください。',
+    );
+    if (limited) return limited;
+    // exceljs で読むのはこのインスタンスで1つずつ(メモリを使うため。xlsxSheets.ts の withXlsxReadSlot)
+    const read = await withXlsxReadSlot(() =>
+      readReportAiWorkbook(Buffer.from(body.data.fileBase64, 'base64')),
+    );
+    if (!read.ok) return rateLimited(c, XLSX_READ_BUSY_RETRY_MS, XLSX_READ_BUSY_MESSAGE);
+    const sheets = read.value;
     const result = await importReportAiMasters(container, actorOf(c), {
       parsed: parseReportAiWorkbook(sheets),
       dryRun: body.data.dryRun,

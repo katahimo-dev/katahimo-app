@@ -76,14 +76,43 @@ describe('Web Push の購読', () => {
     expect(JSON.stringify(logs)).not.toContain('device-a');
   });
 
-  it('同じ端末で別のスタッフが登録したら、そのスタッフの購読に付け替える', async () => {
+  it('同じ端末(同じ endpoint・同じ鍵)で別のスタッフが登録したら、そのスタッフの購読に付け替え、WARN に残す', async () => {
     await subscribePush(ctx.deps, taro, { endpoint: ENDPOINT_A, ...keys });
     await subscribePush(ctx.deps, hanako, { endpoint: ENDPOINT_A, ...keys });
     expect(ctx.data().pushSubscriptions.map((p) => p.staffId)).toEqual([hanako.staffId]);
-    expect(ctx.appLog.byAction('push.subscription.saved').at(-1)?.details).toMatchObject({
-      created: false,
-      previousStaffId: taro.staffId,
+    expect(ctx.appLog.byAction('push.subscription.moved')).toEqual([
+      expect.objectContaining({
+        level: 'WARN',
+        actorStaffId: hanako.staffId,
+        targetStaffId: taro.staffId,
+        details: expect.objectContaining({ created: false, previousStaffId: taro.staffId }),
+      }),
+    ]);
+  });
+
+  it('別のスタッフの endpoint を違う鍵で登録しようとしたら 409 にし、何も書かずに WARN を残す(購読の乗っ取りを防ぐ)', async () => {
+    await subscribePush(ctx.deps, taro, { endpoint: ENDPOINT_A, ...keys });
+    for (const stolen of [
+      { endpoint: ENDPOINT_A, p256dh: 'x'.repeat(87), auth: keys.auth },
+      { endpoint: ENDPOINT_A, p256dh: keys.p256dh, auth: 'y'.repeat(22) },
+    ]) {
+      await expect(subscribePush(ctx.deps, hanako, stolen)).rejects.toMatchObject({
+        code: 'conflict',
+        reason: 'subscription_owned_by_other',
+      });
+    }
+    expect(ctx.data().pushSubscriptions).toEqual([
+      expect.objectContaining({ staffId: taro.staffId, endpoint: ENDPOINT_A, p256dh: keys.p256dh }),
+    ]);
+    expect(ctx.appLog.byAction('push.subscription.takeover_refused')).toHaveLength(2);
+    expect(ctx.appLog.byAction('push.subscription.takeover_refused')[0]).toMatchObject({
+      level: 'WARN',
+      targetStaffId: taro.staffId,
+      details: { reason: 'keys_mismatch' },
     });
+    // 本人は鍵を変えて登録し直せる
+    await subscribePush(ctx.deps, taro, { endpoint: ENDPOINT_A, p256dh: 'z'.repeat(87), auth: keys.auth });
+    expect(ctx.data().pushSubscriptions[0]?.p256dh).toBe('z'.repeat(87));
   });
 
   it('購読をやめられるのは本人の購読だけ', async () => {
@@ -357,6 +386,10 @@ describe('翌日の予定のお知らせ(夜間ジョブ)', () => {
     expect(summary).toMatchObject({ queued: 1, failed: 1 });
     expect(summary.tenants[0]?.failures).toEqual([{ staffId: hanako.staffId, error: expect.any(String) }]);
     expect(ctx.appLog.byAction('push.route_notice.staff_failed')).toHaveLength(1);
+    // 操作ログには例外の種類・理由コードだけ(予定の読み込みの失敗の文は残さない)
+    const details = ctx.appLog.byAction('push.route_notice.staff_failed')[0]?.details;
+    expect(details).toMatchObject({ date: '2026-09-27', errorClass: expect.any(String) });
+    expect(JSON.stringify(details)).not.toContain('カレンダーを読み込めませんでした');
 
     ctx.schedule.clearError('佐藤 花子', '2026-09-27');
     expect(await runRouteNoticeJob(ctx.deps)).toMatchObject({ queued: 1, alreadyQueued: 1, failed: 0 });

@@ -12,6 +12,9 @@ describe('matchDemoRestriction', () => {
     });
     expect(matchDemoRestriction('POST', '/api/admin/staff/abc/password-guide')?.targetId).toBe('abc');
     expect(matchDemoRestriction('POST', '/api/admin/staff/import')?.rule.name).toBe('staff.xlsx_import');
+    expect(matchDemoRestriction('POST', '/api/admin/report-ai/import')?.rule.name).toBe(
+      'settings.report_ai.import',
+    );
   });
 
   it('デモでも使える操作は当たらない(入力・編集・閲覧、スタッフの追加、プロンプトの編集)', () => {
@@ -19,6 +22,8 @@ describe('matchDemoRestriction', () => {
     expect(matchDemoRestriction('POST', '/api/admin/staff')).toBeNull();
     expect(matchDemoRestriction('GET', '/api/admin/staff/abc')).toBeNull();
     expect(matchDemoRestriction('PUT', '/api/settings/admin/prompts')).toBeNull();
+    // 日報AIの調整は1行ずつの保存・書き出しは使える(断るのは xlsx の取込だけ)
+    expect(matchDemoRestriction('GET', '/api/admin/report-ai/export.xlsx')).toBeNull();
     expect(matchDemoRestriction('POST', '/api/auth/login')).toBeNull();
   });
 
@@ -47,7 +52,7 @@ describe('DemoTenant.isDemoTenant', () => {
     } as unknown as TenantDirectoryPort;
     let now = 0;
     const demo = new DemoTenant(
-      { slug: 'public-demo', publicLogin: false, dataRetentionDays: 30, logRetentionMonths: 3 },
+      { slug: 'public-demo', publicLogin: false, dataRetentionDays: 30, logRetentionMonths: 12 },
       tenants,
       () => now,
     );
@@ -69,7 +74,7 @@ describe('DemoTenant.isDemoTenant', () => {
 describe('DemoTenant.loginRateLimits', () => {
   it('アカウント単位・端末単位のログインの失敗はロックしない(送信元IP単位は残す)', () => {
     const demo = new DemoTenant(
-      { slug: 'public-demo', publicLogin: false, dataRetentionDays: 30, logRetentionMonths: 3 },
+      { slug: 'public-demo', publicLogin: false, dataRetentionDays: 30, logRetentionMonths: 12 },
       {} as TenantDirectoryPort,
     );
     const policy = demo.loginRateLimits(DEFAULT_RATE_LIMIT_POLICY);

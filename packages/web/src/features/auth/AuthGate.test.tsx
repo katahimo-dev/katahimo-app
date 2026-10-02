@@ -120,7 +120,7 @@ describe('AuthGate: 公開デモの注釈', () => {
       accounts: [{ role: 'admin', label: '管理者', email: 'admin@demo.example.com' }],
       password: 'demo-pass',
       dataRetentionDays: 30,
-      logRetentionMonths: 6,
+      logRetentionMonths: 24,
       aiUsesPerSession: 5,
     });
   });
@@ -138,7 +138,7 @@ describe('AuthGate: 公開デモの注釈', () => {
     const dialog = await loginFromForm();
     expect(dialog.textContent).toContain('ほかの閲覧者にも見えます');
     expect(dialog.textContent).toContain(
-      '入力した内容は運営者が30日間、操作ログ・接続情報（IPアドレス等）は6か月間保存し',
+      '入力した内容は運営者が30日間、操作ログ・接続情報（IPアドレス等）は24か月間保存し',
     );
     expect(dialog.textContent).toContain('パスワードの変更・再設定');
     expect(dialog.textContent).toContain('操作ログの閲覧');

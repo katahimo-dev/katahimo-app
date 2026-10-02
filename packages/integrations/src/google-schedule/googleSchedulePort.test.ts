@@ -360,7 +360,7 @@ describe('GoogleSchedulePort', () => {
     expect(logs[0]).toMatchObject({
       level: 'WARN',
       action: 'schedule.calendar_read_failed',
-      details: { calendarId: 'reserva@group.calendar.google.com', message: 'Not Found' },
+      details: { calendarId: 'reserva@group.calendar.google.com', errorClass: expect.any(String) },
     });
     await expect(
       port.getScheduleWithRoute(targetOf('佐藤 美咲'), date, false, { tenantId, fresh: true }),

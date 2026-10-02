@@ -1,3 +1,4 @@
+import { errorMessageOf } from '@katahimo/core/domain';
 import { Hono } from 'hono';
 import type { Container } from './container';
 import type { Env } from './env';
@@ -67,7 +68,7 @@ export function createApp(deps: AppDeps) {
       writeStructuredLog({
         severity: 'ERROR',
         message: 'DBの疎通確認に失敗しました',
-        error: e instanceof Error ? e.message : String(e),
+        error: errorMessageOf(e),
       });
       return c.json({ status: 'error' }, 503);
     }

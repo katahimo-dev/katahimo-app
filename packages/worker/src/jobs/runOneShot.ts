@@ -1,3 +1,4 @@
+import { errorMessageOf } from '@katahimo/core/domain';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import { createWorkerContainer, type WorkerContainer } from '../container';
 import { loadWorkerEnv, type WorkerEnv } from '../env';
@@ -44,7 +45,7 @@ export function runOneShot(
       return finish(ok ? 0 : 1);
     })
     .catch((error: unknown) => {
-      logJson('ERROR', `${name} が異常終了しました`, { error: String(error) });
+      logJson('ERROR', `${name} が異常終了しました`, { error: errorMessageOf(error) });
       return finish(1);
     });
 }

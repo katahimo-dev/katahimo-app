@@ -1,4 +1,5 @@
 import { DomainError } from '@katahimo/core/domain';
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import { onApiError, requestLogger } from './requestLog';
@@ -22,6 +23,17 @@ describe('onApiError', () => {
     expect(await res.json()).toEqual({ code: 'conflict', message: '重なっています', fields: { date: 'x' } });
   });
 
+  it('cause のある DomainError(外部サービスの失敗)は応答に一般的な文言だけを返し、元の例外の文はプロセスのログに出す', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = new DomainError('upstream_unavailable', '予定を取得できませんでした。', undefined, 'x');
+    error.cause = new Error('Calendar API: Not Found taro@example.com');
+    const res = await appThrowing(error).request('/boom');
+    expect(res.status).toBe(502);
+    expect(JSON.stringify(await res.json())).not.toContain('taro@example.com');
+    expect(log.mock.calls.map((c) => String(c[0])).join('\n')).toContain('Not Found taro@example.com');
+    log.mockRestore();
+  });
+
   it('想定外の例外は 500 internal にし、内部の情報を応答に出さない(ログには残す)', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = await appThrowing(new Error('password=secret at db.ts:10')).request('/boom', {
@@ -34,5 +46,23 @@ describe('onApiError', () => {
     expect(res.headers.get('x-request-id')).toBe('a'.repeat(32));
     expect(log.mock.calls.map((c) => String(c[0])).join('\n')).toContain('password=secret');
     log.mockRestore();
+  });
+
+  it('DB の問い合わせの失敗(drizzle の DrizzleQueryError)は、cause でも想定外の例外でも params・SQL をログに出さない', async () => {
+    const pg = Object.assign(new Error('invalid input syntax for type uuid'), { code: '22P02' });
+    const query = () =>
+      new DrizzleQueryError('select * from "staff" where "email" = $1', ['taro@example.com'], pg);
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const wrapped = new DomainError('upstream_unavailable', '予定を取得できませんでした。');
+    wrapped.cause = query();
+    expect((await appThrowing(wrapped).request('/boom')).status).toBe(502);
+    expect((await appThrowing(query()).request('/boom')).status).toBe(500);
+    const logged = [...out.mock.calls, ...err.mock.calls].map((c) => String(c[0])).join('\n');
+    expect(logged).not.toContain('taro@example.com');
+    expect(logged).not.toContain('where');
+    expect(logged).toContain('22P02');
+    out.mockRestore();
+    err.mockRestore();
   });
 });

@@ -1,6 +1,6 @@
 import type { CustomerDetailView } from '@katahimo/shared';
 import { describe, expect, it } from 'vitest';
-import { buildDetailRows, buildFamilyRows } from './customerDetailRows';
+import { buildDetailRows, buildFamilyRows, mailtoHref, telHref } from './customerDetailRows';
 import { filterCustomers } from './customerFilter';
 import { historyBadge, ratingStars, splitHistoryTimestamp } from './historyFormat';
 
@@ -108,6 +108,21 @@ describe('buildDetailRows', () => {
       `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent('東京都世田谷区桜新町1-2-3')}`,
     );
     expect(noLatLng.find((r) => r.key === 'メールアドレス')?.action).toBeNull();
+  });
+
+  it('メール・電話のボタンの URL に、宛先の追加・件名・別の操作を差し込めない', () => {
+    expect(mailtoHref('sakura@example.com')).toBe('mailto:sakura@example.com');
+    expect(mailtoHref(' sakura@example.com ')).toBe('mailto:sakura@example.com');
+    expect(mailtoHref('a@example.com?cc=evil@example.com&subject=x')).toBeNull();
+    expect(mailtoHref('a@example.com,evil@example.com')).toBeNull();
+    expect(mailtoHref('a@example.com#x')).toBeNull();
+    expect(mailtoHref('javascript:alert(1)')).toBeNull();
+    expect(mailtoHref('メールなし')).toBeNull();
+    expect(telHref('090-1234-5678')).toBe('tel:090-1234-5678');
+    expect(telHref('０９０（１２３４）５６７８')).toBe('tel:09012345678');
+    expect(telHref('03-1234-5678 内線#12')).toBe('tel:03-1234-5678%2312');
+    expect(telHref('090-1234-5678?x=javascript:alert(1)')).toBe('tel:090-1234-56781');
+    expect(telHref('なし')).toBeNull();
   });
 
   it('緯度・経度の行は取込元の表記のまま出し、地図はその場所を開く(読めない表記は住所で検索)', () => {

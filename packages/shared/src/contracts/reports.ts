@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { businessDateSchema, freeText, idSchema, recordDateSchema } from './common';
+import { businessDateSchema, freeText, idSchema, recordDateSchema, timeOfDaySchema } from './common';
 
 const ratingSchema = z.number().int().min(1).max(5).nullable();
 const textSchema = freeText(z.string().default(''));
@@ -212,13 +212,23 @@ export const generateAccidentReportResponseSchema = z.object({
   retryable: z.boolean(),
 });
 
+/**
+ * 「訪問終わりました」の時刻('HH:mm' か空文字)。前の版の画面(端末にキャッシュされた PWA)は、時刻を選んでいないとき
+ * 時・分の空欄をつないだ ':' を送るため、1リリースの間だけ ':' を空文字として受け付ける(次のリリースで外す)。
+ */
+const visitCompleteTimeSchema = z.preprocess(
+  (value) => (value === ':' ? '' : value),
+  z.union([timeOfDaySchema, z.literal('')]),
+);
+
 /** POST /api/reports/visit-complete(「訪問終わりました」の通知だけを送る。GAS版 sendVisitCompleteNotification) */
 export const visitCompleteRequestSchema = z.object({
   staffId: idSchema.optional(),
   customerId: idSchema,
   visitDate: businessDateSchema,
-  startTime: z.string(),
-  endTime: z.string(),
+  /** 'HH:mm'(時刻を選んでいなければ空文字)。通知の本文に入れるため形を決める。 */
+  startTime: visitCompleteTimeSchema,
+  endTime: visitCompleteTimeSchema,
 });
 export type VisitCompleteRequest = z.infer<typeof visitCompleteRequestSchema>;
 export const visitCompleteResponseSchema = z.object({ success: z.literal(true) });

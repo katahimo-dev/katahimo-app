@@ -1,3 +1,8 @@
+import {
+  RECEIPT_AMOUNT_MAX_YEN,
+  RECEIPT_HANDOFF_MAX_LENGTH,
+  RECEIPT_STORE_NAME_MAX_LENGTH,
+} from '@katahimo/shared';
 import { type ChangeEvent, useRef } from 'react';
 import type { ReceiptEditableField, ReceiptImage, ReceiptsController } from '../hooks/useReceipts';
 import { cx } from './cx';
@@ -162,6 +167,7 @@ export function ReceiptSection({
           id="receiptHandoff"
           rows={2}
           value={receipts.handoff}
+          maxLength={RECEIPT_HANDOFF_MAX_LENGTH}
           onChange={(e) => {
             receipts.setHandoff(e.target.value);
             onEdited();
@@ -225,6 +231,8 @@ function ReceiptImageCard({
           value={image.amount}
           aria-label="金額（円）"
           placeholder="金額（円）"
+          min={0}
+          max={RECEIPT_AMOUNT_MAX_YEN}
           step="100"
           onChange={(e) => onChange('amount', e.target.value)}
           className="w-full min-h-11 p-2 text-sm border border-gray-300 rounded-xl text-center focus:ring-1 focus:ring-blue-500"
@@ -234,6 +242,7 @@ function ReceiptImageCard({
         <input
           type="text"
           value={image.storeName}
+          maxLength={RECEIPT_STORE_NAME_MAX_LENGTH}
           aria-label="お店の名前"
           placeholder="お店の名前"
           onChange={(e) => onChange('storeName', e.target.value)}

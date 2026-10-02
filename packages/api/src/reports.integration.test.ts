@@ -371,3 +371,25 @@ describe('API: 日報・事故報告の一覧', () => {
     expect(exported.every((e) => e.level === 'SECURITY')).toBe(true);
   });
 });
+
+describe('API: 訪問終わりました(POST /api/reports/visit-complete)', () => {
+  it('時刻は HH:mm か空だけ(通知の本文に入れるため)。スタッフごとに1時間の上限があり 429', async () => {
+    const t = await createTenant();
+    const send = (startTime: string, endTime = '12:00', cookie = t.otherCookie) =>
+      post('/api/reports/visit-complete', cookie, {
+        customerId: t.customerId,
+        visitDate: today(),
+        startTime,
+        endTime,
+      });
+    expect((await send('<users/all>')).status).toBe(400);
+    expect((await send('09:00\n担当: 偽物')).status).toBe(400);
+    expect((await send('09:00')).status).toBe(200);
+    expect((await send('', '')).status).toBe(200);
+    const limit = container.rateLimits.visitCompleteStaff.limit;
+    for (let i = 2; i < limit; i++) expect((await send('09:00')).status).toBe(200);
+    const limited = await send('09:00');
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toMatchObject({ code: 'rate_limited' });
+  });
+});

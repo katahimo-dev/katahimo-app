@@ -107,6 +107,32 @@ describe('領収書の取消(論理削除)', () => {
     ).rejects.toMatchObject({ code: 'conflict' });
   });
 
+  it('取消した行の取消の列は DB のトリガーが変えさせない(取消を戻す・取消した人・理由の書き換えは KH003 → conflict)', async () => {
+    const tenant = await createTenant('rc');
+    const owner = await setup(tenant);
+    const id = newId();
+    await uow.run(tenant, async (r) => {
+      await insertReceipt(r, owner, { id });
+      await r.receipts.cancel(id, cancellation(owner.staffId, '間違い'), 1);
+    });
+    const attempts = [
+      sql`update receipts set cancelled_at = null, cancelled_by = null, cancel_reason = null where id = ${id}`,
+      sql`update receipts set cancel_reason = '書き換え' where id = ${id}`,
+      sql`update receipts set cancelled_at = now() where id = ${id}`,
+    ];
+    for (const statement of attempts) {
+      expect(await sqlState(withTenant(app, tenant, (tx) => tx.execute(statement)))).toBe('KH003');
+    }
+    // 取消に関係しない列(重複の判定の代表・版)は今までどおり変えられる
+    expect(
+      await sqlState(
+        withTenant(app, tenant, (tx) =>
+          tx.execute(sql`update receipts set row_version = row_version + 1 where id = ${id}`),
+        ),
+      ),
+    ).toBeNull();
+  });
+
   it('取消した行は合計・月の明細から除き、一覧は includeCancelled のときだけ出す', async () => {
     const tenant = await createTenant('rc');
     const owner = await setup(tenant);

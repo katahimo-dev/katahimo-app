@@ -11,6 +11,7 @@ import {
   changedSheetColumns,
   compactRowData,
   DomainError,
+  errorLogDetails,
   forbidden,
   isAdminRole,
   mergeOverlappingOfficeAppointments,
@@ -228,7 +229,8 @@ async function logSyncFailure(
   await writeActorLog(deps.appLog, actor, target, {
     level: 'ERROR',
     action,
-    details: { date, error: error instanceof Error ? error.message : String(error) },
+    // 例外の文は残さない(種類・理由コードだけ。文は投げ直した先の API の要求のログに出る)
+    details: { date, ...errorLogDetails(error) },
   });
 }
 

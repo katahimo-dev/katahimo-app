@@ -1,3 +1,4 @@
+import { errorMessageOf } from '@katahimo/core/domain';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import { createWorkerContainer } from './container';
 import { loadWorkerEnv } from './env';
@@ -45,6 +46,6 @@ pollOutboxLocally(container, { intervalMs: env.OUTBOX_POLL_INTERVAL_MS, stop })
     process.exit(0);
   })
   .catch((error: unknown) => {
-    logJson('ERROR', 'outbox の見回りが異常終了しました', { error: String(error) });
+    logJson('ERROR', 'outbox の見回りが異常終了しました', { error: errorMessageOf(error) });
     process.exit(1);
   });

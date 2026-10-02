@@ -83,9 +83,12 @@ export async function getAuthenticatedSession(
 ): Promise<ResolvedSession | null> {
   const cookieValue = readSessionCookie(c, container);
   if (!cookieValue) return null;
+  const meta = requestMeta(c);
   const result = await authenticateSession(container, cookieValue, {
-    ...(options.isInitialLoad ? { isInitialLoad: true } : {}),
-    meta: requestMeta(c),
+    ...(options.isInitialLoad
+      ? { isInitialLoad: true, failureLogGate: () => container.denialLogThrottle.take(meta.ip) }
+      : {}),
+    meta,
   });
   if (!result.ok) {
     clearSessionCookie(c, container);
@@ -93,6 +96,23 @@ export async function getAuthenticatedSession(
   }
   if (result.session.renewed) setSessionCookie(c, container, cookieValue, result.session.expiresAt);
   return result.session;
+}
+
+/**
+ * ログインしていない要求の拒否を WARN `<action>.access_denied`(reason `invalid_session`)に残す。認証の無い要求は誰でも
+ * 送れるため、送信元IPごとに間引く(http/denialLogThrottle.ts。応答は変えない)。
+ */
+async function logUnauthenticatedDenial(c: Context, container: Container, action: string): Promise<void> {
+  const meta = requestMeta(c);
+  const gate = container.denialLogThrottle.take(meta.ip);
+  if (!gate) return;
+  await container.appLog.write({
+    tenantId: null,
+    level: 'WARN',
+    action: `${action}.access_denied`,
+    details: { reason: 'invalid_session', ...(gate.suppressed > 0 ? { suppressed: gate.suppressed } : {}) },
+    ...meta,
+  });
 }
 
 /** ルートのContext変数(requireSession/requireAdminが設定する)。 */
@@ -108,15 +128,7 @@ export function requireSession(container: Container, deniedAction?: string): Mid
   return async (c, next) => {
     const session = await getAuthenticatedSession(c, container);
     if (!session) {
-      if (deniedAction) {
-        await container.appLog.write({
-          tenantId: null,
-          level: 'WARN',
-          action: `${deniedAction}.access_denied`,
-          details: { reason: 'invalid_session' },
-          ...requestMeta(c),
-        });
-      }
+      if (deniedAction) await logUnauthenticatedDenial(c, container, deniedAction);
       return apiError(c, 401, 'unauthenticated', 'ログインセッションが無効です。再度ログインしてください。');
     }
     c.set('session', session);
@@ -148,18 +160,21 @@ function requireRole(
 ): MiddlewareHandler<SessionEnv> {
   return async (c, next) => {
     const session = await getAuthenticatedSession(c, container);
-    if (!session || !allowed(session.role)) {
+    if (!session) {
+      await logUnauthenticatedDenial(c, container, action);
+      return apiError(c, 401, 'unauthenticated', 'ログインセッションが無効です。再度ログインしてください。');
+    }
+    if (!allowed(session.role)) {
+      // ログイン中のスタッフの拒否は間引かない(誰の操作か分かり、権限の確かめとして残す)
       await container.appLog.write({
-        tenantId: session?.tenantId ?? null,
+        tenantId: session.tenantId,
         level: 'WARN',
         action: `${action}.access_denied`,
-        actorStaffId: session?.staffId ?? null,
-        details: { reason: session ? deniedReason : 'invalid_session' },
+        actorStaffId: session.staffId,
+        details: { reason: deniedReason },
         ...requestMeta(c),
       });
-      return session
-        ? apiError(c, 403, 'forbidden', '権限がありません。')
-        : apiError(c, 401, 'unauthenticated', 'ログインセッションが無効です。再度ログインしてください。');
+      return apiError(c, 403, 'forbidden', '権限がありません。');
     }
     c.set('session', session);
     return next();

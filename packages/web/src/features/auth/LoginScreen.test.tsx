@@ -115,11 +115,11 @@ const DEMO_CONFIG = {
   ],
   password: 'demo-pass',
   dataRetentionDays: 30,
-  logRetentionMonths: 6,
+  logRetentionMonths: 24,
   aiUsesPerSession: 5,
 } as const satisfies DemoConfigResponse;
 
-const NOTICE_TEXT = '入力した内容（30日間）と、操作ログ・接続情報（IPアドレス等。6か月間）を保存し';
+const NOTICE_TEXT = '入力した内容（30日間）と、操作ログ・接続情報（IPアドレス等。24か月間）を保存し';
 
 describe('ログイン画面: 公開デモ(GET /api/demo/config)', () => {
   beforeEach(() => {

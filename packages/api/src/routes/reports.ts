@@ -33,7 +33,7 @@ import {
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import type { Container } from '../container';
-import { enforceAiQuota } from '../http/quota';
+import { enforceAiQuota, enforceStaffQuota } from '../http/quota';
 import { requestIdOf } from '../http/requestLog';
 import { apiError, jsonOk, parseJsonBody, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
@@ -108,6 +108,13 @@ export function createReportRoutes(container: Container) {
   app.post('/visit-complete', requireSession(container), async (c) => {
     const body = await parseJsonBody(c, visitCompleteRequestSchema);
     if (!body.ok) return body.response;
+    const limited = await enforceStaffQuota(
+      c,
+      container,
+      container.rateLimits.visitCompleteStaff,
+      '「訪問終わりました」を送る回数の上限に達しました。少し時間をおいてからもう一度お試しください。',
+    );
+    if (limited) return limited;
     const { staffId, ...fields } = body.data;
     await sendVisitCompleteNotification(container, actorOf(c), { ...fields, requestedStaffId: staffId });
     return jsonOk(c, visitCompleteResponseSchema, { success: true });

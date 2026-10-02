@@ -1,4 +1,4 @@
-import { isStaffCalendarAllowed, newId, zonedBusinessDate } from '../domain';
+import { errorLogDetails, isStaffCalendarAllowed, newId, zonedBusinessDate } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
 import type { CalendarBusyResult, GoogleCalendarPort, InstantRange } from '../ports/googleCalendar';
 import type { TenantDirectoryPort } from '../ports/tenants';
@@ -118,7 +118,8 @@ export async function syncStaffBusyBlocksForAllTenants(
         tenantId: tenant.id,
         level: 'ERROR',
         action: 'calendar.busy_blocks.sync_error',
-        details: { message: error.message },
+        // 文はジョブの出力(プロセスのログ)にだけ。操作ログは種類・理由コードだけ
+        details: { ...errorLogDetails(e) },
       });
     }
   }

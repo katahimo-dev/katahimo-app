@@ -44,6 +44,8 @@ export async function runRouteNoticeJob(
         noEvents: t.noEvents,
         failed: t.failed,
         error: t.error,
+        // 失敗の文はここ(プロセスのログ)にだけ出す。操作ログは理由コード・例外の種類だけ
+        failures: t.failures,
       })),
     },
   );

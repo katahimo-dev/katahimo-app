@@ -14,7 +14,8 @@ services:
       POSTGRES_PASSWORD: postgres
       TZ: Asia/Tokyo
     ports:
-      - '5433:5432'
+      # 開発マシンの外(LAN)に公開しない。スーパーユーザーのパスワードが postgres の使い捨て DB のため
+      - '127.0.0.1:5433:5432'
     volumes:
       # メジャーバージョンごとにデータの形式が違うため、ボリューム名に版を入れる(版・ロールの構成を変えたら作り直し)
       - katahimo-pgdata-17-v2:/var/lib/postgresql/data

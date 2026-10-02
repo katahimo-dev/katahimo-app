@@ -58,6 +58,11 @@ export interface RateLimitPolicy {
    * 画像を保存先(GCS)に書くため、送り続けで保存先・CPU を使い切らせない。数えるのは登録の要求の回数(枚数ではない)。
    */
   receiptUploadStaff: RateLimitRule;
+  /**
+   * 「訪問終わりました」の通知(POST /api/reports/visit-complete。スタッフ単位の1時間の上限)。押すたびに Google Chat に
+   * 送るため、送り続けで通知先を溢れさせない。
+   */
+  visitCompleteStaff: RateLimitRule;
   /** 予定の「ルート再計算」(forceRefresh、スタッフ単位の1時間の上限。Maps の従量課金対策)。 */
   scheduleForceRefreshStaff: RateLimitRule;
   /** 設定画面の「テスト通知を送る」(スタッフ単位の1時間の上限)。 */
@@ -78,6 +83,13 @@ export interface RateLimitPolicy {
    * 自宅住所の変わる行ごとに地図API(従量課金)を呼ぶため。確かめる(dryRun)だけは数えない。
    */
   staffImportApplyStaff: RateLimitRule;
+  /**
+   * スタッフの xlsx の取込(確かめる dryRun・反映の両方。管理者単位の1時間の上限)。1回ごとに最大 2MB の xlsx を
+   * 展開して読むため、送り続けで CPU・メモリを使い切らせない(反映は staffImportApplyStaff でも数える)。
+   */
+  staffXlsxImportStaff: RateLimitRule;
+  /** 日報AIの調整の xlsx の取込(確かめる dryRun・反映の両方。管理者単位の1時間の上限。理由は staffXlsxImportStaff と同じ)。 */
+  reportAiXlsxImportStaff: RateLimitRule;
   /**
    * Gemini API キーの保存(管理者単位の1時間の上限)。保存ごとに Gemini へ確かめの問い合わせをするため
    * (公開デモでは誰でも管理者でログインできる)。
@@ -124,6 +136,7 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   aiGenerateStaff: { name: 'ai_generate_staff', limit: 200, windowMs: DAY_MS },
   receiptOcrStaff: { name: 'receipt_ocr_staff', limit: 300, windowMs: DAY_MS },
   receiptUploadStaff: { name: 'receipt_upload_staff', limit: 60, windowMs: HOUR_MS },
+  visitCompleteStaff: { name: 'visit_complete_staff', limit: 60, windowMs: HOUR_MS },
   scheduleForceRefreshStaff: { name: 'schedule_force_refresh_staff', limit: 30, windowMs: HOUR_MS },
   pushTestStaff: { name: 'push_test_staff', limit: 10, windowMs: HOUR_MS },
   pushSubscribeStaff: { name: 'push_subscribe_staff', limit: 30, windowMs: HOUR_MS },
@@ -136,6 +149,8 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   },
   attendanceExportStaff: { name: 'attendance_export_staff', limit: 30, windowMs: HOUR_MS },
   staffImportApplyStaff: { name: 'staff_import_apply_staff', limit: 5, windowMs: 10 * MINUTE_MS },
+  staffXlsxImportStaff: { name: 'staff_xlsx_import_staff', limit: 30, windowMs: HOUR_MS },
+  reportAiXlsxImportStaff: { name: 'report_ai_xlsx_import_staff', limit: 30, windowMs: HOUR_MS },
   geminiKeySaveStaff: { name: 'gemini_key_save_staff', limit: 20, windowMs: HOUR_MS },
   customerCsvImportStaff: { name: 'customer_csv_import_staff', limit: 30, windowMs: HOUR_MS },
 };

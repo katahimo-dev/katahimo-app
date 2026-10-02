@@ -29,6 +29,13 @@
       "when": 1790930022247,
       "tag": "0003_lock_attendance_period_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790942356552,
+      "tag": "0004_defense_in_depth",
+      "breakpoints": true
     }
   ]
 }

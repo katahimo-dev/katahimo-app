@@ -1,3 +1,4 @@
+import { RECEIPT_STORE_NAME_MAX_LENGTH } from '@katahimo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiRequestError } from '../../../api/client';
@@ -97,7 +98,10 @@ export function useReceipts(storageScope: UserStorageScope) {
         patchImage(id, (img) => ({
           loading: false,
           amount: result.amount ? String(result.amount) : img.amount,
-          storeName: result.storeName || img.storeName,
+          // 読み取った店名が長すぎるときは欄の上限で切る(登録で断られないように)
+          storeName: result.storeName
+            ? result.storeName.slice(0, RECEIPT_STORE_NAME_MAX_LENGTH)
+            : img.storeName,
           // 読み取れた日時、読めなければ今の日時
           receiptDate: toDatetimeLocal(result.receiptDate) || nowDatetimeLocal(),
         }));

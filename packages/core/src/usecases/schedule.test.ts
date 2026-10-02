@@ -79,7 +79,12 @@ describe('予定の閲覧', () => {
   it('success:false は WARN、存在しないスタッフは WARN と失敗の結果', async () => {
     ctx.schedule.setFailure('山田 太郎', date, 'カレンダーが見つかりません');
     expect((await getScheduleForStaff(ctx.deps, request(staffId, staffId))).success).toBe(false);
-    expect(ctx.appLog.entries.at(-1)).toMatchObject({ level: 'WARN', action: 'schedule.view.failed' });
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({
+      level: 'WARN',
+      action: 'schedule.view.failed',
+      details: { reason: 'schedule_unavailable' },
+    });
+    expect(JSON.stringify(ctx.appLog.entries.at(-1))).not.toContain('カレンダーが見つかりません');
     const missing = await getScheduleForStaff(
       ctx.deps,
       request(staffId, '00000000-0000-7000-8000-00000000ffff'),
@@ -87,18 +92,19 @@ describe('予定の閲覧', () => {
     expect(missing).toMatchObject({ success: false, message: 'スタッフが見つかりません' });
   });
 
-  it('外部サービスの例外は詳細をログにだけ残し、一般的な文言の upstream_unavailable にする', async () => {
+  it('外部サービスの例外は操作ログに種類だけ、文は cause(API の要求のログ)にだけ残し、一般的な文言の upstream_unavailable にする', async () => {
     ctx.schedule.setError('山田 太郎', date, 'Maps API quota exceeded (key=xyz)');
-    await expect(
-      getScheduleWithRouteForStaff(ctx.deps, { ...request(staffId, staffId), forceRefresh: false }),
-    ).rejects.toMatchObject({
-      code: 'upstream_unavailable',
-      message: UPSTREAM_FAILURE_MESSAGE,
-    });
+    const error = await getScheduleWithRouteForStaff(ctx.deps, {
+      ...request(staffId, staffId),
+      forceRefresh: false,
+    }).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'upstream_unavailable', message: UPSTREAM_FAILURE_MESSAGE });
+    expect((error as Error).cause).toMatchObject({ message: 'Maps API quota exceeded (key=xyz)' });
     expect(ctx.appLog.entries.at(-1)).toMatchObject({
       level: 'ERROR',
       action: 'schedule.route.error',
-      details: { message: 'Maps API quota exceeded (key=xyz)' },
+      details: { errorClass: 'Error' },
     });
+    expect(JSON.stringify(ctx.appLog.entries.at(-1))).not.toContain('key=xyz');
   });
 });

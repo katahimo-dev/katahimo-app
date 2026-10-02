@@ -110,6 +110,26 @@ describe('設定の「通知」', () => {
     expect(showToast).toHaveBeenCalledWith(PUSH_ENABLED_MESSAGE);
   });
 
+  it('サーバーが 409(別のスタッフの購読として鍵の違う登録が残っている)なら、端末の購読を作り直して1回だけ登録し直す', async () => {
+    vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn(async () => 'granted') });
+    const stale = deviceSubscription('https://fcm.googleapis.com/fcm/send/stale');
+    const fresh = deviceSubscription('https://fcm.googleapis.com/fcm/send/fresh');
+    vi.mocked(subscribeDevice).mockResolvedValueOnce(stale).mockResolvedValueOnce(fresh);
+    vi.mocked(pushApi.subscribe)
+      .mockRejectedValueOnce(new ApiRequestError(409, { code: 'conflict', message: '別のスタッフ' }))
+      .mockResolvedValueOnce({ ok: true });
+    renderSection();
+    const sw = await toggle();
+    fireEvent.click(sw);
+    await waitFor(() => expect((sw as HTMLInputElement).checked).toBe(true));
+    expect(stale.unsubscribe).toHaveBeenCalled();
+    expect(pushApi.subscribe).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(pushApi.subscribe).mock.calls[1]?.[0]).toMatchObject({
+      endpoint: 'https://fcm.googleapis.com/fcm/send/fresh',
+    });
+    expect(localStorage.getItem(storageKey)).toBe('https://fcm.googleapis.com/fcm/send/fresh');
+  });
+
   it('許可を拒否したら購読せず、設定で許可し直す案内を出す', async () => {
     let environment: PushEnvironment = { ...supported, permission: 'default' };
     vi.mocked(readPushEnvironment).mockImplementation(() => environment);

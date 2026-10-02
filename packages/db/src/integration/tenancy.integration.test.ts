@@ -546,6 +546,42 @@ describe('活動記録', () => {
     expect(await sqlState(remove)).toBe('23503');
   });
 
+  it('本文の履歴はトリガーだけが書き(アプリは直接書けない)、提出した記録は下書きに戻せない(KH004)', async () => {
+    const a = await createTenant();
+    const { recordId, staffId } = await uow.run(a, async (r) => {
+      const staffId = await createStaff(r);
+      return { staffId, recordId: await insertRecord(r, staffId, await createCustomer(r), 'submitted') };
+    });
+    const forged = withTenant(app, a, (tx) =>
+      tx.execute(
+        sql`insert into care_record_revisions (tenant_id, id, care_record_id, revision_no, body, body_schema_ver)
+            values (${a}, ${newId()}, ${recordId}, 99, '{}'::jsonb, 1)`,
+      ),
+    );
+    expect(await sqlState(forged)).toBe('42501');
+    expect(
+      await sqlState(
+        withTenant(app, a, (tx) =>
+          tx.execute(sql`update care_records set status = 'draft' where id = ${recordId}`),
+        ),
+      ),
+    ).toBe('KH004');
+    await expect(
+      uow.run(a, (r) => r.careRecords.update(recordId, { status: 'draft' })),
+    ).rejects.toMatchObject({
+      code: 'conflict',
+      reason: 'record_not_draft',
+    });
+    // トリガー(所有者の権限)は今までどおり履歴を書き、変更者はセッションの app.actor_id
+    await uow.run(a, (r) => r.careRecords.update(recordId, { body: reportBody('v2') }), { actorId: staffId });
+    const revisions = (await withTenant(app, a, (tx) =>
+      tx.execute(
+        sql`select revision_no, changed_by from care_record_revisions where care_record_id = ${recordId}`,
+      ),
+    )) as unknown as { revision_no: number; changed_by: string }[];
+    expect(revisions.map((v) => [v.revision_no, v.changed_by])).toEqual([[1, staffId]]);
+  });
+
   it('同じ記録日時が並んでもキーセットで重複・抜け無く読める', async () => {
     const a = await createTenant();
     const customerId = await uow.run(a, async (r) => {

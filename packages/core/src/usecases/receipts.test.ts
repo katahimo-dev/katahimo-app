@@ -222,4 +222,11 @@ describe('parseAmountYen', () => {
     expect(parseAmountYen('abc')).toBeNull();
     expect(parseAmountYen('')).toBeNull();
   });
+
+  it('1,000万円を超える値は null(DB の integer に収め、500 にしない)', () => {
+    expect(parseAmountYen('10,000,000')).toBe(10_000_000);
+    expect(parseAmountYen('10000001')).toBeNull();
+    expect(parseAmountYen(99999999999)).toBeNull();
+    expect(parseAmountYen(-1)).toBeNull();
+  });
 });

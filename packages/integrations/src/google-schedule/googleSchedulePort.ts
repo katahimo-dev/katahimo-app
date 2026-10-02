@@ -3,6 +3,7 @@ import type { Appointment, CalendarEvent, CalendarEventSource } from '@katahimo/
 import {
   appointmentsForStaff,
   classifyCalendarEvents,
+  errorLogDetails,
   isValidBusinessDate,
   jstDayRange,
   planRouteLegs,
@@ -169,7 +170,7 @@ export class GoogleSchedulePort implements SchedulePort {
         try {
           return { source, list: await this.listEvents(query, source.calendarId, mode) };
         } catch (e) {
-          return { source, error: e instanceof Error ? e.message : String(e) };
+          return { source, error: e };
         }
       }),
     );
@@ -181,8 +182,18 @@ export class GoogleSchedulePort implements SchedulePort {
         events.push({ ownerName: source.ownerName ?? list.calendarName, events: list.events });
         continue;
       }
-      if (mode === 'strict') throw new Error(`カレンダーを読み込めませんでした: ${error}`);
+      const message = error instanceof Error ? error.message : String(error);
+      if (mode === 'strict') throw new Error(`カレンダーを読み込めませんでした: ${message}`);
       partial = true;
+      // 文はプロセスのログにだけ(Cloud Logging)。操作ログには例外の種類・理由コードだけを残す
+      console.warn(
+        JSON.stringify({
+          severity: 'WARNING',
+          message: 'カレンダーを読めないため飛ばしました',
+          tenantId: query.tenantId,
+          error: message,
+        }),
+      );
       await this.deps.appLog.write({
         tenantId: query.tenantId,
         level: 'WARN',
@@ -191,7 +202,7 @@ export class GoogleSchedulePort implements SchedulePort {
         details: {
           date: query.date,
           calendarId: source.staffId ? undefined : source.calendarId,
-          message: error,
+          ...errorLogDetails(error),
         },
       });
     }

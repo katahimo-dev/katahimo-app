@@ -1,4 +1,4 @@
-import { newId } from '@katahimo/core/domain';
+import { errorMessageOf, newId } from '@katahimo/core/domain';
 import type { AppLogEntry, AppLogPort } from '@katahimo/core/ports';
 import { sql } from 'drizzle-orm';
 import type { Database } from '../../client';
@@ -41,7 +41,7 @@ export class DrizzleAppLogRepository implements AppLogPort {
           severity: 'ERROR',
           message: 'app_logs への記録に失敗しました',
           action: entry.action,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessageOf(error),
         }),
       );
     }

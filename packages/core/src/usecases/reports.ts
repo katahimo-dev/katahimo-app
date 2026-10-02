@@ -6,6 +6,7 @@ import {
   buildDailyReportNotificationText,
   buildPsiAlertChatText,
   buildPsiAlertNotice,
+  buildVisitCompleteNotificationText,
   CARE_RECORD_BODY_SCHEMA_VERSION,
   canActForOthers,
   conflict,
@@ -589,9 +590,24 @@ export async function sendVisitCompleteNotification(
     return staff && customer ? { staff: staff.displayName, customer: customer.displayName } : null;
   });
   if (!names) throw notFound('顧客またはスタッフが見つかりません');
-  const dateStr = input.visitDate.replaceAll('-', '/');
-  const message = `【訪問完了】\n担当: ${names.staff}\n顧客名: ${names.customer}\n訪問日時: ${dateStr} ${input.startTime}〜${input.endTime}`;
+  const message = buildVisitCompleteNotificationText({
+    staffName: names.staff,
+    customerName: names.customer,
+    visitDate: input.visitDate,
+    startTime: input.startTime,
+    endTime: input.endTime,
+  });
   await notifyWithLog(deps, actor.tenantId, 'report', message, actor.staffId);
+  // 書き込みは無いが外部(Google Chat)へ送る操作なので残す(ID と日付だけ)
+  await deps.appLog.write({
+    tenantId: actor.tenantId,
+    level: 'INFO',
+    action: 'report.visit_complete.notified',
+    actorStaffId: actor.staffId,
+    targetStaffId: staffId !== actor.staffId ? staffId : null,
+    details: { customerId: input.customerId, visitDate: input.visitDate },
+    ...actor.meta,
+  });
 }
 
 export interface HistoryItem {

@@ -45,4 +45,24 @@ describe('記録の日付(日報の訪問日・領収書の日時)', () => {
     expect(upload({ reportDate: '2026-09-05' }).success).toBe(true);
     expect(upload({ reportDate: '2201-09-05' }).success).toBe(false);
   });
+
+  it('領収書の金額は1,000万円まで・入力は20文字まで、店名は200文字・事務局へのひとことは2000文字まで', () => {
+    const image = (extra: Record<string, unknown>) =>
+      uploadReceiptsRequestSchema.safeParse({ images: [{ data: 'data:image/jpeg;base64,AAAA', ...extra }] });
+    expect(image({ amount: '10,000,000円' }).success).toBe(true);
+    expect(image({ amount: 10_000_001 }).success).toBe(false);
+    expect(image({ amount: '99999999999' }).success).toBe(false);
+    expect(image({ amount: '1'.repeat(21) }).success).toBe(false);
+    // 読めない金額は断らない(金額なしで登録する。GAS版と同じ)
+    expect(image({ amount: 'abc' }).success).toBe(true);
+    expect(image({ storeName: 'あ'.repeat(200) }).success).toBe(true);
+    expect(image({ storeName: 'あ'.repeat(201) }).success).toBe(false);
+    const upload = (handoffText: string) =>
+      uploadReceiptsRequestSchema.safeParse({
+        images: [{ data: 'data:image/jpeg;base64,AAAA' }],
+        handoffText,
+      });
+    expect(upload('あ'.repeat(2000)).success).toBe(true);
+    expect(upload('あ'.repeat(2001)).success).toBe(false);
+  });
 });
