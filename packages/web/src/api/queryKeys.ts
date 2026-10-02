@@ -8,6 +8,7 @@
  *   読み直す(一覧を開いたままでも送ったばかりの領収書が出るように)。
  * - `reports`: 日報・事故報告の一覧・中身(管理タブの「📋 報告一覧」)。日報・事故報告を保存したら `queryKeys.reports.all`
  *   以下を読み直す(一度開いたタブは隠れたまま残るため、読み直さないと保存したばかりの報告が出ない)。
+ * - `demoConfig`: 公開デモの表示の設定(GET /api/demo/config。ログイン画面とログイン後の画面で共有する)。
  * - 各機能の中だけで使うキーは、その機能のフォルダで `[機能名, ...]` の形で定義してよい。
  */
 export const queryKeys = {
@@ -16,6 +17,7 @@ export const queryKeys = {
   /** 顧客データの版数(customers の下に置かない。読み直しの対象にならないように) */
   dataVersion: ['system', 'data-version'] as const,
   activeStaff: ['staff', 'active'] as const,
+  demoConfig: ['demo', 'config'] as const,
   customers: {
     all: ['customers'] as const,
   },

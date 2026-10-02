@@ -11,6 +11,7 @@ export const TEST_USER: SessionUser = {
   name: '管理者 太郎',
   email: 'admin@example.com',
   role: 'admin',
+  demoTenant: false,
 };
 
 export function createTestQueryClient() {

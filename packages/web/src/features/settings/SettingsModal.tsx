@@ -1,5 +1,4 @@
 import { isAdminRole } from '@katahimo/shared';
-import { isDemoMode } from '../../lib/demo';
 import { confirmNative } from '../../ui/confirm';
 import { FadeModal, ModalHeader } from '../../ui/modal';
 import { showToast } from '../../ui/toast';
@@ -47,7 +46,7 @@ export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsM
           <NotificationSettingsSection open={open} />
 
           {/* 公開デモではパスワードを変えられない(API が断る。共有のアカウントのため) */}
-          {isDemoMode() ? null : (
+          {user.demoTenant ? null : (
             <div className="border-t pt-4">
               <button
                 type="button"

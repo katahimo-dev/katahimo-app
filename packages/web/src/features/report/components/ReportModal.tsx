@@ -1,4 +1,6 @@
+import { DEMO_NO_REAL_PERSON } from '../../../lib/demo';
 import { Modal } from '../../../ui/modal';
+import { useSession } from '../../auth';
 import { useReportController } from '../hooks/useReportController';
 import { useVoiceInput } from '../hooks/useVoiceInput';
 import {
@@ -46,6 +48,9 @@ export function ReportModal({
   const standalone = session?.kind === 'standalone';
   const isDaily = f.mode === 'daily';
   const placeholder = (isDaily ? c.uiConfig?.dailyPlaceholder : c.uiConfig?.accidentPlaceholder) ?? '';
+  // 公開デモ: メモは AI(Google Gemini)に送り、保存もされるので、欄の下に注意を出す(いつもの案内文は placeholder のまま)
+  const { user } = useSession();
+  const memoNotice = user.demoTenant ? DEMO_NO_REAL_PERSON : null;
 
   return (
     <>
@@ -119,6 +124,7 @@ export function ReportModal({
                 mode={f.mode}
                 memo={f.memo}
                 placeholder={placeholder}
+                inputNotice={memoNotice}
                 accidentType={f.accidentType}
                 listening={voice.listening}
                 warnings={f.warnings}

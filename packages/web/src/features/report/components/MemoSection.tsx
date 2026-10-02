@@ -7,6 +7,8 @@ interface MemoSectionProps {
   mode: ReportMode;
   memo: string;
   placeholder: string;
+  /** 欄のすぐ下に出す注意(公開デモの「実在の人物の名前・連絡先は入力しないでください」)。null なら出さない */
+  inputNotice?: string | null;
   accidentType: AccidentType;
   listening: boolean;
   warnings: string | null;
@@ -33,6 +35,7 @@ export function MemoSection({
   mode,
   memo,
   placeholder,
+  inputNotice = null,
   accidentType,
   listening,
   warnings,
@@ -106,9 +109,15 @@ export function MemoSection({
         rows={6}
         value={memo}
         placeholder={placeholder}
+        aria-describedby={inputNotice ? 'reportInputNotice' : undefined}
         onChange={(e) => onMemoChange(e.target.value)}
         className="w-full p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 transition-all resize-none text-base"
       />
+      {inputNotice ? (
+        <p id="reportInputNotice" className="mt-1 text-sm font-bold text-amber-800">
+          ⚠️ {inputNotice}
+        </p>
+      ) : null}
 
       <div
         id="warningsArea"

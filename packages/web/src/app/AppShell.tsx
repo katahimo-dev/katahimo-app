@@ -1,11 +1,10 @@
 import { canActForOthers } from '@katahimo/shared';
 import { lazy, type ReactNode, Suspense, useEffect, useState } from 'react';
-import { ChangePasswordModal, useSession } from '../features/auth';
+import { ChangePasswordModal, DemoBanner, useSession } from '../features/auth';
 import { CustomerSearchProvider, CustomersTab } from '../features/customers';
 import { ReportModalProvider } from '../features/report';
 import { ScheduleTab, useScheduleLinkNavigation } from '../features/schedule';
 import { SettingsModal } from '../features/settings';
-import { DEMO_NOTICE, isDemoMode } from '../lib/demo';
 import { runWhenIdle } from '../lib/idle';
 import { SectionErrorBoundary } from '../ui/ErrorBoundary';
 import { AdminTargetStaffProvider } from './adminTargetStaff';
@@ -53,11 +52,8 @@ function ShellLayout() {
 
   return (
     <div className="min-h-screen flex flex-col relative bg-white shadow-xl overflow-hidden">
-      {isDemoMode() ? (
-        <p className="bg-amber-100 text-amber-900 text-xs text-center px-3 py-1" role="note">
-          {DEMO_NOTICE}
-        </p>
-      ) : null}
+      {/* 公開デモのテナントでは「デモ環境」の帯を出す(押すとログイン直後の注釈を開き直す) */}
+      {user.demoTenant ? <DemoBanner /> : null}
       <Header userName={user.name} onOpenSettings={() => setSettingsOpen(true)} />
 
       <main className="flex-grow p-4 overflow-y-auto pb-24">
