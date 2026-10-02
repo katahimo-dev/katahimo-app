@@ -121,7 +121,9 @@ src/
   (`features/auth/demo/useDemoConfig.ts`、キー `queryKeys.demoConfig`。失敗はデモではない扱い)で注意書き・デモ用アカウント・既定の法人IDを
   出し分け、ログイン後はセッションの `user.demoTenant` で注釈(`DemoTermsProvider`。ログインの画面からログインした直後だけ出す)・
   「デモ環境」の帯(`DemoBanner`。押すと注釈を開き直す)・メモ欄の注意を出し、API が断る操作(パスワード変更・顧客CSVの取込)のボタンを隠す。
-  文言は `lib/demo.ts` にまとめ、保存の日数・月数・AI の回数は API の値を入れる。
+  文言は `lib/demo.ts` にまとめ、保存の日数・月数・AI の回数は API の値を入れる(日数・月数が null = 本番の環境に暫定で置いたデモ用テナント・
+  設定を読めなかったときは期間を書かず、日数が無ければ「毎晩作り直します」とも書かない)。ログイン画面の注意書きと「パスワードを忘れたとき」を
+  隠すのは、入る法人IDがデモ用テナントのときだけ。ログイン直後の注釈には「同意しない（ログアウト）」(`useSession().logout`)を置く。
 - **Service Worker**: vite-plugin-pwa の generateSW が作る `sw.js`(事前キャッシュ・新しい版のお知らせ)が、`workbox.importScripts` で
   `public/push-sw.js`(通知の表示と通知を押したときの処理)を読む。テストは `src/test/pushServiceWorker.test.ts`(`node:vm` で動かす)。
 

@@ -249,16 +249,29 @@ describe('公開デモ: 表示の設定(GET /api/demo/config)とログイン中�
     return createApp({ env: variant, container: createContainer(variant, appDb) });
   };
 
-  it('ログインなしで読める。本番の環境に置くデモ(DEMO_PUBLIC_LOGIN なし)ではデモ用アカウント・パスワードを返さない', async () => {
+  it('ログインなしで読める。本番の環境に置くデモ(DEMO_PUBLIC_LOGIN なし)ではデモ用アカウント・パスワードを返さず、保存期間は明示したときだけ返す', async () => {
     expect(await configOf(app)).toEqual({
       enabled: true,
       tenantSlug: demoSlug,
       publicLogin: false,
       accounts: [],
       password: null,
+      dataRetentionDays: null,
+      logRetentionMonths: null,
+      aiUsesPerSession: DEMO_AI_USES_PER_SESSION,
+    });
+    expect(await configOf(appWith({ DEMO_LOG_RETENTION_MONTHS: '13' }))).toMatchObject({
+      publicLogin: false,
+      dataRetentionDays: null,
+      logRetentionMonths: 13,
+    });
+  });
+
+  it('デモ専用の環境で保存期間が未設定なら 30日・3か月', async () => {
+    expect(await configOf(appWith({ DEMO_PUBLIC_LOGIN: 'true' }))).toMatchObject({
+      publicLogin: true,
       dataRetentionDays: 30,
       logRetentionMonths: 3,
-      aiUsesPerSession: DEMO_AI_USES_PER_SESSION,
     });
   });
 

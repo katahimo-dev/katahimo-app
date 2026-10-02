@@ -53,13 +53,11 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
   const tenantSlug = resolvedSlug ?? login.tenantSlug.trim();
 
   // 公開デモ: ログインの前に、入力した内容・接続情報を保存することを知らせる(ログインでも IPアドレス等を記録するため)。
-  // デモ専用の環境ならいつも、本番の環境に置いたデモ用テナントならその法人IDが入っているときだけ出す。
+  // 入る法人ID(既定・?t=・最後にログインした法人ID・入力)がデモ用テナントのときだけ出す(デモ専用の環境でも、
+  // ほかの法人に入るときは出さない。「パスワードを忘れたとき」もデモ用テナントのときだけ隠す)。
   const demoSlug = demo.enabled ? normalizeTenantSlug(demo.tenantSlug) : null;
   const demoSlugEntered = demoSlug !== null && normalizeTenantSlug(tenantSlug) === demoSlug;
-  const demoNotice =
-    demo.enabled && (demo.publicLogin || demoSlugEntered)
-      ? demoLoginNoticeLines(demoTermsValuesOf(demo))
-      : null;
+  const demoNotice = demo.enabled && demoSlugEntered ? demoLoginNoticeLines(demoTermsValuesOf(demo)) : null;
   // デモ用アカウントはデモ専用の環境で、デモ用テナントに入るときだけ出す(ほかの法人IDでは使えないため)
   const demoAccounts =
     demo.enabled && demo.publicLogin && demoSlugEntered && demo.password !== null && demo.accounts.length > 0
@@ -178,6 +176,7 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
       passwordVisibility={passwordVisibility}
       onSubmit={doLogin}
       onForgotPassword={() => setStep('resetRequest')}
+      hideForgotPassword={demoSlugEntered}
       demoNotice={demoNotice}
       demoAccounts={demoAccounts}
     />

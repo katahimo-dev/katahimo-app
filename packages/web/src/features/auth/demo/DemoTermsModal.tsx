@@ -1,15 +1,19 @@
+import { useState } from 'react';
 import {
   DEMO_TERMS_AGREE,
   DEMO_TERMS_CLOSE,
+  DEMO_TERMS_DECLINE,
   DEMO_TERMS_TITLE,
   type DemoTermsValues,
   demoTermsSections,
 } from '../../../lib/demo';
 import { Modal, ModalFooter } from '../../../ui/modal';
+import { useSession } from '../session';
 
 /**
  * 公開デモの注釈(共有のアカウント・保存すること・できない操作・AI・お願い)。
- * ログインした直後は「同意して始める」だけで閉じる(Escape・× では閉じない)。画面上の帯から開き直したときは「閉じる」。
+ * ログインした直後は「同意して始める」だけで閉じる(Escape・× では閉じない)。同意しない人は「同意しない（ログアウト）」で
+ * ログアウトできる(設定のログアウトと同じ `useSession().logout`)。画面上の帯から開き直したときは「閉じる」だけ。
  */
 export function DemoTermsModal({
   open,
@@ -23,6 +27,13 @@ export function DemoTermsModal({
   values: DemoTermsValues | null;
   onClose: () => void;
 }) {
+  const { logout } = useSession();
+  const [loggingOut, setLoggingOut] = useState(false);
+  const decline = () => {
+    setLoggingOut(true);
+    // ログアウトは画面を読み込み直す(失敗してもサーバーに届かなかっただけで画面上はログアウトする)
+    void logout();
+  };
   return (
     <Modal
       open={open}
@@ -55,13 +66,26 @@ export function DemoTermsModal({
           ))}
         </div>
         <ModalFooter>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-full min-h-12 px-4 py-3 bg-blue-600 text-white text-base font-bold rounded-xl"
-          >
-            {afterLogin ? DEMO_TERMS_AGREE : DEMO_TERMS_CLOSE}
-          </button>
+          <div className="w-full space-y-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={loggingOut}
+              className="w-full min-h-12 px-4 py-3 bg-blue-600 text-white text-base font-bold rounded-xl"
+            >
+              {afterLogin ? DEMO_TERMS_AGREE : DEMO_TERMS_CLOSE}
+            </button>
+            {afterLogin ? (
+              <button
+                type="button"
+                onClick={decline}
+                disabled={loggingOut}
+                className="w-full min-h-11 px-4 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl"
+              >
+                {DEMO_TERMS_DECLINE}
+              </button>
+            ) : null}
+          </div>
         </ModalFooter>
       </div>
     </Modal>

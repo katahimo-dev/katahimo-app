@@ -14,7 +14,7 @@ import {
 import { sql } from 'drizzle-orm';
 import type { Container } from '../container';
 import { createContainer } from '../container';
-import { loadEnv } from '../env';
+import { demoResetRetentionDays, loadEnv } from '../env';
 import { cliArgs } from './cliArgs';
 import { type DemoSeedSummary, seedDemoTenant } from './demo/seedDemoTenant';
 
@@ -29,7 +29,7 @@ const TENANT_SLUG_MAX_LENGTH = 63;
 export const DEMO_RESET_SLUG_MAX_LENGTH = TENANT_SLUG_MAX_LENGTH - '-YYYYMMDD'.length - '-999'.length;
 
 export interface DemoResetOptions {
-  /** 残した過去のデモ用テナントを消すまでの日数(DEMO_DATA_RETENTION_DAYS)。 */
+  /** 残した過去のデモ用テナントを消すまでの日数(DEMO_DATA_RETENTION_DAYS。未設定なら 30)。 */
   dataRetentionDays: number;
 }
 
@@ -432,7 +432,8 @@ async function main() {
   try {
     const container = createContainer(env, appDb);
     const result = await resetDemoTenant(ownerDb, container, slug, {
-      dataRetentionDays: env.DEMO_DATA_RETENTION_DAYS,
+      // 未設定なら 30 日(API の案内は本番の環境では期間を出さないが、作り直しのジョブは必ず期限で消す)
+      dataRetentionDays: demoResetRetentionDays(env),
     });
     printSummary(result);
   } finally {

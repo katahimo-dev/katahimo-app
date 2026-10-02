@@ -30,10 +30,18 @@ export const demoConfigResponseSchema = z.discriminatedUnion('enabled', [
     accounts: z.array(demoAccountViewSchema),
     /** デモ用アカウントの共通のパスワード(publicLogin が false なら null)。 */
     password: z.string().nullable(),
-    /** 訪問者の入力を保存する日数(`DEMO_DATA_RETENTION_DAYS`。作り直しのジョブが前日分を日付付きのテナントで残す期間)。 */
-    dataRetentionDays: z.number().int().positive(),
-    /** 操作ログ・接続情報(IPアドレス等)を保存する月数(`DEMO_LOG_RETENTION_MONTHS`)。 */
-    logRetentionMonths: z.number().int().positive(),
+    /**
+     * 訪問者の入力を保存する日数(`DEMO_DATA_RETENTION_DAYS`。作り直しのジョブが前日分を日付付きのテナントで残す期間)。
+     * null = 期間を約束しない(本番の環境に暫定でデモ用テナントを置き、毎晩の作り直しも無いとき。画面は「毎晩作り直す」
+     * 「◯日間」と言わず、保存することだけを伝える)。デモ専用の環境(publicLogin)では未設定でも 30。
+     */
+    dataRetentionDays: z.number().int().positive().nullable(),
+    /**
+     * 操作ログ・接続情報(IPアドレス等)を保存する月数(`DEMO_LOG_RETENTION_MONTHS`)。
+     * null = 期間を約束しない(本番の操作ログは本番の保存期間に従うため、明示して設定したときだけ出す)。
+     * デモ専用の環境(publicLogin)では未設定でも 3。
+     */
+    logRetentionMonths: z.number().int().positive().nullable(),
     /** 1回のログインで使える AI の回数。 */
     aiUsesPerSession: z.number().int().positive(),
   }),

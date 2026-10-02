@@ -80,16 +80,19 @@ const envSchema = z.object({
   // 本番の環境に暫定でデモ用テナントを置くときは false のまま(本番の利用者に出さない)。DEMO_TENANT_SLUG が必要。
   DEMO_PUBLIC_LOGIN: booleanFlag,
   // 訪問者の入力を残す日数(demo:reset が日付付きの slug で残した過去のデモ用テナントを、この日数を過ぎたら消す)。
-  // ログイン画面の案内にも出す。API と demo:reset のジョブで同じ値にする。
+  // ログイン画面の案内にも出す。API と demo:reset のジョブで同じ値にする。未設定ならデモ専用の環境(DEMO_PUBLIC_LOGIN=true)は
+  // 30、それ以外(本番の環境に暫定でデモ用テナントを置く。作り直しのジョブが無い)は null(画面は期間を約束しない)。
+  // demo:reset は未設定なら 30 で消す(demoResetRetentionDays)。
   DEMO_DATA_RETENTION_DAYS: z.preprocess(
     emptyToUndefined,
-    z.coerce.number().int().min(1).max(3650).default(30),
+    z.coerce.number().int().min(1).max(3650).optional(),
   ),
   // 操作ログ・接続情報(IPアドレス等)を残す月数の案内(ログイン画面に出す値)。実際に消すのはワーカーの保守ジョブ
-  // (APP_LOG_RETENTION_MONTHS)なので、デモの環境では同じ値にする。
+  // (APP_LOG_RETENTION_MONTHS)なので同じ値にする。未設定ならデモ専用の環境は 3、それ以外は null(本番の操作ログは
+  // 本番の保存期間に従うため、明示して設定したときだけ出す)。
   DEMO_LOG_RETENTION_MONTHS: z.preprocess(
     emptyToUndefined,
-    z.coerce.number().int().min(1).max(120).default(3),
+    z.coerce.number().int().min(1).max(120).optional(),
   ),
 
   // X-Forwarded-For の右から何番目を送信元IPとみなすか(信頼できるプロキシの段数)。Cloud Run 直は1、
@@ -107,14 +110,44 @@ const envSchema = z.object({
   RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR: optionalPositiveInt,
 });
 
-export type Env = z.infer<typeof envSchema>;
+/** デモ専用の環境(DEMO_PUBLIC_LOGIN=true)で DEMO_DATA_RETENTION_DAYS が未設定のときの日数(demo:reset も同じ)。 */
+export const DEFAULT_DEMO_DATA_RETENTION_DAYS = 30;
+/** デモ専用の環境で DEMO_LOG_RETENTION_MONTHS が未設定のときの月数(デモのワーカーの APP_LOG_RETENTION_MONTHS と揃える)。 */
+export const DEFAULT_DEMO_LOG_RETENTION_MONTHS = 3;
+
+type ParsedEnv = z.infer<typeof envSchema>;
+
+/**
+ * 公開デモの保存期間の案内(GET /api/demo/config)は、デモ専用の環境なら未設定でも既定値、それ以外は明示したときだけ
+ * (本番の環境に暫定でデモ用テナントを置くときに、守っていない期間を約束しない)。null = 期間を約束しない。
+ */
+export type Env = Omit<ParsedEnv, 'DEMO_DATA_RETENTION_DAYS' | 'DEMO_LOG_RETENTION_MONTHS'> & {
+  DEMO_DATA_RETENTION_DAYS: number | null;
+  DEMO_LOG_RETENTION_MONTHS: number | null;
+};
+
+function withDemoRetentionDefaults(env: ParsedEnv): Env {
+  const publicDemo = env.DEMO_PUBLIC_LOGIN;
+  return {
+    ...env,
+    DEMO_DATA_RETENTION_DAYS:
+      env.DEMO_DATA_RETENTION_DAYS ?? (publicDemo ? DEFAULT_DEMO_DATA_RETENTION_DAYS : null),
+    DEMO_LOG_RETENTION_MONTHS:
+      env.DEMO_LOG_RETENTION_MONTHS ?? (publicDemo ? DEFAULT_DEMO_LOG_RETENTION_MONTHS : null),
+  };
+}
+
+/** demo:reset が過去のデモ用テナントを消すまでの日数(未設定なら DEFAULT_DEMO_DATA_RETENTION_DAYS)。 */
+export function demoResetRetentionDays(env: Pick<Env, 'DEMO_DATA_RETENTION_DAYS'>): number {
+  return env.DEMO_DATA_RETENTION_DAYS ?? DEFAULT_DEMO_DATA_RETENTION_DAYS;
+}
 
 /** X-Forwarded-For の信頼する段数(未指定なら本番1・それ以外0)。 */
 export function trustedProxyHops(env: Pick<Env, 'NODE_ENV' | 'TRUSTED_PROXY_HOPS'>): number {
   return env.TRUSTED_PROXY_HOPS ?? (env.NODE_ENV === 'production' ? 1 : 0);
 }
 
-function checkCombinations(env: Env): string[] {
+function checkCombinations(env: ParsedEnv): string[] {
   const problems = [...sharedEnvProblems(env), ...secretBoxEnvProblems(env, env.NODE_ENV === 'production')];
   if (
     env.NODE_ENV === 'production' &&
@@ -136,5 +169,5 @@ function checkCombinations(env: Env): string[] {
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  return parseEnvOrThrow(envSchema, source, checkCombinations);
+  return withDemoRetentionDefaults(parseEnvOrThrow(envSchema, source, checkCombinations));
 }

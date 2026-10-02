@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadEnv } from './env';
+import { demoResetRetentionDays, loadEnv } from './env';
 
 const hex = (ch: string) => ch.repeat(64);
 
@@ -77,11 +77,22 @@ describe('loadEnv', () => {
   });
 
   it('公開デモの設定: 既定値、DEMO_PUBLIC_LOGIN は DEMO_TENANT_SLUG が無いと起動できない、日数・月数の範囲', () => {
+    // デモ専用の環境でなければ、保存期間は明示したときだけ(本番の環境に置いたデモ用テナントで期間を約束しない)
     expect(loadEnv(development)).toMatchObject({
       DEMO_PUBLIC_LOGIN: false,
-      DEMO_DATA_RETENTION_DAYS: 30,
-      DEMO_LOG_RETENTION_MONTHS: 3,
+      DEMO_DATA_RETENTION_DAYS: null,
+      DEMO_LOG_RETENTION_MONTHS: null,
     });
+    expect(
+      loadEnv({ ...development, DEMO_TENANT_SLUG: 'public-demo', DEMO_LOG_RETENTION_MONTHS: '13' }),
+    ).toMatchObject({ DEMO_DATA_RETENTION_DAYS: null, DEMO_LOG_RETENTION_MONTHS: 13 });
+    // デモ専用の環境では未設定でも 30日・3か月
+    expect(
+      loadEnv({ ...development, DEMO_TENANT_SLUG: 'public-demo', DEMO_PUBLIC_LOGIN: 'true' }),
+    ).toMatchObject({ DEMO_DATA_RETENTION_DAYS: 30, DEMO_LOG_RETENTION_MONTHS: 3 });
+    // demo:reset は未設定でも 30日で消す
+    expect(demoResetRetentionDays(loadEnv(development))).toBe(30);
+    expect(demoResetRetentionDays(loadEnv({ ...development, DEMO_DATA_RETENTION_DAYS: '7' }))).toBe(7);
     expect(() => loadEnv({ ...development, DEMO_PUBLIC_LOGIN: 'true' })).toThrow(/DEMO_PUBLIC_LOGIN/);
     expect(
       loadEnv({

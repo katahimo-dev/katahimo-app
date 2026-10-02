@@ -315,4 +315,46 @@ describe('resetDemoTenant(実DB)', () => {
       failures: [],
     });
   });
+
+  it('期限切れのデモの画像を消せなければ、そのテナントは停止のまま残して purgeFailures に出し、作り直しは終える', async () => {
+    const failSlug = `demo-fail-it-${randomBytes(4).toString('hex')}`;
+    const now = new Date();
+    const old = addDays(zonedBusinessDate(now, 'Asia/Tokyo'), -31).replaceAll('-', '');
+    const expiredSlug = `${failSlug}-${old}`;
+    const expired = await makeTenant(expiredSlug, DEMO_TENANT_NAME, 'suspended');
+    const storageKey = `receipts/${expired.id}/purge-fail-it.jpg`;
+    await container.storage.put(storageKey, 'image/jpeg', new Uint8Array([1]));
+    await container.uow.run(expired.id, (r) =>
+      r.storedFiles.insert({
+        id: newId(),
+        storageKey,
+        contentType: 'image/jpeg',
+        byteSize: 1,
+        sha256: new Uint8Array(32),
+        purpose: 'receipt_image',
+        createdBy: null,
+      }),
+    );
+    const deleteSpy = vi
+      .spyOn(container.storage, 'delete')
+      .mockRejectedValue(new Error('storage unavailable'));
+    try {
+      const result = await resetDemoTenant(ownerDb, container, failSlug, RETENTION, now);
+      createdTenantIds.add(result.tenantId);
+      expect(deleteSpy).toHaveBeenCalledWith(storageKey);
+      expect(result.purged).toEqual([]);
+      expect(result.purgeFailures).toEqual([{ slug: expiredSlug, error: expect.any(String) }]);
+      // 消せなかったテナントは停止のまま残る(次回の作り直しでもう一度消す)
+      expect(await tenantRow(expired.id)).toEqual({
+        slug: expiredSlug,
+        status: 'suspended',
+        name: DEMO_TENANT_NAME,
+      });
+      // 新しいデモは使える状態で終わる
+      expect(await tenantRow(result.tenantId)).toMatchObject({ slug: failSlug, status: 'active' });
+    } finally {
+      deleteSpy.mockRestore();
+      await container.storage.delete(storageKey).catch(() => undefined);
+    }
+  }, 240_000);
 });

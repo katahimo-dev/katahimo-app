@@ -80,7 +80,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `password_reset_confirm_account` / `_ip` | アカウント / IP | 1時間に20回 / 50回 | 429 | — |
 | `ai_generate_staff` | テナント + スタッフ | 1日200回 | 429 | `RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY` |
 | `receipt_ocr_staff` | テナント + スタッフ | 1日300回 | 429 | `RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY` |
-| `receipt_upload_staff` | テナント + スタッフ | 1時間60回(領収書の登録 `POST /api/receipts`。画像の枚数ではなく要求の回数。1回で最大6枚・14MB の本文を受け、画像を保存先に書くため) | 429「領収書の登録の回数が上限に達しました。しばらく待ってから再度お試しください。」(`Retry-After` つき) | `RATE_LIMIT_RECEIPT_UPLOAD_PER_STAFF_HOUR` |
+| `receipt_upload_staff` | テナント + スタッフ | 1時間60回(領収書の登録 `POST /api/receipts`。画像の枚数ではなく要求の回数。1回で最大6枚・14MB の本文を受け、画像を保存先に書くため。本文を読む前に数えるので、検証で断られた(400)要求も数える) | 429「領収書の登録の回数が上限に達しました。しばらく待ってから再度お試しください。」(`Retry-After` つき) | `RATE_LIMIT_RECEIPT_UPLOAD_PER_STAFF_HOUR` |
 | `schedule_force_refresh_staff` | テナント + スタッフ | 1時間30回 | 429 | `RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR` |
 | `push_test_staff` | テナント + スタッフ | 1時間10回 | 429 | — |
 | `push_subscribe_staff` | テナント + スタッフ | 1時間30回 | 429 | — |
@@ -309,7 +309,7 @@ RESERVA 等の外部システムからの受け口(05 11章)。認証は `Author
 
 | メソッド・パス | 権限 | 応答 | 備考 |
 | --- | --- | --- | --- |
-| `GET /api/demo/config` | 誰でも(ログイン不要) | `demoConfigResponseSchema` | 環境変数 `DEMO_*` から作った値をそのまま返す(DB を読まない・操作ログに残さない・`Cache-Control: no-store`)。`DEMO_TENANT_SLUG` が無ければ `{ enabled: false }`。あれば `{ enabled: true, tenantSlug, publicLogin, accounts: [{ role, label, email }], password, dataRetentionDays, logRetentionMonths, aiUsesPerSession }`。`publicLogin`(`DEMO_PUBLIC_LOGIN`)が false のときは `accounts` は `[]`、`password` は `null`(本番の環境に暫定でデモ用テナントを置くとき、本番の利用者にデモ用アカウントを見せない)。`dataRetentionDays`(`DEMO_DATA_RETENTION_DAYS`、既定30)・`logRetentionMonths`(`DEMO_LOG_RETENTION_MONTHS`、既定3)・`aiUsesPerSession`(10)は画面の案内に入れる値 |
+| `GET /api/demo/config` | 誰でも(ログイン不要) | `demoConfigResponseSchema` | 環境変数 `DEMO_*` から作った値をそのまま返す(DB を読まない・操作ログに残さない・`Cache-Control: no-store`)。`DEMO_TENANT_SLUG` が無ければ `{ enabled: false }`。あれば `{ enabled: true, tenantSlug, publicLogin, accounts: [{ role, label, email }], password, dataRetentionDays, logRetentionMonths, aiUsesPerSession }`。`publicLogin`(`DEMO_PUBLIC_LOGIN`)が false のときは `accounts` は `[]`、`password` は `null`(本番の環境に暫定でデモ用テナントを置くとき、本番の利用者にデモ用アカウントを見せない)。`dataRetentionDays`(`DEMO_DATA_RETENTION_DAYS`)・`logRetentionMonths`(`DEMO_LOG_RETENTION_MONTHS`)・`aiUsesPerSession`(10)は画面の案内に入れる値。日数・月数は null になりうる(null = 期間を約束しない): `publicLogin` が true なら未設定でも 30・3、false(本番の環境に暫定で置いたデモ用テナント。作り直しのジョブが無く、操作ログは本番の保存期間に従う)なら明示して設定したときだけ数を返し、未設定は null。画面は日数が null なら「毎晩作り直します」も期間も書かない(02 3.1) |
 
 web はログイン画面で、`enabled` かつ(`publicLogin` またはデモ用テナントの法人IDが入っている)なら注意書きを、`publicLogin` かつデモ用テナントの法人IDなら
 デモ用アカウントのボタンを出し、`publicLogin` なら会社IDの既定をデモ用テナントにする(02 3章)。読めなかったときはデモではない扱い。

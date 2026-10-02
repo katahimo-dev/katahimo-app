@@ -153,10 +153,71 @@ describe('AuthGate: 公開デモの注釈', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(screen.getByText('アプリ本体')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: /デモ環境です。.*注意事項を見る/ }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /デモ環境です。データは架空のもので、毎晩作り直します。.*注意事項を見る/,
+      }),
+    );
     expect(await screen.findByRole('dialog', { name: 'デモ環境をお使いになる前に' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '閉じる' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('ログインした直後の注釈の「同意しない（ログアウト）」でログアウトする', async () => {
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...window.location, reload });
+    vi.mocked(authApi.logout).mockResolvedValue({ ok: true });
+    await loginFromForm();
+    fireEvent.click(screen.getByRole('button', { name: '同意しない（ログアウト）' }));
+    await waitFor(() => expect(authApi.logout).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(reload).toHaveBeenCalled());
+    vi.unstubAllGlobals();
+  });
+
+  it('帯から開き直した注釈には「同意しない（ログアウト）」を出さない', async () => {
+    me.mockResolvedValue({ staff: DEMO_USER });
+    renderGate();
+    fireEvent.click(await screen.findByRole('button', { name: /注意事項を見る/ }));
+    await screen.findByRole('dialog', { name: 'デモ環境をお使いになる前に' });
+    expect(screen.getByRole('button', { name: '閉じる' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '同意しない（ログアウト）' })).toBeNull();
+  });
+
+  it('保存期間が無い(本番の環境に置いたデモ用テナント)ときは、注釈・帯に期間も「毎晩作り直します」も書かない', async () => {
+    vi.mocked(demoApi.config).mockResolvedValue({
+      enabled: true,
+      tenantSlug: 'public-demo',
+      publicLogin: false,
+      accounts: [],
+      password: null,
+      dataRetentionDays: null,
+      logRetentionMonths: null,
+      aiUsesPerSession: 5,
+    });
+    me.mockResolvedValue({ staff: DEMO_USER });
+    renderGate();
+    const banner = await screen.findByRole('button', { name: /注意事項を見る/ });
+    await waitFor(() => expect(banner.textContent).toContain('デモ環境です。データは架空のものです。'));
+    expect(banner.textContent).not.toContain('毎晩');
+    fireEvent.click(banner);
+    const dialog = await screen.findByRole('dialog', { name: 'デモ環境をお使いになる前に' });
+    expect(dialog.textContent).toContain(
+      '入力した内容と、操作ログ・接続情報（IPアドレス等）は運営者が保存し、サービスの改善と不正利用の調査に使います。',
+    );
+    expect(dialog.textContent).not.toMatch(/毎晩|日間|か月間|その日に/);
+  });
+
+  it('設定を読めなかったときも、期間・「毎晩作り直します」は書かない', async () => {
+    vi.mocked(demoApi.config).mockRejectedValue(new NetworkError('offline'));
+    me.mockResolvedValue({ staff: DEMO_USER });
+    renderGate();
+    const banner = await screen.findByRole('button', { name: /注意事項を見る/ });
+    await waitFor(() => expect(demoApi.config).toHaveBeenCalled());
+    expect(banner.textContent).not.toContain('毎晩');
+    fireEvent.click(banner);
+    const dialog = await screen.findByRole('dialog', { name: 'デモ環境をお使いになる前に' });
+    expect(dialog.textContent).not.toMatch(/毎晩|日間|か月間/);
+    expect(dialog.textContent).toContain('1回のログインごとの上限があります');
   });
 
   it('ページを読み込み直したとき(ログイン済み)は注釈を出さず、帯だけ出す', async () => {

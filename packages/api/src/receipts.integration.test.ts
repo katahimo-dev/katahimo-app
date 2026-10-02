@@ -367,7 +367,7 @@ describe('API: 領収書の会社負担・取消', () => {
 });
 
 describe('API: 領収書の登録の回数の上限', () => {
-  it('スタッフ単位の1時間の上限(receipt_upload_staff)を超えたら 429(他のスタッフは登録できる)', async () => {
+  it('スタッフ単位の1時間の上限(receipt_upload_staff)を超えたら 429(形の正しくない本文も数える。他のスタッフは登録できる)', async () => {
     const limitedEnv = loadEnv({
       ...process.env,
       NODE_ENV: 'test',
@@ -396,7 +396,13 @@ describe('API: 領収書の登録の回数の上限', () => {
         }),
       });
     expect((await send(fresh.staff, '100')).status).toBe(200);
-    expect((await send(fresh.staff, '200')).status).toBe(200);
+    // 本文を読む前に数えるので、検証で断られた(400)回も1回に数える
+    const invalid = await limitedApp.request('/api/receipts', {
+      method: 'POST',
+      headers: { Cookie: fresh.staff.cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: 'not-an-array' }),
+    });
+    expect(invalid.status).toBe(400);
     const over = await send(fresh.staff, '300');
     expect(over.status).toBe(429);
     expect(await over.json()).toEqual({

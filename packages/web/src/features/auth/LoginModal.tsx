@@ -18,9 +18,11 @@ interface LoginModalProps {
   onSubmit: () => void;
   onForgotPassword: () => void;
   /**
-   * 公開デモの注意書き(1要素 = 1行。lib/demo.ts)。null でなければログインボタンの上に出し、
-   * 「パスワードを忘れたとき」は出さない(デモでは使えない)。
+   * 「パスワードを忘れたとき」を出さない(入る法人IDが公開デモ用テナントのとき。デモでは使えない)。
+   * 決めるのは LoginScreen(法人IDがデモ用テナントかだけで決め、デモ専用の環境かどうかでは変えない)。
    */
+  hideForgotPassword?: boolean;
+  /** 公開デモの注意書き(1要素 = 1行。lib/demo.ts)。null でなければログインボタンの上に出す。 */
   demoNotice?: string[] | null;
   /** デモ用アカウントの一覧(デモ専用の環境だけ)。押すとメールアドレスとパスワードを入れる。 */
   demoAccounts?: DemoAccountsView | null;
@@ -39,6 +41,7 @@ export function LoginModal({
   passwordVisibility,
   onSubmit,
   onForgotPassword,
+  hideForgotPassword = false,
   demoNotice = null,
   demoAccounts = null,
 }: LoginModalProps) {
@@ -123,7 +126,7 @@ export function LoginModal({
         <div className="text-red-600 text-base text-center min-h-[1.25rem]" role="alert">
           {error}
         </div>
-        {demoNotice ? null : (
+        {hideForgotPassword ? null : (
           <div className="text-center">
             <button
               type="button"

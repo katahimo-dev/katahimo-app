@@ -1,5 +1,5 @@
 import type { DemoConfigResponse } from '@katahimo/shared';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { authApi } from '../../api/auth';
 import { NetworkError } from '../../api/client';
@@ -131,12 +131,37 @@ describe('ログイン画面: 公開デモ(GET /api/demo/config)', () => {
     );
   });
 
-  it('デモ専用の環境でも、最後にログインした別の法人IDが先。注意書きは出すが、デモ用アカウントは出さない', async () => {
+  it('デモ専用の環境でも、最後にログインした別の法人IDが先。デモ用テナントではないので注意書き・デモ用アカウントは出さず、再設定の案内を出す', async () => {
     localStorage.setItem(STORAGE_KEYS.lastTenantSlug, 'acme');
     vi.mocked(demoApi.config).mockResolvedValue(DEMO_CONFIG);
     renderLogin();
-    expect((await screen.findByRole('note')).textContent).toContain(NOTICE_TEXT);
+    expect(await screen.findByRole('button', { name: 'パスワードを忘れたときはこちら' })).toBeTruthy();
+    // 設定が届いて描き直したあとも出さない
+    await waitFor(() => expect(demoApi.config).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByRole('note')).toBeNull();
+    expect(screen.getByRole('button', { name: 'パスワードを忘れたときはこちら' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'コーディネーター' })).toBeNull();
+  });
+
+  it('保存期間が無い(本番の環境に置いたデモ用テナントで未設定)ときは、期間も「毎晩」も書かない', async () => {
+    vi.mocked(demoApi.config).mockResolvedValue({
+      ...DEMO_CONFIG,
+      publicLogin: false,
+      accounts: [],
+      password: null,
+      dataRetentionDays: null,
+      logRetentionMonths: null,
+    });
+    renderLogin();
+    fireEvent.change(await screen.findByLabelText('法人ID'), { target: { value: 'public-demo' } });
+    const note = screen.getByRole('note');
+    expect(note.textContent).toContain(
+      '入力した内容と、操作ログ・接続情報（IPアドレス等）を保存し、サービスの改善と不正利用の調査に使います。',
+    );
+    expect(note.textContent).not.toMatch(/日間|か月間|毎晩/);
   });
 
   it('本番の環境に置いたデモ用テナント(publicLogin: false): その法人IDを入れたときだけ注意書きを出し、アカウントは出さない', async () => {

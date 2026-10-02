@@ -137,10 +137,10 @@ export interface DemoSettings {
   slug: string;
   /** DEMO_PUBLIC_LOGIN(ログイン画面にデモ用アカウントとパスワードを出すか)。 */
   publicLogin: boolean;
-  /** DEMO_DATA_RETENTION_DAYS。 */
-  dataRetentionDays: number;
-  /** DEMO_LOG_RETENTION_MONTHS。 */
-  logRetentionMonths: number;
+  /** DEMO_DATA_RETENTION_DAYS(null = 期間を約束しない。env.ts の withDemoRetentionDefaults)。 */
+  dataRetentionDays: number | null;
+  /** DEMO_LOG_RETENTION_MONTHS(null = 期間を約束しない)。 */
+  logRetentionMonths: number | null;
 }
 
 /** テナントの ID → デモ用テナントかの判定を覚えておく時間。 */

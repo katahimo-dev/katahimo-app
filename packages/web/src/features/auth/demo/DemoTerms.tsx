@@ -1,11 +1,13 @@
 import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from 'react';
-import { DEMO_BANNER_LINK, DEMO_BANNER_TEXT, demoTermsValuesOf } from '../../../lib/demo';
+import { DEMO_BANNER_LINK, type DemoTermsValues, demoBannerText, demoTermsValuesOf } from '../../../lib/demo';
 import { DemoTermsModal } from './DemoTermsModal';
 import { useDemoConfig } from './useDemoConfig';
 
 interface DemoTermsContextValue {
   /** 注釈を開き直す(画面上の帯から) */
   reopen: () => void;
+  /** 文言に入れる API の値(読めなければ null) */
+  values: DemoTermsValues | null;
 }
 
 const DemoTermsContext = createContext<DemoTermsContextValue | null>(null);
@@ -20,14 +22,15 @@ export function DemoTermsProvider({ showOnMount, children }: { showOnMount: bool
   // afterLogin は閉じても変えない(消えていく間にボタンの文言が変わらないように)
   const [state, setState] = useState({ open: showOnMount, afterLogin: showOnMount });
   const reopen = useCallback(() => setState({ open: true, afterLogin: false }), []);
-  const value = useMemo(() => ({ reopen }), [reopen]);
+  const values = demoTermsValuesOf(config);
+  const value = useMemo(() => ({ reopen, values }), [reopen, values]);
   return (
     <DemoTermsContext value={value}>
       {children}
       <DemoTermsModal
         open={state.open}
         afterLogin={state.afterLogin}
-        values={demoTermsValuesOf(config)}
+        values={values}
         onClose={() => setState((s) => ({ ...s, open: false }))}
       />
     </DemoTermsContext>
@@ -47,7 +50,7 @@ export function DemoBanner() {
       onClick={context.reopen}
       className="w-full bg-amber-100 text-amber-900 text-xs text-center px-3 py-1"
     >
-      {DEMO_BANNER_TEXT} <span className="underline font-bold">{DEMO_BANNER_LINK}</span>
+      {demoBannerText(context.values)} <span className="underline font-bold">{DEMO_BANNER_LINK}</span>
     </button>
   );
 }
