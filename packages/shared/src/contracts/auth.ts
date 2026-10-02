@@ -33,6 +33,8 @@ export const sessionUserSchema = z.object({
   email: z.string(),
   /** 役割(isAdminRole / canActForOthers で表示を出し分ける)。 */
   role: staffRoleSchema,
+  /** 公開デモ用のテナント(API の `DEMO_TENANT_SLUG`)にログインしているか。ログイン直後の注釈・「デモ環境」の帯を出す。 */
+  demoTenant: z.boolean(),
 });
 export type SessionUser = z.infer<typeof sessionUserSchema>;
 
