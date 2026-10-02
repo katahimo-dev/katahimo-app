@@ -259,4 +259,12 @@ export class DrizzleAttendanceRepository extends TenantBound implements Attendan
       );
     return rows.map((r) => r.staffId);
   }
+
+  async isPeriodLocked(staffId: string, yearMonth: string): Promise<boolean> {
+    // 勤怠の書き込みのトリガーと同じ関数(共有のアドバイザリロックを取ってから読む)。テナントは UoW の設定から
+    const [row] = await this.tx.execute<{ locked: boolean }>(
+      sql`select public.attendance_period_is_locked(app_current_tenant(), ${staffId}::uuid, ${`${yearMonth}-01`}::date) as locked`,
+    );
+    return row?.locked === true;
+  }
 }

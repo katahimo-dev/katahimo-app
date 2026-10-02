@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { receiptCancelRefusal, zonedBusinessDate } from '@katahimo/core/domain';
@@ -41,6 +41,7 @@ interface Member {
   cookie: string;
 }
 interface TestTenant {
+  id: string;
   slug: string;
   staff: Member;
   other: Member;
@@ -72,6 +73,7 @@ async function createTenant(): Promise<TestTenant> {
     return { id: staff.id, cookie: (res.headers.get('set-cookie') ?? '').split(';')[0] ?? '' };
   };
   return {
+    id: tenant.id,
     slug,
     staff: await member('staff', '山田 太郎', 'staff'),
     other: await member('other', '鈴木 次郎', 'staff'),
@@ -363,6 +365,44 @@ describe('API: 領収書の会社負担・取消', () => {
       month: { receipts: { total: number; companyPaid: number; customerBillable: number } };
     };
     expect(summary.receipts).toMatchObject({ total: 1600, companyPaid: 600, customerBillable: 1000 });
+  });
+});
+
+describe('API: 締めた月の領収書の登録', () => {
+  it('領収書日時の月の担当スタッフの出勤簿が締め済みなら 400 locked で、記録も画像も残さない', async () => {
+    const fresh = await createTenant();
+    await container.uow.run(fresh.id, (r) =>
+      r.attendance.lockPeriod(fresh.staff.id, '2026-08', fresh.admin.id, new Date()),
+    );
+    const send = (who: Member, receiptDate: string, staffId?: string) =>
+      app.request('/api/receipts', {
+        method: 'POST',
+        headers: { Cookie: who.cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(staffId ? { staffId } : {}),
+          customerNameText: '未登録 さん',
+          images: [{ data: JPEG, amount: '800', storeName: '駐車場', receiptDate }],
+        }),
+      });
+    const refused = await send(fresh.staff, '2026/08/31 18:00');
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({
+      code: 'locked',
+      message: expect.stringContaining('2026年8月の出勤簿は締め済み'),
+    });
+    // 管理者が本人の名義で登録しても同じ(締めは担当スタッフの月で見る)
+    expect((await send(fresh.admin, '2026/08/31 18:00', fresh.staff.id)).status).toBe(400);
+    const august = await list(fresh.admin, `month=2026-08&allStaff=true`);
+    expect(august.body.receipts).toEqual([]);
+    // 画像の置き場(まだ作られていなければ空): 断った登録は画像を残さない
+    const receiptDir = join(storageDir, fresh.id, 'receipts');
+    const storedFiles = () => readdir(receiptDir).catch(() => [] as string[]);
+    expect(await storedFiles()).toEqual([]);
+    // 締めていない月・締めていないスタッフは登録できる
+    expect((await send(fresh.staff, '2026/09/01 09:00')).status).toBe(200);
+    expect((await send(fresh.other, '2026/08/31 18:00')).status).toBe(200);
+    // 同じ置き場に画像が2枚できる(上の「空」が置き場の取り違えで空だったのではない)
+    expect(await storedFiles()).toHaveLength(2);
   });
 });
 

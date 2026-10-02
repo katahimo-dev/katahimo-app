@@ -62,6 +62,26 @@
 - 領収書の登録(`POST /api/receipts`)にスタッフごとの上限を追加(1時間60回。枚数ではなく要求の回数で、本文を読む前に数える(形の正しくない本文も数える)。規則 `receipt_upload_staff`、環境変数
   `RATE_LIMIT_RECEIPT_UPLOAD_PER_STAFF_HOUR`)。超えると 429「領収書の登録の回数が上限に達しました。しばらく待ってから再度お試しください。」
   (`doc/04_API仕様.md` 1.5)。
+- 出勤簿を締めた月(`attendance_periods.status='locked'`)の行を、締めたまま別の月・別のスタッフに付け替えて締めを外せた抜け道を
+  ふさいだ。マイグレーション `0003_lock_attendance_period_keys` で、締めた行の `tenant_id`・`staff_id`・`year_month`・`locked_at`・
+  `locked_by` の変更も所有者以外は `KH001` で断り(締めの守りのトリガー関数・締めの判定 `attendance_period_is_locked` の
+  `search_path` も固定)、アプリのロールの UPDATE を締めの列
+  (`status`・`locked_at`・`locked_by`)だけに絞った。アプリが書く列は変わらないため、前の版のアプリもマイグレーションの後にそのまま動く
+  (`doc/03_データベース設計.md` 5章・6章)。
+- 締め済みの月の日付の領収書は登録できないようにした(領収書の日時はクライアントが送るため、締めた月の合計に後から足せた)。
+  `POST /api/receipts` は、どれか1枚の領収書日時(テナントのタイムゾーンの月)の名義のスタッフの出勤簿が締め済みなら1枚も登録せず、
+  400 `locked`「YYYY年M月の出勤簿は締め済みのため、この月の日付の領収書は登録できません。…」(続きの案内は一般スタッフ・
+  コーディネーター・管理者で変える)と WARN `receipt.upload_refused`(月 `yearMonth` つき)を返す。締めは画像を保存する前に確かめ、
+  登録のトランザクションの中でも締めと同じアドバイザリロックを共有で取って確かめ直す(領収書の取消も同じ読み方にした)ため、
+  確かめてから登録・取消すまでの間に締められない。GAS版はどの日付でも登録した(意図した違い。`doc/02_機能仕様.md` 7章・11章、
+  `doc/04_API仕様.md` 2.7、`doc/11_GAS版との機能比較.md`)。
+- お客様の活動記録(📖 これまでの記録、`GET /api/reports/history`)は訪問の引き継ぎのため今までどおり一般スタッフにも他のスタッフの
+  記録(社内向けの記録・PSI を含む)を見せるが、返すページに他のスタッフの記録が入れば、続きのページも1ページごとに INFO
+  `report.history.viewed`(顧客ID・件数・ページの先頭と末尾の記録IDだけ。本文は残さない)を操作ログに残すようにした。意図した例外として資料に書いた
+  (`doc/04_API仕様.md` 2.6、`doc/06_セキュリティ設計.md` 4章・10章)。
+- `.gitignore`・`.dockerignore` に、日報AIの調整に使うお客様の実物の xlsx の置き場 `.scratch-ai/` が抜けていたのを足した
+  (資料では無視する約束だった)。あわせて `.gitignore` に `*.pem`・`*-key.json`・`service-account*.json`・`*.tfvars`
+  (`*.tfvars.example` は残す)・`.claude/settings.local.json`、`.dockerignore` に `*.tfvars` を足した。
 
 ## [Ver. 1.3.0] - 2026-10-01
 

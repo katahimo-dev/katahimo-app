@@ -70,6 +70,8 @@ export async function cancelReceipt(
         actor,
         timeZone,
         yearMonthOf(zonedBusinessDate(row.receiptedAt, timeZone)),
+        // 領収書のスタッフの締めを共有ロックを取って読む(取消の間に締められないように)
+        row.staffId,
       );
       const block = receiptCancelBlock(row, context);
       // 断った記録は UoW の外で書く(ロールバックで消えないように)

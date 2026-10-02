@@ -19,3 +19,17 @@ tools/e2e/.cache/
 
 # 運用のモデル比較(pnpm ai:compare)の結果。テナントのデータを含むためコミットしない
 ai-compare-*.html
+
+# 日報AIの調整に使うお客様の実物のマスタ・提案書(xlsx)。実データのためコミットしない
+# (読むテストはこのフォルダが無ければスキップする)
+.scratch-ai/
+
+# 秘密情報になりうるファイル(本番は Secret Manager から環境変数で渡す)
+*.pem
+*-key.json
+service-account*.json
+*.tfvars
+!*.tfvars.example
+
+# Claude Code の個人の設定
+.claude/settings.local.json

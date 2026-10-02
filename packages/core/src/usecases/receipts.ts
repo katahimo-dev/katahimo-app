@@ -4,8 +4,10 @@ import {
   buildReceiptDedupeKey,
   buildReceiptNotificationText,
   canCheckReceiptDuplicate,
+  DomainError,
   decodeReceiptImage,
   invalid,
+  isAdminRole,
   newId,
   normalizeAmount,
   normalizeText,
@@ -14,11 +16,13 @@ import {
   parseJstTimestamp,
   receiptDedupeHash,
   resolveTargetStaffId,
+  yearMonthOf,
+  zonedBusinessDate,
 } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
 import type { NotifierPort } from '../ports/notifier';
 import type { StoragePort } from '../ports/storage';
-import type { UnitOfWorkPort } from '../ports/unitOfWork';
+import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
 import { notifyWithLog } from './notify';
 import type { Actor, Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
@@ -76,6 +80,48 @@ export interface UploadReceiptsSummary {
 
 const INVALID_IMAGE_MESSAGE = '領収書画像の形式が正しくないか、大きすぎます(JPEG・PNG・WebP、1枚1.5MBまで)。';
 
+/**
+ * 締め済みの月の日付の領収書を登録しようとしたときの案内(yearMonth は 'YYYY-MM')。締めの解除は運用担当者が
+ * 行う(platform.unlock_attendance_period)ため、続けて何をするかは登録した人の役割で変える。
+ */
+function periodLockedMessage(yearMonth: string, role: Actor['role']): string {
+  const [year, month] = yearMonth.split('-');
+  const head = `${year}年${Number(month)}月の出勤簿は締め済みのため、この月の日付の領収書は登録できません。`;
+  if (isAdminRole(role)) {
+    return `${head}領収書の日付を確かめてください。この月に登録する必要があるときは、運用担当者に締めの解除を依頼してください。`;
+  }
+  if (role === 'coordinator') {
+    return `${head}領収書の日付を確かめてください。この月に登録する必要があるときは、管理者から運用担当者に締めの解除を依頼してください。`;
+  }
+  return `${head}領収書の日付を確かめるか、管理者に連絡してください。`;
+}
+
+/** 登録のトランザクションの中で締め済みの月を見つけた(ロールバックの後に WARN を残して 400 locked にする)。 */
+class LockedPeriodFound extends Error {
+  constructor(readonly yearMonth: string) {
+    super(`attendance period ${yearMonth} is locked`);
+  }
+}
+
+/**
+ * 領収書日時(テナントのタイムゾーンの暦日)の月のうち、担当スタッフの出勤簿が締め済みの最初の月(無ければ null)。
+ * UoW の中で呼ぶ。attendance.isPeriodLocked が締めと同じアドバイザリロックを共有で取るため、同じトランザクションで
+ * 書く領収書と締めの処理の順序が付く(締めている途中なら待ち、読んだ後の締めはこのトランザクションの終わりを待つ)。
+ */
+async function firstLockedMonth(
+  r: TenantRepositories,
+  staffId: string,
+  receiptedAts: readonly Date[],
+): Promise<string | null> {
+  const timeZone = (await r.tenant()).timezone;
+  const months = [...new Set(receiptedAts.map((at) => yearMonthOf(zonedBusinessDate(at, timeZone))))];
+  // 月の順に読む(複数の月の共有ロックを取る順を揃える)
+  for (const yearMonth of months.sort()) {
+    if (await r.attendance.isPeriodLocked(staffId, yearMonth)) return yearMonth;
+  }
+  return null;
+}
+
 /** 金額の入力を円の整数にする(「1,200」「1200円」等。読めなければ null)。 */
 export function parseAmountYen(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -96,6 +142,11 @@ export function parseAmountYen(value: string | number | null | undefined): numbe
  *   最初の1枚が既存と重複したら、同じ内容の残りの画像も全て重複にする(GAS版と同じく、同じ束を送り直しても
  *   1枚も増えない)。取消済みの領収書とは重複にしない(取消して登録し直せるように)。会社負担かどうかは判定に
  *   入れない。
+ * - 領収書日時(テナントのタイムゾーンの暦日)の月の、担当スタッフの出勤簿が締め済み(attendance_periods)なら
+ *   1枚も登録せず 400 locked(reason `period_locked`)+ WARN `receipt.upload_refused`(`yearMonth` 付き)。
+ *   月の集計・出勤簿の Excel は領収書日時で月を分けるため、締めた月に後から領収書を足させない(取消の判定と同じ
+ *   締めの読み方)。画像を保存する前に読むだけの UoW で確かめ(断る登録で画像を書いて消さないように)、登録の
+ *   トランザクションの中でもう一度確かめる(共有のアドバイザリロックで、確かめてから登録するまでの間に締められない)。
  * - 1件以上登録できたら Google Chat へ通知する(GAS版 sendReceiptNotification)。
  */
 export async function uploadReceipts(
@@ -139,6 +190,9 @@ export async function uploadReceipts(
       index,
       img,
       timestamp,
+      // 読めない領収書日時は GAS版と同じくフォールバックの日時(報告の日付+開始時刻等)、それも読めなければ登録時刻
+      receiptedAt:
+        parseJstTimestamp(timestamp) ?? parseJstTimestamp(input.fallbackTimestamp) ?? currentTime(deps),
       key,
       fileId: newId(),
       receiptId: newId(),
@@ -146,6 +200,23 @@ export async function uploadReceipts(
       dedupePrimary: first,
     };
   });
+
+  // 締めた月に登録する誤りは、画像を保存する前に断る(登録のトランザクションの中でも確かめ直す)
+  const refuseLockedPeriod = async (yearMonth: string, imageCount: number): Promise<never> => {
+    await deps.appLog.write({
+      tenantId,
+      level: 'WARN',
+      action: 'receipt.upload_refused',
+      actorStaffId: actor.staffId,
+      targetStaffId: staffId === actor.staffId ? null : staffId,
+      details: { customerId: input.customerId, imageCount, yearMonth, reason: 'period_locked' },
+      ...actor.meta,
+    });
+    throw new DomainError('locked', periodLockedMessage(yearMonth, actor.role), undefined, 'period_locked');
+  };
+  const receiptedAts = withKeys.map((c) => c.receiptedAt);
+  const lockedBeforeStoring = await deps.uow.run(tenantId, (r) => firstLockedMonth(r, staffId, receiptedAts));
+  if (lockedBeforeStoring) await refuseLockedPeriod(lockedBeforeStoring, withKeys.length);
 
   const stored = await Promise.all(
     withKeys.map(async (c) => {
@@ -174,6 +245,10 @@ export async function uploadReceipts(
         ]);
         if (!staff) throw notFound('スタッフが見つかりません');
         if (input.customerId && !customer) throw notFound('顧客が見つかりません');
+        // 確かめてから画像を保存する間に締められていれば登録しない(throw でロールバックし、保存した画像は下の
+        // catch で消す)。ここで取る共有ロックはコミットまで持つため、この後に締める処理はこの登録の終わりを待つ
+        const lockedMonth = await firstLockedMonth(r, staffId, receiptedAts);
+        if (lockedMonth) throw new LockedPeriodFound(lockedMonth);
         const customerNameText = customer ? null : normalizeText(input.customerNameText) || null;
         await r.receipts.createUpload({
           id: uploadId,
@@ -208,11 +283,7 @@ export async function uploadReceipts(
             staffId,
             customerId: customer?.id ?? null,
             customerNameText,
-            // 読めない領収書日時は GAS版と同じくフォールバックの日時(報告の日付+開始時刻等)、それも読めなければ登録時刻
-            receiptedAt:
-              parseJstTimestamp(c.timestamp) ??
-              parseJstTimestamp(input.fallbackTimestamp) ??
-              currentTime(deps),
+            receiptedAt: c.receiptedAt,
             amountYen: parseAmountYen(c.img.amount),
             storeName: normalizeText(c.img.storeName) || null,
             companyPaid: c.img.companyPaid === true,
@@ -244,6 +315,7 @@ export async function uploadReceipts(
     );
   } catch (error) {
     await Promise.all(stored.map((c) => deps.storage.delete(c.storageKey).catch(() => undefined)));
+    if (error instanceof LockedPeriodFound) await refuseLockedPeriod(error.yearMonth, stored.length);
     throw error;
   }
   await Promise.all(outcome.duplicates.map((c) => deps.storage.delete(c.storageKey).catch(() => undefined)));

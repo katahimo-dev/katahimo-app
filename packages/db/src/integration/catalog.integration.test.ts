@@ -197,7 +197,7 @@ describe('スキーマの約束事(カタログ)', () => {
     }
   });
 
-  it('アプリ・ワーカーは月の締めを削除できない(解除・削除は所有者の関数だけ)', async () => {
+  it('アプリ・ワーカーは月の締めを削除・付け替えできない(解除・削除は所有者の関数だけ)', async () => {
     const has = async (role: string, privilege: string) =>
       (
         await rows<{ ok: boolean }>(
@@ -207,6 +207,33 @@ describe('スキーマの約束事(カタログ)', () => {
     expect(await has('katahimo_app', 'DELETE')).toBe(false);
     expect(await has('katahimo_worker', 'DELETE')).toBe(false);
     expect(await has('katahimo_worker', 'UPDATE')).toBe(false);
+    // アプリが UPDATE できるのは締めの列だけ(締めた行を別の月・別のスタッフに付け替えられない)
+    expect(await has('katahimo_app', 'UPDATE')).toBe(false);
+    const updatable = await rows<{ column: string }>(sql`
+      select a.attname as column from pg_attribute a
+      where a.attrelid = 'public.attendance_periods'::regclass and a.attnum > 0 and not a.attisdropped
+        and has_column_privilege('katahimo_app', a.attrelid, a.attnum, 'UPDATE')
+      order by a.attname`);
+    expect(updatable.map((c) => c.column)).toEqual(['locked_at', 'locked_by', 'status']);
+    // 締めの守りの関数(締めの行のトリガー・勤怠の書き込みのトリガー・締めの判定)は search_path を固定する
+    const pinned = await rows<{ name: string; config: string[] | null }>(sql`
+      select p.oid::regprocedure::text as name, p.proconfig as config from pg_proc p
+      where p.oid in (
+        'public.guard_attendance_period()'::regprocedure,
+        'public.enforce_attendance_period_lock()'::regprocedure,
+        'public.attendance_period_is_locked(uuid, uuid, date)'::regprocedure
+      )
+      order by 1`);
+    expect(pinned).toEqual([
+      { name: 'attendance_period_is_locked(uuid,uuid,date)', config: ['search_path=pg_catalog, public'] },
+      { name: 'enforce_attendance_period_lock()', config: ['search_path=pg_catalog, public'] },
+      { name: 'guard_attendance_period()', config: ['search_path=pg_catalog, public'] },
+    ]);
+    // 締めの判定(領収書の登録・取消がトランザクションの中で呼ぶ)はアプリが実行できる
+    const [execute] = await rows<{ ok: boolean }>(
+      sql`select has_function_privilege('katahimo_app', 'public.attendance_period_is_locked(uuid, uuid, date)', 'EXECUTE') as ok`,
+    );
+    expect(execute?.ok).toBe(true);
   });
 
   it('アプリ・ワーカーの接続には文・ロック待ち・放置されたトランザクションの上限がある(infra の初期化SQL)', async () => {
