@@ -60,15 +60,23 @@ export function createAdminStaffRoutes(container: Container) {
   app.post('/import', requireAdmin(container, 'staff.xlsx_import'), async (c) => {
     const body = await parseJsonBody(c, staffImportRequestSchema);
     if (!body.ok) return body.response;
+    // 確かめる(dryRun)・反映の両方を数える(どちらも xlsx を展開して読むため)。読む前に数える
+    const limited = await enforceStaffQuota(
+      c,
+      container,
+      container.rateLimits.staffXlsxImportStaff,
+      'スタッフの取込の回数の上限に達しました。少し時間をおいてからもう一度お試しください。',
+    );
+    if (limited) return limited;
     if (!body.data.dryRun) {
-      // 反映だけを数える(確かめるだけは何も書かず、地図APIも呼ばない)
-      const limited = await enforceStaffQuota(
+      // 反映はもう1つの枠でも数える(1回で最大500人を書き、地図APIを呼ぶため)
+      const applyLimited = await enforceStaffQuota(
         c,
         container,
         container.rateLimits.staffImportApplyStaff,
         'スタッフの取込の反映の回数の上限に達しました。少し時間をおいてからもう一度お試しください。',
       );
-      if (limited) return limited;
+      if (applyLimited) return applyLimited;
     }
     const sheets = await readStaffWorkbook(Buffer.from(body.data.fileBase64, 'base64'));
     const result = await importStaffSheet(container, actorOf(c), {

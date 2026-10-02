@@ -444,7 +444,7 @@ describe('API: スタッフの xlsx', () => {
     expect(list.staff.some((s) => s.email === `jiro-${other.slug}@example.com`)).toBe(false);
   });
 
-  it('反映は管理者ごとに回数の上限があり(429)、確かめるだけは数えない', async () => {
+  it('反映は管理者ごとに10分の上限があり(429)、確かめるだけはこの枠では数えない', async () => {
     const other = await createTenant();
     const body = Buffer.from(await (await exportOf(other.adminCookie)).xlsx.writeBuffer());
     const limit = container.rateLimits.staffImportApplyStaff.limit;
@@ -455,6 +455,18 @@ describe('API: スタッフの xlsx', () => {
       expect((await postImport(other.adminCookie, body, false)).status).toBe(400);
     }
     const limited = await postImport(other.adminCookie, body, false);
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toMatchObject({ code: 'rate_limited' });
+  });
+
+  it('確かめる・反映を合わせて管理者ごとに1時間の上限があり(429)、xlsx を読む前に数える', async () => {
+    const other = await createTenant();
+    const notZip = Buffer.from('not a zip');
+    const limit = container.rateLimits.staffXlsxImportStaff.limit;
+    for (let i = 0; i < limit; i++) {
+      expect((await postImport(other.adminCookie, notZip, true)).status).toBe(400);
+    }
+    const limited = await postImport(other.adminCookie, notZip, true);
     expect(limited.status).toBe(429);
     expect(await limited.json()).toMatchObject({ code: 'rate_limited' });
   });

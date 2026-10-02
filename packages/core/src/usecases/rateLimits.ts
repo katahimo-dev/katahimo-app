@@ -79,6 +79,13 @@ export interface RateLimitPolicy {
    */
   staffImportApplyStaff: RateLimitRule;
   /**
+   * スタッフの xlsx の取込(確かめる dryRun・反映の両方。管理者単位の1時間の上限)。1回ごとに最大 3MB の本体を
+   * 展開して読むため、送り続けで CPU・メモリを使い切らせない(反映は staffImportApplyStaff でも数える)。
+   */
+  staffXlsxImportStaff: RateLimitRule;
+  /** 日報AIの調整の xlsx の取込(確かめる dryRun・反映の両方。管理者単位の1時間の上限。理由は staffXlsxImportStaff と同じ)。 */
+  reportAiXlsxImportStaff: RateLimitRule;
+  /**
    * Gemini API キーの保存(管理者単位の1時間の上限)。保存ごとに Gemini へ確かめの問い合わせをするため
    * (公開デモでは誰でも管理者でログインできる)。
    */
@@ -136,6 +143,8 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   },
   attendanceExportStaff: { name: 'attendance_export_staff', limit: 30, windowMs: HOUR_MS },
   staffImportApplyStaff: { name: 'staff_import_apply_staff', limit: 5, windowMs: 10 * MINUTE_MS },
+  staffXlsxImportStaff: { name: 'staff_xlsx_import_staff', limit: 30, windowMs: HOUR_MS },
+  reportAiXlsxImportStaff: { name: 'report_ai_xlsx_import_staff', limit: 30, windowMs: HOUR_MS },
   geminiKeySaveStaff: { name: 'gemini_key_save_staff', limit: 20, windowMs: HOUR_MS },
   customerCsvImportStaff: { name: 'customer_csv_import_staff', limit: 30, windowMs: HOUR_MS },
 };

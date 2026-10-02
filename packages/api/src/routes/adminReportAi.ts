@@ -33,6 +33,7 @@ import type { Container } from '../container';
 import { buildReportAiWorkbook, readReportAiWorkbook } from '../export/reportAiWorkbook';
 import { csvLine, UTF8_BOM } from '../http/csv';
 import { attachmentDisposition, xlsxResponse } from '../http/download';
+import { enforceStaffQuota } from '../http/quota';
 import { apiError, jsonOk, parseJsonBody, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
 import { actorOf, requireAdmin } from '../session';
@@ -147,6 +148,14 @@ export function createAdminReportAiRoutes(container: Container) {
   app.post('/import', requireAdmin(container, 'settings.report_ai.import'), async (c) => {
     const body = await parseJsonBody(c, reportAiImportRequestSchema);
     if (!body.ok) return body.response;
+    // 確かめる(dryRun)・反映の両方を数える(どちらも xlsx を展開して読むため)。読む前に数える
+    const limited = await enforceStaffQuota(
+      c,
+      container,
+      container.rateLimits.reportAiXlsxImportStaff,
+      '日報AIの調整の取込の回数の上限に達しました。少し時間をおいてからもう一度お試しください。',
+    );
+    if (limited) return limited;
     const sheets = await readReportAiWorkbook(Buffer.from(body.data.fileBase64, 'base64'));
     const result = await importReportAiMasters(container, actorOf(c), {
       parsed: parseReportAiWorkbook(sheets),

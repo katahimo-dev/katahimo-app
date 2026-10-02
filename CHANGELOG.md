@@ -116,6 +116,12 @@
   `exceljs` 経由の `brace-expansion` を `pnpm-workspace.yaml` の overrides で 2.1.7 以上に固定した(`pnpm audit --prod` の指摘 0 件)。
   開発用の依存も、`brace-expansion` の 5 系を 5.0.12 以上、`fast-uri`(`vite-plugin-pwa` 経由)を 3.1.8 以上に固定した(残るのは開発用の
   `esbuild` の2件。`drizzle-kit`・`tsup` の更新を待つ)。
+- 管理画面の xlsx の取込(スタッフ・日報AIの調整)で、展開すると何GBにも膨らむ zip(展開爆弾)を exceljs で読む前に断るようにした
+  (exceljs が使う JSZip は全てのファイルを展開してから読むため、シート・行の上限では止まらなかった)。zip の目次を先に読み、
+  ファイル200個・1つ10MB・合計30MB(展開後)・圧縮率200倍(1MB を超えるファイル)まで、暗号化・ZIP64 は断る。目次の展開後の大きさは
+  偽れるため、目次の大きさを上限に実際に展開して確かめる。超えたら 400 `xlsx_too_large`。あわせて取込の回数を、確かめる(`dryRun`)・
+  反映の両方で管理者ごとに1時間30回までにした(規則 `staff_xlsx_import_staff`・`report_ai_xlsx_import_staff`。スタッフの反映は
+  今までの `staff_import_apply_staff` でも数える)(`doc/04_API仕様.md` 1.4・1.5、`doc/06_セキュリティ設計.md` 6章)。
 
 ## [Ver. 1.3.0] - 2026-10-01
 

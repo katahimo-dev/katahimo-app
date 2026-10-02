@@ -1,5 +1,6 @@
 import { type ImportCell, invalid, UNREADABLE_CELL } from '@katahimo/core/domain';
 import ExcelJS from 'exceljs';
+import { inspectZip, XLSX_ZIP_LIMITS } from './xlsxZipGuard';
 
 /**
  * 管理画面の取込・書き出しの xlsx(日報AIの調整のマスター・スタッフ)を読む・書く共通の処理。
@@ -51,17 +52,39 @@ export function cellValue(cell: ExcelJS.Cell): ImportCell {
   return UNREADABLE_CELL;
 }
 
+const INVALID_XLSX_MESSAGE = 'Excel(.xlsx)のファイルを読めませんでした';
+const INVALID_XLSX_FIELDS = { file: 'xlsx のファイルを選んでください' };
+
+/**
+ * exceljs に渡す前に zip の目次と展開後の大きさを確かめる(xlsxZipGuard.ts)。展開すると大きすぎるファイルは
+ * 400 `xlsx_too_large`、zip として読めない・暗号化・ZIP64・目次と中身の合わないファイルは 400 `invalid_xlsx`。
+ */
+function assertSafeXlsxZip(body: Buffer): void {
+  const result = inspectZip(body, XLSX_ZIP_LIMITS);
+  if (result.ok) return;
+  switch (result.reason) {
+    case 'too_many_entries':
+    case 'entry_too_large':
+    case 'total_too_large':
+    case 'ratio_too_high':
+      throw invalid(
+        `Excel(.xlsx)のファイルの中身が大きすぎます(展開して${XLSX_ZIP_LIMITS.maxTotalBytes / (1024 * 1024)}MBまで)`,
+        { file: '取り込む表だけのファイルにしてください' },
+        'xlsx_too_large',
+      );
+    default:
+      throw invalid(INVALID_XLSX_MESSAGE, INVALID_XLSX_FIELDS, 'invalid_xlsx');
+  }
+}
+
 /** xlsx を読んでシートのセルの表にする。読めないファイル・上限を超えるファイルは 400。 */
 export async function readXlsxSheets(body: Buffer, limits: XlsxReadLimits): Promise<XlsxSheetCells[]> {
+  assertSafeXlsxZip(body);
   const workbook = new ExcelJS.Workbook();
   try {
     await workbook.xlsx.load(body as unknown as ArrayBuffer);
   } catch {
-    throw invalid(
-      'Excel(.xlsx)のファイルを読めませんでした',
-      { file: 'xlsx のファイルを選んでください' },
-      'invalid_xlsx',
-    );
+    throw invalid(INVALID_XLSX_MESSAGE, INVALID_XLSX_FIELDS, 'invalid_xlsx');
   }
   if (workbook.worksheets.length > limits.maxSheets) {
     throw invalid(`シートが多すぎます(${limits.maxSheets}枚まで)`, undefined, 'too_many_sheets');

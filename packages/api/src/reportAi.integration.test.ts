@@ -199,6 +199,26 @@ describe('管理画面「日報AIの調整」', () => {
     expect(broken.status).toBe(400);
   });
 
+  it('取込は確かめる・反映を合わせて管理者ごとに1時間の上限があり(429)、xlsx を読む前に数える', async () => {
+    const fileBase64 = Buffer.from('not xlsx').toString('base64');
+    for (let i = 0; i < container.rateLimits.reportAiXlsxImportStaff.limit; i++) {
+      expect(
+        (
+          await request('POST', '/api/admin/report-ai/import', other.adminCookie, {
+            fileBase64,
+            dryRun: true,
+          })
+        ).status,
+      ).toBe(400);
+    }
+    const limited = await request('POST', '/api/admin/report-ai/import', other.adminCookie, {
+      fileBase64,
+      dryRun: true,
+    });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toMatchObject({ code: 'rate_limited' });
+  });
+
   it('行ごとの編集: 版が古ければ 409、同じ ID は 409、外した行は一覧から消える', async () => {
     const row = {
       code: 'k50',
