@@ -206,6 +206,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'report.detail.view_denied': '他のスタッフの報告の閲覧を断った',
   'report.psi_alert': 'PSI 2以下(注意・危険)の日報を管理者へ知らせた',
   'receipt.uploaded': '領収書の登録',
+  'receipt.upload_refused': '締め済みの月の日付の領収書の登録を断った',
   'receipt.cancelled': '領収書の取消',
   'receipt.cancel_denied': '他のスタッフの領収書の取消を断った',
   'receipt.cancel_refused': '取消せる期間の外・締め済みの月の領収書の取消を断った',

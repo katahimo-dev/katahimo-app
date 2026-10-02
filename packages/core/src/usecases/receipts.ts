@@ -4,6 +4,7 @@ import {
   buildReceiptDedupeKey,
   buildReceiptNotificationText,
   canCheckReceiptDuplicate,
+  DomainError,
   decodeReceiptImage,
   invalid,
   newId,
@@ -14,6 +15,8 @@ import {
   parseJstTimestamp,
   receiptDedupeHash,
   resolveTargetStaffId,
+  yearMonthOf,
+  zonedBusinessDate,
 } from '../domain';
 import type { AppLogPort } from '../ports/appLog';
 import type { NotifierPort } from '../ports/notifier';
@@ -76,6 +79,12 @@ export interface UploadReceiptsSummary {
 
 const INVALID_IMAGE_MESSAGE = '領収書画像の形式が正しくないか、大きすぎます(JPEG・PNG・WebP、1枚1.5MBまで)。';
 
+/** 締め済みの月の日付の領収書を登録しようとしたときの案内(yearMonth は 'YYYY-MM')。 */
+function periodLockedMessage(yearMonth: string): string {
+  const [year, month] = yearMonth.split('-');
+  return `${year}年${Number(month)}月の出勤簿は締め済みのため、この月の日付の領収書は登録できません。領収書の日付を確かめるか、管理者に連絡してください。`;
+}
+
 /** 金額の入力を円の整数にする(「1,200」「1200円」等。読めなければ null)。 */
 export function parseAmountYen(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -96,6 +105,9 @@ export function parseAmountYen(value: string | number | null | undefined): numbe
  *   最初の1枚が既存と重複したら、同じ内容の残りの画像も全て重複にする(GAS版と同じく、同じ束を送り直しても
  *   1枚も増えない)。取消済みの領収書とは重複にしない(取消して登録し直せるように)。会社負担かどうかは判定に
  *   入れない。
+ * - 領収書日時(テナントのタイムゾーンの暦日)の月の、担当スタッフの出勤簿が締め済み(attendance_periods)なら
+ *   1枚も登録せず 400 locked(reason `period_locked`)+ WARN `receipt.upload_refused`。月の集計・出勤簿の Excel は
+ *   領収書日時で月を分けるため、締めた月に後から領収書を足させない(取消の判定と同じ締めの読み方)。
  * - 1件以上登録できたら Google Chat へ通知する(GAS版 sendReceiptNotification)。
  */
 export async function uploadReceipts(
@@ -139,6 +151,9 @@ export async function uploadReceipts(
       index,
       img,
       timestamp,
+      // 読めない領収書日時は GAS版と同じくフォールバックの日時(報告の日付+開始時刻等)、それも読めなければ登録時刻
+      receiptedAt:
+        parseJstTimestamp(timestamp) ?? parseJstTimestamp(input.fallbackTimestamp) ?? currentTime(deps),
       key,
       fileId: newId(),
       receiptId: newId(),
@@ -174,6 +189,16 @@ export async function uploadReceipts(
         ]);
         if (!staff) throw notFound('スタッフが見つかりません');
         if (input.customerId && !customer) throw notFound('顧客が見つかりません');
+        // 締め済みの月の日付の領収書は登録しない(throw でロールバックし、保存した画像は下の catch で消す)
+        const timeZone = (await r.tenant()).timezone;
+        const months = [
+          ...new Set(stored.map((c) => yearMonthOf(zonedBusinessDate(c.receiptedAt, timeZone)))),
+        ];
+        for (const yearMonth of months.sort()) {
+          if ((await r.attendance.listLockedStaffIds(yearMonth)).includes(staffId)) {
+            throw new DomainError('locked', periodLockedMessage(yearMonth), undefined, 'period_locked');
+          }
+        }
         const customerNameText = customer ? null : normalizeText(input.customerNameText) || null;
         await r.receipts.createUpload({
           id: uploadId,
@@ -208,11 +233,7 @@ export async function uploadReceipts(
             staffId,
             customerId: customer?.id ?? null,
             customerNameText,
-            // 読めない領収書日時は GAS版と同じくフォールバックの日時(報告の日付+開始時刻等)、それも読めなければ登録時刻
-            receiptedAt:
-              parseJstTimestamp(c.timestamp) ??
-              parseJstTimestamp(input.fallbackTimestamp) ??
-              currentTime(deps),
+            receiptedAt: c.receiptedAt,
             amountYen: parseAmountYen(c.img.amount),
             storeName: normalizeText(c.img.storeName) || null,
             companyPaid: c.img.companyPaid === true,
@@ -244,6 +265,17 @@ export async function uploadReceipts(
     );
   } catch (error) {
     await Promise.all(stored.map((c) => deps.storage.delete(c.storageKey).catch(() => undefined)));
+    if (error instanceof DomainError && error.reason === 'period_locked') {
+      await deps.appLog.write({
+        tenantId,
+        level: 'WARN',
+        action: 'receipt.upload_refused',
+        actorStaffId: actor.staffId,
+        targetStaffId: staffId === actor.staffId ? null : staffId,
+        details: { customerId: input.customerId, imageCount: stored.length, reason: 'period_locked' },
+        ...actor.meta,
+      });
+    }
     throw error;
   }
   await Promise.all(outcome.duplicates.map((c) => deps.storage.delete(c.storageKey).catch(() => undefined)));

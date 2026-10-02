@@ -123,6 +123,52 @@ describe('uploadReceipts', () => {
     expect(ctx.data().uploads).toHaveLength(0);
   });
 
+  it('領収書日時の月の出勤簿が締め済みなら1枚も登録せず 400 locked + WARN、保存した画像も消す', async () => {
+    ctx.data().lockedPeriods.push({ staffId: staff.staffId, yearMonth: '2026-09' });
+    // 1枚だけ締めた月(フォールバックの 9/25)、もう1枚は締めていない 10月の日付: 束ごと断る
+    const images = [
+      { data: JPEG, amount: '1,200', storeName: 'コンビニ' },
+      { data: JPEG, amount: '300', storeName: '駐車場', receiptDate: '2026/10/01 09:00' },
+    ];
+    await expect(uploadReceipts(ctx.deps, staff, input({ images }))).rejects.toMatchObject({
+      code: 'locked',
+      reason: 'period_locked',
+      message: expect.stringContaining('2026年9月の出勤簿は締め済み'),
+    });
+    expect(ctx.storage.files.size).toBe(0);
+    expect(ctx.data().uploads).toHaveLength(0);
+    expect(ctx.data().receipts).toHaveLength(0);
+    expect(ctx.data().files).toHaveLength(0);
+    expect(ctx.data().outbox).toHaveLength(0);
+    expect(ctx.notifier.notifications).toHaveLength(0);
+    expect(ctx.appLog.byAction('receipt.uploaded')).toHaveLength(0);
+    expect(ctx.appLog.byAction('receipt.upload_refused')).toMatchObject([
+      {
+        level: 'WARN',
+        actorStaffId: staff.staffId,
+        targetStaffId: null,
+        details: { customerId, imageCount: 2, reason: 'period_locked' },
+      },
+    ]);
+    // 締めていない月の日付だけなら登録できる。別のスタッフの締めは関係ない
+    const october = [{ data: JPEG, amount: '300', storeName: '駐車場', receiptDate: '2026/10/01 09:00' }];
+    expect((await uploadReceipts(ctx.deps, staff, input({ images: october }))).uploadedCount).toBe(1);
+    expect((await uploadReceipts(ctx.deps, other, input())).uploadedCount).toBe(2);
+  });
+
+  it('管理者が他のスタッフの名義で締めた月に登録しようとしても断る(締めは担当スタッフの月で見る)', async () => {
+    const admin = (await ctx.addStaff('管理 花子', 'hanako@example.com', 'admin')).actor;
+    ctx.data().lockedPeriods.push({ staffId: staff.staffId, yearMonth: '2026-09' });
+    await expect(
+      uploadReceipts(ctx.deps, admin, input({ requestedStaffId: staff.staffId })),
+    ).rejects.toMatchObject({ code: 'locked', reason: 'period_locked' });
+    expect(ctx.appLog.byAction('receipt.upload_refused')).toMatchObject([
+      { actorStaffId: admin.staffId, targetStaffId: staff.staffId },
+    ]);
+    // 管理者本人の名義(締めていない)なら登録できる
+    expect((await uploadReceipts(ctx.deps, admin, input())).uploadedCount).toBe(2);
+  });
+
   it('画像の形式が正しくなければ validation_failed', async () => {
     await expect(
       uploadReceipts(ctx.deps, staff, input({ images: [{ data: 'data:image/gif;base64,R0lGOD' }] })),
