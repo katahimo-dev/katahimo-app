@@ -1,3 +1,4 @@
+import { isGoogleMapsUrl } from '@katahimo/shared';
 import type { RouteLeg } from './scheduleItems';
 
 /**
@@ -11,7 +12,8 @@ export function RouteLegRow({ leg, showMapButtons }: { leg: RouteLeg; showMapBut
         {leg.label} {leg.detail}
       </div>
       <div className="flex gap-3">
-        {showMapButtons && leg.directionsUrl ? (
+        {/* 道順のリンクは Google マップの https の URL だけ(契約でも '' にしているが、画面でも確かめる) */}
+        {showMapButtons && leg.directionsUrl && isGoogleMapsUrl(leg.directionsUrl) ? (
           <a
             href={leg.directionsUrl}
             target="_blank"

@@ -3,7 +3,6 @@ import { loadDotenv } from '../loadDotenv';
 loadDotenv();
 
 import { randomBytes } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
 import { resolveReportAiPort } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase } from '@katahimo/db';
 import { createContainer } from '../container';
@@ -11,6 +10,7 @@ import { loadEnv } from '../env';
 import { AI_COMPARE_USAGE, checkAiCompareTenant, parseAiCompareArgs } from './aiCompare/args';
 import { runAiCompareCommand } from './aiCompare/command';
 import { resolveInputPath } from './cliArgs';
+import { writePrivateFile } from './privateFile';
 
 /**
  * 運用のモデル比較: 過去の保育日報の AI 生成と同じプロンプトをいくつかの Gemini のモデルに送り直し、答えを並べた
@@ -46,8 +46,8 @@ async function main() {
         appLog: container.appLog,
         resolveReportAi: (tenantId) => resolveReportAiPort(container, tenantId),
         resolvePath: (path) => resolveInputPath(path),
-        // テナントのデータを含むので、書き出したファイルは本人だけが読める権限にする
-        writeFile: (path, content) => writeFile(path, content, { encoding: 'utf8', mode: 0o600 }),
+        // テナントのデータを含むので、書き出したファイルは本人だけが読める権限にする(既にあるファイルへの上書きも)
+        writeFile: (path, content) => writePrivateFile(path, content),
         now: () => new Date(),
         blindSeed: () => randomBytes(8).toString('hex'),
         log: (line) => console.log(line),

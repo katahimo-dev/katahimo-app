@@ -20,6 +20,20 @@ const minOrKm = z
   .nullish()
   .transform((v) => v ?? '');
 
+/** 道順を開く URL の先頭(Google マップの https の URL だけを画面のリンクにする)。 */
+export const GOOGLE_MAPS_URL_PREFIX = 'https://www.google.com/maps/';
+
+/** Google マップの https の URL か(道順のリンクに使ってよいか)。 */
+export function isGoogleMapsUrl(value: string): boolean {
+  return value.startsWith(GOOGLE_MAPS_URL_PREFIX);
+}
+
+/**
+ * 区間の道順の URL。サーバー(core の summarizeLeg)は GOOGLE_MAPS_URL_PREFIX の URL だけを作るが、GAS Bridge の値は
+ * そのまま届くため、それ以外の値(別のサイト・`javascript:` 等)は '' にする(画面にリンクを出さない。応答を 500 にはしない)。
+ */
+const mapsUrl = text.transform((v) => (isGoogleMapsUrl(v) ? v : ''));
+
 /** 'CUSTOMER APPOINTMENT' / 'OFFICE WORK' / 'EVENT'(それ以外もありうるため文字列のまま)。 */
 const eventType = text;
 
@@ -53,13 +67,13 @@ export const scheduleAppointmentWithRouteSchema = z.object({
   startTime: text,
   endTime: text,
   reservaUrl: text,
-  moveUrl: text,
+  moveUrl: mapsUrl,
   moveMin: minOrKm,
   moveKm: minOrKm,
-  attendanceUrl: text,
+  attendanceUrl: mapsUrl,
   attendanceMin: minOrKm,
   attendanceKm: minOrKm,
-  leavingUrl: text,
+  leavingUrl: mapsUrl,
   leavingMin: minOrKm,
   leavingKm: minOrKm,
   /** RESERVAの顧客ID(customers.external_id)。 */

@@ -90,9 +90,32 @@ export function detailAction(key: string, value: string, customer: Detail): Deta
       href: latLng ? mapsLatLngSearchUrl(latLng.lat, latLng.lng) : mapsSearchUrl(value),
     };
   }
-  if (key.includes('メール')) return { kind: 'mail', href: `mailto:${value}` };
-  if (key.includes('電話')) return { kind: 'tel', href: `tel:${value}` };
+  if (key.includes('メール')) {
+    const href = mailtoHref(value);
+    return href ? { kind: 'mail', href } : null;
+  }
+  if (key.includes('電話')) {
+    const href = telHref(value);
+    return href ? { kind: 'tel', href } : null;
+  }
   return null;
+}
+
+/**
+ * メールアドレスの mailto: の URL。値は顧客CSV・外部連携から来るため、`?`(件名・本文・宛先の追加)・`&`・`#`・空白・
+ * 区切りの文字などを含むものはボタンを出さない(1つのアドレスだけを宛先にする)。
+ */
+export function mailtoHref(value: string): string | null {
+  const address = value.trim();
+  if (!/^[^\s@?&#%/:;,<>()[\]"'\\]+@[^\s@?&#%/:;,<>()[\]"'\\]+$/.test(address)) return null;
+  return `mailto:${address}`;
+}
+
+/** 電話番号の tel: の URL。全角は半角にそろえ、数字と + - # * , ; だけを残す(# は URL の区切りなので %23)。 */
+export function telHref(value: string): string | null {
+  const number = value.normalize('NFKC').replace(/[^0-9+\-#*,;]/g, '');
+  if (!/[0-9]/.test(number)) return null;
+  return `tel:${number.replaceAll('#', '%23')}`;
 }
 
 export function buildDetailRows(customer: Detail): DetailRow[] {
