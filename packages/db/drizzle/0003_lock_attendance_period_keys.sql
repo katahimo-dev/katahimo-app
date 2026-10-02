@@ -8,6 +8,11 @@
 --   ON CONFLICT DO UPDATE)だけに絞る。updated_at はトリガーが書く(列の権限は要らない)。
 --   今のアプリが書く列は変わらないため、前の版のアプリもこのマイグレーションの後にそのまま動く。
 --   ワーカーの権限(SELECT だけ)は変えない。
+-- - 締めの判定 attendance_period_is_locked・勤怠の書き込みのトリガー enforce_attendance_period_lock の search_path も
+--   固定する(どちらも public の表・関数と pg_catalog の関数だけを使う。platform.tenants は修飾済み)。
+--   attendance_period_is_locked はアプリが領収書の登録・取消のトランザクションの中でも直接呼ぶ(締めと同じキーの
+--   共有のアドバイザリロックを取ってから読む)。関数の EXECUTE は PUBLIC の既定のまま(トリガーも呼び出した
+--   ロールの権限で動く)。
 CREATE OR REPLACE FUNCTION public.guard_attendance_period() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, public
@@ -36,4 +41,8 @@ $$;--> statement-breakpoint
 
 -- 月の締めは締めるだけ: アプリが UPDATE できるのは締めの列だけ(行の付け替え・作成日時の書き換えはできない)
 REVOKE UPDATE ON "attendance_periods" FROM katahimo_app;--> statement-breakpoint
-GRANT UPDATE ("status", "locked_at", "locked_by") ON "attendance_periods" TO katahimo_app;
+GRANT UPDATE ("status", "locked_at", "locked_by") ON "attendance_periods" TO katahimo_app;--> statement-breakpoint
+
+-- 締めの判定・勤怠の書き込みのトリガーの search_path を固定する(呼び出す側の search_path で別の表・関数を引かない)
+ALTER FUNCTION public.attendance_period_is_locked(uuid, uuid, date) SET search_path = pg_catalog, public;--> statement-breakpoint
+ALTER FUNCTION public.enforce_attendance_period_lock() SET search_path = pg_catalog, public;

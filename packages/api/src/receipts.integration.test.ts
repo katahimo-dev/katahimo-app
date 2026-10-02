@@ -394,11 +394,15 @@ describe('API: 締めた月の領収書の登録', () => {
     expect((await send(fresh.admin, '2026/08/31 18:00', fresh.staff.id)).status).toBe(400);
     const august = await list(fresh.admin, `month=2026-08&allStaff=true`);
     expect(august.body.receipts).toEqual([]);
-    const stored = await readdir(join(storageDir, fresh.id, 'receipts')).catch(() => []);
-    expect(stored).toEqual([]);
+    // 画像の置き場(まだ作られていなければ空): 断った登録は画像を残さない
+    const receiptDir = join(storageDir, fresh.id, 'receipts');
+    const storedFiles = () => readdir(receiptDir).catch(() => [] as string[]);
+    expect(await storedFiles()).toEqual([]);
     // 締めていない月・締めていないスタッフは登録できる
     expect((await send(fresh.staff, '2026/09/01 09:00')).status).toBe(200);
     expect((await send(fresh.other, '2026/08/31 18:00')).status).toBe(200);
+    // 同じ置き場に画像が2枚できる(上の「空」が置き場の取り違えで空だったのではない)
+    expect(await storedFiles()).toHaveLength(2);
   });
 });
 

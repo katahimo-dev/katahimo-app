@@ -159,6 +159,11 @@ export interface ReceiptCancelContext {
 /**
  * 判定する領収書の月(yearMonth)の締め済みのスタッフを読み、取消の可否の判定に使う文脈を作る(UoW の中で呼ぶ)。
  * 管理者は前の月の領収書も締めるまでは取消せるため、今日の月ではなく領収書の月の締めを読む。
+ *
+ * - 一覧(forStaffId を渡さない): その月の締め済みのスタッフをまとめて読む(表示だけ。ロックは取らない)。
+ * - 取消(forStaffId = 領収書のスタッフ): そのスタッフの締めだけを attendance.isPeriodLocked で読む。締めと同じ
+ *   アドバイザリロックを共有で取り、取消のトランザクションの終わりまで持つため、締めている途中なら待ち、読んだ後に
+ *   締める処理は取消の終わりを待つ(確かめてから取消すまでの間に締められない)。
  */
 export async function loadReceiptCancelContext(
   r: TenantRepositories,
@@ -166,9 +171,13 @@ export async function loadReceiptCancelContext(
   actor: Actor,
   timeZone: string,
   yearMonth: string,
+  forStaffId?: string,
 ): Promise<ReceiptCancelContext> {
   const today = zonedBusinessDate(currentTime(deps), timeZone);
-  const lockedStaffIds = new Set(await r.attendance.listLockedStaffIds(yearMonth));
+  const lockedStaffIds =
+    forStaffId === undefined
+      ? new Set(await r.attendance.listLockedStaffIds(yearMonth))
+      : new Set((await r.attendance.isPeriodLocked(forStaffId, yearMonth)) ? [forStaffId] : []);
   return { actor, timeZone, today, yearMonth, lockedStaffIds };
 }
 

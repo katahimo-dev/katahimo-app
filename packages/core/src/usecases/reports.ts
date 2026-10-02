@@ -624,7 +624,7 @@ export interface CustomerHistoryPage {
  * 訪問の引き継ぎ(前の訪問の様子・社内向けの記録・PSI を次に訪問するスタッフが読む)のため、一般スタッフにも
  * 他のスタッフが書いた記録を見せる(報告の一覧・中身は本人の分だけ、の意図した例外。doc/06 4章)。その代わり、
  * 返すページに他のスタッフの記録が入っていれば、続きのページも1ページごとに INFO `report.history.viewed` を残す
- * (ID と件数だけ。本文は残さない。読んだのは顧客の記録なので targetStaffId は null)。
+ * (顧客ID・件数・ページの先頭と末尾の記録IDだけ。本文は残さない。読んだのは顧客の記録なので targetStaffId は null)。
  */
 export async function getCustomerHistory(
   deps: ReportDeps,
@@ -693,7 +693,9 @@ export async function getCustomerHistory(
         customerId,
         count: items.length,
         othersCount,
-        includesOthers: true,
+        // 読んだページの範囲(新しい順の先頭と末尾の記録ID。続きのページを読んだときもどこを読んだか分かるように)
+        firstRecordId: page[0]?.id ?? null,
+        lastRecordId: last?.id ?? null,
         continued: after !== null,
         hasMore: nextCursor !== null,
       },

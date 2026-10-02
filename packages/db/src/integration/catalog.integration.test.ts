@@ -215,11 +215,25 @@ describe('スキーマの約束事(カタログ)', () => {
         and has_column_privilege('katahimo_app', a.attrelid, a.attnum, 'UPDATE')
       order by a.attname`);
     expect(updatable.map((c) => c.column)).toEqual(['locked_at', 'locked_by', 'status']);
-    // 締めの守りのトリガー関数は search_path を固定する
-    const [guard] = await rows<{ config: string[] | null }>(
-      sql`select proconfig as config from pg_proc where oid = 'public.guard_attendance_period()'::regprocedure`,
+    // 締めの守りの関数(締めの行のトリガー・勤怠の書き込みのトリガー・締めの判定)は search_path を固定する
+    const pinned = await rows<{ name: string; config: string[] | null }>(sql`
+      select p.oid::regprocedure::text as name, p.proconfig as config from pg_proc p
+      where p.oid in (
+        'public.guard_attendance_period()'::regprocedure,
+        'public.enforce_attendance_period_lock()'::regprocedure,
+        'public.attendance_period_is_locked(uuid, uuid, date)'::regprocedure
+      )
+      order by 1`);
+    expect(pinned).toEqual([
+      { name: 'attendance_period_is_locked(uuid,uuid,date)', config: ['search_path=pg_catalog, public'] },
+      { name: 'enforce_attendance_period_lock()', config: ['search_path=pg_catalog, public'] },
+      { name: 'guard_attendance_period()', config: ['search_path=pg_catalog, public'] },
+    ]);
+    // 締めの判定(領収書の登録・取消がトランザクションの中で呼ぶ)はアプリが実行できる
+    const [execute] = await rows<{ ok: boolean }>(
+      sql`select has_function_privilege('katahimo_app', 'public.attendance_period_is_locked(uuid, uuid, date)', 'EXECUTE') as ok`,
     );
-    expect(guard?.config).toEqual(['search_path=pg_catalog, public']);
+    expect(execute?.ok).toBe(true);
   });
 
   it('アプリ・ワーカーの接続には文・ロック待ち・放置されたトランザクションの上限がある(infra の初期化SQL)', async () => {

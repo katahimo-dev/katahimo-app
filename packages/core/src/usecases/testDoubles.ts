@@ -482,6 +482,9 @@ export function fakeRepositories(
         .lockedPeriods.filter((p) => p.yearMonth === yearMonth)
         .map((p) => p.staffId);
     },
+    async isPeriodLocked(staffId, yearMonth) {
+      return d().lockedPeriods.some((p) => p.staffId === staffId && p.yearMonth === yearMonth);
+    },
   };
 
   return {

@@ -403,6 +403,65 @@ describe('月の締め(attendance_periods)', () => {
     const visits = await uow.run(a, (r) => r.attendance.loadDay(staffId, '2026-09-24'));
     expect(visits.visits).toHaveLength(1);
   });
+
+  it('isPeriodLocked は締めた月だけ true を返し、締めと同じキーの共有ロックをトランザクションの終わりまで持つ(アプリのロール)', async () => {
+    const a = await createTenant();
+    const { staffId, otherId } = await uow.run(a, async (r) => ({
+      staffId: await createStaff(r),
+      otherId: await createStaff(r),
+    }));
+    await uow.run(a, (r) => r.attendance.lockPeriod(staffId, '2026-08', staffId, new Date()));
+    expect(
+      await uow.run(a, async (r) => [
+        await r.attendance.isPeriodLocked(staffId, '2026-08'),
+        await r.attendance.isPeriodLocked(staffId, '2026-09'),
+        await r.attendance.isPeriodLocked(otherId, '2026-08'),
+      ]),
+    ).toEqual([true, false, false]);
+    // 別のテナントからは締めが見えない(テナントは UoW の設定から読む)
+    const b = await createTenant();
+    expect(await uow.run(b, (r) => r.attendance.isPeriodLocked(staffId, '2026-08'))).toBe(false);
+
+    // 別の接続から同じキーの排他ロックを試す(取れれば文の終わりで放す)
+    const tryExclusive = async () =>
+      (
+        (await owner.execute(
+          sql`select pg_try_advisory_xact_lock(public.attendance_period_lock_key(${a}::uuid, ${staffId}::uuid, '2026-09')) as ok`,
+        )) as unknown as { ok: boolean }[]
+      )[0]?.ok;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let checked = () => {};
+    const wasChecked = new Promise<void>((resolve) => {
+      checked = resolve;
+    });
+    const reader = uow.run(a, async (r) => {
+      const locked = await r.attendance.isPeriodLocked(staffId, '2026-09');
+      checked();
+      await gate;
+      return locked;
+    });
+    await wasChecked;
+    expect(await tryExclusive()).toBe(false);
+    // 締めは、確かめたトランザクションの終わりを待つ
+    let lockedAt: number | null = null;
+    const locker = uow
+      .run(a, (r) => r.attendance.lockPeriod(staffId, '2026-09', staffId, new Date()))
+      .then(() => {
+        lockedAt = Date.now();
+      });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(lockedAt).toBeNull();
+    const committedAt = Date.now();
+    release();
+    expect(await reader).toBe(false);
+    await locker;
+    expect(lockedAt as unknown as number).toBeGreaterThanOrEqual(committedAt);
+    expect(await tryExclusive()).toBe(true);
+    expect(await uow.run(a, (r) => r.attendance.isPeriodLocked(staffId, '2026-09'))).toBe(true);
+  });
 });
 
 describe('活動記録', () => {

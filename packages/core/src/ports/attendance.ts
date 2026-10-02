@@ -96,6 +96,13 @@ export interface AttendanceRepository {
    * (運用の platform.unlock_attendance_period)。
    */
   lockPeriod(staffId: string, yearMonth: string, lockedBy: string, at: Date): Promise<void>;
-  /** その月の出勤簿が締め済みのスタッフ(領収書の取消の可否に使う)。 */
+  /** その月の出勤簿が締め済みのスタッフ(領収書の一覧の「取消せるか」の表示に使う。ロックは取らない)。 */
   listLockedStaffIds(yearMonth: string): Promise<string[]>;
+  /**
+   * そのスタッフのその月('YYYY-MM')の出勤簿が締め済みか(DB の attendance_period_is_locked)。締めと同じ
+   * (テナント・スタッフ・月)のアドバイザリロックを共有で取ってから読み、トランザクションの終わりまで持つ:
+   * 締めている途中ならその終わりを待ち、読んだ後に締めようとする処理はこのトランザクションの終わりを待つ。
+   * 締めた月に書かせない判定(領収書の登録・取消)はこれで読む。
+   */
+  isPeriodLocked(staffId: string, yearMonth: string): Promise<boolean>;
 }
