@@ -81,6 +81,7 @@ function createMailer(env: WorkerEnv): MailerPort {
   return new SmtpMailerPort({
     host: env.SMTP_HOST,
     port: env.SMTP_PORT,
+    requireTls: env.SMTP_REQUIRE_TLS,
     from: env.SMTP_FROM,
     ...(env.SMTP_USER ? { user: env.SMTP_USER } : {}),
     ...(env.SMTP_PASS ? { pass: env.SMTP_PASS } : {}),

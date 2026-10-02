@@ -61,6 +61,7 @@ export function createTestContext(options: { now?: string } = {}) {
     rateLimiter,
     rateLimits: DEFAULT_RATE_LIMIT_POLICY,
     resetCodeSecret: 'test-secret',
+    deviceTrustSecret: 'test-device-secret',
     legacyAuthSalt: undefined as string | undefined,
     // ミラーするテナント(GAS_BRIDGE_TENANT)。null にするとミラーを使わない環境になる
     mirrorTenantSlug: tenant.slug as string | null,

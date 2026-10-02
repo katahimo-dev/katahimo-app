@@ -25,6 +25,11 @@ const envSchema = z.object({
   SMTP_USER: z.preprocess(emptyToUndefined, z.string().optional()),
   SMTP_PASS: z.preprocess(emptyToUndefined, z.string().optional()),
   SMTP_FROM: z.string().default('保育日報 <noreply@localhost>'),
+  // STARTTLS(SMTP_PORT が 465 以外)で TLS への切り替えを必須にするか(既定 true。TLS 1.2 以上)。false は TLS の無い
+  // 開発用の SMTP(Mailpit 等)だけで、本番(NODE_ENV=production)では起動時に断る(途中で STARTTLS を消されると平文で流れるため)。
+  SMTP_REQUIRE_TLS: z
+    .preprocess(emptyToUndefined, z.enum(['true', 'false', '1', '0']).optional())
+    .transform((value) => value === undefined || value === 'true' || value === '1'),
   // 画面の URL(例: https://app.example.jp)。管理者が送る「パスワード設定の案内」のメールに、法人IDつきの
   // ログイン画面の URL として書く(未設定なら URL は書かず、法人IDだけを書く)。
   APP_PUBLIC_URL: z.preprocess(
@@ -73,6 +78,11 @@ function checkCombinations(env: WorkerEnv): string[] {
   const problems = [...sharedEnvProblems(env), ...vapidEnvProblems(env)];
   if (env.NODE_ENV === 'production' && !env.SMTP_HOST) {
     problems.push('  - SMTP_HOST: 本番ではパスワード再設定メールの送信にSMTP設定が必要です');
+  }
+  if (env.NODE_ENV === 'production' && !env.SMTP_REQUIRE_TLS) {
+    problems.push(
+      '  - SMTP_REQUIRE_TLS: 本番では false にできません(STARTTLS を必須にし、再設定コードを平文で送らない)',
+    );
   }
   return problems;
 }

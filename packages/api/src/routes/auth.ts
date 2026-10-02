@@ -27,8 +27,10 @@ import type { SessionEnv } from '../session';
 import {
   clearSessionCookie,
   getAuthenticatedSession,
+  readDeviceCookie,
   readSessionCookie,
   requireSession,
+  setDeviceCookie,
   setSessionCookie,
 } from '../session';
 
@@ -53,6 +55,9 @@ async function toSessionUser(
 /** ログインの失敗が続いたときの案内(アカウント単位・送信元IP単位のどちらのロックでも同じ文面)。 */
 const LOGIN_LOCKED_MESSAGE =
   'ログインの失敗が続いたため、一時的にログインできません。しばらく(15分ほど)待ってから再度お試しください。';
+/** パスワード変更で現在のパスワードの誤りが続いたときの案内。 */
+const PASSWORD_CHANGE_LOCKED_MESSAGE =
+  '現在のパスワードの誤りが続いたため、一時的にパスワードを変更できません。しばらく(15分ほど)待ってから再度お試しください。';
 /** パスワード再設定の要求が多すぎるときの案内。 */
 const RESET_RATE_LIMITED_MESSAGE =
   'パスワード再設定の要求が多すぎます。しばらく待ってから再度お試しください。';
@@ -73,7 +78,11 @@ export function createAuthRoutes(container: Container) {
     const deps = container.demo?.isDemoSlug(body.data.tenantSlug)
       ? { ...container, rateLimits: container.demo.loginRateLimits(container.rateLimits) }
       : container;
-    const result = await login(deps, { ...body.data, meta: requestMeta(c) });
+    const result = await login(deps, {
+      ...body.data,
+      deviceToken: readDeviceCookie(c, container),
+      meta: requestMeta(c),
+    });
     if (!result.ok) {
       if (result.reason === 'locked') return rateLimited(c, result.retryAfterMs, LOGIN_LOCKED_MESSAGE);
       const message =
@@ -86,6 +95,7 @@ export function createAuthRoutes(container: Container) {
     }
 
     setSessionCookie(c, container, result.sessionCookieValue, result.expiresAt);
+    setDeviceCookie(c, container, result.deviceToken.value, result.deviceToken.expiresAt);
     const staff = await toSessionUser(container, {
       staffId: result.staff.id,
       tenantId: result.staff.tenantId,
@@ -103,7 +113,10 @@ export function createAuthRoutes(container: Container) {
     return jsonOk(c, sessionUserResponseSchema, { staff: await toSessionUser(container, session) });
   });
 
-  /** ログアウト。Cookie を消すだけでなく、サーバー側のセッションも失効させる。 */
+  /**
+   * ログアウト。Cookie を消すだけでなく、サーバー側のセッションも失効させる。「この端末」の印の Cookie は残す
+   * (端末を表すもので、次のログインでアカウントのロックを避けるため)。
+   */
   app.post('/logout', async (c) => {
     const cookieValue = readSessionCookie(c, container);
     if (cookieValue) await logout(container, cookieValue, requestMeta(c));
@@ -132,8 +145,13 @@ export function createAuthRoutes(container: Container) {
       if (result.reason === 'incorrect_current_password') {
         return apiError(c, 400, 'validation_failed', '現在のパスワードが正しくありません');
       }
+      if (result.reason === 'locked') {
+        return rateLimited(c, result.retryAfterMs, PASSWORD_CHANGE_LOCKED_MESSAGE);
+      }
       return apiError(c, 401, 'unauthenticated', 'セッションが無効です');
     }
+    // 前の「この端末」の印はパスワードの変更で通らなくなるため、この端末の分を作り直す
+    setDeviceCookie(c, container, result.deviceToken.value, result.deviceToken.expiresAt);
     return jsonOk(c, changePasswordResponseSchema, { success: true, message: 'パスワードを変更しました' });
   });
 
@@ -154,7 +172,11 @@ export function createAuthRoutes(container: Container) {
     });
   });
 
-  /** GAS版Auth.js resetPasswordWithCode。 */
+  /**
+   * GAS版Auth.js resetPasswordWithCode。429 は送信元IP単位の上限だけ(アカウント単位の上限は誤ったコードと同じ 400)。
+   * 成功したら、再設定した端末の「この端末」の印を新しいパスワードで作り直す(前の印は再設定で通らなくなるため。
+   * アカウントが第三者の失敗でロック中でも、再設定した端末からは新しいパスワードでログインできる)。
+   */
   app.post('/password-reset/confirm', async (c) => {
     const body = await parseJsonBody(c, passwordResetConfirmSchema);
     if (!body.ok) return body.response;
@@ -174,6 +196,7 @@ export function createAuthRoutes(container: Container) {
               : '無効な認証コードです';
       return apiError(c, 400, 'validation_failed', message);
     }
+    setDeviceCookie(c, container, result.deviceToken.value, result.deviceToken.expiresAt);
     return jsonOk(c, passwordResetConfirmResponseSchema, { ok: true, message: 'パスワードを再設定しました' });
   });
 

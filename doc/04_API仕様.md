@@ -31,6 +31,7 @@
 | 期限 | 無操作7日(`SESSION_IDLE_TTL_MS`)。残りが6日を切った要求で7日に延ばし Cookie も更新。ログインから30日(`SESSION_ABSOLUTE_TTL_MS`)を超えない |
 | 毎回の確認 | セッション(失効・期限)→ テナントが `active` → スタッフの存在 → 退職日(テナントの時刻帯の業務日)。退職済みならそのスタッフの全セッションを失効 |
 | ミドルウェア | `requireSession(container, deniedAction?)`(未ログイン 401。`deniedAction` があれば WARN `<action>.access_denied`)、`requireAdmin(container, action)`(未ログイン 401・管理者以外 403、どちらも WARN)、`requireCoordinator(container, action)`(同じくコーディネーター・管理者以外 403) |
+| 「この端末」の印 | 本番 `__Host-katahimo_device`、開発 `katahimo_device`。`HttpOnly`・`SameSite=Lax`・`Path=/`・本番は `Secure`、期限180日。ログインの成功のたびに発行し直し(パスワードの変更・再設定の成功でもその端末の分を作り直す)、ログアウトでは消さない。値は `v1.<テナントID>.<スタッフID>.<発行時刻(秒)>.<乱数>.<HMAC>`(個人情報なし。[06](06_セキュリティ設計.md) 2.4)。アカウント単位のログインのロックを本人の端末から避けるためだけに使う(セッションではない) |
 | 対象スタッフ | `targetStaffIdOf(c, staffId)`: 一般スタッフは常に本人、コーディネーター・管理者は指定があればそのスタッフ(usecase でも確かめる) |
 
 ### 1.3 エラー
@@ -73,11 +74,16 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 
 | 規則(name) | キー | 既定 | 超えたとき | 回数の環境変数 |
 | --- | --- | --- | --- | --- |
-| `login_failure_account` | テナントslug + 正規化したログインID(無いアカウントも数える) | 15分に10回 → 15分ロック | 429(正しいパスワードでも) | `RATE_LIMIT_LOGIN_FAILURES_PER_ACCOUNT` |
+| `login_failure_account` | テナントslug + 正規化したログインID(無いアカウントも数える) | 15分に10回 → 15分ロック | 429(正しいパスワードでも。ただし正しい「この端末」の印のある要求は数えず、断らない) | `RATE_LIMIT_LOGIN_FAILURES_PER_ACCOUNT` |
+| `login_failure_device` | テナント + スタッフ + 端末(「この端末」の印が正しい要求だけ。`login_failure_account` の代わりに数える) | 15分に10回 → 15分ロック | 429(その端末だけ) | — |
 | `login_failure_ip` | 送信元IP | 15分に50回 → 15分ロック | 429 | `RATE_LIMIT_LOGIN_FAILURES_PER_IP` |
-| `password_reset_request_account` | アカウント | 1時間に5回 | 何もせず同じ応答(既存のコードに触れない) | `RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT` |
+| `password_reset_request_account` | アカウント(分かればテナント + スタッフ = 主・サブのメールで同じ枠、分からなければテナントslug + ログインID) | 1時間に5回 | 何もせず同じ応答(既存のコードに触れない) | `RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT` |
+| `password_reset_request_account_ip_day` | `password_reset_request_account` のキー × 送信元IP(1つの送信元からのメールの送り続けを止める。別のネットワークの本人は止めない) | 1日10回 | 同上 | `RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT_IP_DAY` |
 | `password_reset_request_ip` | IP | 1時間に20回 | 429 | `RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_IP` |
-| `password_reset_confirm_account` / `_ip` | アカウント / IP | 1時間に20回 / 50回 | 429 | — |
+| `password_reset_confirm_account` | アカウント(発行要求と同じ考え方) | 1時間に20回 | 誤ったコードと同じ 400「無効な認証コードです」(コードに触れない。429 にすると2つのメールが同じスタッフと分かるため) | — |
+| `password_reset_confirm_ip` | IP | 1時間に50回 | 429 | — |
+| `password_guide_staff` / `_day` | テナント + 送り先のスタッフ(管理者のパスワード設定の案内。本人の再設定の要求とは別の枠) | 1時間に5回 / 1日20回 | 429 | — |
+| `password_change_failure_staff` | テナント + スタッフ(パスワード変更で現在のパスワードを誤った回。照合の前に枠を取り、一致した回は数え直す) | 15分に5回 → 15分ロック | 429「現在のパスワードの誤りが続いたため、一時的にパスワードを変更できません。…」(正しいパスワードでも) | — |
 | `ai_generate_staff` | テナント + スタッフ | 1日200回 | 429 | `RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY` |
 | `receipt_ocr_staff` | テナント + スタッフ | 1日300回 | 429 | `RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY` |
 | `receipt_upload_staff` | テナント + スタッフ | 1時間60回(領収書の登録 `POST /api/receipts`。画像の枚数ではなく要求の回数。1回で最大6枚・14MB の本文を受け、画像を保存先に書くため。本文を読む前に数えるので、検証で断られた(400)要求も数える) | 429「領収書の登録の回数が上限に達しました。しばらく待ってから再度お試しください。」(`Retry-After` つき) | `RATE_LIMIT_RECEIPT_UPLOAD_PER_STAFF_HOUR` |
@@ -91,8 +97,18 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `customer_csv_import_staff` | テナント + スタッフ | 1時間30回(顧客CSVの取込。`POST /api/admin/customers/import`) | 429 | — |
 | `staff_import_apply_staff` | テナント + スタッフ(管理者) | 10分に5回(スタッフの xlsx の取込の反映。`dryRun` は数えない) | 429 | — |
 
-ログインの2つの規則は照合(argon2)の**前に**1回分の枠を取る(同時の大量の試行でも照合まで進むのは上限の回数まで)。
-一致した回は数えない(アカウントは数え直し、IP は先に取った1回分を返す)。
+パスワード再設定の規則は、まず送信元IPで数え(上限なら 429 でアカウントも探さない)、次にアカウントを探してからアカウント単位の
+枠を数える(発行要求は1時間の枠、続いて送信元IPごとの1日の枠。1時間の上限を超えた回は1日の分に数えない)。アカウントが無い・退職者・
+停止中のテナントでも入力のログインIDで同じ回数だけ数えるため、上限に達するまでの回数からアカウントの有無は分からない。認証の無い
+要求で数える枠は、第三者が使い切っても本人を長く止められないようにする(確認に1日の枠は無く、発行要求の1日の枠は送信元IPごと。
+管理者の案内は別の枠。[06](06_セキュリティ設計.md) 2.3)。
+
+ログインの規則は照合(argon2)の**前に**1回分の枠を取る(同時の大量の試行でも照合まで進むのは上限の回数まで)。まず送信元IPで数え、
+ロック中ならアカウントの枠には触れずに 429(1つのIPから送り続けてもアカウントの枠は減らない)。形の正しい「この端末」の印(Cookie)が
+無ければ、テナント・アカウントを探す前に `login_failure_account` で数え、ロック中なら DB を読まずに 429(読み方の差からアカウントの有無が
+分からないように)。印があればテナント・アカウントを探し(アカウントの有無にかかわらず同じ問い合わせ)、そのアカウントの正しい印なら
+`login_failure_device`、それ以外は `login_failure_account` で数える。
+一致した回は数えない(使った枠は数え直し、IP は先に取った1回分を返す)。印での成功ではアカウント単位の枠は戻さない。
 `integration_auth_failure_ip` も同じく API キーを確かめる前に1回分を取り、成功した回は返す。ロック中の要求は `rate_limit.exceeded` も
 `integration.auth_failed` も残さず(失敗の続く連携先で操作ログが溢れないように)、ロックの始まりに1回だけ WARN `integration.auth_locked` を残す。
 
@@ -126,7 +142,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 - 前日のデモは `demo:reset` が slug を `<slug>-YYYYMMDD` に変えて停止(`suspended`)で残す。停止中のテナントはログイン(「ご利用の法人は現在利用を停止しています。…」)も
   既存のセッション Cookie も通らない(1.2 の「テナントが `active`」)。
 - テナントはセッション Cookie の先頭(テナント ID)か本文の `tenantSlug` で決める(断るかどうかの判定だけ。認証は各ルートが行う)。
-- ログイン: デモ用テナントはアカウント単位のロック(`login_failure_account`)をしない(わざと間違え続けて全員を締め出させない)。
+- ログイン: デモ用テナントはアカウント単位・端末単位のロック(`login_failure_account`・`login_failure_device`)をしない(わざと間違え続けて全員を締め出させない)。
   送信元IP単位(`login_failure_ip`)は残す。
 - AI(`POST /api/reports/daily/generate`・`/accident/generate`・`POST /api/receipts/ocr`)は1回のログイン(セッション)につき合計
   `DEMO_AI_USES_PER_SESSION`(10)回まで(規則 `demo_ai_session`、キーはセッションID)。超えると 429「デモ環境では、AIを使えるのは
@@ -152,12 +168,12 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 
 | メソッド・パス | 権限 | 契約(要求 / 応答) | 応答・エラー | 主なログ |
 | --- | --- | --- | --- | --- |
-| `POST /login` | 誰でも | `loginRequestSchema`(`tenantSlug`・`email`(サブメールも可)・`password`)/ `sessionUserResponseSchema` | `{ staff: { staffId, tenantId, name, email, role, demoTenant } }` + Cookie(`demoTenant` = 公開デモ用テナントへのログインか。1.6)。401「メールアドレスまたはパスワードが違います」/「ログイン権限のないユーザーです」(退職)/「ご利用の法人は現在利用を停止しています。…」、429(ロック中) | INFO `auth.login.succeeded`、SECURITY `auth.login.failed`・`.lockout_started`・`.locked` |
+| `POST /login` | 誰でも | `loginRequestSchema`(`tenantSlug`・`email`(サブメールも可)・`password`)/ `sessionUserResponseSchema` | `{ staff: { staffId, tenantId, name, email, role, demoTenant } }` + セッションの Cookie と「この端末」の印の Cookie(1.2。要求に正しい印があれば、アカウント単位のロック中でも通す)(`demoTenant` = 公開デモ用テナントへのログインか。1.6)。401「メールアドレスまたはパスワードが違います」/「ログイン権限のないユーザーです」(退職)/「ご利用の法人は現在利用を停止しています。…」、429(ロック中) | INFO `auth.login.succeeded`、SECURITY `auth.login.failed`・`.lockout_started`・`.locked`(`scope` = `ip` / `account` / `device`。印を送った要求は `details.device` = `trusted` / `invalid`) |
 | `GET /me` | 誰でも(Cookie) | — / `sessionUserResponseSchema` | `{ staff: { …, demoTenant } }`(`/login` と同じ形)。401「未ログインです」 | INFO `auth.session.auto_login` / WARN `.auto_login_failed` |
-| `POST /logout` | 誰でも | — / `okResponseSchema` | `{ ok: true }`。セッションを失効し Cookie を消す | INFO `auth.logout` |
-| `POST /change-password` | ログイン | `changePasswordRequestSchema`(`currentPassword`・`newPassword` 8〜128文字)/ `changePasswordResponseSchema` | 400「現在のパスワードが正しくありません」・長さの規則。操作中以外のセッションを失効 | SECURITY `auth.password_change.succeeded` / `.failed` |
+| `POST /logout` | 誰でも | — / `okResponseSchema` | `{ ok: true }`。セッションを失効しセッションの Cookie を消す(「この端末」の印の Cookie は残す) | INFO `auth.logout` |
+| `POST /change-password` | ログイン | `changePasswordRequestSchema`(`currentPassword`・`newPassword` 8〜128文字)/ `changePasswordResponseSchema` | 400「現在のパスワードが正しくありません」・長さの規則、429(現在のパスワードの誤りが15分に5回を超えた。1.5 `password_change_failure_staff`)。操作中以外のセッションを失効し、「この端末」の印の Cookie を作り直す(1.2) | SECURITY `auth.password_change.succeeded` / `.failed`、WARN `.locked` / `.lockout_started` |
 | `POST /password-reset/request` | 誰でも | `passwordResetRequestSchema`(`tenantSlug`・`email`)/ `passwordResetRequestResponseSchema` | 常に `{ ok: true, message }`。IP の上限だけ 429 | SECURITY `auth.password_reset.requested`、WARN `.request_rejected` |
-| `POST /password-reset/confirm` | 誰でも | `passwordResetConfirmSchema`(`tenantSlug`・`email`・`code` 6桁・`newPassword`)/ `passwordResetConfirmResponseSchema` | 400「無効な認証コードです」/「認証コードの有効期限が切れています」/入力回数の上限、429 | SECURITY `auth.password_reset.completed`、WARN `.failed` |
+| `POST /password-reset/confirm` | 誰でも | `passwordResetConfirmSchema`(`tenantSlug`・`email`・`code` 8桁の数字(移行のあいだだけ6桁も受け付ける。`PASSWORD_RESET_CODE_PATTERN`)・`newPassword`)/ `passwordResetConfirmResponseSchema` | `{ ok: true, message }` + この端末の「この端末」の印の Cookie(新しいパスワードで作り直す。1.2)。400「無効な認証コードです」(アカウント単位の確認の上限も同じ)/「認証コードの有効期限が切れています」/入力回数の上限、429(送信元IPの上限だけ) | SECURITY `auth.password_reset.completed`、WARN `.failed` |
 
 ### 2.3 お客様 `/api/customers`(`routes/customers.ts`、全てログイン)
 
@@ -258,7 +274,7 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 | `POST /api/admin/staff` | `createStaffRequestSchema`(`name`・`email`・`kana?`・`altEmail?`・`phone?`・`role`(既定 staff)・`homeAddress?`・`travelMode?`(car / bicycle / transit / walk)・`gender?`(female / male / other / unknown)・`scheduleCalendarId?`・`initialPassword?`)/ `adminStaffResponseSchema` | 201 `{ staff, homeGeocode }`。初期パスワードを省くと未設定。メール・サブメールはテナント内で両方を跨いで一意(409、`fields` つき)。自宅住所はジオコーディングして緯度経度・区画を保存し、`homeGeocode` に結果(`ok` / `not_found` / `failed` / `unavailable`。住所を送らなければ null)。ok 以外でも住所は保存する。`scheduleCalendarId` はテナントの許可の一覧(運用担当者の `pnpm tenant:calendars`。05 4.2)に合うものだけで、合わなければ 400(`fields.scheduleCalendarId`「このカレンダーは使えません。運用担当者に登録を依頼してください」、WARN `staff.admin.create_rejected` `calendar_not_allowed`)。カレンダーIDは小文字にして保存する。SECURITY `staff.admin.created` |
 | `PATCH /api/admin/staff/:id` | `updateStaffRequestSchema`(登録の項目 + `retiredOn`、全て省略可。null・空欄は値を消す。`rowVersion?`)/ `adminStaffResponseSchema` | `rowVersion` が今の版と違えば 409(`stale_row_version`)。`rowVersion` は地図APIを呼ぶ前に確かめる。住所を変えたとき(または住所は同じでも緯度経度が無いとき)だけジオコーディングし `homeGeocode` を返す(それ以外は null)。カレンダーを変えるときは登録と同じ許可の確かめ(400)。今日以前の退職日を入れると全セッションを失効(先の日付ならその日からログイン不可)。自分の役割の変更・退職日は 400。ほかの管理者を外す・退職させる変更は、在籍中の管理者の行をロックして確かめ、操作する人がもう管理者でなければ 403(`actor_not_admin`)、退職日の決まっていない管理者が残らなければ 409(`last_admin`)。更新する項目が無ければ 400。SECURITY `staff.admin.updated`(`changedFields` と役割・退職日・`homeGeocode`。値そのものは残さない) |
 | `DELETE /api/admin/staff/:id` | — / `okResponseSchema` | 業務の記録(出勤簿・訪問・移動・勤務・日報・領収書・取込・設定の更新者 等、`ON DELETE` の無い外部キー)にも、外部キーの無い変更の履歴(`entity_changes.changed_by`・`care_record_revisions.changed_by`・`ai_prompt_revisions.created_by`)にも無ければ削除し、認証情報・ログイン用メール・セッション・再設定コード・カレンダー設定も消える。参照されていれば 409「…記録があるため削除できません。辞めた方は退職日を設定してください。」(`staff_has_records`)。自分自身は 400、無ければ 404、管理者で退職日の決まっていない管理者が残らなくなるなら 409(`last_admin`)。SECURITY `staff.admin.deleted` |
-| `POST /api/admin/staff/:id/password-guide` | — / `okResponseSchema` | パスワード未設定・GAS版のパスワードのままの在籍者に、パスワード設定の案内(再設定コード。`mail.password_reset` を outbox に積み、payload は `{ purpose: 'setup_guide' }` だけ)をメールアドレス宛に送る(本文に法人ID と、ワーカーの `APP_PUBLIC_URL` があれば `?t=<法人ID>` つきのログイン画面の URL)。設定済み・退職者は 400。回数は本人の再設定の要求と同じアカウント単位の枠(メール・サブメールそれぞれ)を数え、どれかが上限なら 429(Retry-After)。SECURITY `staff.admin.password_guide_sent` |
+| `POST /api/admin/staff/:id/password-guide` | — / `okResponseSchema` | パスワード未設定・GAS版のパスワードのままの在籍者に、パスワード設定の案内(再設定コード。`mail.password_reset` を outbox に積み、payload は `{ purpose: 'setup_guide' }` だけ)をメールアドレス宛に送る(本文に法人ID と、ワーカーの `APP_PUBLIC_URL` があれば `?t=<法人ID>` つきのログイン画面の URL)。設定済み・退職者は 400。回数は送り先のスタッフ単位の `password_guide_staff`(1時間5回)・`_day`(1日20回)で数え、上限なら 429(Retry-After)。本人の再設定の要求(認証の無い要求)とは枠を共有しない(第三者が要求を送り続けても案内は止まらない)。SECURITY `staff.admin.password_guide_sent` |
 | `GET /api/admin/staff/export.xlsx` | — | 退職者を含む全員の xlsx(`スタッフ一覧.xlsx`、シート「スタッフ」)。列は shared の `STAFF_SHEET_COLUMNS` の順(ID・氏名・カナ・メールアドレス・サブメール・電話・役割・退職日・自宅住所・移動手段・性別・予定カレンダーID)、役割・移動手段・性別は画面と同じ日本語(`STAFF_ROLE_LABELS` / `TRAVEL_MODE_LABELS` / `GENDER_LABELS`)、退職日は「YYYY-MM-DD」の文字、ID・電話・退職日の列は文字の書式。パスワードは出さない。そのまま取り込める。SECURITY `staff.export.downloaded`(件数だけ) |
 | `POST /api/admin/staff/import` | `staffImportRequestSchema`(`fileBase64`(xlsx。2MB まで)・`fileName?`・`dryRun`(既定 true)・`planDigest?`(反映するときは必須))/ `staffImportResponseSchema` | `{ dryRun, applied, counts: { rows, created, updated, unchanged }, changes: [{ row, kind: create/update, name, email, fields: [見出し] }], errors: [{ row, message }], warnings, planDigest }`(`row` は Excel の行番号、ファイル全体の問題は null)。シート「スタッフ」(無ければ先頭のシート)の上から10行までで「氏名」「メールアドレス」の見出しの行を探し、見出しで列を見分ける(並び順は問わない。知らない見出しは知らせ、同じ見出しが2つ・氏名かメールアドレスの見出しが無ければ誤り)。空の行は読まず、500行を超えれば誤り。突き合わせは ID(空欄でなければ。知らない ID は誤り)、無ければメールアドレス(主)、どちらでも見つからなければ新しいスタッフ(パスワード未設定、役割の空欄はスタッフ)。見出しのある列はセルの値で上書きし、空欄は値の削除(氏名・メールアドレス・既存のスタッフの役割は必須)、見出しの無い列は今の値のまま、ファイルに無いスタッフは変えない。セルは登録・更新と同じ規則(`staffFieldSchemas`)で確かめ、役割・移動手段・性別は日本語の名前か値のコード、退職日は日付のセル・Excel の日付のシリアル値(整数)・「YYYY-MM-DD」「YYYY/MM/DD」「YYYY.MM.DD」(月・日は1桁も可、全角も可。2000〜2100年)。式は残っている計算結果を、リンク・書式つきの文字は文字だけを読む。値を読めないセル(エラーの値・計算結果の残っていない式)と、退職日以外の列の日付のセルは空欄(値の削除)にせず、その行の誤り(「「電話」の列のセルを読めません(式・エラーの値)…」「…の列が日付のセルです…」)にする。業務の規則は `PATCH` と同じ: ファイル内・他のスタッフとのメール・サブメールの重なり(取込の後の状態で確かめる。ファイルの中で2人のメールを入れ替えるのは良い)、自分自身の降格・退職日、取込の後に退職日の決まっていない管理者が残らない(`last_admin`)、許可の一覧に無い予定のカレンダー(変えるときだけ)は誤り。`dryRun` は確かめるだけで何も書かない(`import_runs`・操作ログも無し、地図APIも呼ばない)。`planDigest` は反映する内容の指紋(行ごとの行番号・作成/更新/変更なし・対象のスタッフとその `row_version`・変わる項目と新しい値の SHA-256。16進64文字。操作ログには残さない)で、反映(`dryRun: false`)は確かめたときの `planDigest` を付けて送る(無ければ 400 `plan_digest_required`)。反映は誤りが1件も無いときだけ: 指紋が今の内容と違えば地図APIを呼ぶ前に 409 `import_stale`「確かめた後に他の人がスタッフの情報を変えました。もう一度ファイルを選んで確かめてから取り込んでください」(確かめた後に他の管理者が対象のスタッフを変えた(ファイルに無い列でも)・ファイルが違う)、自宅住所が変わる行をトランザクションの前にジオコーディング(同じ住所は1回。見つからない・失敗は住所だけ保存して warnings)、1つのトランザクションで在籍中の管理者の行をロックして読み直して確かめ直し(誤りになる・指紋が変われば 409 `import_stale`、操作する人がもう管理者でなければ 403)、変わる行だけを書き(メール・サブメールが変わるスタッフは先に全員のログイン用メールを外してから書く)、今日以前の退職日を入れたスタッフはセッションを失効し通知の購読を消し、`import_runs`(`staff_xlsx`)に件数を残す。コミットの後に SECURITY `staff.xlsx_import.applied`(`importRunId`・件数・`retired`・`warnings`・`geocode: { geocoded, notFound, failed }`(地図APIを呼んだ住所の数))と、書いたスタッフごとに SECURITY `staff.admin.created` / `staff.admin.updated`(画面の登録・更新と同じ形: `targetStaffId`・`changedFields`(項目の名前だけ)・変わったときの `role` / `retiredOn`・`homeGeocode`、作成は `initialPasswordSet: false`。加えて `via: 'staff_xlsx'`・`importRunId`。値そのものは残さない)。誤り・`import_stale` で反映しないときは WARN `staff.xlsx_import.rejected`(`reason`)。反映だけ回数制限 `staff_import_apply_staff`(429。確かめるだけは数えない)。読めないファイルは 400 `invalid_xlsx`、シートが20枚を超えれば 400 `too_many_sheets`、シートの行が2000行を超えれば 400 `too_many_rows`。41列目より右の列は読まない |
 | `GET /api/admin/audit-logs` | `auditLogQuerySchema`(`from?`・`to?`(業務日、両端を含む。既定は今日までの7日間、93日まで)・`level?`・`staffId?`(操作者か対象)・`action?`(操作コードの前方一致)・`cursor?`・`limit`(1〜200、既定50))/ `auditLogListResponseSchema` | `{ entries: [{ id, createdAt, level, action, actorType, actorStaffId, actorName, targetStaffId, targetName, details, ip, userAgent, requestId }], nextCursor, range: { from, to }, timeZone }`。新しい順(`created_at`, `id` の keyset。`nextCursor` を次の `cursor` に)。テナントの行だけ(tenant_id が null のログイン前の記録は出さない)。期間の誤り・読めない `cursor` は 400(`fields.from` / `invalid_cursor`)。最初のページだけ INFO `audit_log.viewed`(条件。スタッフを絞れば `targetStaffId`) |

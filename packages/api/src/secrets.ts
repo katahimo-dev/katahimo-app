@@ -11,4 +11,7 @@ export function deriveSecret(masterSecret: string, label: DerivedSecretLabel): s
   return Buffer.from(hkdfSync('sha256', masterSecret, Buffer.alloc(0), label, 32)).toString('hex');
 }
 
-export type DerivedSecretLabel = 'katahimo/password-reset-code/v1' | 'katahimo/rate-limit-key/v1';
+export type DerivedSecretLabel =
+  | 'katahimo/password-reset-code/v1'
+  | 'katahimo/rate-limit-key/v1'
+  | 'katahimo/device-trust/v1';

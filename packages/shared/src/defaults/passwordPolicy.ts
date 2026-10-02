@@ -7,6 +7,18 @@
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_LENGTH = 128;
 
+/**
+ * パスワード再設定コードの桁数(メールで届く数字)。GAS版の6桁から8桁にした(1つのコードへの入力の上限・
+ * 回数制限と合わせて、総当たりで当たる見込みを1/100にする)。
+ */
+export const PASSWORD_RESET_CODE_LENGTH = 8;
+
+/**
+ * 受け付ける再設定コードの形。8桁のほか、移行のあいだだけ6桁も受け付ける(この版を出す前に発行した6桁のコードは
+ * 30分で切れるため、次のリリースで6桁を外す)。
+ */
+export const PASSWORD_RESET_CODE_PATTERN = /^(?:\d{8}|\d{6})$/;
+
 export type PasswordPolicyViolation = 'empty' | 'too_short' | 'too_long';
 
 export function checkPasswordPolicy(password: string): PasswordPolicyViolation | null {

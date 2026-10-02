@@ -131,6 +131,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'auth.session.auto_login_failed': '自動ログインの失敗',
   'auth.password_change.succeeded': 'パスワードの変更',
   'auth.password_change.failed': 'パスワードの変更の失敗',
+  'auth.password_change.locked': 'ロック中のパスワードの変更',
+  'auth.password_change.lockout_started': 'パスワードの変更のロック開始',
   'auth.password_reset.requested': 'パスワード再設定の番号を送信',
   'auth.password_reset.request_rejected': 'パスワード再設定の番号の送信を断った',
   'auth.password_reset.completed': 'パスワードの再設定',

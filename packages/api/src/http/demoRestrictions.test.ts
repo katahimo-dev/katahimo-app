@@ -1,4 +1,5 @@
 import type { TenantDirectoryPort, TenantRecord } from '@katahimo/core/ports';
+import { DEFAULT_RATE_LIMIT_POLICY } from '@katahimo/core/usecases';
 import { describe, expect, it } from 'vitest';
 import { DEMO_RESTRICTION_RULES, DemoTenant, matchDemoRestriction } from './demoRestrictions';
 
@@ -62,5 +63,21 @@ describe('DemoTenant.isDemoTenant', () => {
     now += 10 * 60 * 1000;
     expect(await demo.isDemoTenant('t1')).toBe(false);
     expect(lookups).toBe(4);
+  });
+});
+
+describe('DemoTenant.loginRateLimits', () => {
+  it('アカウント単位・端末単位のログインの失敗はロックしない(送信元IP単位は残す)', () => {
+    const demo = new DemoTenant(
+      { slug: 'public-demo', publicLogin: false, dataRetentionDays: 30, logRetentionMonths: 3 },
+      {} as TenantDirectoryPort,
+    );
+    const policy = demo.loginRateLimits(DEFAULT_RATE_LIMIT_POLICY);
+    for (const rule of [policy.loginFailureAccount, policy.loginFailureDevice]) {
+      expect(rule.limit).toBe(Number.MAX_SAFE_INTEGER);
+      expect(rule.lockMs).toBeUndefined();
+    }
+    expect(policy.loginFailureDevice.name).toBe(DEFAULT_RATE_LIMIT_POLICY.loginFailureDevice.name);
+    expect(policy.loginFailureIp).toEqual(DEFAULT_RATE_LIMIT_POLICY.loginFailureIp);
   });
 });

@@ -182,15 +182,20 @@ export class DemoTenant {
     return result;
   }
 
-  /** デモ用テナントでは、アカウント単位のログインの失敗は数えるだけでロックしない(送信元IP単位は残す)。 */
+  /**
+   * デモ用テナントでは、アカウント単位・「アカウント × 端末」単位のログインの失敗は数えるだけでロックしない
+   * (送信元IP単位は残す)。
+   */
   loginRateLimits(policy: RateLimitPolicy): RateLimitPolicy {
+    const unlocked = (rule: RateLimitRule): RateLimitRule => ({
+      name: rule.name,
+      limit: Number.MAX_SAFE_INTEGER,
+      windowMs: rule.windowMs,
+    });
     return {
       ...policy,
-      loginFailureAccount: {
-        name: policy.loginFailureAccount.name,
-        limit: Number.MAX_SAFE_INTEGER,
-        windowMs: policy.loginFailureAccount.windowMs,
-      },
+      loginFailureAccount: unlocked(policy.loginFailureAccount),
+      loginFailureDevice: unlocked(policy.loginFailureDevice),
     };
   }
 }

@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '../defaults/passwordPolicy';
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_RESET_CODE_LENGTH,
+  PASSWORD_RESET_CODE_PATTERN,
+} from '../defaults/passwordPolicy';
 import { idSchema } from './common';
 import { staffRoleSchema } from './roles';
 
@@ -66,14 +71,17 @@ export type PasswordResetRequest = z.infer<typeof passwordResetRequestSchema>;
 export const passwordResetRequestResponseSchema = z.object({ ok: z.literal(true), message: z.string() });
 export type PasswordResetRequestResponse = z.infer<typeof passwordResetRequestResponseSchema>;
 
-/** POST /api/auth/password-reset/confirm */
+/**
+ * POST /api/auth/password-reset/confirm。code は8桁の数字(移行のあいだは6桁も受け付ける。
+ * PASSWORD_RESET_CODE_PATTERN。6桁は次のリリースで外す)。
+ */
 export const passwordResetConfirmSchema = z.object({
   tenantSlug: tenantSlugSchema,
   email: loginIdSchema,
   code: z
     .string()
     .trim()
-    .regex(/^\d{6}$/, '認証コードは6桁の数字です'),
+    .regex(PASSWORD_RESET_CODE_PATTERN, `認証コードは${PASSWORD_RESET_CODE_LENGTH}桁の数字です`),
   newPassword: newPasswordSchema,
 });
 export type PasswordResetConfirm = z.infer<typeof passwordResetConfirmSchema>;

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
 import { loadEnv } from './env';
+import { sessionCookieOf } from './testSupport/cookies';
 
 /**
  * API のルートを実際の DB につないで app.request で確かめる(エラーの形・admin-vs-self)。
@@ -41,8 +42,7 @@ async function login(email: string): Promise<string> {
     body: JSON.stringify({ tenantSlug: slug, email, password: PASSWORD }),
   });
   expect(res.status).toBe(200);
-  const cookie = res.headers.get('set-cookie') ?? '';
-  return cookie.split(';')[0] ?? '';
+  return sessionCookieOf(res);
 }
 
 /** 応答の本文(テストで読む項目だけの形)。 */

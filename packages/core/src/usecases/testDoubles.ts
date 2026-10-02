@@ -1673,8 +1673,11 @@ export class FakePasswordHasherPort implements PasswordHasherPort {
   dummyVerifications = 0;
   /** verify が呼ばれた回数(パスワードの照合まで進んだ試行の数)。 */
   verifications = 0;
+  /** hash が呼ばれた回数(応答時間をそろえるためのハッシュの計算が行われたかの確認用)。 */
+  hashes = 0;
 
   async hash(password: string): Promise<string> {
+    this.hashes++;
     return `HASH:${password}`;
   }
   async verify(hash: string, password: string): Promise<boolean> {

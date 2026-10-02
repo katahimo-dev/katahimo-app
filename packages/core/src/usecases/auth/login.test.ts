@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeLegacyHash } from '../../domain';
+import type { UnitOfWorkPort } from '../../ports/unitOfWork';
 import { DEFAULT_RATE_LIMIT_POLICY } from '../rateLimits';
 import { changePassword } from './changePassword';
 import type { AuthDeps } from './deps';
+import { DEVICE_TRUST_TTL_MS, parseDeviceToken } from './deviceTrust';
 import { login } from './login';
 import { authenticateSession, logout } from './session';
 import { decodeSessionCookie } from './sessionCookie';
@@ -211,6 +213,221 @@ describe('login', () => {
   });
 });
 
+describe('「この端末」の印(アカウントのロックの妨害への対策)', () => {
+  let ctx: AuthTestContext;
+  let staffId: string;
+  const limit = DEFAULT_RATE_LIMIT_POLICY.loginFailureAccount.limit;
+
+  beforeEach(async () => {
+    ctx = await createAuthTestContext();
+    staffId = (
+      await registerStaff(ctx.deps, {
+        tenantId: ctx.tenantId,
+        name: '佐藤 花子',
+        email: 'hanako@example.com',
+        password: 'correct-horse',
+        role: 'staff',
+      })
+    ).id;
+    await registerStaff(ctx.deps, {
+      tenantId: ctx.tenantId,
+      name: '鈴木 次郎',
+      email: 'jiro@example.com',
+      password: 'jiro-password',
+      role: 'staff',
+    });
+  });
+
+  const attempt = (password: string, deviceToken?: string, email = 'hanako@example.com', ip?: string) =>
+    login(ctx.deps, {
+      tenantSlug: 'test-tenant',
+      email,
+      password,
+      ...(deviceToken ? { deviceToken } : {}),
+      ...(ip ? { meta: { ip } } : {}),
+    });
+  const deviceOf = async (email = 'hanako@example.com', password = 'correct-horse') => {
+    const result = await attempt(password, undefined, email);
+    if (!result.ok) throw new Error('ログインできません');
+    return result.deviceToken.value;
+  };
+  const lockAccount = async () => {
+    for (let i = 0; i < limit; i++) await attempt('wrong');
+    expect(await attempt('correct-horse')).toMatchObject({ ok: false, reason: 'locked' });
+  };
+
+  it('ログインの成功で180日の印を発行し、値にはテナント・スタッフのIDのほか個人情報を入れない', async () => {
+    const result = await attempt('correct-horse');
+    if (!result.ok) throw new Error('unreachable');
+    const parsed = parseDeviceToken(result.deviceToken.value);
+    expect(parsed).toMatchObject({ tenantId: ctx.tenantId, staffId });
+    expect(result.deviceToken.value).not.toContain('hanako');
+    expect(result.deviceToken.expiresAt.getTime() - ctx.clock.now.getTime()).toBe(DEVICE_TRUST_TTL_MS);
+  });
+
+  it('アカウントがロック中でも、正しい印のある端末からは正しいパスワードでログインできる', async () => {
+    const token = await deviceOf();
+    await lockAccount();
+    const result = await attempt('correct-horse', token);
+    expect(result.ok).toBe(true);
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({
+      action: 'auth.login.succeeded',
+      details: { device: 'trusted' },
+    });
+    // 端末の印での成功ではアカウント単位の回数を戻さない(第三者の試行の枠を戻さない)
+    expect(await attempt('correct-horse')).toMatchObject({ ok: false, reason: 'locked' });
+  });
+
+  it('印のある端末の失敗は端末単位で数え、上限で端末もロックする(アカウント単位には数えない)', async () => {
+    const token = await deviceOf();
+    const deviceLimit = DEFAULT_RATE_LIMIT_POLICY.loginFailureDevice.limit;
+    for (let i = 0; i < deviceLimit; i++) {
+      expect(await attempt('wrong', token)).toEqual({ ok: false, reason: 'invalid_credentials' });
+    }
+    expect(await attempt('correct-horse', token)).toMatchObject({ ok: false, reason: 'locked' });
+    expect(ctx.appLog.byAction('auth.login.locked').at(-1)?.details).toMatchObject({ scope: 'device' });
+    expect(ctx.appLog.byAction('auth.login.lockout_started').at(-1)?.details).toMatchObject({
+      scope: 'device',
+    });
+    // アカウント単位は減っていないので、印の無い端末からはログインできる
+    expect((await attempt('correct-horse')).ok).toBe(true);
+  });
+
+  it('別のアカウントの印・書き換えた印・形の不正な印は使えず、ふつうのアカウントのロックに従う', async () => {
+    const jiroToken = await deviceOf('jiro@example.com', 'jiro-password');
+    const own = await deviceOf();
+    await lockAccount();
+    expect(await attempt('correct-horse', jiroToken)).toMatchObject({ ok: false, reason: 'locked' });
+    const forged = `${own.slice(0, -1)}${own.endsWith('A') ? 'B' : 'A'}`;
+    expect(await attempt('correct-horse', forged)).toMatchObject({ ok: false, reason: 'locked' });
+    const otherStaff = own.replace(staffId, '00000000-0000-7000-8000-000000000001');
+    expect(await attempt('correct-horse', otherStaff)).toMatchObject({ ok: false, reason: 'locked' });
+    expect(await attempt('correct-horse', 'garbage')).toMatchObject({ ok: false, reason: 'locked' });
+  });
+
+  it('期限(180日)を過ぎた印は使えない', async () => {
+    const token = await deviceOf();
+    ctx.clock.now = new Date(ctx.clock.now.getTime() + DEVICE_TRUST_TTL_MS);
+    await lockAccount();
+    expect(await attempt('correct-horse', token)).toMatchObject({ ok: false, reason: 'locked' });
+  });
+
+  it('パスワードを変えると、それより前に発行した印は使えなくなる', async () => {
+    const token = await deviceOf();
+    const session = ctx.data().sessions.at(-1);
+    if (!session) throw new Error('unreachable');
+    expect(
+      (
+        await changePassword(ctx.deps, {
+          tenantId: ctx.tenantId,
+          staffId,
+          sessionId: session.id,
+          currentPassword: 'correct-horse',
+          newPassword: 'brand-new-pass',
+        })
+      ).ok,
+    ).toBe(true);
+    for (let i = 0; i < limit; i++) await attempt('wrong');
+    expect(await attempt('brand-new-pass', token)).toMatchObject({ ok: false, reason: 'locked' });
+  });
+
+  it('退職日を設定すると、それより前に発行した印は使えなくなる', async () => {
+    const token = await deviceOf();
+    ctx.setRetiredOn(staffId, '2027-01-01');
+    await lockAccount();
+    expect(await attempt('correct-horse', token)).toMatchObject({ ok: false, reason: 'locked' });
+  });
+
+  /** テナント・スタッフ・資格情報の読み取りを数える依存(応答時間の差を生む DB の読み方の確認用)。 */
+  const countingDeps = () => {
+    const reads = { tenants: 0, runs: 0, staff: 0, credentials: 0 };
+    const findBySlug = ctx.deps.tenants.findBySlug.bind(ctx.deps.tenants);
+    vi.spyOn(ctx.deps.tenants, 'findBySlug').mockImplementation((slug) => {
+      reads.tenants++;
+      return findBySlug(slug);
+    });
+    const uow: UnitOfWorkPort = {
+      run: (tenantId, work) => {
+        reads.runs++;
+        return ctx.deps.uow.run(tenantId, (r) =>
+          work({
+            ...r,
+            staff: {
+              ...r.staff,
+              findByLoginEmail: (loginId) => {
+                reads.staff++;
+                return r.staff.findByLoginEmail(loginId);
+              },
+              getCredentials: (id) => {
+                reads.credentials++;
+                return r.staff.getCredentials(id);
+              },
+            },
+          }),
+        );
+      },
+    };
+    return { deps: { ...ctx.deps, uow }, reads };
+  };
+
+  it('形の正しい印の無い要求は、アカウントがロック中ならテナント・スタッフを引かずに断る(応答時間からアカウントの有無が分からない)', async () => {
+    await lockAccount();
+    for (let i = 0; i < limit; i++) await attempt('wrong', undefined, 'nobody@example.com');
+    const { deps, reads } = countingDeps();
+    for (const deviceToken of [undefined, 'garbage']) {
+      expect(
+        await login(deps, {
+          tenantSlug: 'test-tenant',
+          email: 'hanako@example.com',
+          password: 'correct-horse',
+          ...(deviceToken ? { deviceToken } : {}),
+        }),
+      ).toMatchObject({ ok: false, reason: 'locked' });
+    }
+    expect(reads).toEqual({ tenants: 0, runs: 0, staff: 0, credentials: 0 });
+    // 存在しないアカウントのロックも同じ
+    await login(deps, { tenantSlug: 'test-tenant', email: 'nobody@example.com', password: 'x' });
+    expect(reads).toEqual({ tenants: 0, runs: 0, staff: 0, credentials: 0 });
+  });
+
+  it('印のある要求は、アカウントの有無にかかわらず同じ問い合わせ(スタッフ・資格情報)をする', async () => {
+    const token = await deviceOf();
+    const { deps, reads } = countingDeps();
+    const tryWith = (email: string) =>
+      login(deps, { tenantSlug: 'test-tenant', email, password: 'wrong', deviceToken: token });
+    await tryWith('hanako@example.com');
+    const existing = { ...reads };
+    expect(existing).toMatchObject({ tenants: 1, staff: 1, credentials: 1 });
+    await tryWith('nobody@example.com');
+    expect({
+      tenants: reads.tenants - existing.tenants,
+      staff: reads.staff - existing.staff,
+      credentials: reads.credentials - existing.credentials,
+    }).toEqual({ tenants: 1, staff: 1, credentials: 1 });
+    // 無いアカウントも、ダミーの argon2 照合で時間をかける
+    expect(ctx.passwordHasher.dummyVerifications).toBeGreaterThan(0);
+  });
+
+  it('送信元IPでロック中の要求はアカウント単位の回数に数えない', async () => {
+    const ipLimit = DEFAULT_RATE_LIMIT_POLICY.loginFailureIp.limit;
+    for (let i = 0; i < ipLimit; i++)
+      await attempt('guess', undefined, `user${i}@example.com`, '198.51.100.20');
+    const accountRule = DEFAULT_RATE_LIMIT_POLICY.loginFailureAccount;
+    const accountBuckets = () =>
+      [...ctx.rateLimiter.buckets.keys()].filter((k) => k.endsWith(':hanako@example.com')).length;
+    for (let i = 0; i < limit * 2; i++) {
+      expect(await attempt('wrong', undefined, 'hanako@example.com', '198.51.100.20')).toMatchObject({
+        ok: false,
+        reason: 'locked',
+      });
+    }
+    expect(accountBuckets()).toBe(0);
+    expect(ctx.rateLimiter.buckets.has(`${accountRule.name}|test-tenant:hanako@example.com`)).toBe(false);
+    // 別のIPの本人は締め出されない
+    expect((await attempt('correct-horse', undefined, 'hanako@example.com', '198.51.100.21')).ok).toBe(true);
+  });
+});
+
 describe('GAS版レガシーパスワードハッシュからの移行ログイン', () => {
   let ctx: AuthTestContext;
   const legacySalt = 'gas-auth-salt-example';
@@ -380,7 +597,7 @@ describe('changePassword', () => {
     changePassword(ctx.deps, { tenantId: ctx.tenantId, staffId, sessionId, currentPassword, newPassword });
 
   it('現在のパスワードが正しければ変更でき、操作中以外のセッションは失効する', async () => {
-    expect(await change('correct-horse', 'new-password-1')).toEqual({ ok: true });
+    expect(await change('correct-horse', 'new-password-1')).toMatchObject({ ok: true });
     expect(
       ctx
         .data()
@@ -409,6 +626,48 @@ describe('changePassword', () => {
       action: 'auth.password_change.failed',
       details: { reason: 'incorrect_current_password' },
     });
+  });
+
+  it(`現在のパスワードの誤りはスタッフ単位で${DEFAULT_RATE_LIMIT_POLICY.passwordChangeFailureStaff.limit}回まで、その後は正しくても15分ロック(WARN)`, async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.passwordChangeFailureStaff.limit;
+    for (let i = 0; i < limit; i++) {
+      expect(await change('wrong-password', 'new-password-1')).toEqual({
+        ok: false,
+        reason: 'incorrect_current_password',
+      });
+    }
+    expect(ctx.appLog.byAction('auth.password_change.lockout_started')).toHaveLength(1);
+    const before = ctx.passwordHasher.verifications;
+    expect(await change('correct-horse', 'new-password-1')).toMatchObject({ ok: false, reason: 'locked' });
+    // ロック中は照合しない
+    expect(ctx.passwordHasher.verifications).toBe(before);
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({
+      level: 'WARN',
+      action: 'auth.password_change.locked',
+      actorStaffId: staffId,
+    });
+    ctx.clock.now = new Date(ctx.clock.now.getTime() + 15 * 60 * 1000);
+    expect((await change('correct-horse', 'new-password-1')).ok).toBe(true);
+  });
+
+  it('同時に送られた多数の誤りでも、照合まで進むのは上限の回数まで', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.passwordChangeFailureStaff.limit;
+    const before = ctx.passwordHasher.verifications;
+    const results = await Promise.all(
+      Array.from({ length: limit * 3 }, () => change('wrong-password', 'new-password-1')),
+    );
+    expect(ctx.passwordHasher.verifications - before).toBeLessThanOrEqual(limit);
+    expect(results.filter((r) => !r.ok && r.reason === 'locked')).toHaveLength(limit * 2);
+  });
+
+  it('成功すると誤りの回数は戻り、新しいパスワードの「この端末」の印を返す', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.passwordChangeFailureStaff.limit;
+    for (let i = 0; i < limit - 1; i++) await change('wrong-password', 'new-password-1');
+    const result = await change('correct-horse', 'new-password-1');
+    if (!result.ok) throw new Error('unreachable');
+    expect(parseDeviceToken(result.deviceToken.value)).toMatchObject({ tenantId: ctx.tenantId, staffId });
+    for (let i = 0; i < limit - 1; i++) await change('wrong-password', 'new-password-2');
+    expect((await change('new-password-1', 'new-password-2')).ok).toBe(true);
   });
 
   it('新しいパスワードが空・短すぎる場合は拒否する', async () => {
