@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeLegacyHash } from '../../domain';
+import type { UnitOfWorkPort } from '../../ports/unitOfWork';
 import { DEFAULT_RATE_LIMIT_POLICY } from '../rateLimits';
 import { changePassword } from './changePassword';
 import type { AuthDeps } from './deps';
@@ -335,6 +336,76 @@ describe('「この端末」の印(アカウントのロックの妨害への対
     ctx.setRetiredOn(staffId, '2027-01-01');
     await lockAccount();
     expect(await attempt('correct-horse', token)).toMatchObject({ ok: false, reason: 'locked' });
+  });
+
+  /** テナント・スタッフ・資格情報の読み取りを数える依存(応答時間の差を生む DB の読み方の確認用)。 */
+  const countingDeps = () => {
+    const reads = { tenants: 0, runs: 0, staff: 0, credentials: 0 };
+    const findBySlug = ctx.deps.tenants.findBySlug.bind(ctx.deps.tenants);
+    vi.spyOn(ctx.deps.tenants, 'findBySlug').mockImplementation((slug) => {
+      reads.tenants++;
+      return findBySlug(slug);
+    });
+    const uow: UnitOfWorkPort = {
+      run: (tenantId, work) => {
+        reads.runs++;
+        return ctx.deps.uow.run(tenantId, (r) =>
+          work({
+            ...r,
+            staff: {
+              ...r.staff,
+              findByLoginEmail: (loginId) => {
+                reads.staff++;
+                return r.staff.findByLoginEmail(loginId);
+              },
+              getCredentials: (id) => {
+                reads.credentials++;
+                return r.staff.getCredentials(id);
+              },
+            },
+          }),
+        );
+      },
+    };
+    return { deps: { ...ctx.deps, uow }, reads };
+  };
+
+  it('形の正しい印の無い要求は、アカウントがロック中ならテナント・スタッフを引かずに断る(応答時間からアカウントの有無が分からない)', async () => {
+    await lockAccount();
+    for (let i = 0; i < limit; i++) await attempt('wrong', undefined, 'nobody@example.com');
+    const { deps, reads } = countingDeps();
+    for (const deviceToken of [undefined, 'garbage']) {
+      expect(
+        await login(deps, {
+          tenantSlug: 'test-tenant',
+          email: 'hanako@example.com',
+          password: 'correct-horse',
+          ...(deviceToken ? { deviceToken } : {}),
+        }),
+      ).toMatchObject({ ok: false, reason: 'locked' });
+    }
+    expect(reads).toEqual({ tenants: 0, runs: 0, staff: 0, credentials: 0 });
+    // 存在しないアカウントのロックも同じ
+    await login(deps, { tenantSlug: 'test-tenant', email: 'nobody@example.com', password: 'x' });
+    expect(reads).toEqual({ tenants: 0, runs: 0, staff: 0, credentials: 0 });
+  });
+
+  it('印のある要求は、アカウントの有無にかかわらず同じ問い合わせ(スタッフ・資格情報)をする', async () => {
+    const token = await deviceOf();
+    const { deps, reads } = countingDeps();
+    const tryWith = (email: string) =>
+      login(deps, { tenantSlug: 'test-tenant', email, password: 'wrong', deviceToken: token });
+    await tryWith('hanako@example.com');
+    const existing = { ...reads };
+    expect(existing).toMatchObject({ tenants: 1, staff: 1, credentials: 1 });
+    await tryWith('nobody@example.com');
+    expect({
+      tenants: reads.tenants - existing.tenants,
+      staff: reads.staff - existing.staff,
+      credentials: reads.credentials - existing.credentials,
+    }).toEqual({ tenants: 1, staff: 1, credentials: 1 });
+    // 無いアカウントも、ダミーの argon2 照合で時間をかける
+    expect(ctx.passwordHasher.dummyVerifications).toBeGreaterThan(0);
   });
 
   it('送信元IPでロック中の要求はアカウント単位の回数に数えない', async () => {

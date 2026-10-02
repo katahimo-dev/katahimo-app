@@ -20,6 +20,9 @@ import {
 import { checkStaffPassword } from './passwordVerification';
 import { openSession } from './session';
 
+/** スタッフが見つからないときに資格情報を引く ID(どのスタッフとも一致しない。引く回数をそろえるためだけ)。 */
+const NO_STAFF_ID = '00000000-0000-0000-0000-000000000000';
+
 export interface LoginInput {
   tenantSlug: string;
   /** スタッフのメールアドレスまたはサブメール(GAS版のE列/M列のどちらでもよい)。 */
@@ -64,7 +67,9 @@ export type LoginResult =
  * 送信元IPでロック中の要求はアカウントの分を数えない(第三者が1つのIPから送り続けても、アカウントの枠は減らない)。
  * 前に正しくログインできた端末(「この端末」の印が正しい。deviceTrust.ts)からの要求は、アカウント単位の代わりに
  * 「アカウント × 端末」単位で数える: アカウントがロック中でも本人の端末からはログインでき(締め出しの妨害を防ぐ)、
- * 印を盗んだ人もその印の枠を超えては試せない。
+ * 印を盗んだ人もその印の枠を超えては試せない。形の正しい印の無い要求はアカウントを探す前にアカウント単位の枠を取り、
+ * ロック中なら DB を読まずに断る。印のある要求は印を確かめるためにアカウントを先に引くが、テナントの中ではアカウントの
+ * 有無にかかわらず同じ問い合わせ(スタッフ・資格情報)をする。
  * 数えるのはパスワードの照合の前(枠を取ってから照合する)。照合の後に数えると、同時に送られた多数の試行が全て
  * 「まだ上限前」と判定されて照合まで進んでしまう。成功した回は取り消す(アカウント・端末は数え直し、送信元IPは1回分を返す)。
  * 端末の印での成功ではアカウント単位の回数は戻さない(第三者の試行の枠を戻さない)。
@@ -96,16 +101,27 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
     return { ok: false, reason: 'locked', retryAfterMs: byIp.retryAfterMs };
   }
 
+  // 形の正しい「この端末」の印が無い要求は、アカウントを探す前にアカウント単位の枠を取る。ロック中ならテナント・スタッフ・
+  // 資格情報を引かずに断る(引いてから断ると、DB の読み方の差からアカウントの有無が応答時間に出る)
+  const presented = parseDeviceToken(input.deviceToken);
+  const accountBucket = { scope: 'account' as const, rule: loginFailureAccount, key: accountKey };
+  const early = presented ? null : await deps.rateLimiter.consume(accountBucket.rule, accountBucket.key, now);
+  if (early && !early.allowed) {
+    await logLocked('account', null);
+    return { ok: false, reason: 'locked', retryAfterMs: early.retryAfterMs };
+  }
+
   const tenant = await deps.tenants.findBySlug(input.tenantSlug.trim().toLowerCase());
   const account = tenant
     ? await deps.uow.run(tenant.id, async (r) => {
         const staff = await r.staff.findByLoginEmail(loginId);
-        return staff ? { staff, credentials: await r.staff.getCredentials(staff.id) } : null;
+        // 資格情報はスタッフが無くても(ダミーの ID で)引き、アカウントの有無で DB の読み方を変えない
+        const credentials = await r.staff.getCredentials(staff?.id ?? NO_STAFF_ID);
+        return staff ? { staff, credentials } : null;
       })
     : null;
 
   // 「この端末」の印がこのアカウントのものなら、アカウント単位の代わりに端末単位で数える
-  const presented = parseDeviceToken(input.deviceToken);
   const trustedDevice =
     tenant && account && presented
       ? verifyDeviceToken(
@@ -124,10 +140,10 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   const device = trustedDevice ? 'trusted' : input.deviceToken ? 'invalid' : null;
   const bucket = trustedDevice
     ? { scope: 'device' as const, rule: loginFailureDevice, key: deviceRateLimitKey(trustedDevice) }
-    : { scope: 'account' as const, rule: loginFailureAccount, key: accountKey };
+    : accountBucket;
 
-  // 照合の前に1回分の枠を取る(同時の試行でも、照合まで進めるのは上限の回数まで)
-  const byAccount = await deps.rateLimiter.consume(bucket.rule, bucket.key, now);
+  // 照合の前に1回分の枠を取る(同時の試行でも、照合まで進めるのは上限の回数まで)。印の無い要求は上で取った枠
+  const byAccount = early ?? (await deps.rateLimiter.consume(bucket.rule, bucket.key, now));
   if (!byAccount.allowed) {
     await logLocked(bucket.scope, tenant?.id ?? null, account?.staff.id);
     return { ok: false, reason: 'locked', retryAfterMs: byAccount.retryAfterMs };

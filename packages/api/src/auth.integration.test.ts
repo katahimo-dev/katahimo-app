@@ -7,6 +7,7 @@ import { createApp } from './app';
 import { createContainer } from './container';
 import { loadEnv } from './env';
 import { DEVICE_COOKIE_NAME, SESSION_COOKIE_NAME } from './session';
+import { setCookieValue } from './testSupport/cookies';
 
 /**
  * ログインの総当たり・締め出しの対策(アカウント・端末・送信元IP単位の回数)を実際の DB につないで確かめる。
@@ -62,16 +63,6 @@ async function attempt({ email, password, device, ip = randomIp() }: Attempt) {
   return res;
 }
 
-/** 応答の Set-Cookie から名前の値を読む。 */
-function cookieValue(res: Response, name: string): string | null {
-  for (const line of res.headers.getSetCookie()) {
-    const [pair = ''] = line.split(';');
-    const idx = pair.indexOf('=');
-    if (pair.slice(0, idx) === name) return pair.slice(idx + 1);
-  }
-  return null;
-}
-
 async function newStaff(): Promise<string> {
   seq++;
   const email = `staff${seq}-${slug}@example.com`;
@@ -91,7 +82,7 @@ async function newStaff(): Promise<string> {
 async function deviceOf(email: string): Promise<string> {
   const res = await attempt({ email, password: PASSWORD });
   expect(res.status).toBe(200);
-  const device = cookieValue(res, DEVICE_COOKIE_NAME);
+  const device = setCookieValue(res, DEVICE_COOKIE_NAME);
   if (!device) throw new Error('端末の印がありません');
   return decodeURIComponent(device);
 }
@@ -119,12 +110,12 @@ afterAll(async () => {
 });
 
 describe('API: ログインの「この端末」の印', () => {
-  it('ログインの成功でセッションの Cookie の後に、HttpOnly・SameSite=Lax・180日の端末の Cookie を置く', async () => {
+  it('ログインの成功でセッションの Cookie と、HttpOnly・SameSite=Lax・180日の端末の Cookie を置く', async () => {
     const email = await newStaff();
     const res = await attempt({ email, password: PASSWORD });
     expect(res.status).toBe(200);
     const lines = res.headers.getSetCookie();
-    expect(lines[0]?.startsWith(`${SESSION_COOKIE_NAME}=`)).toBe(true);
+    expect(setCookieValue(res, SESSION_COOKIE_NAME)).toBeTruthy();
     const device = lines.find((l) => l.startsWith(`${DEVICE_COOKIE_NAME}=`)) ?? '';
     expect(device).toMatch(/HttpOnly/);
     expect(device).toMatch(/SameSite=Lax/);
@@ -138,7 +129,7 @@ describe('API: ログインの「この端末」の印', () => {
   it('ログアウトでは端末の Cookie を消さない', async () => {
     const email = await newStaff();
     const res = await attempt({ email, password: PASSWORD });
-    const session = cookieValue(res, SESSION_COOKIE_NAME) ?? '';
+    const session = setCookieValue(res, SESSION_COOKIE_NAME) ?? '';
     const out = await app.request('/api/auth/logout', {
       method: 'POST',
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${session}` },
@@ -154,7 +145,7 @@ describe('API: ログインの「この端末」の印', () => {
     const res = await attempt({ email, password: PASSWORD, device });
     expect(res.status).toBe(200);
     // 端末の印は発行し直す
-    expect(cookieValue(res, DEVICE_COOKIE_NAME)).not.toBeNull();
+    expect(setCookieValue(res, DEVICE_COOKIE_NAME)).not.toBeNull();
     // 印の無い要求は引き続きロック中
     expect((await attempt({ email, password: PASSWORD })).status).toBe(429);
   });
@@ -187,8 +178,8 @@ describe('API: ログインの「この端末」の印', () => {
   it('パスワードを変えると、前の端末の Cookie ではロックを避けられない', async () => {
     const email = await newStaff();
     const res = await attempt({ email, password: PASSWORD });
-    const device = decodeURIComponent(cookieValue(res, DEVICE_COOKIE_NAME) ?? '');
-    const session = cookieValue(res, SESSION_COOKIE_NAME) ?? '';
+    const device = decodeURIComponent(setCookieValue(res, DEVICE_COOKIE_NAME) ?? '');
+    const session = setCookieValue(res, SESSION_COOKIE_NAME) ?? '';
     const changed = await app.request('/api/auth/change-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: `${SESSION_COOKIE_NAME}=${session}` },
@@ -225,7 +216,7 @@ describe('API: パスワード変更の現在のパスワードの誤り', () =>
   it('スタッフ単位の上限を超えると正しいパスワードでも 429(Retry-After つき)、成功すると端末の印を作り直す', async () => {
     const email = await newStaff();
     const res = await attempt({ email, password: PASSWORD });
-    const session = cookieValue(res, SESSION_COOKIE_NAME) ?? '';
+    const session = setCookieValue(res, SESSION_COOKIE_NAME) ?? '';
     const limit = container.rateLimits.passwordChangeFailureStaff.limit;
     for (let i = 0; i < limit; i++) {
       const wrong = await changePassword(session, 'wrong-password');
@@ -241,9 +232,65 @@ describe('API: パスワード変更の現在のパスワードの誤り', () =>
     // 別のスタッフは影響を受けず、成功すると端末の印の Cookie を返す
     const other = await newStaff();
     const otherSession =
-      cookieValue(await attempt({ email: other, password: PASSWORD }), SESSION_COOKIE_NAME) ?? '';
+      setCookieValue(await attempt({ email: other, password: PASSWORD }), SESSION_COOKIE_NAME) ?? '';
     const ok = await changePassword(otherSession, PASSWORD);
     expect(ok.status).toBe(200);
-    expect(cookieValue(ok, DEVICE_COOKIE_NAME)).not.toBeNull();
+    expect(setCookieValue(ok, DEVICE_COOKIE_NAME)).not.toBeNull();
+  });
+});
+
+describe('API: パスワード再設定と「この端末」の印', () => {
+  const post = (path: string, body: unknown, ip = randomIp()) =>
+    app.request(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip },
+      body: JSON.stringify({ tenantSlug: slug, ...(body as object) }),
+    });
+
+  /** 送信待ちのコード(メールに書く値。outbox-drain が送るまで DB にある)。 */
+  async function pendingCodeOf(email: string): Promise<string> {
+    const tenant = await container.tenants.findBySlug(slug);
+    if (!tenant) throw new Error('テナントがありません');
+    const code = await container.uow.run(tenant.id, async (r) => {
+      const staff = await r.staff.findByLoginEmail(email);
+      if (!staff) return null;
+      return (await r.passwordResetCodes.findLatestUnused(staff.id))?.mailCode ?? null;
+    });
+    if (!code) throw new Error('再設定コードがありません');
+    return code;
+  }
+
+  it('ロック中のアカウントを端末Dで再設定すると、Dからは新しいパスワードでログインできる(印の無い要求はロック中のまま)', async () => {
+    const email = await newStaff();
+    await lockAccount(email);
+    const deviceIp = randomIp();
+    expect((await post('/api/auth/password-reset/request', { email }, deviceIp)).status).toBe(200);
+    const confirmed = await post(
+      '/api/auth/password-reset/confirm',
+      { email, code: await pendingCodeOf(email), newPassword: 'reset-pass-1' },
+      deviceIp,
+    );
+    expect(confirmed.status).toBe(200);
+    const device = decodeURIComponent(setCookieValue(confirmed, DEVICE_COOKIE_NAME) ?? '');
+    expect(device).not.toBe('');
+    expect((await attempt({ email, password: 'reset-pass-1' })).status).toBe(429);
+    const res = await attempt({ email, password: 'reset-pass-1', device, ip: deviceIp });
+    expect(res.status).toBe(200);
+    expect(setCookieValue(res, SESSION_COOKIE_NAME)).toBeTruthy();
+  });
+
+  it('確認のアカウント単位の上限は、誤ったコードと同じ 400「無効な認証コードです」(429 にしない)', async () => {
+    const email = await newStaff();
+    const limit = container.rateLimits.passwordResetConfirmAccount.limit;
+    const confirm = () =>
+      post('/api/auth/password-reset/confirm', { email, code: '00000000', newPassword: 'reset-pass-1' });
+    for (let i = 0; i < limit; i++) expect((await confirm()).status).toBe(400);
+    const limited = await confirm();
+    expect(limited.status).toBe(400);
+    expect(limited.headers.get('retry-after')).toBeNull();
+    expect(await limited.json()).toMatchObject({
+      code: 'validation_failed',
+      message: '無効な認証コードです',
+    });
   });
 });

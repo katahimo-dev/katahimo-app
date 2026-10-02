@@ -26,3 +26,7 @@ overrides:
   'uuid@<11.1.1': ^11.1.1
   # GHSA: brace-expansion の ReDoS・無限ループ(exceljs → archiver → readdir-glob → minimatch 経由)
   'brace-expansion@>=2.0.0 <2.1.7': ^2.1.7
+  # 同じ指摘の 5 系(開発用のツール経由。本番の依存には入らない)
+  'brace-expansion@>=4.0.0 <5.0.12': ^5.0.12
+  # GHSA: fast-uri の authority の解釈の誤り(開発用。vite-plugin-pwa → workbox-build → ajv 経由。ajv の範囲 ^3 の中の修正版)
+  'fast-uri@>=3.0.0 <3.1.8': ^3.1.8

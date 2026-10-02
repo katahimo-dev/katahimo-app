@@ -94,7 +94,6 @@ export function createAuthRoutes(container: Container) {
       return apiError(c, 401, 'unauthenticated', message);
     }
 
-    // セッションの Cookie を先に置く(Set-Cookie の順。テストは最初の Cookie をセッションとして読む)
     setSessionCookie(c, container, result.sessionCookieValue, result.expiresAt);
     setDeviceCookie(c, container, result.deviceToken.value, result.deviceToken.expiresAt);
     const staff = await toSessionUser(container, {
@@ -173,7 +172,11 @@ export function createAuthRoutes(container: Container) {
     });
   });
 
-  /** GAS版Auth.js resetPasswordWithCode。 */
+  /**
+   * GAS版Auth.js resetPasswordWithCode。429 は送信元IP単位の上限だけ(アカウント単位の上限は誤ったコードと同じ 400)。
+   * 成功したら、再設定した端末の「この端末」の印を新しいパスワードで作り直す(前の印は再設定で通らなくなるため。
+   * アカウントが第三者の失敗でロック中でも、再設定した端末からは新しいパスワードでログインできる)。
+   */
   app.post('/password-reset/confirm', async (c) => {
     const body = await parseJsonBody(c, passwordResetConfirmSchema);
     if (!body.ok) return body.response;
@@ -193,6 +196,7 @@ export function createAuthRoutes(container: Container) {
               : '無効な認証コードです';
       return apiError(c, 400, 'validation_failed', message);
     }
+    setDeviceCookie(c, container, result.deviceToken.value, result.deviceToken.expiresAt);
     return jsonOk(c, passwordResetConfirmResponseSchema, { ok: true, message: 'パスワードを再設定しました' });
   });
 

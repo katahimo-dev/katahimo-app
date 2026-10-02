@@ -18,6 +18,7 @@ import { createApp } from './app';
 import { createContainer } from './container';
 import { loadEnv } from './env';
 import { readReportAiWorkbook } from './export/reportAiWorkbook';
+import { sessionCookieOf } from './testSupport/cookies';
 
 /**
  * 日報AIの調整の API を実際の DB につないで確かめる: 管理画面(管理者だけ・xlsx の取込・行ごとの編集の 409・
@@ -64,7 +65,7 @@ const request = (method: string, path: string, cookie: string, body?: unknown) =
 async function login(slug: string, email: string): Promise<string> {
   const res = await request('POST', '/api/auth/login', '', { tenantSlug: slug, email, password: PASSWORD });
   expect(res.status).toBe(200);
-  return (res.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+  return sessionCookieOf(res);
 }
 
 async function createTenant(): Promise<TestTenant> {

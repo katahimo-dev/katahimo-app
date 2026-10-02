@@ -44,6 +44,8 @@ export interface ParsedDeviceToken {
 /**
  * スタッフの資格情報の版。パスワードのハッシュ(argon2id はソルトを含むため、同じパスワードに変えても変わる)と退職日から作る。
  * ハッシュそのものは印に入れず、HMAC の入力にだけ使う。
+ * 退職日を消す(退職の取り消し)と版も元に戻り、退職日を設定する前の印がまた通る。印はロックを避けるだけ(照合は通常どおり)で、
+ * 退職の取り消しはまれなため受け入れる(スタッフの行の row_version・updated_at はプロフィールの編集のたびに変わるため混ぜない。doc/06 2.4)。
  */
 export function deviceCredentialVersion(
   credentials: StaffCredentials | null,
@@ -71,7 +73,7 @@ function macOf(secret: string, token: Omit<ParsedDeviceToken, 'mac'>, credential
     .digest('base64url');
 }
 
-/** 印を発行する(ログインの成功・パスワード変更の成功の後)。 */
+/** 印を発行する(ログインの成功・パスワード変更の成功・パスワード再設定の成功の後)。 */
 export function issueDeviceToken(
   secret: string,
   subject: DeviceTrustSubject,

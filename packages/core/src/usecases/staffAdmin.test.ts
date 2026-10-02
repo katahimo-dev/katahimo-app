@@ -412,14 +412,26 @@ describe('管理者によるスタッフ管理(自宅・移動手段・カレン
     });
   });
 
-  it('パスワード設定の案内は本人の再設定の要求と回数の上限を共有する', async () => {
+  it('パスワード設定の案内は送り先のスタッフ単位の1時間・1日の上限で断る', async () => {
     const { staff } = await createStaffByAdmin(ctx.deps, admin, {
       name: 'A',
       email: 'a@example.com',
       role: 'staff',
     });
-    const limit = ctx.deps.rateLimits.passwordResetRequestAccount.limit;
-    for (let i = 0; i < limit; i++) await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id);
+    const hour = ctx.deps.rateLimits.passwordGuideStaff.limit;
+    const day = ctx.deps.rateLimits.passwordGuideStaffDay.limit;
+    let sent = 0;
+    while (sent < day) {
+      for (let i = 0; i < hour && sent < day; i++, sent++) {
+        expect(await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id)).toEqual({ status: 'queued' });
+      }
+      if (sent < day) {
+        expect(await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id)).toMatchObject({
+          status: 'rate_limited',
+        });
+        ctx.clock.now = new Date(ctx.clock.now.getTime() + 61 * 60 * 1000);
+      }
+    }
     expect(await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id)).toMatchObject({
       status: 'rate_limited',
     });
@@ -428,20 +440,28 @@ describe('管理者によるスタッフ管理(自宅・移動手段・カレン
     });
   });
 
-  it('本人がサブメールで再設定を要求し続けた後も、案内は同じ上限で断る', async () => {
+  it('認証の無い再設定の要求を上限まで送られても、パスワード設定の案内は止まらない(枠を共有しない)', async () => {
     const { staff } = await createStaffByAdmin(ctx.deps, admin, {
       name: 'A',
       email: 'a@example.com',
       altEmail: 'a@cutest.biz',
       role: 'staff',
     });
-    const rule = ctx.deps.rateLimits.passwordResetRequestAccount;
-    for (let i = 0; i < rule.limit; i++) {
-      await requestPasswordReset(ctx.deps, { tenantSlug: 'test-tenant', email: 'a@cutest.biz' });
+    const hour = ctx.deps.rateLimits.passwordResetRequestAccount.limit;
+    const day = ctx.deps.rateLimits.passwordResetRequestAccountIpDay.limit;
+    const requestAs = (email: string) =>
+      requestPasswordReset(ctx.deps, { tenantSlug: 'test-tenant', email, meta: { ip: '198.51.100.30' } });
+    for (let i = 0; i < hour; i++) await requestAs(i % 2 ? 'a@cutest.biz' : 'a@example.com');
+    expect((await requestAs('a@cutest.biz')).status).toBe('rate_limited');
+    expect(await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id)).toEqual({ status: 'queued' });
+    // 1日の上限まで送られた後も同じ
+    for (let i = hour; i < day; i += hour) {
+      ctx.clock.now = new Date(ctx.clock.now.getTime() + 61 * 60 * 1000);
+      for (let j = 0; j < hour; j++) await requestAs('a@example.com');
     }
-    expect(await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id)).toMatchObject({
-      status: 'rate_limited',
-    });
+    ctx.clock.now = new Date(ctx.clock.now.getTime() + 61 * 60 * 1000);
+    expect((await requestAs('a@example.com')).status).toBe('rate_limited');
+    expect(await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id)).toEqual({ status: 'queued' });
   });
 
   it('変更の履歴(外部キーの無い変更者の記録)に残っているスタッフも削除しない', async () => {

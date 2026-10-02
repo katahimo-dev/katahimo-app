@@ -106,7 +106,7 @@ function rateLimitPolicyOf(env: Env): RateLimitPolicy {
     loginFailureAccount: env.RATE_LIMIT_LOGIN_FAILURES_PER_ACCOUNT,
     loginFailureIp: env.RATE_LIMIT_LOGIN_FAILURES_PER_IP,
     passwordResetRequestAccount: env.RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT,
-    passwordResetRequestAccountDay: env.RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT_DAY,
+    passwordResetRequestAccountIpDay: env.RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT_IP_DAY,
     passwordResetRequestIp: env.RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_IP,
     aiGenerateStaff: env.RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY,
     receiptOcrStaff: env.RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY,

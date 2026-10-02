@@ -9,6 +9,7 @@ import { createApp } from './app';
 import { createContainer } from './container';
 import { loadEnv } from './env';
 import { DEMO_AI_QUOTA_MESSAGE, DEMO_REFUSED_MESSAGE } from './http/demoRestrictions';
+import { sessionCookieOf } from './testSupport/cookies';
 
 /**
  * 公開デモ用テナント(DEMO_TENANT_SLUG)の制限を実際の DB につないで確かめる。デモ用テナントと、比べるための
@@ -61,7 +62,7 @@ async function loginAs(tenantSlug: string, email: string, password: string) {
 async function cookieOf(tenantSlug: string, email: string, password: string): Promise<string> {
   const res = await loginAs(tenantSlug, email, password);
   expect(res.status).toBe(200);
-  return (res.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+  return sessionCookieOf(res);
 }
 
 beforeAll(async () => {
@@ -298,7 +299,7 @@ describe('公開デモ: 表示の設定(GET /api/demo/config)とログイン中�
   it('ログイン・/api/auth/me の staff.demoTenant はデモ用テナントだけ true', async () => {
     const demoLogin = await loginAs(demoSlug, admin.email, DEMO_PASSWORD);
     expect(((await demoLogin.json()) as { staff: { demoTenant: boolean } }).staff.demoTenant).toBe(true);
-    const demoCookie = (demoLogin.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    const demoCookie = sessionCookieOf(demoLogin);
     const me = await app.request('/api/auth/me', { headers: { Cookie: demoCookie } });
     expect(await me.json()).toMatchObject({ staff: { demoTenant: true } });
 

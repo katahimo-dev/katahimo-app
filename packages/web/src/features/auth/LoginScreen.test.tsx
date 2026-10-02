@@ -66,6 +66,42 @@ describe('ログイン画面: 届いている番号でパスワードを設定�
     );
     expect(authApi.requestPasswordReset).not.toHaveBeenCalled();
   });
+
+  it('日本語入力の変換中は番号をそろえず、変換の確定と送信のときに数字だけにそろえる', async () => {
+    vi.mocked(authApi.confirmPasswordReset).mockResolvedValue({
+      ok: true,
+      message: 'パスワードを変更しました',
+    });
+    renderLogin();
+    fireEvent.click(screen.getByRole('button', { name: 'パスワードを忘れたときはこちら' }));
+    fireEvent.change(screen.getByLabelText('メールアドレス'), { target: { value: 'jiro@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: '番号が届いている方はこちら' }));
+    const field = screen.getByLabelText<HTMLInputElement>('メールに届いた8けたの番号');
+
+    // 変換中の文字(全角・かな)は消さずにそのまま残す
+    fireEvent.compositionStart(field);
+    fireEvent.input(field, { target: { value: '１２３４ｓ' }, isComposing: true });
+    expect(field.value).toBe('１２３４ｓ');
+    // 確定したら数字だけにそろえる
+    fireEvent.input(field, { target: { value: '１２３４' }, isComposing: true });
+    fireEvent.compositionEnd(field);
+    expect(field.value).toBe('1234');
+
+    // 変換中のまま送っても、送る前にそろえる
+    fireEvent.compositionStart(field);
+    fireEvent.input(field, { target: { value: '1234５６７８' }, isComposing: true });
+    expect(field.value).toBe('1234５６７８');
+    fireEvent.change(screen.getByLabelText('新しいパスワード'), { target: { value: 'new-password-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'このパスワードにする' }));
+    await waitFor(() =>
+      expect(authApi.confirmPasswordReset).toHaveBeenCalledWith({
+        tenantSlug: 'demo',
+        email: 'jiro@example.com',
+        code: '12345678',
+        newPassword: 'new-password-1',
+      }),
+    );
+  });
 });
 
 const DEMO_CONFIG = {

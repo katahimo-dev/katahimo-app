@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
 import { loadEnv } from './env';
+import { sessionCookieOf } from './testSupport/cookies';
 
 /**
  * 領収書の一覧・画像・CSV の API を実際の DB とローカルのファイル置き場につないで確かめる(admin-vs-self、
@@ -70,7 +71,7 @@ async function createTenant(): Promise<TestTenant> {
       body: JSON.stringify({ tenantSlug: slug, email, password: PASSWORD }),
     });
     expect(res.status).toBe(200);
-    return { id: staff.id, cookie: (res.headers.get('set-cookie') ?? '').split(';')[0] ?? '' };
+    return { id: staff.id, cookie: sessionCookieOf(res) };
   };
   return {
     id: tenant.id,

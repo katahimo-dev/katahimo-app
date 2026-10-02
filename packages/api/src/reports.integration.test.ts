@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
 import { loadEnv } from './env';
+import { sessionCookieOf } from './testSupport/cookies';
 
 /**
  * 全員分の日報・事故報告の一覧・詳細・CSV の API を実際の DB につないで確かめる(役割ごとの権限、
@@ -48,7 +49,7 @@ async function login(slug: string, email: string): Promise<string> {
     body: JSON.stringify({ tenantSlug: slug, email, password: PASSWORD }),
   });
   expect(res.status).toBe(200);
-  return (res.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+  return sessionCookieOf(res);
 }
 
 const get = (path: string, cookie: string) => app.request(path, { headers: { Cookie: cookie } });

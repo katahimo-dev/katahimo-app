@@ -21,7 +21,7 @@ import type { RateLimiterPort } from '../ports/rateLimiter';
 import type { StaffPasswordStatus, StaffRecord } from '../ports/staff';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
 import type { PasswordHasherPort } from './auth';
-import { consumeResetAccountLimits, issuePasswordResetCode } from './auth/passwordReset';
+import { consumeLimitsInOrder, issuePasswordResetCode } from './auth/passwordReset';
 import { type RateLimitPolicy, staffRateLimitKey } from './rateLimits';
 import type { Actor, Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
@@ -398,8 +398,9 @@ export type PasswordGuideOutcome = { status: 'queued' } | { status: 'rate_limite
 
 /**
  * パスワード未設定・GAS版のパスワードのままのスタッフに、パスワード設定の案内(再設定コード)をメールで送る。
- * 本人の「パスワードを忘れたとき」と同じコード・同じ outbox の送信を使う。回数の上限は本人の再設定の要求と共有する
- * (スタッフ単位の1時間・1日の枠。consumeResetAccountLimits)。送り先はメールアドレス(主)。
+ * 本人の「パスワードを忘れたとき」と同じコード・同じ outbox の送信を使う。回数の上限は送り先のスタッフ単位の1時間・1日で、
+ * 本人の再設定の要求(認証の無い要求)とは枠を共有しない(第三者が要求を送り続けても、管理者の案内は止まらない)。
+ * 送り先はメールアドレス(主)。
  */
 export async function sendPasswordGuideByAdmin(
   deps: StaffPasswordGuideDeps,
@@ -420,13 +421,13 @@ export async function sendPasswordGuideByAdmin(
       }
       return view;
     });
-    const limit = await consumeResetAccountLimits(
-      deps,
-      {
-        account: deps.rateLimits.passwordResetRequestAccount,
-        accountDay: deps.rateLimits.passwordResetRequestAccountDay,
-      },
-      staffRateLimitKey(actor.tenantId, staffId),
+    const key = staffRateLimitKey(actor.tenantId, staffId);
+    const limit = await consumeLimitsInOrder(
+      deps.rateLimiter,
+      [
+        { scope: 'hour', rule: deps.rateLimits.passwordGuideStaff, key },
+        { scope: 'day', rule: deps.rateLimits.passwordGuideStaffDay, key },
+      ],
       now,
     );
     if (limit.limited) {

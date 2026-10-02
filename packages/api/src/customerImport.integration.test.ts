@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
 import { loadEnv } from './env';
+import { sessionCookieOf } from './testSupport/cookies';
 
 /**
  * 顧客CSVの手動取込(POST /api/admin/customers/import)を実際の DB につないで確かめる。取込元は開発用の
@@ -42,7 +43,7 @@ async function login(slug: string, email: string): Promise<string> {
     body: JSON.stringify({ tenantSlug: slug, email, password: PASSWORD }),
   });
   expect(res.status).toBe(200);
-  return (res.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+  return sessionCookieOf(res);
 }
 
 const importCsv = (cookie: string, body: unknown) =>

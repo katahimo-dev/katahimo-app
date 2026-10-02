@@ -104,7 +104,7 @@ describe('パスワード再設定', () => {
     await login(ctx.deps, { tenantSlug: 'test-tenant', email: 'hanako@gmail.com', password: 'old-password' });
     await request();
     const code = lastCode();
-    expect(await confirm(code)).toEqual({ ok: true });
+    expect(await confirm(code)).toMatchObject({ ok: true });
     expect(ctx.data().sessions.every((s) => s.revokedAt)).toBe(true);
     expect(ctx.appLog.entries.at(-1)).toMatchObject({
       level: 'SECURITY',
@@ -129,7 +129,7 @@ describe('パスワード再設定', () => {
     const newCode = lastCode();
     if (oldCode === newCode) return; // 偶然同じ値が出た場合は判定できないため省略
     expect(await confirm(oldCode)).toEqual({ ok: false, reason: 'invalid_code' });
-    expect(await confirm(newCode)).toEqual({ ok: true });
+    expect(await confirm(newCode)).toMatchObject({ ok: true });
   });
 
   it('30分を過ぎたコードは期限切れ', async () => {
@@ -157,7 +157,7 @@ describe('パスワード再設定', () => {
     await request();
     const code = lastCode();
     for (let i = 0; i < RESET_CODE_MAX_ATTEMPTS - 1; i++) await confirm(wrongCodeFor(code));
-    expect(await confirm(code)).toEqual({ ok: true });
+    expect(await confirm(code)).toMatchObject({ ok: true });
   });
 
   it('並列に送られた大量の確認でも上限を超えて試せず、後から正しいコードを送っても通らない', async () => {
@@ -183,7 +183,7 @@ describe('パスワード再設定', () => {
     expect(await request()).toBe('rate_limited');
     expect(ctx.mailer.sent).toHaveLength(limit);
     // 上限を超えた要求は既存のコードに触れない(第三者が有効なコードを無効にし続けられない)
-    expect(await confirm(activeCode)).toEqual({ ok: true });
+    expect(await confirm(activeCode)).toMatchObject({ ok: true });
     ctx.clock.now = new Date(ctx.clock.now.getTime() + 61 * 60 * 1000);
     expect(await request()).toBe('queued');
   });
@@ -197,22 +197,30 @@ describe('パスワード再設定', () => {
     expect(await request('hanako@gmail.com')).toBe('rate_limited');
   });
 
-  it('発行要求はアカウント単位の1日の上限も設ける', async () => {
-    const day = DEFAULT_RATE_LIMIT_POLICY.passwordResetRequestAccountDay.limit;
+  it('発行要求はアカウント × 送信元IP単位の1日の上限も設け、別の送信元IPの本人は止めない', async () => {
+    const day = DEFAULT_RATE_LIMIT_POLICY.passwordResetRequestAccountIpDay.limit;
     const hour = DEFAULT_RATE_LIMIT_POLICY.passwordResetRequestAccount.limit;
+    const attacker = '198.51.100.20';
     let sent = 0;
     while (sent < day) {
-      for (let i = 0; i < hour && sent < day; i++, sent++) expect(await request()).toBe('queued');
+      for (let i = 0; i < hour && sent < day; i++, sent++) {
+        // 主・サブのどちらのメールでも同じスタッフの枠
+        expect(await request(i % 2 ? 'hanako@cutest.biz' : 'hanako@gmail.com', 'test-tenant', attacker)).toBe(
+          'queued',
+        );
+      }
       ctx.clock.now = new Date(ctx.clock.now.getTime() + 61 * 60 * 1000);
     }
-    expect(await request()).toBe('rate_limited');
+    expect(await request('hanako@gmail.com', 'test-tenant', attacker)).toBe('rate_limited');
     expect(ctx.appLog.entries.at(-1)).toMatchObject({
       action: 'auth.password_reset.request_rejected',
       actorStaffId: staffId,
-      details: { reason: 'rate_limited', scope: 'account_day' },
+      details: { reason: 'rate_limited', scope: 'account_ip_day' },
     });
+    // 別のネットワーク(IPv6 なら別の /64)からの本人の要求は受け付ける
+    expect(await request('hanako@gmail.com', 'test-tenant', '203.0.113.50')).toBe('queued');
     ctx.clock.now = new Date(ctx.clock.now.getTime() + 24 * 60 * 60 * 1000);
-    expect(await request()).toBe('queued');
+    expect(await request('hanako@gmail.com', 'test-tenant', attacker)).toBe('queued');
   });
 
   it('発行要求のアカウント単位の上限は、存在しないアカウントにも同じように数える(列挙防止)', async () => {
@@ -268,42 +276,72 @@ describe('パスワード再設定', () => {
     expect(await request('hanako@gmail.com', 'test-tenant', '2001:db8:7:8::1')).toBe('queued');
   });
 
-  it('確認はアカウント単位の上限を超えると rate_limited(コードを発行し直しながらの総当たり対策)', async () => {
+  it('確認はアカウント単位の上限を超えると、正しいコードでも「無効な認証コード」と同じ結果(コードを発行し直しながらの総当たり対策)', async () => {
     const limit = DEFAULT_RATE_LIMIT_POLICY.passwordResetConfirmAccount.limit;
+    // 有効なコードの無いうちに枠を使い切る(コードの試行回数は減らさない)
     for (let i = 0; i < limit; i++) await confirm('00000000');
-    expect(await confirm('00000000')).toMatchObject({ ok: false, reason: 'rate_limited' });
+    ctx.clock.now = new Date(ctx.clock.now.getTime() + 40 * 60 * 1000);
+    await request();
+    const code = lastCode();
+    const before = ctx.passwordHasher.hashes;
+    expect(await confirm(code)).toEqual({ ok: false, reason: 'invalid_code' });
+    // 上限の要求も新しいパスワードのハッシュを作る(応答時間をそろえる)
+    expect(ctx.passwordHasher.hashes).toBe(before + 1);
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({
+      level: 'WARN',
+      action: 'auth.password_reset.failed',
+      actorStaffId: staffId,
+      details: { reason: 'rate_limited', scope: 'account' },
+    });
+    // 上限の要求はコードに触れないため、1時間の窓が明ければ同じコードで再設定できる
+    expect(ctx.data().resetCodes.at(-1)?.attemptCount).toBe(0);
+    ctx.clock.now = new Date(ctx.clock.now.getTime() + 21 * 60 * 1000);
+    expect(await confirm(code)).toMatchObject({ ok: true });
   });
 
-  it('確認のアカウント単位の上限は主・サブのメールで同じ枠(スタッフ単位)', async () => {
+  it('確認のアカウント単位の上限は主・サブのメールで同じ枠で、超えても 429 にしない(2つのメールが同じスタッフと分からない)', async () => {
     const limit = DEFAULT_RATE_LIMIT_POLICY.passwordResetConfirmAccount.limit;
     for (let i = 0; i < limit; i++) {
       await confirm('00000000', 'brand-new-pass', i % 2 ? 'hanako@cutest.biz' : 'hanako@gmail.com');
     }
-    expect(await confirm('00000000', 'brand-new-pass', 'hanako@cutest.biz')).toMatchObject({
-      ok: false,
-      reason: 'rate_limited',
-    });
-    expect(await confirm('00000000', 'brand-new-pass', 'hanako@gmail.com')).toMatchObject({
-      ok: false,
-      reason: 'rate_limited',
-    });
+    for (const email of ['hanako@cutest.biz', 'hanako@gmail.com', 'nobody@example.com']) {
+      expect(await confirm('00000000', 'brand-new-pass', email)).toEqual({
+        ok: false,
+        reason: 'invalid_code',
+      });
+    }
+    expect(
+      ctx.appLog.entries.filter((e) => e.details?.reason === 'rate_limited').map((e) => e.actorStaffId),
+    ).toEqual([staffId, staffId]);
   });
 
-  it('確認はアカウント単位の1日の上限も設ける(1時間の窓をまたいでも1日30回まで)', async () => {
-    const day = DEFAULT_RATE_LIMIT_POLICY.passwordResetConfirmAccountDay.limit;
+  it('確認には1日の上限を設けない(第三者が使い切って本人の再設定を丸1日止められない)', async () => {
     const hour = DEFAULT_RATE_LIMIT_POLICY.passwordResetConfirmAccount.limit;
-    let tried = 0;
-    while (tried < day) {
-      for (let i = 0; i < hour && tried < day; i++, tried++) {
-        expect((await confirm('00000000')).ok).toBe(false);
-      }
+    for (let round = 0; round < 3; round++) {
+      for (let i = 0; i < hour; i++) await confirm('00000000');
       ctx.clock.now = new Date(ctx.clock.now.getTime() + 61 * 60 * 1000);
     }
-    expect(await confirm('00000000')).toMatchObject({ ok: false, reason: 'rate_limited' });
-    expect(ctx.appLog.entries.at(-1)?.details).toMatchObject({
-      reason: 'rate_limited',
-      scope: 'account_day',
-    });
+    await request();
+    expect(await confirm(lastCode())).toMatchObject({ ok: true });
+  });
+
+  it('確認の成功で、この端末の「この端末」の印を新しいパスワードで作る(ロック中のアカウントにも、その端末からログインできる)', async () => {
+    await request();
+    const result = await confirm(lastCode());
+    if (!result.ok) throw new Error('再設定できませんでした');
+    const limit = DEFAULT_RATE_LIMIT_POLICY.loginFailureAccount.limit;
+    for (let i = 0; i < limit; i++) {
+      await login(ctx.deps, { tenantSlug: 'test-tenant', email: 'hanako@gmail.com', password: 'wrong' });
+    }
+    const loginWith = (deviceToken?: string) =>
+      login(ctx.deps, {
+        tenantSlug: 'test-tenant',
+        email: 'hanako@gmail.com',
+        password: 'brand-new-pass',
+        ...(deviceToken ? { deviceToken } : {}),
+      });
+    expect(await loginWith()).toMatchObject({ ok: false, reason: 'locked' });
+    expect(await loginWith(result.deviceToken.value)).toMatchObject({ ok: true });
   });
 
   it('回数制限を通った確認は、アカウントが無い・退職者でも新しいパスワードのハッシュを作る(応答時間をそろえる)', async () => {

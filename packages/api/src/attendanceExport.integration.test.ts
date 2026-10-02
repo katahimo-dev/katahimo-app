@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
 import { loadEnv } from './env';
+import { sessionCookieOf } from './testSupport/cookies';
 
 /**
  * 出勤簿の Excel の書き出し(GET /api/attendance/export ・ /export/all)を実際の DB につないで確かめる
@@ -54,7 +55,7 @@ async function login(slug: string, email: string): Promise<string> {
     body: JSON.stringify({ tenantSlug: slug, email, password: PASSWORD }),
   });
   expect(res.status).toBe(200);
-  return (res.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+  return sessionCookieOf(res);
 }
 
 async function createTenant(): Promise<TestTenant> {

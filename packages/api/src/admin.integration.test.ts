@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
 import { loadEnv } from './env';
+import { sessionCookieOf } from './testSupport/cookies';
 
 /**
  * 管理画面の API(スタッフ管理・操作ログ)を実際の DB につないで確かめる(外部キーによる削除の可否、
@@ -54,7 +55,7 @@ async function login(slug: string, email: string): Promise<string> {
     body: JSON.stringify({ tenantSlug: slug, email, password: PASSWORD }),
   });
   expect(res.status).toBe(200);
-  return (res.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+  return sessionCookieOf(res);
 }
 
 async function createTenant(): Promise<TestTenant> {

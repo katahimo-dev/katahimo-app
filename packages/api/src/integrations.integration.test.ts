@@ -16,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
 import { createContainer } from './container';
 import { loadEnv } from './env';
+import { sessionCookieOf } from './testSupport/cookies';
 
 /**
  * 外部システムからの顧客の受け取り(POST /api/integrations/customers)を実際の DB で確かめる:
@@ -90,7 +91,7 @@ beforeAll(async () => {
       password: 'integration-pass-1',
     }),
   });
-  adminCookie = (login.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+  adminCookie = sessionCookieOf(login);
 });
 
 afterAll(async () => {

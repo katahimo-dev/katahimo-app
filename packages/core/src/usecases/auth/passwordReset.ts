@@ -20,6 +20,7 @@ import { accountRateLimitKey, staffRateLimitKey } from '../rateLimits';
 import type { Clock, RequestMeta } from '../requestMeta';
 import { currentTime } from '../requestMeta';
 import type { PasswordResetDeps } from './deps';
+import { deviceCredentialVersion, issueDeviceToken } from './deviceTrust';
 
 /** 再設定コードの有効期限(GAS版と同じ30分)。 */
 export const RESET_CODE_TTL_MS = 30 * 60 * 1000;
@@ -153,25 +154,46 @@ async function findAccount(
   return { ok: true, tenant, staff, loginId };
 }
 
-/** 再設定の要求・確認の回数制限の規則(送信元IP・アカウントの1時間・アカウントの1日)。 */
-interface ResetLimitRules {
-  ip: RateLimitRule;
-  account: RateLimitRule;
-  accountDay: RateLimitRule;
-}
-
 type ResetLimitOutcome =
   | { limited: false }
-  | { limited: true; scope: 'ip' | 'account' | 'account_day'; retryAfterMs: number };
+  | { limited: true; scope: 'ip' | 'account' | 'account_ip_day'; retryAfterMs: number };
 
-/** 送信元IP単位の回数を1回分数える(IPv6 は /64 ごと。rateLimitIpSubject)。アカウントを探す前に数える。 */
+/** 回数を数える範囲(規則・キー・ログに残す範囲の名前)。 */
+export interface LimitStep<Scope extends string> {
+  scope: Scope;
+  rule: RateLimitRule;
+  key: string;
+}
+
+/**
+ * 回数を順に1回分ずつ数え、上限を超えた最初の範囲を返す(上限を超えた範囲より後ろは数えない。例: 1時間の上限を
+ * 超えた回は1日の分に数えない)。
+ */
+export async function consumeLimitsInOrder<Scope extends string>(
+  rateLimiter: PasswordResetDeps['rateLimiter'],
+  steps: readonly LimitStep<Scope>[],
+  now: Date,
+): Promise<{ limited: false } | { limited: true; scope: Scope; retryAfterMs: number }> {
+  for (const step of steps) {
+    const decision = await rateLimiter.consume(step.rule, step.key, now);
+    if (!decision.allowed) return { limited: true, scope: step.scope, retryAfterMs: decision.retryAfterMs };
+  }
+  return { limited: false };
+}
+
+/** 送信元IP単位の回数のキー(IPv6 は /64 ごと。rateLimitIpSubject)。IP の分からない要求は null。 */
+function ipSubjectOf(meta: RequestMeta | undefined): string | null {
+  return meta?.ip ? rateLimitIpSubject(meta.ip) : null;
+}
+
+/** 送信元IP単位の回数を1回分数える。アカウントを探す前に数える。 */
 async function consumeResetIpLimit(
   deps: PasswordResetDeps,
   rule: RateLimitRule,
   meta: RequestMeta | undefined,
   now: Date,
 ): Promise<ResetLimitOutcome> {
-  const ip = meta?.ip ? rateLimitIpSubject(meta.ip) : null;
+  const ip = ipSubjectOf(meta);
   if (!ip) return { limited: false };
   const byIp = await deps.rateLimiter.consume(rule, ip, now);
   return byIp.allowed ? { limited: false } : { limited: true, scope: 'ip', retryAfterMs: byIp.retryAfterMs };
@@ -186,23 +208,6 @@ function resetLimitKey(found: Lookup, input: { tenantSlug: string; email: string
   return found.ok
     ? staffRateLimitKey(found.tenant.id, found.staff.id)
     : accountRateLimitKey(input.tenantSlug, normalizeEmailForIndex(input.email));
-}
-
-/**
- * アカウント単位の1時間・1日の回数を1回分数える(1時間の上限を超えた回は1日の分に数えない)。どちらかが上限を
- * 超えていればその範囲を返す。管理者のパスワード設定の案内(staffAdmin.ts)も発行要求と同じ枠で数える。
- */
-export async function consumeResetAccountLimits(
-  deps: Pick<PasswordResetDeps, 'rateLimiter'>,
-  rules: Pick<ResetLimitRules, 'account' | 'accountDay'>,
-  key: string,
-  now: Date,
-): Promise<ResetLimitOutcome> {
-  const byHour = await deps.rateLimiter.consume(rules.account, key, now);
-  if (!byHour.allowed) return { limited: true, scope: 'account', retryAfterMs: byHour.retryAfterMs };
-  const byDay = await deps.rateLimiter.consume(rules.accountDay, key, now);
-  if (!byDay.allowed) return { limited: true, scope: 'account_day', retryAfterMs: byDay.retryAfterMs };
-  return { limited: false };
 }
 
 export interface RequestPasswordResetInput {
@@ -223,9 +228,11 @@ export type RequestPasswordResetOutcome =
  *   送信までの間だけ持ち、送信後に消す(outbox の payload にも入れない)。
  * - コードの作成とメールの積み込みは同じトランザクション(片方だけが残らない)。メールはワーカーが送る
  *   (SMTP の所要時間から、アカウントの有無が応答時間に表れないように)。
- * - 新しいコードを発行すると古いコードは無効。発行要求は送信元IP・アカウント単位(1時間・1日)で回数を制限し、上限を
- *   超えた要求では既存のコードに触れない(第三者が有効なコードを無効にし続けられない)。アカウント単位はアカウントが
- *   分かればスタッフ単位(主・サブのメールで同じ枠)、分からなければ入力のログインID単位で、同じ回数だけ数える。
+ * - 新しいコードを発行すると古いコードは無効。発行要求は送信元IP・アカウント単位(1時間)・アカウント × 送信元IP単位(1日)で
+ *   回数を制限し、上限を超えた要求では既存のコードに触れない(第三者が有効なコードを無効にし続けられない)。アカウント単位は
+ *   アカウントが分かればスタッフ単位(主・サブのメールで同じ枠)、分からなければ入力のログインID単位で、同じ回数だけ数える。
+ * - 1日の上限は送信元IPごとに数える(1つの送信元からのメールの送り続けは止めるが、第三者が1日の枠を使い切って本人の
+ *   再設定・管理者のパスワード設定の案内を丸1日止めることはできない。案内は別の枠。staffAdmin.ts)。
  */
 export async function requestPasswordReset(
   deps: PasswordResetDeps,
@@ -233,10 +240,6 @@ export async function requestPasswordReset(
 ): Promise<RequestPasswordResetOutcome> {
   const now = currentTime(deps);
   const maskedLoginId = maskEmail(normalizeEmailForIndex(input.email));
-  const rules = {
-    account: deps.rateLimits.passwordResetRequestAccount,
-    accountDay: deps.rateLimits.passwordResetRequestAccountDay,
-  };
   const byIp = await consumeResetIpLimit(deps, deps.rateLimits.passwordResetRequestIp, input.meta, now);
   if (byIp.limited) {
     await deps.appLog.write({
@@ -250,7 +253,19 @@ export async function requestPasswordReset(
   }
 
   const found = await findAccount(deps, input.tenantSlug, input.email, now);
-  const limits = await consumeResetAccountLimits(deps, rules, resetLimitKey(found, input), now);
+  const accountKey = resetLimitKey(found, input);
+  const limits = await consumeLimitsInOrder(
+    deps.rateLimiter,
+    [
+      { scope: 'account', rule: deps.rateLimits.passwordResetRequestAccount, key: accountKey },
+      {
+        scope: 'account_ip_day',
+        rule: deps.rateLimits.passwordResetRequestAccountIpDay,
+        key: `${accountKey}|${ipSubjectOf(input.meta) ?? ''}`,
+      },
+    ],
+    now,
+  );
   const logTenantId = found.ok ? found.tenant.id : found.tenantId;
   if (limits.limited) {
     await deps.appLog.write({
@@ -340,8 +355,13 @@ export interface ConfirmPasswordResetInput {
 }
 
 export type ConfirmPasswordResetResult =
-  | { ok: true }
+  /**
+   * deviceToken はこの端末の「この端末」の印(新しいパスワードの版で作る。再設定で前の印は通らなくなるため、
+   * 再設定した端末からはアカウントがロック中でもログインできるように)。
+   */
+  | { ok: true; deviceToken: { value: string; expiresAt: Date } }
   | { ok: false; reason: 'invalid_code' | 'expired' | 'too_many_attempts' }
+  /** 送信元IP単位の上限だけ(アカウント単位の上限は invalid_code と同じ結果にする)。 */
   | { ok: false; reason: 'rate_limited'; retryAfterMs: number }
   | { ok: false; reason: 'weak_password'; violation: PasswordPolicyViolation };
 
@@ -354,9 +374,13 @@ type ConfirmOutcome =
  * - アカウントが無い場合も「無効な認証コード」と同じ結果にする(利用者の列挙防止)。
  * - 試行回数の加算・上限判定は照合より前に1文の条件付き UPDATE(registerAttempt)で行い、使用済みへの遷移も
  *   条件付き UPDATE(consume)にする。コードの消費・パスワードの設定・全セッションの失効は同じトランザクション。
- * - 送信元IP単位・アカウント単位(1時間・1日。キーは発行要求と同じ考え方)でも確認の回数を制限する(コードを
- *   発行し直しながらの総当たり対策)。
- * - 回数制限を通った要求は、アカウントが無くても新しいパスワードの argon2 のハッシュを作る(応答時間をそろえる)。
+ * - 送信元IP単位・アカウント単位(1時間。キーは発行要求と同じ考え方)でも確認の回数を制限する(コードを
+ *   発行し直しながらの総当たり対策)。アカウント単位の上限を超えた要求は、誤ったコードと同じ「無効な認証コード」に
+ *   する(429 にすると、主・サブのメールが同じ枠かどうかから、2つのメールが同じスタッフのものと分かるため)。
+ *   1日の上限は設けない(第三者が使い切ると本人の再設定を丸1日止められる。当たる見込みは doc/06 2.3)。
+ * - 送信元IP単位の上限を通った要求は、アカウントが無くても・アカウント単位の上限でも、新しいパスワードの argon2 の
+ *   ハッシュを作る(応答時間をそろえる)。
+ * - 成功したら、この端末の「この端末」の印を新しいパスワードの版で作って返す(API が Cookie に置く)。
  */
 export async function confirmPasswordReset(
   deps: PasswordResetDeps,
@@ -382,29 +406,23 @@ export async function confirmPasswordReset(
     return { ok: false, reason: 'rate_limited', retryAfterMs: byIp.retryAfterMs };
   }
   const found = await findAccount(deps, input.tenantSlug, input.email, now);
-  const limits = await consumeResetAccountLimits(
-    deps,
-    {
-      account: deps.rateLimits.passwordResetConfirmAccount,
-      accountDay: deps.rateLimits.passwordResetConfirmAccountDay,
-    },
+  const byAccount = await deps.rateLimiter.consume(
+    deps.rateLimits.passwordResetConfirmAccount,
     resetLimitKey(found, input),
     now,
   );
-  if (limits.limited) {
+  // 新しいパスワードのハッシュ(argon2、時間がかかる)は、アカウントの有無・アカウント単位の上限で結果を分ける前に必ず作る。
+  // 無いアカウント・退職者・停止中のテナント・上限の要求だけ先に返すと、応答時間の差からそれらが分かるため
+  const newPasswordHash = await deps.passwordHasher.hash(input.newPassword);
+  if (!byAccount.allowed) {
     await logFailure(
       found.ok ? found.tenant.id : found.tenantId,
       'rate_limited',
       found.ok ? found.staff.id : undefined,
-      {
-        scope: limits.scope,
-      },
+      { scope: 'account' },
     );
-    return { ok: false, reason: 'rate_limited', retryAfterMs: limits.retryAfterMs };
+    return { ok: false, reason: 'invalid_code' };
   }
-  // 新しいパスワードのハッシュ(argon2、時間がかかる)は、アカウントの有無を分ける前に必ず作る。無いアカウント・退職者・
-  // 停止中のテナントだけ先に返すと、応答時間の差からアカウントの有無が分かるため
-  const newPasswordHash = await deps.passwordHasher.hash(input.newPassword);
   if (!found.ok) {
     await logFailure(found.tenantId, found.reason);
     return { ok: false, reason: 'invalid_code' };
@@ -453,5 +471,17 @@ export async function confirmPasswordReset(
     actorStaffId: staff.id,
     ...input.meta,
   });
-  return { ok: true };
+  const deviceToken = issueDeviceToken(
+    deps.deviceTrustSecret,
+    {
+      tenantId: tenant.id,
+      staffId: staff.id,
+      credentialVersion: deviceCredentialVersion(
+        { passwordHash: newPasswordHash, legacyPasswordHash: null },
+        staff.retiredOn,
+      ),
+    },
+    now,
+  );
+  return { ok: true, deviceToken };
 }

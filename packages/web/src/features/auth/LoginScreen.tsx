@@ -11,6 +11,7 @@ import { useDemoConfig } from './demo/useDemoConfig';
 import { type LoginFormValues, LoginModal } from './LoginModal';
 import { ResetRequestModal } from './ResetRequestModal';
 import { RESET_CODE_LABEL, ResetVerifyModal } from './ResetVerifyModal';
+import { normalizeResetCodeInput } from './resetCode';
 
 type Step = 'login' | 'resetRequest' | 'resetVerify';
 
@@ -46,7 +47,7 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
   const [requestingReset, setRequestingReset] = useState(false);
   /** 番号を送ったメールアドレス(GAS版 window._resetUserId) */
   const [resetTargetEmail, setResetTargetEmail] = useState('');
-  const [resetCode, setResetCode] = useState('');
+  const [resetCodeInput, setResetCodeInput] = useState('');
   const [resetNewPassword, setResetNewPassword] = useState('');
   const [resetVerifyError, setResetVerifyError] = useState('');
   const [completingReset, setCompletingReset] = useState(false);
@@ -113,11 +114,14 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
   };
 
   const doCompleteReset = async () => {
-    if (!resetCode || !resetNewPassword) {
+    // 変換中のまま送られた番号もここで数字だけにそろえる(欄の入力は変換中はそろえない。ResetVerifyModal)
+    const code = normalizeResetCodeInput(resetCodeInput);
+    setResetCodeInput(code);
+    if (!code || !resetNewPassword) {
       setResetVerifyError('全ての項目を入力してください');
       return;
     }
-    if (!PASSWORD_RESET_CODE_PATTERN.test(resetCode)) {
+    if (!PASSWORD_RESET_CODE_PATTERN.test(code)) {
       setResetVerifyError(`${RESET_CODE_LABEL}を入力してください`);
       return;
     }
@@ -127,7 +131,7 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
       await authApi.confirmPasswordReset({
         tenantSlug,
         email: resetTargetEmail,
-        code: resetCode,
+        code,
         newPassword: resetNewPassword,
       });
       alertNative('パスワードがリセットされました。新しいパスワードでログインしてください。');
@@ -159,8 +163,8 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
   if (step === 'resetVerify') {
     return (
       <ResetVerifyModal
-        code={resetCode}
-        onCodeChange={setResetCode}
+        code={resetCodeInput}
+        onCodeChange={setResetCodeInput}
         newPassword={resetNewPassword}
         onNewPasswordChange={setResetNewPassword}
         error={resetVerifyError}

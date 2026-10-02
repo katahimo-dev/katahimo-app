@@ -46,7 +46,12 @@ export function ResetVerifyModal({
           inputMode="numeric"
           autoComplete="one-time-code"
           value={code}
-          onChange={(e) => onCodeChange(normalizeResetCodeInput(e.target.value))}
+          onChange={(e) => {
+            // 日本語入力の変換中はそろえない(変換中の文字を消すと入力が崩れる)。変換の確定と送信のときにそろえる
+            const composing = (e.nativeEvent as Partial<InputEvent>).isComposing === true;
+            onCodeChange(composing ? e.target.value : normalizeResetCodeInput(e.target.value));
+          }}
+          onCompositionEnd={(e) => onCodeChange(normalizeResetCodeInput(e.currentTarget.value))}
           className="w-full p-3 text-base rounded-xl border border-gray-300"
           placeholder={RESET_CODE_LABEL}
         />

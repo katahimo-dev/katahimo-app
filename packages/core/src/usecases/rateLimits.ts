@@ -26,16 +26,24 @@ export interface RateLimitPolicy {
    * 分からなければテナントslug+ログインID)。メール爆撃・有効なコードの無効化の繰り返し対策。
    */
   passwordResetRequestAccount: RateLimitRule;
-  /** パスワード再設定コードの発行要求の1日の上限(キーは passwordResetRequestAccount と同じ)。 */
-  passwordResetRequestAccountDay: RateLimitRule;
+  /**
+   * パスワード再設定コードの発行要求の1日の上限(キーは passwordResetRequestAccount のキー × 送信元IP)。1つの送信元からの
+   * メールの送り続けを止める。送信元IPごとに数えるため、第三者が使い切っても別のネットワークの本人は止まらない。
+   */
+  passwordResetRequestAccountIpDay: RateLimitRule;
   /** パスワード再設定コードの発行要求(送信元IP単位)。 */
   passwordResetRequestIp: RateLimitRule;
   /** パスワード再設定コードの確認(アカウント単位。キーは発行要求と同じ考え方。コードを発行し直しながらの総当たり対策)。 */
   passwordResetConfirmAccount: RateLimitRule;
-  /** パスワード再設定コードの確認の1日の上限(キーは passwordResetConfirmAccount と同じ)。 */
-  passwordResetConfirmAccountDay: RateLimitRule;
   /** パスワード再設定コードの確認(送信元IP単位)。 */
   passwordResetConfirmIp: RateLimitRule;
+  /**
+   * 管理者が送るパスワード設定の案内(送り先のスタッフ単位の1時間の上限)。本人の再設定の要求とは別の枠にし、
+   * 第三者が再設定の要求で枠を使い切っても案内を止められないようにする。
+   */
+  passwordGuideStaff: RateLimitRule;
+  /** パスワード設定の案内の1日の上限(送り先のスタッフ単位)。 */
+  passwordGuideStaffDay: RateLimitRule;
   /**
    * パスワード変更で現在のパスワードを誤った回数(スタッフ単位)。上限で一時ロック。セッションを奪った人が
    * 現在のパスワードを総当たりで探り、パスワードを変えて乗っ取るのを防ぐ。
@@ -97,11 +105,16 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   },
   loginFailureIp: { name: 'login_failure_ip', limit: 50, windowMs: 15 * MINUTE_MS, lockMs: 15 * MINUTE_MS },
   passwordResetRequestAccount: { name: 'password_reset_request_account', limit: 5, windowMs: HOUR_MS },
-  passwordResetRequestAccountDay: { name: 'password_reset_request_account_day', limit: 10, windowMs: DAY_MS },
+  passwordResetRequestAccountIpDay: {
+    name: 'password_reset_request_account_ip_day',
+    limit: 10,
+    windowMs: DAY_MS,
+  },
   passwordResetRequestIp: { name: 'password_reset_request_ip', limit: 20, windowMs: HOUR_MS },
   passwordResetConfirmAccount: { name: 'password_reset_confirm_account', limit: 20, windowMs: HOUR_MS },
-  passwordResetConfirmAccountDay: { name: 'password_reset_confirm_account_day', limit: 30, windowMs: DAY_MS },
   passwordResetConfirmIp: { name: 'password_reset_confirm_ip', limit: 50, windowMs: HOUR_MS },
+  passwordGuideStaff: { name: 'password_guide_staff', limit: 5, windowMs: HOUR_MS },
+  passwordGuideStaffDay: { name: 'password_guide_staff_day', limit: 20, windowMs: DAY_MS },
   passwordChangeFailureStaff: {
     name: 'password_change_failure_staff',
     limit: 5,
@@ -147,7 +160,8 @@ export function accountRateLimitKey(tenantSlug: string, normalizedLoginId: strin
 
 /**
  * スタッフ単位の規則のキー(テナントID:スタッフID)。ログインIDの形(`slug:メール`。必ず `@` を含む)とは重ならない。
- * パスワード再設定の回数は、アカウントが分かればこのキーで数え、主・サブのメールで同じ枠にする。
+ * パスワード再設定の回数は、アカウントが分かればこのキーで数え、主・サブのメールで同じ枠にする(パスワード設定の案内も
+ * このキーで数えるが、規則が別なので枠は共有しない)。
  */
 export function staffRateLimitKey(tenantId: string, staffId: string): string {
   return `${tenantId}:${staffId}`;
