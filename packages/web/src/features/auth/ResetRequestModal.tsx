@@ -1,3 +1,5 @@
+import { PASSWORD_RESET_CODE_LENGTH } from '@katahimo/shared';
+
 interface ResetRequestModalProps {
   email: string;
   onEmailChange: (email: string) => void;
@@ -43,7 +45,7 @@ export function ResetRequestModal({
         <p className="text-base text-gray-600">
           登録したメールアドレスを入力してください。
           <br />
-          6けたの番号をメールでお送りします。
+          {PASSWORD_RESET_CODE_LENGTH}けたの番号をメールでお送りします。
         </p>
         {showTenantField ? (
           <input

@@ -1,4 +1,5 @@
 import type { SessionUser } from '@katahimo/shared';
+import { PASSWORD_RESET_CODE_PATTERN } from '@katahimo/shared';
 import { useMemo, useState } from 'react';
 import { authApi } from '../../api/auth';
 import { userMessageOf } from '../../api/client';
@@ -9,7 +10,7 @@ import { useVisibilityToggle } from '../../ui/useVisibilityToggle';
 import { useDemoConfig } from './demo/useDemoConfig';
 import { type LoginFormValues, LoginModal } from './LoginModal';
 import { ResetRequestModal } from './ResetRequestModal';
-import { ResetVerifyModal } from './ResetVerifyModal';
+import { RESET_CODE_LABEL, ResetVerifyModal } from './ResetVerifyModal';
 
 type Step = 'login' | 'resetRequest' | 'resetVerify';
 
@@ -114,6 +115,10 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
   const doCompleteReset = async () => {
     if (!resetCode || !resetNewPassword) {
       setResetVerifyError('全ての項目を入力してください');
+      return;
+    }
+    if (!PASSWORD_RESET_CODE_PATTERN.test(resetCode)) {
+      setResetVerifyError(`${RESET_CODE_LABEL}を入力してください`);
       return;
     }
     setCompletingReset(true);

@@ -21,8 +21,8 @@ import type { RateLimiterPort } from '../ports/rateLimiter';
 import type { StaffPasswordStatus, StaffRecord } from '../ports/staff';
 import type { TenantRepositories, UnitOfWorkPort } from '../ports/unitOfWork';
 import type { PasswordHasherPort } from './auth';
-import { issuePasswordResetCode } from './auth/passwordReset';
-import { accountRateLimitKey, type RateLimitPolicy } from './rateLimits';
+import { consumeResetAccountLimits, issuePasswordResetCode } from './auth/passwordReset';
+import { type RateLimitPolicy, staffRateLimitKey } from './rateLimits';
 import type { Actor, Clock } from './requestMeta';
 import { currentTime } from './requestMeta';
 import {
@@ -399,7 +399,7 @@ export type PasswordGuideOutcome = { status: 'queued' } | { status: 'rate_limite
 /**
  * パスワード未設定・GAS版のパスワードのままのスタッフに、パスワード設定の案内(再設定コード)をメールで送る。
  * 本人の「パスワードを忘れたとき」と同じコード・同じ outbox の送信を使う。回数の上限は本人の再設定の要求と共有する
- * (その人のログイン用メール(主・サブ)それぞれの枠を数え、どれかが上限なら送らない)。送り先はメールアドレス(主)。
+ * (スタッフ単位の1時間・1日の枠。consumeResetAccountLimits)。送り先はメールアドレス(主)。
  */
 export async function sendPasswordGuideByAdmin(
   deps: StaffPasswordGuideDeps,
@@ -408,7 +408,7 @@ export async function sendPasswordGuideByAdmin(
 ): Promise<PasswordGuideOutcome> {
   const now = currentTime(deps);
   try {
-    const { staff, tenantSlug } = await deps.uow.run(actor.tenantId, async (r) => {
+    const staff = await deps.uow.run(actor.tenantId, async (r) => {
       const view = await loadView(deps, r, staffId);
       if (view.isRetired) throw invalid('退職したスタッフには送れません', undefined, 'retired');
       if (view.passwordStatus === 'set') {
@@ -418,25 +418,26 @@ export async function sendPasswordGuideByAdmin(
           'password_already_set',
         );
       }
-      return { staff: view, tenantSlug: (await r.tenant()).slug };
+      return view;
     });
-    for (const loginId of [staff.email, staff.altEmail]) {
-      if (!loginId) continue;
-      const limit = await deps.rateLimiter.consume(
-        deps.rateLimits.passwordResetRequestAccount,
-        accountRateLimitKey(tenantSlug, loginId),
-        now,
+    const limit = await consumeResetAccountLimits(
+      deps,
+      {
+        account: deps.rateLimits.passwordResetRequestAccount,
+        accountDay: deps.rateLimits.passwordResetRequestAccountDay,
+      },
+      staffRateLimitKey(actor.tenantId, staffId),
+      now,
+    );
+    if (limit.limited) {
+      await logRejected(
+        deps,
+        actor,
+        'staff.admin.password_guide_rejected',
+        { reason: 'rate_limited' },
+        staffId,
       );
-      if (!limit.allowed) {
-        await logRejected(
-          deps,
-          actor,
-          'staff.admin.password_guide_rejected',
-          { reason: 'rate_limited' },
-          staffId,
-        );
-        return { status: 'rate_limited', retryAfterMs: limit.retryAfterMs };
-      }
+      return { status: 'rate_limited', retryAfterMs: limit.retryAfterMs };
     }
     await issuePasswordResetCode(
       deps,

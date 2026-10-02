@@ -45,14 +45,22 @@ describe('ログイン画面: 届いている番号でパスワードを設定�
 
     fireEvent.change(screen.getByLabelText('メールアドレス'), { target: { value: 'jiro@example.com' } });
     fireEvent.click(screen.getByRole('button', { name: '番号が届いている方はこちら' }));
-    fireEvent.change(screen.getByLabelText('メールに届いた6けたの番号'), { target: { value: '123456' } });
+    fireEvent.change(screen.getByLabelText('メールに届いた8けたの番号'), { target: { value: '1234' } });
     fireEvent.change(screen.getByLabelText('新しいパスワード'), { target: { value: 'new-password-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'このパスワードにする' }));
+    // 桁の足りない番号は送らない
+    expect(screen.getByRole('alert').textContent).toBe('メールに届いた8けたの番号を入力してください');
+    expect(authApi.confirmPasswordReset).not.toHaveBeenCalled();
+    // 全角・空白まじりで入れても数字だけにそろえる
+    fireEvent.change(screen.getByLabelText('メールに届いた8けたの番号'), {
+      target: { value: '１２３４ ５６７８' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'このパスワードにする' }));
     await waitFor(() =>
       expect(authApi.confirmPasswordReset).toHaveBeenCalledWith({
         tenantSlug: 'demo',
         email: 'jiro@example.com',
-        code: '123456',
+        code: '12345678',
         newPassword: 'new-password-1',
       }),
     );

@@ -75,9 +75,11 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | --- | --- | --- | --- | --- |
 | `login_failure_account` | テナントslug + 正規化したログインID(無いアカウントも数える) | 15分に10回 → 15分ロック | 429(正しいパスワードでも) | `RATE_LIMIT_LOGIN_FAILURES_PER_ACCOUNT` |
 | `login_failure_ip` | 送信元IP | 15分に50回 → 15分ロック | 429 | `RATE_LIMIT_LOGIN_FAILURES_PER_IP` |
-| `password_reset_request_account` | アカウント | 1時間に5回 | 何もせず同じ応答(既存のコードに触れない) | `RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT` |
+| `password_reset_request_account` | アカウント(分かればテナント + スタッフ = 主・サブのメールで同じ枠、分からなければテナントslug + ログインID。管理者のパスワード設定の案内も同じ枠) | 1時間に5回 | 何もせず同じ応答(既存のコードに触れない)。案内は 429 | `RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT` |
+| `password_reset_request_account_day` | `password_reset_request_account` と同じ | 1日10回 | 同上 | `RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT_DAY` |
 | `password_reset_request_ip` | IP | 1時間に20回 | 429 | `RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_IP` |
-| `password_reset_confirm_account` / `_ip` | アカウント / IP | 1時間に20回 / 50回 | 429 | — |
+| `password_reset_confirm_account` / `_ip` | アカウント(発行要求と同じ考え方)/ IP | 1時間に20回 / 50回 | 429 | — |
+| `password_reset_confirm_account_day` | `password_reset_confirm_account` と同じ | 1日30回 | 429 | — |
 | `ai_generate_staff` | テナント + スタッフ | 1日200回 | 429 | `RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY` |
 | `receipt_ocr_staff` | テナント + スタッフ | 1日300回 | 429 | `RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY` |
 | `receipt_upload_staff` | テナント + スタッフ | 1時間60回(領収書の登録 `POST /api/receipts`。画像の枚数ではなく要求の回数。1回で最大6枚・14MB の本文を受け、画像を保存先に書くため。本文を読む前に数えるので、検証で断られた(400)要求も数える) | 429「領収書の登録の回数が上限に達しました。しばらく待ってから再度お試しください。」(`Retry-After` つき) | `RATE_LIMIT_RECEIPT_UPLOAD_PER_STAFF_HOUR` |
@@ -90,6 +92,10 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `attendance_export_staff` | テナント + スタッフ | 1時間30回(出勤簿の Excel の書き出し。1人分・全員分の合計) | 429 | — |
 | `customer_csv_import_staff` | テナント + スタッフ | 1時間30回(顧客CSVの取込。`POST /api/admin/customers/import`) | 429 | — |
 | `staff_import_apply_staff` | テナント + スタッフ(管理者) | 10分に5回(スタッフの xlsx の取込の反映。`dryRun` は数えない) | 429 | — |
+
+パスワード再設定の規則は、まず送信元IPで数え(上限なら 429 でアカウントも探さない)、次にアカウントを探してからアカウント単位の
+1時間・1日の枠を数える(1時間の上限を超えた回は1日の分に数えない)。アカウントが無い・退職者・停止中のテナントでも入力のログインIDで
+同じ回数だけ数えるため、上限に達するまでの回数からアカウントの有無は分からない。
 
 ログインの2つの規則は照合(argon2)の**前に**1回分の枠を取る(同時の大量の試行でも照合まで進むのは上限の回数まで)。
 一致した回は数えない(アカウントは数え直し、IP は先に取った1回分を返す)。
@@ -157,7 +163,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `POST /logout` | 誰でも | — / `okResponseSchema` | `{ ok: true }`。セッションを失効し Cookie を消す | INFO `auth.logout` |
 | `POST /change-password` | ログイン | `changePasswordRequestSchema`(`currentPassword`・`newPassword` 8〜128文字)/ `changePasswordResponseSchema` | 400「現在のパスワードが正しくありません」・長さの規則。操作中以外のセッションを失効 | SECURITY `auth.password_change.succeeded` / `.failed` |
 | `POST /password-reset/request` | 誰でも | `passwordResetRequestSchema`(`tenantSlug`・`email`)/ `passwordResetRequestResponseSchema` | 常に `{ ok: true, message }`。IP の上限だけ 429 | SECURITY `auth.password_reset.requested`、WARN `.request_rejected` |
-| `POST /password-reset/confirm` | 誰でも | `passwordResetConfirmSchema`(`tenantSlug`・`email`・`code` 6桁・`newPassword`)/ `passwordResetConfirmResponseSchema` | 400「無効な認証コードです」/「認証コードの有効期限が切れています」/入力回数の上限、429 | SECURITY `auth.password_reset.completed`、WARN `.failed` |
+| `POST /password-reset/confirm` | 誰でも | `passwordResetConfirmSchema`(`tenantSlug`・`email`・`code` 8桁の数字(移行のあいだだけ6桁も受け付ける。`PASSWORD_RESET_CODE_PATTERN`)・`newPassword`)/ `passwordResetConfirmResponseSchema` | 400「無効な認証コードです」/「認証コードの有効期限が切れています」/入力回数の上限、429 | SECURITY `auth.password_reset.completed`、WARN `.failed` |
 
 ### 2.3 お客様 `/api/customers`(`routes/customers.ts`、全てログイン)
 

@@ -35,7 +35,7 @@ describe('パスワード再設定', () => {
     await ctx.drain();
     return outcome.status;
   };
-  const lastCode = () => /コード: (\d{6})/.exec(ctx.mailer.sent.at(-1)?.text ?? '')?.[1] ?? '';
+  const lastCode = () => /コード: (\d{8})/.exec(ctx.mailer.sent.at(-1)?.text ?? '')?.[1] ?? '';
   const confirm = (code: string, newPassword = 'brand-new-pass', email = 'hanako@gmail.com') =>
     confirmPasswordReset(ctx.deps, {
       tenantSlug: 'test-tenant',
@@ -44,9 +44,9 @@ describe('パスワード再設定', () => {
       newPassword,
       meta: { ip: '203.0.113.1' },
     });
-  const wrongCodeFor = (code: string) => (code === '123456' ? '654321' : '123456');
+  const wrongCodeFor = (code: string) => (code === '12345678' ? '87654321' : '12345678');
 
-  it('6桁のコードをGAS版と同じ文面でメール送信し(ワーカー経由)、送信後はDBにハッシュだけが残る', async () => {
+  it('8桁のコードをGAS版と同じ文面でメール送信し(ワーカー経由)、送信後はDBにハッシュだけが残る', async () => {
     const outcome = await requestPasswordReset(ctx.deps, {
       tenantSlug: 'test-tenant',
       email: 'hanako@gmail.com',
@@ -55,7 +55,7 @@ describe('パスワード再設定', () => {
     // リクエストの中では送らず、outboxに積むだけ(応答時間からアカウントの有無が分からないように)
     expect(ctx.mailer.sent).toHaveLength(0);
     expect(ctx.data().outbox.map((j) => j.topic)).toEqual(['mail.password_reset']);
-    expect(ctx.data().resetCodes[0]?.mailCode).toMatch(/^\d{6}$/);
+    expect(ctx.data().resetCodes[0]?.mailCode).toMatch(/^[1-9]\d{7}$/);
     // outbox の payload にはコードを入れない
     expect(JSON.stringify(ctx.data().outbox[0]?.payload ?? {})).not.toContain(
       ctx.data().resetCodes[0]?.mailCode,
@@ -65,7 +65,7 @@ describe('パスワード再設定', () => {
     expect(mail?.to).toBe('hanako@gmail.com');
     expect(mail?.subject).toBe('【保育日報】パスワード再設定認証コード');
     expect(mail?.text).toMatch(
-      /^パスワード再設定のリクエストを受け付けました。\n以下の認証コードを入力してください。\n\nコード: \d{6}\n有効期限: 30分$/,
+      /^パスワード再設定のリクエストを受け付けました。\n以下の認証コードを入力してください。\n\nコード: \d{8}\n有効期限: 30分$/,
     );
     const row = ctx.data().resetCodes[0];
     expect(row?.codeHash).not.toContain(lastCode());
@@ -188,6 +188,33 @@ describe('パスワード再設定', () => {
     expect(await request()).toBe('queued');
   });
 
+  it('発行要求のアカウント単位の上限は主・サブのメールで同じ枠(スタッフ単位)', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.passwordResetRequestAccount.limit;
+    for (let i = 0; i < limit; i++) {
+      expect(await request(i % 2 ? 'hanako@cutest.biz' : 'hanako@gmail.com')).toBe('queued');
+    }
+    expect(await request('hanako@cutest.biz')).toBe('rate_limited');
+    expect(await request('hanako@gmail.com')).toBe('rate_limited');
+  });
+
+  it('発行要求はアカウント単位の1日の上限も設ける', async () => {
+    const day = DEFAULT_RATE_LIMIT_POLICY.passwordResetRequestAccountDay.limit;
+    const hour = DEFAULT_RATE_LIMIT_POLICY.passwordResetRequestAccount.limit;
+    let sent = 0;
+    while (sent < day) {
+      for (let i = 0; i < hour && sent < day; i++, sent++) expect(await request()).toBe('queued');
+      ctx.clock.now = new Date(ctx.clock.now.getTime() + 61 * 60 * 1000);
+    }
+    expect(await request()).toBe('rate_limited');
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({
+      action: 'auth.password_reset.request_rejected',
+      actorStaffId: staffId,
+      details: { reason: 'rate_limited', scope: 'account_day' },
+    });
+    ctx.clock.now = new Date(ctx.clock.now.getTime() + 24 * 60 * 60 * 1000);
+    expect(await request()).toBe('queued');
+  });
+
   it('発行要求のアカウント単位の上限は、存在しないアカウントにも同じように数える(列挙防止)', async () => {
     const limit = DEFAULT_RATE_LIMIT_POLICY.passwordResetRequestAccount.limit;
     for (let i = 0; i < limit; i++) expect(await request('nobody@example.com')).toBe('rejected');
@@ -243,8 +270,59 @@ describe('パスワード再設定', () => {
 
   it('確認はアカウント単位の上限を超えると rate_limited(コードを発行し直しながらの総当たり対策)', async () => {
     const limit = DEFAULT_RATE_LIMIT_POLICY.passwordResetConfirmAccount.limit;
-    for (let i = 0; i < limit; i++) await confirm('000000');
-    expect(await confirm('000000')).toMatchObject({ ok: false, reason: 'rate_limited' });
+    for (let i = 0; i < limit; i++) await confirm('00000000');
+    expect(await confirm('00000000')).toMatchObject({ ok: false, reason: 'rate_limited' });
+  });
+
+  it('確認のアカウント単位の上限は主・サブのメールで同じ枠(スタッフ単位)', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.passwordResetConfirmAccount.limit;
+    for (let i = 0; i < limit; i++) {
+      await confirm('00000000', 'brand-new-pass', i % 2 ? 'hanako@cutest.biz' : 'hanako@gmail.com');
+    }
+    expect(await confirm('00000000', 'brand-new-pass', 'hanako@cutest.biz')).toMatchObject({
+      ok: false,
+      reason: 'rate_limited',
+    });
+    expect(await confirm('00000000', 'brand-new-pass', 'hanako@gmail.com')).toMatchObject({
+      ok: false,
+      reason: 'rate_limited',
+    });
+  });
+
+  it('確認はアカウント単位の1日の上限も設ける(1時間の窓をまたいでも1日30回まで)', async () => {
+    const day = DEFAULT_RATE_LIMIT_POLICY.passwordResetConfirmAccountDay.limit;
+    const hour = DEFAULT_RATE_LIMIT_POLICY.passwordResetConfirmAccount.limit;
+    let tried = 0;
+    while (tried < day) {
+      for (let i = 0; i < hour && tried < day; i++, tried++) {
+        expect((await confirm('00000000')).ok).toBe(false);
+      }
+      ctx.clock.now = new Date(ctx.clock.now.getTime() + 61 * 60 * 1000);
+    }
+    expect(await confirm('00000000')).toMatchObject({ ok: false, reason: 'rate_limited' });
+    expect(ctx.appLog.entries.at(-1)?.details).toMatchObject({
+      reason: 'rate_limited',
+      scope: 'account_day',
+    });
+  });
+
+  it('回数制限を通った確認は、アカウントが無い・退職者でも新しいパスワードのハッシュを作る(応答時間をそろえる)', async () => {
+    await request();
+    const before = ctx.passwordHasher.hashes;
+    await confirm('00000000');
+    expect(ctx.passwordHasher.hashes).toBe(before + 1);
+    await confirm('00000000', 'brand-new-pass', 'nobody@example.com');
+    expect(ctx.passwordHasher.hashes).toBe(before + 2);
+    ctx.setRetiredOn(staffId, '2026-01-01');
+    await confirm('00000000');
+    expect(ctx.passwordHasher.hashes).toBe(before + 3);
+    await confirmPasswordReset(ctx.deps, {
+      tenantSlug: 'no-such',
+      email: 'hanako@gmail.com',
+      code: '00000000',
+      newPassword: 'brand-new-pass',
+    });
+    expect(ctx.passwordHasher.hashes).toBe(before + 4);
   });
 
   it('メール送信に失敗したらワーカーが例外にし(outboxが再試行する)、コードは送信待ちのまま残る', async () => {
@@ -264,10 +342,15 @@ describe('パスワード再設定', () => {
   });
 
   it('未登録アカウントの確認も「無効な認証コード」と同じ結果(列挙防止)', async () => {
-    expect(await confirm('123456', 'brand-new-pass', 'nobody@example.com')).toEqual({
+    expect(await confirm('12345678', 'brand-new-pass', 'nobody@example.com')).toEqual({
       ok: false,
       reason: 'invalid_code',
     });
+  });
+
+  it('移行のあいだは6桁のコードの入力も受け付ける(照合は桁数によらずハッシュで行う)', async () => {
+    await request();
+    expect(await confirm('123456')).toEqual({ ok: false, reason: 'invalid_code' });
   });
 
   it('短すぎる新パスワードは拒否する', async () => {
@@ -282,14 +365,14 @@ describe('パスワード再設定', () => {
 
 describe('パスワード設定の案内のメール', () => {
   it('法人ID と、画面の URL があれば法人IDつきのログイン画面の URL を書く', () => {
-    const mail = buildPasswordResetMail('a@example.com', '123456', 'setup_guide', {
+    const mail = buildPasswordResetMail('a@example.com', '12345678', 'setup_guide', {
       tenantSlug: 'cutest',
       appPublicUrl: 'https://app.example.jp/',
     });
     expect(mail.text).toContain('ログイン画面: https://app.example.jp/?t=cutest');
     expect(mail.text).toContain('法人ID(事業所ID): cutest');
-    expect(mail.text).toContain('コード: 123456');
-    const withoutUrl = buildPasswordResetMail('a@example.com', '123456', 'setup_guide', {
+    expect(mail.text).toContain('コード: 12345678');
+    const withoutUrl = buildPasswordResetMail('a@example.com', '12345678', 'setup_guide', {
       tenantSlug: 'cutest',
     });
     expect(withoutUrl.text).not.toContain('ログイン画面:');

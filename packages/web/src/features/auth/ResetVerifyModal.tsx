@@ -1,3 +1,9 @@
+import { PASSWORD_RESET_CODE_LENGTH } from '@katahimo/shared';
+import { normalizeResetCodeInput } from './resetCode';
+
+/** 番号の欄の名前(読み上げ・見出し・テストで共通)。 */
+export const RESET_CODE_LABEL = `メールに届いた${PASSWORD_RESET_CODE_LENGTH}けたの番号`;
+
 interface ResetVerifyModalProps {
   code: string;
   onCodeChange: (code: string) => void;
@@ -31,20 +37,18 @@ export function ResetVerifyModal({
         className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm space-y-4"
       >
         <h3 className="text-xl font-bold text-gray-800">メールに届いた番号を入力</h3>
-        <p className="text-base text-gray-600">
-          メールに届いた6けたの番号と、新しいパスワードを入力してください。
-        </p>
+        <p className="text-base text-gray-600">{RESET_CODE_LABEL}と、新しいパスワードを入力してください。</p>
 
         <input
           type="text"
           id="resetCode"
-          aria-label="メールに届いた6けたの番号"
+          aria-label={RESET_CODE_LABEL}
           inputMode="numeric"
           autoComplete="one-time-code"
           value={code}
-          onChange={(e) => onCodeChange(e.target.value)}
+          onChange={(e) => onCodeChange(normalizeResetCodeInput(e.target.value))}
           className="w-full p-3 text-base rounded-xl border border-gray-300"
-          placeholder="メールに届いた6けたの番号"
+          placeholder={RESET_CODE_LABEL}
         />
 
         <input

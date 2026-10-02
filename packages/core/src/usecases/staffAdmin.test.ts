@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { LatLng, MapsPort } from '../ports/maps';
 import { updateAttendanceDay } from './attendance';
-import { accountRateLimitKey } from './rateLimits';
+import { requestPasswordReset } from './auth/passwordReset';
 import type { Actor } from './requestMeta';
 import { listActiveStaffForActor } from './staff';
 import {
@@ -395,7 +395,7 @@ describe('管理者によるスタッフ管理(自宅・移動手段・カレン
     expect(ctx.mailer.sent.at(-1)).toMatchObject({
       to: 'a@example.com',
       subject: '【保育日報】パスワード設定のご案内',
-      text: expect.stringMatching(/法人ID\(事業所ID\): test-tenant\nコード: \d{6}/),
+      text: expect.stringMatching(/法人ID\(事業所ID\): test-tenant\nコード: \d{8}/),
     });
     expect(ctx.appLog.entries.at(-1)).toMatchObject({
       level: 'SECURITY',
@@ -437,7 +437,7 @@ describe('管理者によるスタッフ管理(自宅・移動手段・カレン
     });
     const rule = ctx.deps.rateLimits.passwordResetRequestAccount;
     for (let i = 0; i < rule.limit; i++) {
-      await ctx.rateLimiter.consume(rule, accountRateLimitKey('test-tenant', 'a@cutest.biz'), ctx.clock.now);
+      await requestPasswordReset(ctx.deps, { tenantSlug: 'test-tenant', email: 'a@cutest.biz' });
     }
     expect(await sendPasswordGuideByAdmin(ctx.deps, admin, staff.id)).toMatchObject({
       status: 'rate_limited',

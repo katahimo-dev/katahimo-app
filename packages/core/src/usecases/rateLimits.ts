@@ -16,12 +16,19 @@ export interface RateLimitPolicy {
   loginFailureAccount: RateLimitRule;
   /** ログイン失敗(送信元IP単位)。複数アカウントへの総当たり(パスワードスプレー)対策。 */
   loginFailureIp: RateLimitRule;
-  /** パスワード再設定コードの発行要求(アカウント単位)。メール爆撃・有効なコードの無効化の繰り返し対策。 */
+  /**
+   * パスワード再設定コードの発行要求(アカウント単位。アカウントが分かればスタッフ単位で、主・サブのメールで同じ枠。
+   * 分からなければテナントslug+ログインID)。メール爆撃・有効なコードの無効化の繰り返し対策。
+   */
   passwordResetRequestAccount: RateLimitRule;
+  /** パスワード再設定コードの発行要求の1日の上限(キーは passwordResetRequestAccount と同じ)。 */
+  passwordResetRequestAccountDay: RateLimitRule;
   /** パスワード再設定コードの発行要求(送信元IP単位)。 */
   passwordResetRequestIp: RateLimitRule;
-  /** パスワード再設定コードの確認(アカウント単位。コードを発行し直しながらの総当たり対策)。 */
+  /** パスワード再設定コードの確認(アカウント単位。キーは発行要求と同じ考え方。コードを発行し直しながらの総当たり対策)。 */
   passwordResetConfirmAccount: RateLimitRule;
+  /** パスワード再設定コードの確認の1日の上限(キーは passwordResetConfirmAccount と同じ)。 */
+  passwordResetConfirmAccountDay: RateLimitRule;
   /** パスワード再設定コードの確認(送信元IP単位)。 */
   passwordResetConfirmIp: RateLimitRule;
   /** 日報・事故報告のAI生成(スタッフ単位の1日の上限。Gemini の従量課金対策)。 */
@@ -74,8 +81,10 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   },
   loginFailureIp: { name: 'login_failure_ip', limit: 50, windowMs: 15 * MINUTE_MS, lockMs: 15 * MINUTE_MS },
   passwordResetRequestAccount: { name: 'password_reset_request_account', limit: 5, windowMs: HOUR_MS },
+  passwordResetRequestAccountDay: { name: 'password_reset_request_account_day', limit: 10, windowMs: DAY_MS },
   passwordResetRequestIp: { name: 'password_reset_request_ip', limit: 20, windowMs: HOUR_MS },
   passwordResetConfirmAccount: { name: 'password_reset_confirm_account', limit: 20, windowMs: HOUR_MS },
+  passwordResetConfirmAccountDay: { name: 'password_reset_confirm_account_day', limit: 30, windowMs: DAY_MS },
   passwordResetConfirmIp: { name: 'password_reset_confirm_ip', limit: 50, windowMs: HOUR_MS },
   aiGenerateStaff: { name: 'ai_generate_staff', limit: 200, windowMs: DAY_MS },
   receiptOcrStaff: { name: 'receipt_ocr_staff', limit: 300, windowMs: DAY_MS },
@@ -112,6 +121,14 @@ export function withRateLimitCounts(
 /** アカウント単位の規則のキー。アカウントの有無にかかわらず入力値から作る(存在の有無を漏らさないため)。 */
 export function accountRateLimitKey(tenantSlug: string, normalizedLoginId: string): string {
   return `${tenantSlug.trim().toLowerCase()}:${normalizedLoginId}`;
+}
+
+/**
+ * スタッフ単位の規則のキー(テナントID:スタッフID)。ログインIDの形(`slug:メール`。必ず `@` を含む)とは重ならない。
+ * パスワード再設定の回数は、アカウントが分かればこのキーで数え、主・サブのメールで同じ枠にする。
+ */
+export function staffRateLimitKey(tenantId: string, staffId: string): string {
+  return `${tenantId}:${staffId}`;
 }
 
 export interface RateLimitDeps {

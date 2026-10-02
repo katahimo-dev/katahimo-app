@@ -82,6 +82,14 @@
 - `.gitignore`・`.dockerignore` に、日報AIの調整に使うお客様の実物の xlsx の置き場 `.scratch-ai/` が抜けていたのを足した
   (資料では無視する約束だった)。あわせて `.gitignore` に `*.pem`・`*-key.json`・`service-account*.json`・`*.tfvars`
   (`*.tfvars.example` は残す)・`.claude/settings.local.json`、`.dockerignore` に `*.tfvars` を足した。
+- パスワード再設定の認証コードを6桁から8桁にした(メールの文面・画面の番号の欄も8けた。欄は全角の数字・空白まじりの貼り付けも
+  数字だけにそろえる)。この版を出す前に発行した6桁のコード(30分で切れる)のため、確認の API は移行のあいだだけ6桁も受け付ける
+  (次のリリースで外す)。再設定の要求・確認のアカウント単位の回数は、アカウントが分かればスタッフ単位で数える(主・サブのメールで
+  別々に数えて2倍試せた)。分からないときは今までどおり入力のログインIDで同じ回数だけ数える。1日の上限も足した
+  (`password_reset_request_account_day` 1日10回(`RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT_DAY`)・`password_reset_confirm_account_day`
+  1日30回)。管理者のパスワード設定の案内も同じスタッフ単位の枠で数える。確認は、無いアカウント・退職者・停止中のテナントでも新しい
+  パスワードのハッシュ(argon2)を作ってから結果を返し、応答時間の差でアカウントの有無が分からないようにした
+  (`doc/04_API仕様.md` 1.5・2.2、`doc/06_セキュリティ設計.md` 2.3)。
 
 ## [Ver. 1.3.0] - 2026-10-01
 
