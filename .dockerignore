@@ -13,10 +13,13 @@
 **/*.pem
 **/*-key.json
 **/service-account*.json
+**/*.tfvars
 
 # 実データを含みうるローカルの保存先
 packages/api/data
 data
+# 日報AIの調整に使うお客様の実物のマスタ・提案書(xlsx)
+.scratch-ai
 
 # 実行に不要なもの
 .git
