@@ -82,6 +82,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `password_reset_request_ip` | IP | 1時間に20回 | 429 | `RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_IP` |
 | `password_reset_confirm_account` / `_ip` | アカウント(発行要求と同じ考え方)/ IP | 1時間に20回 / 50回 | 429 | — |
 | `password_reset_confirm_account_day` | `password_reset_confirm_account` と同じ | 1日30回 | 429 | — |
+| `password_change_failure_staff` | テナント + スタッフ(パスワード変更で現在のパスワードを誤った回。照合の前に枠を取り、一致した回は数え直す) | 15分に5回 → 15分ロック | 429「現在のパスワードの誤りが続いたため、一時的にパスワードを変更できません。…」(正しいパスワードでも) | — |
 | `ai_generate_staff` | テナント + スタッフ | 1日200回 | 429 | `RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY` |
 | `receipt_ocr_staff` | テナント + スタッフ | 1日300回 | 429 | `RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY` |
 | `receipt_upload_staff` | テナント + スタッフ | 1時間60回(領収書の登録 `POST /api/receipts`。画像の枚数ではなく要求の回数。1回で最大6枚・14MB の本文を受け、画像を保存先に書くため。本文を読む前に数えるので、検証で断られた(400)要求も数える) | 429「領収書の登録の回数が上限に達しました。しばらく待ってから再度お試しください。」(`Retry-After` つき) | `RATE_LIMIT_RECEIPT_UPLOAD_PER_STAFF_HOUR` |
@@ -165,7 +166,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `POST /login` | 誰でも | `loginRequestSchema`(`tenantSlug`・`email`(サブメールも可)・`password`)/ `sessionUserResponseSchema` | `{ staff: { staffId, tenantId, name, email, role, demoTenant } }` + セッションの Cookie と「この端末」の印の Cookie(1.2。要求に正しい印があれば、アカウント単位のロック中でも通す)(`demoTenant` = 公開デモ用テナントへのログインか。1.6)。401「メールアドレスまたはパスワードが違います」/「ログイン権限のないユーザーです」(退職)/「ご利用の法人は現在利用を停止しています。…」、429(ロック中) | INFO `auth.login.succeeded`、SECURITY `auth.login.failed`・`.lockout_started`・`.locked`(`scope` = `ip` / `account` / `device`。印を送った要求は `details.device` = `trusted` / `invalid`) |
 | `GET /me` | 誰でも(Cookie) | — / `sessionUserResponseSchema` | `{ staff: { …, demoTenant } }`(`/login` と同じ形)。401「未ログインです」 | INFO `auth.session.auto_login` / WARN `.auto_login_failed` |
 | `POST /logout` | 誰でも | — / `okResponseSchema` | `{ ok: true }`。セッションを失効しセッションの Cookie を消す(「この端末」の印の Cookie は残す) | INFO `auth.logout` |
-| `POST /change-password` | ログイン | `changePasswordRequestSchema`(`currentPassword`・`newPassword` 8〜128文字)/ `changePasswordResponseSchema` | 400「現在のパスワードが正しくありません」・長さの規則。操作中以外のセッションを失効 | SECURITY `auth.password_change.succeeded` / `.failed` |
+| `POST /change-password` | ログイン | `changePasswordRequestSchema`(`currentPassword`・`newPassword` 8〜128文字)/ `changePasswordResponseSchema` | 400「現在のパスワードが正しくありません」・長さの規則、429(現在のパスワードの誤りが15分に5回を超えた。1.5 `password_change_failure_staff`)。操作中以外のセッションを失効し、「この端末」の印の Cookie を作り直す(1.2) | SECURITY `auth.password_change.succeeded` / `.failed`、WARN `.locked` / `.lockout_started` |
 | `POST /password-reset/request` | 誰でも | `passwordResetRequestSchema`(`tenantSlug`・`email`)/ `passwordResetRequestResponseSchema` | 常に `{ ok: true, message }`。IP の上限だけ 429 | SECURITY `auth.password_reset.requested`、WARN `.request_rejected` |
 | `POST /password-reset/confirm` | 誰でも | `passwordResetConfirmSchema`(`tenantSlug`・`email`・`code` 8桁の数字(移行のあいだだけ6桁も受け付ける。`PASSWORD_RESET_CODE_PATTERN`)・`newPassword`)/ `passwordResetConfirmResponseSchema` | 400「無効な認証コードです」/「認証コードの有効期限が切れています」/入力回数の上限、429 | SECURITY `auth.password_reset.completed`、WARN `.failed` |
 

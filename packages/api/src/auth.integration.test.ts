@@ -213,3 +213,37 @@ describe('API: ログインの「この端末」の印', () => {
     expect((await attempt({ email, password: PASSWORD })).status).toBe(200);
   });
 });
+
+describe('API: パスワード変更の現在のパスワードの誤り', () => {
+  const changePassword = (session: string, currentPassword: string, newPassword = 'changed-pass-2') =>
+    app.request('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: `${SESSION_COOKIE_NAME}=${session}` },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+
+  it('スタッフ単位の上限を超えると正しいパスワードでも 429(Retry-After つき)、成功すると端末の印を作り直す', async () => {
+    const email = await newStaff();
+    const res = await attempt({ email, password: PASSWORD });
+    const session = cookieValue(res, SESSION_COOKIE_NAME) ?? '';
+    const limit = container.rateLimits.passwordChangeFailureStaff.limit;
+    for (let i = 0; i < limit; i++) {
+      const wrong = await changePassword(session, 'wrong-password');
+      expect(wrong.status).toBe(400);
+    }
+    const locked = await changePassword(session, PASSWORD);
+    expect(locked.status).toBe(429);
+    expect(Number(locked.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(((await locked.json()) as { message: string }).message).toContain(
+      '一時的にパスワードを変更できません',
+    );
+
+    // 別のスタッフは影響を受けず、成功すると端末の印の Cookie を返す
+    const other = await newStaff();
+    const otherSession =
+      cookieValue(await attempt({ email: other, password: PASSWORD }), SESSION_COOKIE_NAME) ?? '';
+    const ok = await changePassword(otherSession, PASSWORD);
+    expect(ok.status).toBe(200);
+    expect(cookieValue(ok, DEVICE_COOKIE_NAME)).not.toBeNull();
+  });
+});

@@ -526,7 +526,7 @@ describe('changePassword', () => {
     changePassword(ctx.deps, { tenantId: ctx.tenantId, staffId, sessionId, currentPassword, newPassword });
 
   it('現在のパスワードが正しければ変更でき、操作中以外のセッションは失効する', async () => {
-    expect(await change('correct-horse', 'new-password-1')).toEqual({ ok: true });
+    expect(await change('correct-horse', 'new-password-1')).toMatchObject({ ok: true });
     expect(
       ctx
         .data()
@@ -555,6 +555,48 @@ describe('changePassword', () => {
       action: 'auth.password_change.failed',
       details: { reason: 'incorrect_current_password' },
     });
+  });
+
+  it(`現在のパスワードの誤りはスタッフ単位で${DEFAULT_RATE_LIMIT_POLICY.passwordChangeFailureStaff.limit}回まで、その後は正しくても15分ロック(WARN)`, async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.passwordChangeFailureStaff.limit;
+    for (let i = 0; i < limit; i++) {
+      expect(await change('wrong-password', 'new-password-1')).toEqual({
+        ok: false,
+        reason: 'incorrect_current_password',
+      });
+    }
+    expect(ctx.appLog.byAction('auth.password_change.lockout_started')).toHaveLength(1);
+    const before = ctx.passwordHasher.verifications;
+    expect(await change('correct-horse', 'new-password-1')).toMatchObject({ ok: false, reason: 'locked' });
+    // ロック中は照合しない
+    expect(ctx.passwordHasher.verifications).toBe(before);
+    expect(ctx.appLog.entries.at(-1)).toMatchObject({
+      level: 'WARN',
+      action: 'auth.password_change.locked',
+      actorStaffId: staffId,
+    });
+    ctx.clock.now = new Date(ctx.clock.now.getTime() + 15 * 60 * 1000);
+    expect((await change('correct-horse', 'new-password-1')).ok).toBe(true);
+  });
+
+  it('同時に送られた多数の誤りでも、照合まで進むのは上限の回数まで', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.passwordChangeFailureStaff.limit;
+    const before = ctx.passwordHasher.verifications;
+    const results = await Promise.all(
+      Array.from({ length: limit * 3 }, () => change('wrong-password', 'new-password-1')),
+    );
+    expect(ctx.passwordHasher.verifications - before).toBeLessThanOrEqual(limit);
+    expect(results.filter((r) => !r.ok && r.reason === 'locked')).toHaveLength(limit * 2);
+  });
+
+  it('成功すると誤りの回数は戻り、新しいパスワードの「この端末」の印を返す', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.passwordChangeFailureStaff.limit;
+    for (let i = 0; i < limit - 1; i++) await change('wrong-password', 'new-password-1');
+    const result = await change('correct-horse', 'new-password-1');
+    if (!result.ok) throw new Error('unreachable');
+    expect(parseDeviceToken(result.deviceToken.value)).toMatchObject({ tenantId: ctx.tenantId, staffId });
+    for (let i = 0; i < limit - 1; i++) await change('wrong-password', 'new-password-2');
+    expect((await change('new-password-1', 'new-password-2')).ok).toBe(true);
   });
 
   it('新しいパスワードが空・短すぎる場合は拒否する', async () => {

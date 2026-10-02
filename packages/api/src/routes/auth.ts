@@ -55,6 +55,9 @@ async function toSessionUser(
 /** ログインの失敗が続いたときの案内(アカウント単位・送信元IP単位のどちらのロックでも同じ文面)。 */
 const LOGIN_LOCKED_MESSAGE =
   'ログインの失敗が続いたため、一時的にログインできません。しばらく(15分ほど)待ってから再度お試しください。';
+/** パスワード変更で現在のパスワードの誤りが続いたときの案内。 */
+const PASSWORD_CHANGE_LOCKED_MESSAGE =
+  '現在のパスワードの誤りが続いたため、一時的にパスワードを変更できません。しばらく(15分ほど)待ってから再度お試しください。';
 /** パスワード再設定の要求が多すぎるときの案内。 */
 const RESET_RATE_LIMITED_MESSAGE =
   'パスワード再設定の要求が多すぎます。しばらく待ってから再度お試しください。';
@@ -143,8 +146,13 @@ export function createAuthRoutes(container: Container) {
       if (result.reason === 'incorrect_current_password') {
         return apiError(c, 400, 'validation_failed', '現在のパスワードが正しくありません');
       }
+      if (result.reason === 'locked') {
+        return rateLimited(c, result.retryAfterMs, PASSWORD_CHANGE_LOCKED_MESSAGE);
+      }
       return apiError(c, 401, 'unauthenticated', 'セッションが無効です');
     }
+    // 前の「この端末」の印はパスワードの変更で通らなくなるため、この端末の分を作り直す
+    setDeviceCookie(c, container, result.deviceToken.value, result.deviceToken.expiresAt);
     return jsonOk(c, changePasswordResponseSchema, { success: true, message: 'パスワードを変更しました' });
   });
 

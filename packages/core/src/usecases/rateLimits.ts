@@ -36,6 +36,11 @@ export interface RateLimitPolicy {
   passwordResetConfirmAccountDay: RateLimitRule;
   /** パスワード再設定コードの確認(送信元IP単位)。 */
   passwordResetConfirmIp: RateLimitRule;
+  /**
+   * パスワード変更で現在のパスワードを誤った回数(スタッフ単位)。上限で一時ロック。セッションを奪った人が
+   * 現在のパスワードを総当たりで探り、パスワードを変えて乗っ取るのを防ぐ。
+   */
+  passwordChangeFailureStaff: RateLimitRule;
   /** 日報・事故報告のAI生成(スタッフ単位の1日の上限。Gemini の従量課金対策)。 */
   aiGenerateStaff: RateLimitRule;
   /** 領収書OCR(スタッフ単位の1日の上限)。 */
@@ -97,6 +102,12 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   passwordResetConfirmAccount: { name: 'password_reset_confirm_account', limit: 20, windowMs: HOUR_MS },
   passwordResetConfirmAccountDay: { name: 'password_reset_confirm_account_day', limit: 30, windowMs: DAY_MS },
   passwordResetConfirmIp: { name: 'password_reset_confirm_ip', limit: 50, windowMs: HOUR_MS },
+  passwordChangeFailureStaff: {
+    name: 'password_change_failure_staff',
+    limit: 5,
+    windowMs: 15 * MINUTE_MS,
+    lockMs: 15 * MINUTE_MS,
+  },
   aiGenerateStaff: { name: 'ai_generate_staff', limit: 200, windowMs: DAY_MS },
   receiptOcrStaff: { name: 'receipt_ocr_staff', limit: 300, windowMs: DAY_MS },
   receiptUploadStaff: { name: 'receipt_upload_staff', limit: 60, windowMs: HOUR_MS },
