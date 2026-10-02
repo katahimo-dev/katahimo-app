@@ -68,8 +68,9 @@ const envSchema = z.object({
     .positive()
     .default(30 * 60_000),
 
-  // 操作ログ(app_logs)を残す月数(月のパーティションごと消す)。
-  APP_LOG_RETENTION_MONTHS: z.coerce.number().int().min(1).default(13),
+  // 操作ログ(app_logs)を残す月数(月のパーティションごと消す)。12か月より短くはできない(DB の
+  // platform.drop_app_log_partitions も12未満を断る。ワーカーの DB ユーザーで監査の記録を消し切れないように)。
+  APP_LOG_RETENTION_MONTHS: z.coerce.number().int().min(12).default(13),
 });
 
 export type WorkerEnv = z.infer<typeof envSchema>;

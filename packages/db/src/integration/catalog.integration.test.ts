@@ -88,6 +88,40 @@ describe('スキーマの約束事(カタログ)', () => {
     expect(await has('katahimo_app', 'platform.tenants', 'UPDATE')).toBe(false);
   });
 
+  it('テナントを横断するポリシーはワーカーの outbox の取り出し・状態の更新(SELECT・UPDATE)だけ', async () => {
+    const policies = await rows<{ table: string; name: string; command: string; roles: string }>(sql`
+      select c.relname as table, p.polname as name, p.polcmd::text as command,
+             array_to_string(array(select pg_get_userbyid(r) from unnest(p.polroles) r order by 1), ',') as roles
+      from pg_policy p join pg_class c on c.oid = p.polrelid join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and p.polname not in ('tenant_isolation', 'app_logs_select', 'app_logs_insert')
+      order by c.relname, p.polname`);
+    expect(policies).toEqual([
+      {
+        table: 'outbox_messages',
+        name: 'outbox_messages_worker_select',
+        command: 'r',
+        roles: 'katahimo_worker',
+      },
+      {
+        table: 'outbox_messages',
+        name: 'outbox_messages_worker_update',
+        command: 'w',
+        roles: 'katahimo_worker',
+      },
+    ]);
+  });
+
+  it('本文の変更履歴(care_record_revisions)はアプリ・ワーカーとも書けない(トリガーが所有者の権限で書く)', async () => {
+    const ok = async (role: string) =>
+      (
+        await rows<{ ok: boolean }>(
+          sql`select has_table_privilege(${role}, 'care_record_revisions', 'INSERT') as ok`,
+        )
+      )[0]?.ok;
+    expect(await ok('katahimo_app')).toBe(false);
+    expect(await ok('katahimo_worker')).toBe(false);
+  });
+
   it('領収書は会計の記録: アプリは消せず、登録の後に変えられるのは取消の列・版・重複の判定の代表だけ', async () => {
     const ok = async (query: ReturnType<typeof sql>) =>
       (await rows<{ ok: boolean }>(sql`select ${query} as ok`))[0]?.ok;

@@ -29,7 +29,7 @@
   - `demo:reset` は毎晩デモ用テナントを消さず、前日のデモを slug `<slug>-YYYYMMDD`(訪問者が使った日。同じ日が重なれば `-2`…)に変えて停止(`suspended`)
     のまま残し、同じ slug で新しいデモを作る(作っている間は作成中でログインできない)。残した過去のデモは `DEMO_DATA_RETENTION_DAYS`
     (既定30日)を過ぎたら、画像を消してから `platform.purge_tenant()` で消す(消せなければ次の晩にもう一度)。操作ログ・接続情報は
-    `DEMO_LOG_RETENTION_MONTHS`(既定3か月。案内の値。実際に消すのは保守ジョブの `APP_LOG_RETENTION_MONTHS` なので、デモの環境では同じ値にする)。
+    `DEMO_LOG_RETENTION_MONTHS`(既定12か月。案内の値。実際に消すのは保守ジョブの `APP_LOG_RETENTION_MONTHS` なので、デモの環境では同じ値にする)。
     日数・月数の既定は `DEMO_PUBLIC_LOGIN=true` のときだけで、本番の環境に暫定で置くとき(false)は明示しない限り `GET /api/demo/config` が null を返し、
     画面は期間も「毎晩作り直します」も書かない(作り直しのジョブが無く、操作ログは本番の保存期間に従うため)。`demo:reset` は未設定なら30日で消す。
   - ログイン画面に、入力した内容・接続情報を保存することと実在の人物の情報を入れないことの注意書きを出し(入る法人IDがデモ用テナントのとき。
@@ -122,6 +122,16 @@
   偽れるため、目次の大きさを上限に実際に展開して確かめる。超えたら 400 `xlsx_too_large`。あわせて取込の回数を、確かめる(`dryRun`)・
   反映の両方で管理者ごとに1時間30回までにした(規則 `staff_xlsx_import_staff`・`report_ai_xlsx_import_staff`。スタッフの反映は
   今までの `staff_import_apply_staff` でも数える)(`doc/04_API仕様.md` 1.4・1.5、`doc/06_セキュリティ設計.md` 6章)。
+- DB の守りを足した(マイグレーション `0004_defense_in_depth`。今のアプリ・前の版のアプリがしない操作だけを断るため、適用の順は問わない):
+  - 操作ログ(`app_logs`)を12か月より短い保存期間で消せないようにした(`platform.drop_app_log_partitions` が12未満を断り、
+    `ensure_app_log_partitions` は24か月より先を作らない。ワーカーの `APP_LOG_RETENTION_MONTHS` も12以上でないと起動しない)。
+    公開デモの操作ログの保存期間の案内(`DEMO_LOG_RETENTION_MONTHS`)も12〜120にし、`DEMO_PUBLIC_LOGIN=true` の既定を3か月から12か月にした
+    (デモの環境のワーカーは同じ値にする。`doc/07_インフラ・運用.md` 3.9)。
+  - 取消した領収書の取消の列(`cancelled_at`・`cancelled_by`・`cancel_reason`)をトリガーで変えられないようにした(取消を戻せない。`KH003`)。
+  - ワーカーのテナント横断の outbox のポリシーを取り出し・状態の更新(SELECT・UPDATE)だけにした(テナントの外では積めず・消せない)。
+  - 日報の本文の変更履歴(`care_record_revisions`)を書くのはトリガー(所有者の権限で動く SECURITY DEFINER に変えた)だけにし、アプリの
+    INSERT の権限を外した(アプリの DB ユーザーで偽の履歴を書けない)。提出した記録を下書きに戻す更新も断る(`KH004`)
+    (`doc/03_データベース設計.md` 4・5・6章、`doc/06_セキュリティ設計.md` 3・10章)。
 
 ## [Ver. 1.3.0] - 2026-10-01
 

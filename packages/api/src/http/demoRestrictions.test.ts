@@ -47,7 +47,7 @@ describe('DemoTenant.isDemoTenant', () => {
     } as unknown as TenantDirectoryPort;
     let now = 0;
     const demo = new DemoTenant(
-      { slug: 'public-demo', publicLogin: false, dataRetentionDays: 30, logRetentionMonths: 3 },
+      { slug: 'public-demo', publicLogin: false, dataRetentionDays: 30, logRetentionMonths: 12 },
       tenants,
       () => now,
     );
@@ -69,7 +69,7 @@ describe('DemoTenant.isDemoTenant', () => {
 describe('DemoTenant.loginRateLimits', () => {
   it('アカウント単位・端末単位のログインの失敗はロックしない(送信元IP単位は残す)', () => {
     const demo = new DemoTenant(
-      { slug: 'public-demo', publicLogin: false, dataRetentionDays: 30, logRetentionMonths: 3 },
+      { slug: 'public-demo', publicLogin: false, dataRetentionDays: 30, logRetentionMonths: 12 },
       {} as TenantDirectoryPort,
     );
     const policy = demo.loginRateLimits(DEFAULT_RATE_LIMIT_POLICY);

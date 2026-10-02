@@ -86,10 +86,10 @@ describe('loadEnv', () => {
     expect(
       loadEnv({ ...development, DEMO_TENANT_SLUG: 'public-demo', DEMO_LOG_RETENTION_MONTHS: '13' }),
     ).toMatchObject({ DEMO_DATA_RETENTION_DAYS: null, DEMO_LOG_RETENTION_MONTHS: 13 });
-    // デモ専用の環境では未設定でも 30日・3か月
+    // デモ専用の環境では未設定でも 30日・12か月(操作ログは12か月より短く消せないため)
     expect(
       loadEnv({ ...development, DEMO_TENANT_SLUG: 'public-demo', DEMO_PUBLIC_LOGIN: 'true' }),
-    ).toMatchObject({ DEMO_DATA_RETENTION_DAYS: 30, DEMO_LOG_RETENTION_MONTHS: 3 });
+    ).toMatchObject({ DEMO_DATA_RETENTION_DAYS: 30, DEMO_LOG_RETENTION_MONTHS: 12 });
     // demo:reset は未設定でも 30日で消す
     expect(demoResetRetentionDays(loadEnv(development))).toBe(30);
     expect(demoResetRetentionDays(loadEnv({ ...development, DEMO_DATA_RETENTION_DAYS: '7' }))).toBe(7);
@@ -102,13 +102,16 @@ describe('loadEnv', () => {
         DEMO_DATA_RETENTION_DAYS: '7',
         DEMO_LOG_RETENTION_MONTHS: '',
       }),
-    ).toMatchObject({ DEMO_PUBLIC_LOGIN: true, DEMO_DATA_RETENTION_DAYS: 7, DEMO_LOG_RETENTION_MONTHS: 3 });
+    ).toMatchObject({ DEMO_PUBLIC_LOGIN: true, DEMO_DATA_RETENTION_DAYS: 7, DEMO_LOG_RETENTION_MONTHS: 12 });
     expect(loadEnv({ ...development, DEMO_PUBLIC_LOGIN: 'false' }).DEMO_PUBLIC_LOGIN).toBe(false);
     expect(() => loadEnv({ ...development, DEMO_DATA_RETENTION_DAYS: '0' })).toThrow(
       /DEMO_DATA_RETENTION_DAYS/,
     );
     expect(() => loadEnv({ ...development, DEMO_DATA_RETENTION_DAYS: '3651' })).toThrow();
     expect(() => loadEnv({ ...development, DEMO_LOG_RETENTION_MONTHS: '121' })).toThrow(
+      /DEMO_LOG_RETENTION_MONTHS/,
+    );
+    expect(() => loadEnv({ ...development, DEMO_LOG_RETENTION_MONTHS: '11' })).toThrow(
       /DEMO_LOG_RETENTION_MONTHS/,
     );
   });

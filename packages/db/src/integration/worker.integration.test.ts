@@ -326,6 +326,45 @@ describe.skipIf(!process.env.WORKER_DATABASE_URL)('ワーカーのジョブ(kata
 describe.skipIf(!process.env.WORKER_DATABASE_URL)('操作ログの既定のパーティション', () => {
   const workerDb = worker as NonNullable<typeof worker>;
 
+  it('ワーカーは操作ログを12か月より短い保存期間で消せず、24か月より先のパーティションも作れない', async () => {
+    const maintenance = new DrizzlePlatformMaintenance(workerDb);
+    await expect(maintenance.dropAppLogPartitions(11)).rejects.toThrow();
+    await expect(maintenance.ensureAppLogPartitions(25)).rejects.toThrow();
+    await expect(maintenance.dropAppLogPartitions(12)).resolves.toBeGreaterThanOrEqual(0);
+  });
+
+  it('ワーカーのテナント横断の outbox は取り出し・状態の更新だけ(テナントの外では積めず・消せない)', async () => {
+    const tenantId = await createTenant('ob');
+    const messageId = newId();
+    // テナントの中(app.tenant_id を設定)なら積める(夜間の反映・翌日のお知らせと同じ)。他のテストの取り出しに
+    // 拾われないよう送信済みの行にする
+    await withTenant(workerDb, tenantId, (tx) =>
+      tx.execute(
+        sql`insert into outbox_messages (tenant_id, id, topic, aggregate_type, aggregate_id, dedupe_key, status, completed_at)
+            values (${tenantId}, ${messageId}, 'push.test', 'x', ${messageId}, ${`push.test:${messageId}:0`}, 'done', now())`,
+      ),
+    );
+    // テナントを設定しない接続(取り出しと同じ)からは、見えて状態を変えられるが、消せず・積めない
+    const visible = (await workerDb.execute(
+      sql`select id from outbox_messages where id = ${messageId}`,
+    )) as unknown as { id: string }[];
+    expect(visible).toHaveLength(1);
+    const updated = (await workerDb.execute(
+      sql`update outbox_messages set last_error = null where id = ${messageId} returning id`,
+    )) as unknown as unknown[];
+    expect(updated).toHaveLength(1);
+    const deleted = (await workerDb.execute(
+      sql`delete from outbox_messages where id = ${messageId} returning id`,
+    )) as unknown as unknown[];
+    expect(deleted).toHaveLength(0);
+    await expect(
+      workerDb.execute(
+        sql`insert into outbox_messages (tenant_id, id, topic, aggregate_type, aggregate_id, dedupe_key, status)
+            values (${tenantId}, ${newId()}, 'push.test', 'x', ${newId()}, ${`push.test:${newId()}:1`}, 'done')`,
+      ),
+    ).rejects.toThrow();
+  });
+
   it('月のパーティションが無い月の行は既定のパーティションが受け、保守が月のパーティションを作って移す', async () => {
     const tenantId = await createTenant('log');
     // 他のテストと重ならない遠い未来の月(保守が先回りで作る12か月より先)

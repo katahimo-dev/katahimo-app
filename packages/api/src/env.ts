@@ -88,11 +88,11 @@ const envSchema = z.object({
     z.coerce.number().int().min(1).max(3650).optional(),
   ),
   // 操作ログ・接続情報(IPアドレス等)を残す月数の案内(ログイン画面に出す値)。実際に消すのはワーカーの保守ジョブ
-  // (APP_LOG_RETENTION_MONTHS)なので同じ値にする。未設定ならデモ専用の環境は 3、それ以外は null(本番の操作ログは
-  // 本番の保存期間に従うため、明示して設定したときだけ出す)。
+  // (APP_LOG_RETENTION_MONTHS。12か月より短くできない)なので同じ値にする(12〜120)。未設定ならデモ専用の環境は 12、
+  // それ以外は null(本番の操作ログは本番の保存期間に従うため、明示して設定したときだけ出す)。
   DEMO_LOG_RETENTION_MONTHS: z.preprocess(
     emptyToUndefined,
-    z.coerce.number().int().min(1).max(120).optional(),
+    z.coerce.number().int().min(12).max(120).optional(),
   ),
 
   // X-Forwarded-For の右から何番目を送信元IPとみなすか(信頼できるプロキシの段数)。Cloud Run 直は1、
@@ -114,7 +114,7 @@ const envSchema = z.object({
 /** デモ専用の環境(DEMO_PUBLIC_LOGIN=true)で DEMO_DATA_RETENTION_DAYS が未設定のときの日数(demo:reset も同じ)。 */
 export const DEFAULT_DEMO_DATA_RETENTION_DAYS = 30;
 /** デモ専用の環境で DEMO_LOG_RETENTION_MONTHS が未設定のときの月数(デモのワーカーの APP_LOG_RETENTION_MONTHS と揃える)。 */
-export const DEFAULT_DEMO_LOG_RETENTION_MONTHS = 3;
+export const DEFAULT_DEMO_LOG_RETENTION_MONTHS = 12;
 
 type ParsedEnv = z.infer<typeof envSchema>;
 

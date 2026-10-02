@@ -40,6 +40,12 @@ export function mapDatabaseError(error: unknown): unknown {
       );
     case 'KH002':
       return new DomainError('locked', '確定済みの記録は変更できません。', undefined, 'record_locked');
+    case 'KH003':
+      // 取消した領収書の取消の列の変更(0004 のトリガー。アプリは未取消の行だけを取消すため、同時の取消の後に来た場合等)
+      return conflict('この領収書は既に取消されています。', undefined, 'already_cancelled');
+    case 'KH004':
+      // 提出した記録を下書きに戻す(0004 のトリガー。アプリはしない)
+      return conflict('提出した記録は下書きに戻せません。', undefined, 'record_not_draft');
     case EXCLUSION_VIOLATION:
       return conflict('期間が他の登録と重なっています。', undefined, pg.constraint);
     case UNIQUE_VIOLATION:

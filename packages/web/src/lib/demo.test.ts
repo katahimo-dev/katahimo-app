@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { type DemoTermsValues, demoBannerText, demoLoginNoticeLines, demoTermsSections } from './demo';
 
-const both: DemoTermsValues = { dataRetentionDays: 30, logRetentionMonths: 3, aiUsesPerSession: 10 };
+const both: DemoTermsValues = { dataRetentionDays: 30, logRetentionMonths: 12, aiUsesPerSession: 10 };
 
 function storageSection(values: DemoTermsValues | null): string[] {
   return (
@@ -20,11 +20,11 @@ function allText(values: DemoTermsValues | null): string {
 describe('公開デモの文言(保存期間)', () => {
   it('日数・月数があれば、その期間と毎晩の作り直しを書く', () => {
     expect(demoLoginNoticeLines(both)[1]).toBe(
-      '入力した内容（30日間）と、操作ログ・接続情報（IPアドレス等。3か月間）を保存し、サービスの改善と不正利用の調査に使います。',
+      '入力した内容（30日間）と、操作ログ・接続情報（IPアドレス等。12か月間）を保存し、サービスの改善と不正利用の調査に使います。',
     );
     expect(storageSection(both)).toEqual([
       'データは架空のもので、毎晩作り直します。',
-      '作り直したあとも、入力した内容は運営者が30日間、操作ログ・接続情報（IPアドレス等）は3か月間保存し、サービスの改善と不正利用の調査に使います。',
+      '作り直したあとも、入力した内容は運営者が30日間、操作ログ・接続情報（IPアドレス等）は12か月間保存し、サービスの改善と不正利用の調査に使います。',
     ]);
     expect(demoBannerText(both)).toContain('毎晩作り直します');
   });

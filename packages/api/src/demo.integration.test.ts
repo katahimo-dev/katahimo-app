@@ -268,17 +268,17 @@ describe('公開デモ: 表示の設定(GET /api/demo/config)とログイン中�
     });
   });
 
-  it('デモ専用の環境で保存期間が未設定なら 30日・3か月', async () => {
+  it('デモ専用の環境で保存期間が未設定なら 30日・12か月', async () => {
     expect(await configOf(appWith({ DEMO_PUBLIC_LOGIN: 'true' }))).toMatchObject({
       publicLogin: true,
       dataRetentionDays: 30,
-      logRetentionMonths: 3,
+      logRetentionMonths: 12,
     });
   });
 
   it('デモ専用の環境(DEMO_PUBLIC_LOGIN=true)ではデモ用アカウントとパスワード、保存期間の設定を返す', async () => {
     const config = await configOf(
-      appWith({ DEMO_PUBLIC_LOGIN: 'true', DEMO_DATA_RETENTION_DAYS: '7', DEMO_LOG_RETENTION_MONTHS: '6' }),
+      appWith({ DEMO_PUBLIC_LOGIN: 'true', DEMO_DATA_RETENTION_DAYS: '7', DEMO_LOG_RETENTION_MONTHS: '24' }),
     );
     expect(config).toEqual({
       enabled: true,
@@ -287,7 +287,7 @@ describe('公開デモ: 表示の設定(GET /api/demo/config)とログイン中�
       accounts: DEMO_ACCOUNTS.map(({ role, label, email }) => ({ role, label, email })),
       password: DEMO_PASSWORD,
       dataRetentionDays: 7,
-      logRetentionMonths: 6,
+      logRetentionMonths: 24,
       aiUsesPerSession: DEMO_AI_USES_PER_SESSION,
     });
   });
