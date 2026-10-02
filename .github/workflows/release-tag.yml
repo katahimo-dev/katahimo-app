@@ -3,6 +3,8 @@
 # 無い環境(Claude のクラウドのセッション等)からも `gh workflow run release-tag.yml -f version=X.Y.Z` で付けられる。
 #
 # 付ける前に確かめること(どれか1つでも満たさなければタグを付けずに失敗する):
+#   - タグのルールセット release-tags が有効(active)で、対象 refs/tags/v* を含み(除外なし)、作成・更新・削除を止めている
+#     (ルールセットが無いままではタグを付けない。doc/07 9.2)
 #   - version が X.Y.Z の形で、タグ vX.Y.Z がまだ無い
 #   - 付けるコミットが main に含まれている(ブランチの途中のコミットを本番に出さない)
 #   - そのコミットの CHANGELOG.md に `## [Ver. X.Y.Z]` があり、ルートと全ワークスペースの package.json の version が X.Y.Z
@@ -60,10 +62,40 @@ jobs:
         run: |
           [ "$REF" = refs/heads/main ] || { echo "::error::main から実行してください(実行したのは $REF)"; exit 1; }
 
+      # タグのルールセットが無い・無効のままタグを付けない(ルールセットが無いと、書き込みの権限がある人なら誰でもタグを付けられ、
+      # この経路で絞る意味が無くなる)。ルールセットの一覧・中身の API は Metadata: Read で読め、GITHUB_TOKEN には Metadata: Read が
+      # いつも付くため、App のトークン・管理の権限は使わない。例外(bypass_actors)は管理の権限の無いトークンには返らないことがあるため
+      # ここでは見ない(doc/07 9.2 の確認の手順で人が確かめる)
+      - name: タグのルールセット release-tags があるか
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RULESET_NAME: release-tags
+          TAG_PATTERN: refs/tags/v*
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1(doc/07_インフラ・運用.md 9.2 のタグのルールセットを設定する)"; exit 1; }
+          ids="$(gh api --paginate "repos/$GITHUB_REPOSITORY/rulesets?includes_parents=true" \
+            --jq '.[] | select(.name == env.RULESET_NAME and .target == "tag") | .id')" \
+            || fail "ルールセットの一覧を読めません"
+          [ -n "$ids" ] || fail "タグのルールセット $RULESET_NAME がありません"
+          ok=""
+          for id in $ids; do
+            # 有効(active)で、対象に refs/tags/v* を含み、除外が無く、作成・更新・削除を止めている
+            res="$(gh api "repos/$GITHUB_REPOSITORY/rulesets/$id" --jq '
+                .enforcement == "active"
+                and any((.conditions.ref_name.include // [])[]; . == env.TAG_PATTERN)
+                and ((.conditions.ref_name.exclude // []) | length == 0)
+                and ((["creation", "update", "deletion"] - [.rules[]?.type]) | length == 0)')" \
+              || fail "ルールセット $id を読めません"
+            [ "$res" != true ] || ok="$id"
+          done
+          [ -n "$ok" ] || fail "タグのルールセット $RULESET_NAME が有効(active)でない、対象に $TAG_PATTERN が無い・除外がある、または作成・更新・削除を止めていません"
+          echo "タグのルールセット $RULESET_NAME(id $ok)は有効"
+
       # タグを push できるのはルールセットの例外に入れたこの App だけ(GITHUB_TOKEN では断られる)
       - name: リリース用の GitHub App のトークン
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}

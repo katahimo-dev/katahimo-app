@@ -2,8 +2,9 @@
 # 前提: infra/gcp(Terraform)を deploy_workloads=true で apply 済み。手順は doc/07_インフラ・運用.md 4章。
 #
 # 実行SAは katahimo-deployer(infra/gcp/iam.tf)。本番はタグ(vX.Y.Z)の push で動く GitHub トリガー katahimo-release
-# (承認必須・_TRAFFIC=canary。doc/07 4.1)から動かす。最初のステップ verify-source が、タグがビルドするコミットを指し、
-# そのコミットが main に含まれることを GitHub に確かめてから先に進む(scripts/verifyReleaseSource.sh)。
+# (承認必須・_TRAFFIC=canary。doc/07 4.1)から動かす。最初のステップ verify-source が、このビルドが承認済みで、読む先がトリガーの
+# リポジトリで、タグがビルドするコミットを指し、そのコミットが main に含まれることを GitHub に確かめてから先に進む
+# (scripts/verifyReleaseSource.sh)。
 # 手元から実行する場合(運用担当者だけ。確かめようがないため _ALLOW_UNVERIFIED_SOURCE=true を明示する)は:
 #   gcloud builds submit --region=asia-northeast1 --config=cloudbuild.yaml \
 #     --gcs-source-staging-dir="gs://${PROJECT_ID}-katahimo-build/source" \
@@ -34,7 +35,8 @@ substitutions:
   # 無視する(トリガーの置換で確認を外せないように)
   _ALLOW_UNVERIFIED_SOURCE: 'false'
   # verify-source が読む GitHub のリポジトリと、読むためのトークンを出す Cloud Build の第 2 世代の接続のリポジトリ
-  # (doc/07 4.1 の接続 github1。katahimo-deployer に roles/cloudbuild.readTokenAccessor が要る)
+  # (doc/07 4.1 の接続 github1。katahimo-deployer に roles/cloudbuild.readTokenAccessor が要る)。トリガーからのビルドでは
+  # _SOURCE_GIT_URL がトリガーのリポジトリ(REPO_FULL_NAME)でなければ verify-source が止まる(置換で別のリポジトリに向けられない)
   _SOURCE_GIT_URL: https://github.com/katahimo-dev/katahimo-app.git
   _SOURCE_REPOSITORY: projects/${PROJECT_ID}/locations/${_REGION}/connections/github1/repositories/katahimo-dev-katahimo-app
 
@@ -58,6 +60,11 @@ steps:
       - TRIGGER_NAME=${TRIGGER_NAME}
       - TAG_NAME=${TAG_NAME}
       - COMMIT_SHA=${COMMIT_SHA}
+      # このビルドの承認の状態を読む(gcloud builds describe)。REPO_FULL_NAME はトリガーのリポジトリ(組み込みの置換で、
+      # 置換では変えられない)で、_SOURCE_GIT_URL がこのリポジトリを指しているかを確かめる
+      - BUILD_ID=${BUILD_ID}
+      - REGION=${_REGION}
+      - REPO_FULL_NAME=${REPO_FULL_NAME}
       - ALLOW_UNVERIFIED_SOURCE=${_ALLOW_UNVERIFIED_SOURCE}
       - SOURCE_GIT_URL=${_SOURCE_GIT_URL}
       - SOURCE_REPOSITORY=${_SOURCE_REPOSITORY}

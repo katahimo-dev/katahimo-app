@@ -51,6 +51,10 @@ resource "google_project_iam_member" "deployer" {
   for_each = toset([
     "roles/run.developer",     # サービスのデプロイ・ジョブの更新と実行
     "roles/logging.logWriter", # ビルドログ(options.logging: CLOUD_LOGGING_ONLY)
+    # cloudbuild.yaml の verify-source が、動いているビルドの承認の状態(gcloud builds describe の approval.state)を読む
+    # (cloudbuild.builds.get。上の2つには含まれない)。読むだけで、ビルドの作成・承認・トリガーの編集はできない。
+    # doc/07_インフラ・運用.md 4.1
+    "roles/cloudbuild.builds.viewer",
   ])
   project = var.project_id
   role    = each.value
