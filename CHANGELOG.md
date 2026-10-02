@@ -40,6 +40,17 @@
 
 ### セキュリティ
 
+- リリースの経路を強めた(タグを付けられる人は、DB のオーナーで動くマイグレーションを含めて本番に任意のコードを出せるため)。
+  Cloud Build のトリガー `katahimo-release` は承認必須に戻し、承認できる人を Terraform の `release_approvers` で名前で挙げる(承認者は
+  タグのコミット・マイグレーション・ビルドの手順の差分を読んでから承認する。マイグレーションは canary の確認より前に本番の DB に当たる)。
+  `cloudbuild.yaml` の最初のステップ `verify-source`(`scripts/verifyReleaseSource.sh`)が、タグがビルドのコミットを指し main に含まれる
+  ことを GitHub から確かめ、だめならビルド・マイグレーションの前に止まる(読み取りのトークンは GitHub 接続の `accessReadToken`。
+  Terraform の `cloudbuild_github_connection` で katahimo-deployer に権限を付ける)。手元からの `gcloud builds submit` は
+  `_ALLOW_UNVERIFIED_SOURCE=true` を明示する。`release-tag.yml` は main からだけ動き、タグはリリース用の GitHub App のトークンで push する
+  (秘密鍵は main だけの Environment `release`)。GitHub のタグのルールセット `release-tags`(例外は App と管理者だけ)を必須の設定にした。
+  **次のリリースの前に** GitHub(App・Environment・ルールセット)と GCP(承認・`release_approvers`・`cloudbuild_github_connection`)の
+  設定が要る。設定するまで `release-tag.yml` はトークンを得られずに止まる(`doc/07_インフラ・運用.md` 4.1・9.2、
+  `doc/06_セキュリティ設計.md` 12章)。
 - 送信元IPごとの回数制限(`login_failure_ip`・`password_reset_request_ip`・`password_reset_confirm_ip`・`integration_auth_failure_ip`、公開デモの AI の
   IP ごとの上限)で、IPv6 は /64 の範囲を1つの送信元として数える(アドレスを替えながら上限を避けられないように)。IPv4 射影の IPv6 は IPv4 と同じ
   送信元。操作ログ・セッションには元のアドレスを残す(`doc/04_API仕様.md` 1.5)。
