@@ -755,8 +755,9 @@ export function useReportController(session: ReportSession | null) {
       await reportsApi.visitComplete({
         customerId: target.id,
         visitDate: f.reportDate,
-        startTime: formatClock(f.start),
-        endTime: formatClock(f.end),
+        // 時刻を選んでいなければ空(API は 'HH:mm' か空だけを受け付ける)
+        startTime: f.start.hour && f.start.minute ? formatClock(f.start) : '',
+        endTime: f.end.hour && f.end.minute ? formatClock(f.end) : '',
       });
       if (requestNonce === nonceRef.current) setVisitComplete({ status: 'sent', at: jstHHmm() });
       showToast('訪問終わりました、と事務局に知らせました');

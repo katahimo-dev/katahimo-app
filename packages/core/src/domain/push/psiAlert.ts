@@ -1,5 +1,6 @@
 import type { PushNotice } from '@katahimo/shared';
 import { ASSESSMENT_DEFINITIONS } from '@katahimo/shared';
+import { escapeChatText } from '../notifications/chatText';
 
 /**
  * PSI 2 以下(注意・危険)の日報が保存されたときの管理者への知らせ(Web Push と Google Chat)。
@@ -41,8 +42,8 @@ export function psiAlertTopic(recordId: string): string {
 export function buildPsiAlertChatText(input: PsiAlertInput): string {
   const urgent = input.riskRating === 1;
   return `【${urgent ? 'PSI緊急' : 'PSI注意'}】PSI ${input.riskRating}（${psiLabel(input.riskRating)}）の日報が保存されました
-担当: ${input.staffName}
-顧客名: ${input.customerName}
-訪問日: ${input.date.replaceAll('-', '/')}
+担当: ${escapeChatText(input.staffName)}
+顧客名: ${escapeChatText(input.customerName)}
+訪問日: ${escapeChatText(input.date.replaceAll('-', '/'))}
 ${urgent ? '管理者はすぐに担当スタッフへ連絡し、安全対応を確認してください。' : '管理者は日報の内容を確認してください。'}`;
 }

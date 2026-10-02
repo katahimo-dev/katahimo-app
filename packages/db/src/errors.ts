@@ -19,6 +19,8 @@ export function pgErrorOf(error: unknown): { code?: string; constraint?: string 
 export const UNIQUE_VIOLATION = '23505';
 export const FOREIGN_KEY_VIOLATION = '23503';
 export const EXCLUSION_VIOLATION = '23P01';
+/** 数値が列の型に収まらない(numeric_value_out_of_range。integer の金額など)。 */
+export const NUMERIC_VALUE_OUT_OF_RANGE = '22003';
 /** lock_timeout を超えてロックを待った(lock_not_available)。 */
 export const LOCK_NOT_AVAILABLE = '55P03';
 
@@ -46,6 +48,14 @@ export function mapDatabaseError(error: unknown): unknown {
     case 'KH004':
       // 提出した記録を下書きに戻す(0004 のトリガー。アプリはしない)
       return conflict('提出した記録は下書きに戻せません。', undefined, 'record_not_draft');
+    case NUMERIC_VALUE_OUT_OF_RANGE:
+      // 契約の上限(領収書の金額など)の確かめが漏れたときの最後の守り(500 にしない)
+      return new DomainError(
+        'validation_failed',
+        '数値が大きすぎます。入力を確かめてください。',
+        undefined,
+        'out_of_range',
+      );
     case EXCLUSION_VIOLATION:
       return conflict('期間が他の登録と重なっています。', undefined, pg.constraint);
     case UNIQUE_VIOLATION:

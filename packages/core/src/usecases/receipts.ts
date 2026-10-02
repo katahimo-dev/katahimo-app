@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { RECEIPT_IMAGE_MAX_BYTES, RECEIPT_MAX_IMAGES } from '@katahimo/shared';
+import { parseReceiptAmountYen, RECEIPT_IMAGE_MAX_BYTES, RECEIPT_MAX_IMAGES } from '@katahimo/shared';
 import {
   buildReceiptDedupeKey,
   buildReceiptNotificationText,
@@ -122,11 +122,12 @@ async function firstLockedMonth(
   return null;
 }
 
-/** 金額の入力を円の整数にする(「1,200」「1200円」等。読めなければ null)。 */
+/**
+ * 金額の入力を円の整数にする(「1,200」「1200円」等。読めない・上限(1,000万円)を超える値は null。
+ * 登録の契約は上限を超える金額を先に 400 で断る。GAS版からの移行の取込は amount_invalid の注意にする)。
+ */
 export function parseAmountYen(value: string | number | null | undefined): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  const n = Number(String(value).replace(/[,，\s円¥￥]/g, ''));
-  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+  return parseReceiptAmountYen(value);
 }
 
 /**

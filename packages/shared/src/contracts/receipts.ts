@@ -33,11 +33,58 @@ const imageDataSchema = z
   .min(1, '領収書画像がありません。')
   .max(RECEIPT_IMAGE_DATA_URL_MAX_LENGTH, '領収書画像が大きすぎます。');
 
+/** 領収書1枚の金額の上限(円)。DB の integer に収め、桁の打ち間違いを止める。 */
+export const RECEIPT_AMOUNT_MAX_YEN = 10_000_000;
+/** 金額の入力(文字)の長さ・店名・事務局へのひとことの文字数の上限。 */
+export const RECEIPT_AMOUNT_TEXT_MAX_LENGTH = 20;
+export const RECEIPT_STORE_NAME_MAX_LENGTH = 200;
+export const RECEIPT_HANDOFF_MAX_LENGTH = 2000;
+const RECEIPT_AMOUNT_TOO_LARGE = `金額は${RECEIPT_AMOUNT_MAX_YEN.toLocaleString('ja-JP')}円以下で入力してください。`;
+
+/**
+ * 金額の入力を円の整数にする(「1,200」「1200円」「¥1,200」等。全角の数字は読まない)。読めない・負・上限
+ * (RECEIPT_AMOUNT_MAX_YEN)を超える値は null。
+ */
+export function parseReceiptAmountYen(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(String(value).replace(/[,，\s円¥￥]/g, ''));
+  if (!Number.isFinite(n) || n < 0) return null;
+  const yen = Math.round(n);
+  return yen <= RECEIPT_AMOUNT_MAX_YEN ? yen : null;
+}
+
+/** 上限を超える金額か(読めない値は登録で金額なしになるため、ここでは断らない)。 */
+function exceedsReceiptAmountMax(value: string | number): boolean {
+  const n = Number(String(value).replace(/[,，\s円¥￥]/g, ''));
+  return Number.isFinite(n) && Math.round(n) > RECEIPT_AMOUNT_MAX_YEN;
+}
+
+const receiptAmountInputSchema = z
+  .union([
+    z
+      .string()
+      .max(
+        RECEIPT_AMOUNT_TEXT_MAX_LENGTH,
+        `金額は${RECEIPT_AMOUNT_TEXT_MAX_LENGTH}文字以内で入力してください。`,
+      ),
+    z.number(),
+  ])
+  .refine((value) => !exceedsReceiptAmountMax(value), RECEIPT_AMOUNT_TOO_LARGE);
+
 export const receiptImageUploadSchema = z.object({
   /** data URL('data:image/jpeg;base64,...')。JPEG・PNG・WebP のみ。 */
   data: imageDataSchema,
-  amount: z.union([z.string(), z.number()]).nullable().optional(),
-  storeName: freeText(z.string().nullable().optional()),
+  amount: receiptAmountInputSchema.nullable().optional(),
+  storeName: freeText(
+    z
+      .string()
+      .max(
+        RECEIPT_STORE_NAME_MAX_LENGTH,
+        `お店の名前は${RECEIPT_STORE_NAME_MAX_LENGTH}文字以内で入力してください。`,
+      )
+      .nullable()
+      .optional(),
+  ),
   /**
    * OCR等で得た領収書日時。GAS版と同じく表記は問わない('2026/9/5 9:05'・日付だけ等も可)。重複判定には文字列の
    * まま使い、日時として読めなければ下記のフォールバック日時で記録する。空なら下記のフォールバック日時を使う。
@@ -69,7 +116,15 @@ export const uploadReceiptsRequestSchema = z.object({
   receiptTimestamp: receiptTimestampSchema.optional(),
   reportDate: recordDateSchema.optional(),
   startTime: timeOfDaySchema.optional(),
-  handoffText: freeText(z.string().default('')),
+  handoffText: freeText(
+    z
+      .string()
+      .max(
+        RECEIPT_HANDOFF_MAX_LENGTH,
+        `事務局へのひとことは${RECEIPT_HANDOFF_MAX_LENGTH}文字以内で入力してください。`,
+      )
+      .default(''),
+  ),
 });
 export type UploadReceiptsRequest = z.infer<typeof uploadReceiptsRequestSchema>;
 

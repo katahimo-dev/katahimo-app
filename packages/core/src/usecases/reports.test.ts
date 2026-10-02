@@ -213,6 +213,15 @@ describe('保育日報・事故報告', () => {
     expect(ctx.notifier.notifications[0]?.text).toBe(
       '【訪問完了】\n担当: 山田 太郎\n顧客名: 佐藤 花子\n訪問日時: 2026/09/25 09:00〜12:00',
     );
+    // 外部へ送った操作として INFO を残す(ID と日付だけ)
+    expect(ctx.appLog.byAction('report.visit_complete.notified')).toEqual([
+      expect.objectContaining({
+        level: 'INFO',
+        actorStaffId: staff.staffId,
+        targetStaffId: null,
+        details: { customerId, visitDate: '2026-09-25' },
+      }),
+    ]);
   });
 
   describe('日報AI: 対象のお子様・AI 生成の記録・PSI の知らせ', () => {

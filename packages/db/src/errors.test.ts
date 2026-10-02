@@ -12,6 +12,10 @@ describe('mapDatabaseError', () => {
   it('締めた月・確定済みの記録は locked、EXCLUDE・ログインID・AIプロンプトの版・日報AIのマスターのキーの重複は conflict', () => {
     expect(mapDatabaseError(pgError('KH001'))).toMatchObject({ code: 'locked', reason: 'period_locked' });
     expect(mapDatabaseError(pgError('KH002'))).toMatchObject({ code: 'locked', reason: 'record_locked' });
+    expect(mapDatabaseError(pgError('22003'))).toMatchObject({
+      code: 'validation_failed',
+      reason: 'out_of_range',
+    });
     expect(mapDatabaseError(pgError('KH003'))).toMatchObject({
       code: 'conflict',
       reason: 'already_cancelled',

@@ -40,12 +40,16 @@ describe('Web Push の購読(push_subscriptions)', () => {
       await uow.run(tenantId, (r) => r.pushSubscriptions.recordRejection(first?.id ?? '', new Date())),
     ).toBe(1);
 
-    await subscribePush(deps, hanako, { endpoint, p256dh: 'q'.repeat(87), auth: keys.auth });
+    // 鍵の違う登録では付け替えない(409)。同じ鍵(同じ端末のブラウザの購読)なら付け替える
+    await expect(
+      subscribePush(deps, hanako, { endpoint, p256dh: 'q'.repeat(87), auth: keys.auth }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    await subscribePush(deps, hanako, { endpoint, ...keys });
     const after = await uow.run(tenantId, (r) => r.pushSubscriptions.findByEndpoint(endpoint));
     expect(after).toMatchObject({
       id: first?.id,
       staffId: hanako.staffId,
-      p256dh: 'q'.repeat(87),
+      p256dh: keys.p256dh,
       failureCount: 0,
       userAgent: null,
     });

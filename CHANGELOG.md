@@ -138,6 +138,17 @@
   - ジョブ・外部サービスの失敗の操作ログ(夜間のカレンダー反映・保守・翌日の予定のお知らせ・free/busy の同期・outbox・予定の読み込み・
     カレンダーから反映・AI の生成と読み取り)に例外の文を入れず、例外の種類と理由コード(`errorClass`・`errorCode`・`httpStatus`、AI は
     `reason`)だけにした。文はジョブの出力・API の要求のログ(Cloud Logging)にだけ出す(`doc/06_セキュリティ設計.md` 10章)。
+- 入力の検証を強めた:
+  - 領収書の金額を1,000万円までにした(超えると DB の integer を超えて 500 になっていた。400「金額は10,000,000円以下で入力してください。」。
+    DB の 22003 も 400 にする)。金額の文字は20文字・店名は200文字・事務局へのひとことは2000文字まで(画面の欄も同じ上限)。
+  - 「訪問終わりました」(`POST /api/reports/visit-complete`)の時刻を `HH:mm` か空だけにし(自由な文字を Google Chat の文に差し込めた)、
+    スタッフごとに1時間60回まで(`visit_complete_staff`)・送ったら INFO `report.visit_complete.notified` を残すようにした。
+  - Google Chat の通知(日報・事故報告・訪問完了・領収書の登録と取消・PSI の知らせ)で、名前・本文・店名などの `&` `<` `>` を文字参照にした
+    (`<users/all>` の全員へのメンションや偽のリンクを差し込めた)。
+  - 通知の購読(`POST /api/push/subscriptions`)で、別のスタッフの購読(同じ endpoint)を付け替えるのは鍵(`p256dh`・`auth`)が同じときだけにした
+    (endpoint を知った人が自分の鍵で上書きして、その人の通知を受け取れた)。鍵が違えば 409 と WARN `push.subscription.takeover_refused`、
+    付け替えは WARN `push.subscription.moved`。画面は 409 のとき端末の購読を作り直して登録し直す(`doc/04_API仕様.md` 2.6・2.7・2.10、
+    `doc/06_セキュリティ設計.md` 6・7章)。
 
 ## [Ver. 1.3.0] - 2026-10-01
 

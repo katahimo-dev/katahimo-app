@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { businessDateSchema, freeText, idSchema, recordDateSchema } from './common';
+import { businessDateSchema, freeText, idSchema, recordDateSchema, timeOfDaySchema } from './common';
 
 const ratingSchema = z.number().int().min(1).max(5).nullable();
 const textSchema = freeText(z.string().default(''));
@@ -217,8 +217,9 @@ export const visitCompleteRequestSchema = z.object({
   staffId: idSchema.optional(),
   customerId: idSchema,
   visitDate: businessDateSchema,
-  startTime: z.string(),
-  endTime: z.string(),
+  /** 'HH:mm'(時刻を選んでいなければ空文字)。通知の本文に入れるため形を決める。 */
+  startTime: z.union([timeOfDaySchema, z.literal('')]),
+  endTime: z.union([timeOfDaySchema, z.literal('')]),
 });
 export type VisitCompleteRequest = z.infer<typeof visitCompleteRequestSchema>;
 export const visitCompleteResponseSchema = z.object({ success: z.literal(true) });

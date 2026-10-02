@@ -2,6 +2,7 @@ import { type PushNotice, pushNoticeSchema } from '@katahimo/shared';
 import {
   buildRouteNotice,
   buildTestNotice,
+  conflict,
   DomainError,
   errorLogDetails,
   errorMessageOf,
@@ -63,10 +64,18 @@ export interface PushSubscriptionInput {
   auth: string;
 }
 
+/** 別のスタッフの購読(同じ endpoint)を、鍵の違う登録で奪おうとしたときの文。 */
+export const PUSH_SUBSCRIPTION_TAKEOVER_MESSAGE =
+  'この端末の通知は別のスタッフの登録として残っています。通知をいったんオフにしてから、もう一度オンにしてください。';
+
 /**
- * この端末(endpoint)の購読を本人の購読として登録する。同じ endpoint が既にあれば鍵を書き直し、別のスタッフの
- * ものなら本人に付け替える(同じ端末で別のスタッフがログインして通知をオンにした場合)。1人の購読は
- * MAX_PUSH_SUBSCRIPTIONS_PER_STAFF 件までで、超えた分は最近使っていないものから消す。
+ * この端末(endpoint)の購読を本人の購読として登録する。同じ endpoint が既に本人のものなら鍵を書き直す。
+ * 別のスタッフのものは、送られてきた鍵(p256dh・auth)が登録済みの鍵と同じときだけ本人に付け替える(同じ端末の
+ * ブラウザの購読を、別のスタッフがログインして通知をオンにした場合。WARN `push.subscription.moved`)。
+ * 鍵が違えば 409(WARN `push.subscription.takeover_refused`)にして何も書かない: endpoint はプッシュサービスの URL で、
+ * 知られると他人の購読を自分の鍵で上書きして、その人の通知(お客様のお名前)を受け取れてしまうため。鍵は端末の
+ * ブラウザの中にしか無い(画面はログインのとき別の人の購読をやめ、作り直した購読は endpoint も変わる)。
+ * 1人の購読は MAX_PUSH_SUBSCRIPTIONS_PER_STAFF 件までで、超えた分は最近使っていないものから消す。
  */
 export async function subscribePush(
   deps: PushSubscriptionDeps,
@@ -75,10 +84,17 @@ export async function subscribePush(
 ): Promise<void> {
   assertPushEnabled(deps);
   const userAgent = actor.meta?.userAgent?.slice(0, USER_AGENT_MAX_CHARS) ?? null;
-  const { saved, previousStaffId, trimmed } = await deps.uow.run(
+  const outcome = await deps.uow.run(
     actor.tenantId,
     async (r) => {
       const existing = await r.pushSubscriptions.findByEndpoint(input.endpoint);
+      if (
+        existing &&
+        existing.staffId !== actor.staffId &&
+        (existing.p256dh !== input.p256dh || existing.auth !== input.auth)
+      ) {
+        return { refused: true as const, subscriptionId: existing.id, ownerStaffId: existing.staffId };
+      }
       const saved = await r.pushSubscriptions.upsert({
         id: newId(),
         staffId: actor.staffId,
@@ -86,19 +102,34 @@ export async function subscribePush(
         ...input,
       });
       const trimmed = await r.pushSubscriptions.trimForStaff(actor.staffId, MAX_PUSH_SUBSCRIPTIONS_PER_STAFF);
-      return { saved, previousStaffId: existing?.staffId ?? null, trimmed };
+      return { refused: false as const, saved, previousStaffId: existing?.staffId ?? null, trimmed };
     },
     { actorId: actor.staffId },
   );
+  if (outcome.refused) {
+    await deps.appLog.write({
+      tenantId: actor.tenantId,
+      level: 'WARN',
+      action: 'push.subscription.takeover_refused',
+      actorStaffId: actor.staffId,
+      targetStaffId: outcome.ownerStaffId,
+      details: { subscriptionId: outcome.subscriptionId, reason: 'keys_mismatch' },
+      ...actor.meta,
+    });
+    throw conflict(PUSH_SUBSCRIPTION_TAKEOVER_MESSAGE, undefined, 'subscription_owned_by_other');
+  }
+  const { saved, previousStaffId, trimmed } = outcome;
+  const moved = previousStaffId !== null && previousStaffId !== actor.staffId;
   await deps.appLog.write({
     tenantId: actor.tenantId,
-    level: 'INFO',
-    action: 'push.subscription.saved',
+    level: moved ? 'WARN' : 'INFO',
+    action: moved ? 'push.subscription.moved' : 'push.subscription.saved',
     actorStaffId: actor.staffId,
+    ...(moved ? { targetStaffId: previousStaffId } : {}),
     details: {
       subscriptionId: saved.id,
       created: previousStaffId === null,
-      ...(previousStaffId !== null && previousStaffId !== actor.staffId ? { previousStaffId } : {}),
+      ...(moved ? { previousStaffId } : {}),
       ...(trimmed > 0 ? { trimmed } : {}),
     },
     ...actor.meta,
