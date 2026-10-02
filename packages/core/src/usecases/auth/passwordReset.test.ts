@@ -227,6 +227,20 @@ describe('パスワード再設定', () => {
     expect(await request('hanako@gmail.com', 'test-tenant', '198.51.100.8')).toBe('queued');
   });
 
+  it('送信元IP単位の上限は IPv6 なら /64 ごと', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.passwordResetRequestIp.limit;
+    for (let i = 0; i < limit; i++) {
+      await request(`user${i}@example.com`, 'test-tenant', `2001:db8:7:7::${(i + 1).toString(16)}`);
+    }
+    const outcome = await requestPasswordReset(ctx.deps, {
+      tenantSlug: 'test-tenant',
+      email: 'hanako@gmail.com',
+      meta: { ip: '2001:db8:7:7:abcd::9' },
+    });
+    expect(outcome.status).toBe('ip_rate_limited');
+    expect(await request('hanako@gmail.com', 'test-tenant', '2001:db8:7:8::1')).toBe('queued');
+  });
+
   it('確認はアカウント単位の上限を超えると rate_limited(コードを発行し直しながらの総当たり対策)', async () => {
     const limit = DEFAULT_RATE_LIMIT_POLICY.passwordResetConfirmAccount.limit;
     for (let i = 0; i < limit; i++) await confirm('000000');

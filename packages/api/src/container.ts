@@ -94,7 +94,7 @@ export interface Container {
     /** セッション Cookie の Secure 属性・HSTS に使う。 */
     isProduction: boolean;
   };
-  /** 公開デモ用テナント(DEMO_TENANT_SLUG)の判定。null ならデモの制限は無い(http/demoRestrictions.ts)。 */
+  /** 公開デモ用テナント(DEMO_TENANT_SLUG)の判定と設定。null ならデモの制限は無い(http/demoRestrictions.ts)。 */
   demo: DemoTenant | null;
 }
 
@@ -107,6 +107,7 @@ function rateLimitPolicyOf(env: Env): RateLimitPolicy {
     passwordResetRequestIp: env.RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_IP,
     aiGenerateStaff: env.RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY,
     receiptOcrStaff: env.RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY,
+    receiptUploadStaff: env.RATE_LIMIT_RECEIPT_UPLOAD_PER_STAFF_HOUR,
     scheduleForceRefreshStaff: env.RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR,
   });
 }
@@ -189,6 +190,16 @@ export function createContainer(env: Env, db: Database): Container {
       await db.execute(sql`SELECT 1`);
     },
     config: { isProduction: env.NODE_ENV === 'production' },
-    demo: env.DEMO_TENANT_SLUG ? new DemoTenant(env.DEMO_TENANT_SLUG, tenants) : null,
+    demo: env.DEMO_TENANT_SLUG
+      ? new DemoTenant(
+          {
+            slug: env.DEMO_TENANT_SLUG,
+            publicLogin: env.DEMO_PUBLIC_LOGIN,
+            dataRetentionDays: env.DEMO_DATA_RETENTION_DAYS,
+            logRetentionMonths: env.DEMO_LOG_RETENTION_MONTHS,
+          },
+          tenants,
+        )
+      : null,
   };
 }

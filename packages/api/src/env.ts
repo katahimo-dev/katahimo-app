@@ -1,4 +1,5 @@
 import {
+  booleanFlag,
   CLOUD_RUN_JOB_NAME_PATTERN,
   emptyToUndefined,
   optionalPositiveInt,
@@ -62,7 +63,8 @@ const envSchema = z.object({
   ),
 
   // 公開デモ用のテナントの slug(このテナントだけ、他の訪問者を妨げる操作を断り、AI の回数を1回のログインで
-  // 10回までにする。http/demoRestrictions.ts、doc/07 の「公開デモ」)。未設定ならデモの制限は無い。
+  // 10回までにする。http/demoRestrictions.ts、doc/07 の「公開デモ」)。未設定ならデモの制限は無く、
+  // GET /api/demo/config は enabled: false を返す。
   DEMO_TENANT_SLUG: z.preprocess(
     emptyToUndefined,
     z
@@ -72,6 +74,22 @@ const envSchema = z.object({
         'DEMO_TENANT_SLUG はテナントの slug(英小文字・数字・ハイフン)にしてください',
       )
       .optional(),
+  ),
+
+  // デモ専用の環境か(true / 1)。true ならログイン画面にデモ用アカウントとパスワードを出す(GET /api/demo/config)。
+  // 本番の環境に暫定でデモ用テナントを置くときは false のまま(本番の利用者に出さない)。DEMO_TENANT_SLUG が必要。
+  DEMO_PUBLIC_LOGIN: booleanFlag,
+  // 訪問者の入力を残す日数(demo:reset が日付付きの slug で残した過去のデモ用テナントを、この日数を過ぎたら消す)。
+  // ログイン画面の案内にも出す。API と demo:reset のジョブで同じ値にする。
+  DEMO_DATA_RETENTION_DAYS: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(3650).default(30),
+  ),
+  // 操作ログ・接続情報(IPアドレス等)を残す月数の案内(ログイン画面に出す値)。実際に消すのはワーカーの保守ジョブ
+  // (APP_LOG_RETENTION_MONTHS)なので、デモの環境では同じ値にする。
+  DEMO_LOG_RETENTION_MONTHS: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(120).default(3),
   ),
 
   // X-Forwarded-For の右から何番目を送信元IPとみなすか(信頼できるプロキシの段数)。Cloud Run 直は1、
@@ -85,6 +103,7 @@ const envSchema = z.object({
   RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_IP: optionalPositiveInt,
   RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY: optionalPositiveInt,
   RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY: optionalPositiveInt,
+  RATE_LIMIT_RECEIPT_UPLOAD_PER_STAFF_HOUR: optionalPositiveInt,
   RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR: optionalPositiveInt,
 });
 
@@ -102,6 +121,11 @@ function checkCombinations(env: Env): string[] {
     (env.SESSION_SECRET.length < 32 || env.SESSION_SECRET === 'change-me-in-production')
   ) {
     problems.push('  - SESSION_SECRET: 本番は32文字以上のランダムな値にしてください(openssl rand -hex 32)');
+  }
+  if (env.DEMO_PUBLIC_LOGIN && !env.DEMO_TENANT_SLUG) {
+    problems.push(
+      '  - DEMO_PUBLIC_LOGIN: デモ用アカウントをログイン画面に出すには、デモ用テナントの DEMO_TENANT_SLUG も必要です',
+    );
   }
   if (env.NODE_ENV === 'production' && !env.OUTBOX_DRAIN_JOB) {
     problems.push(

@@ -32,13 +32,21 @@ import {
   setSessionCookie,
 } from '../session';
 
-function toSessionUser(session: ResolvedSession): SessionUser {
+/**
+ * 画面に返すログイン中のスタッフ。demoTenant は公開デモ用テナント(DEMO_TENANT_SLUG)へのログインか
+ * (DemoTenant がテナントの ID ごとの判定をプロセス内に覚えるので、要求のたびには DB を引かない)。
+ */
+async function toSessionUser(
+  container: Container,
+  staff: Pick<ResolvedSession, 'staffId' | 'tenantId' | 'name' | 'email' | 'role'>,
+): Promise<SessionUser> {
   return {
-    staffId: session.staffId,
-    tenantId: session.tenantId,
-    name: session.name,
-    email: session.email,
-    role: session.role,
+    staffId: staff.staffId,
+    tenantId: staff.tenantId,
+    name: staff.name,
+    email: staff.email,
+    role: staff.role,
+    demoTenant: container.demo ? await container.demo.isDemoTenant(staff.tenantId) : false,
   };
 }
 
@@ -78,13 +86,13 @@ export function createAuthRoutes(container: Container) {
     }
 
     setSessionCookie(c, container, result.sessionCookieValue, result.expiresAt);
-    const staff: SessionUser = {
+    const staff = await toSessionUser(container, {
       staffId: result.staff.id,
       tenantId: result.staff.tenantId,
       name: result.staff.name,
       email: result.staff.email,
       role: result.staff.role,
-    };
+    });
     return jsonOk(c, sessionUserResponseSchema, { staff });
   });
 
@@ -92,7 +100,7 @@ export function createAuthRoutes(container: Container) {
   app.get('/me', async (c) => {
     const session = await getAuthenticatedSession(c, container, { isInitialLoad: true });
     if (!session) return apiError(c, 401, 'unauthenticated', '未ログインです');
-    return jsonOk(c, sessionUserResponseSchema, { staff: toSessionUser(session) });
+    return jsonOk(c, sessionUserResponseSchema, { staff: await toSessionUser(container, session) });
   });
 
   /** ログアウト。Cookie を消すだけでなく、サーバー側のセッションも失効させる。 */

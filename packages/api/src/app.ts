@@ -21,6 +21,7 @@ import { createAttendanceRoutes } from './routes/attendance';
 import { createAuthRoutes } from './routes/auth';
 import { createCustomerRoutes } from './routes/customers';
 import { createDataVersionRoutes } from './routes/dataVersion';
+import { createDemoRoutes } from './routes/demo';
 import { createIntegrationRoutes } from './routes/integrations';
 import { createPushRoutes } from './routes/push';
 import { createReceiptRoutes } from './routes/receipts';
@@ -86,6 +87,8 @@ export function createApp(deps: AppDeps) {
   app.route('/api/admin/report-ai', createAdminReportAiRoutes(container));
   app.route('/api/admin', createAdminAuditLogRoutes(container));
   app.route('/api/ui-config', createUiConfigRoutes(container));
+  // 公開デモの表示の設定(ログイン不要。DEMO_TENANT_SLUG が無ければ enabled: false)
+  app.route('/api/demo', createDemoRoutes(container));
   app.route('/api/push', createPushRoutes(container));
   // 外部システム連携(API キーで認証。Cookie のセッションは使わない)
   app.route('/api/integrations', createIntegrationRoutes(container));

@@ -145,7 +145,7 @@ describe('API: エラーの形', () => {
   it('応答にリクエストIDを付ける', async () => {
     const res = await get('/api/auth/me', staffCookie);
     expect(res.headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
-    expect(await res.json()).toMatchObject({ staff: { staffId, role: 'staff' } });
+    expect(await res.json()).toMatchObject({ staff: { staffId, role: 'staff', demoTenant: false } });
   });
 });
 

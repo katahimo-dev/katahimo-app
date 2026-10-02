@@ -26,7 +26,7 @@ import { type Context, Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import type { Container } from '../container';
 import { csvLine, writeCsvStream } from '../http/csv';
-import { enforceAiQuota } from '../http/quota';
+import { enforceAiQuota, enforceStaffQuota } from '../http/quota';
 import { requestIdOf } from '../http/requestLog';
 import { apiError, jsonOk, parseJsonBody, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
@@ -176,6 +176,13 @@ export function createReceiptRoutes(container: Container) {
   app.post('/', requireSession(container, 'receipt.upload'), async (c) => {
     const body = await parseJsonBody(c, uploadReceiptsRequestSchema);
     if (!body.ok) return body.response;
+    const limited = await enforceStaffQuota(
+      c,
+      container,
+      container.rateLimits.receiptUploadStaff,
+      '領収書の登録の回数が上限に達しました。しばらく待ってから再度お試しください。',
+    );
+    if (limited) return limited;
     const { data } = body;
     const summary = await uploadReceipts(container, actorOf(c), {
       requestedStaffId: data.staffId,

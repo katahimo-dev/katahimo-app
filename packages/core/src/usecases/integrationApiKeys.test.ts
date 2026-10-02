@@ -152,6 +152,15 @@ describe('外部システム連携の API キー', () => {
     expect(await authenticateIntegrationApiKey(deps, token, { ip: '203.0.113.10' })).toMatchObject({
       ok: true,
     });
+    // IPv6 は /64 ごとに数える(同じ /64 の別のアドレスもロック中)
+    const v6 = (ip: string) => authenticateIntegrationApiKey(deps, wrong, { ip });
+    for (let i = 1; i <= 3; i++) await v6(`2001:db8:5:5::${i}`);
+    expect(await authenticateIntegrationApiKey(deps, token, { ip: '2001:db8:5:5:ffff::1' })).toMatchObject({
+      reason: 'locked',
+    });
+    expect(await authenticateIntegrationApiKey(deps, token, { ip: '2001:db8:5:6::1' })).toMatchObject({
+      ok: true,
+    });
     // ロックが明けたら確かめる
     ctx.clock.now = new Date(ctx.clock.now.getTime() + 60_000);
     expect(await authenticateIntegrationApiKey(deps, token, meta)).toMatchObject({ ok: true });

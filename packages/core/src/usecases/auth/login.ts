@@ -1,4 +1,10 @@
-import { isRetiredOn, maskEmail, normalizeEmailForIndex, zonedBusinessDate } from '../../domain';
+import {
+  isRetiredOn,
+  maskEmail,
+  normalizeEmailForIndex,
+  rateLimitIpSubject,
+  zonedBusinessDate,
+} from '../../domain';
 import type { StaffRole } from '../../domain/model';
 import { accountRateLimitKey } from '../rateLimits';
 import type { RequestMeta } from '../requestMeta';
@@ -46,7 +52,8 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   const now = currentTime(deps);
   const loginId = normalizeEmailForIndex(input.email);
   const accountKey = accountRateLimitKey(input.tenantSlug, loginId);
-  const ip = input.meta?.ip ?? null;
+  // 送信元IP単位の数え方は IPv6 なら /64 ごと(アドレスを替えながらの回避を防ぐ。ログには元のアドレスを残す)
+  const ip = input.meta?.ip ? rateLimitIpSubject(input.meta.ip) : null;
   const { loginFailureAccount, loginFailureIp } = deps.rateLimits;
   const masked = maskEmail(loginId);
 

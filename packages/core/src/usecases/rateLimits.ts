@@ -28,6 +28,11 @@ export interface RateLimitPolicy {
   aiGenerateStaff: RateLimitRule;
   /** 領収書OCR(スタッフ単位の1日の上限)。 */
   receiptOcrStaff: RateLimitRule;
+  /**
+   * 領収書の画像の登録(POST /api/receipts。スタッフ単位の1時間の上限)。1回で最大6枚・14MB までの本文を受け取り、
+   * 画像を保存先(GCS)に書くため、送り続けで保存先・CPU を使い切らせない。数えるのは登録の要求の回数(枚数ではない)。
+   */
+  receiptUploadStaff: RateLimitRule;
   /** 予定の「ルート再計算」(forceRefresh、スタッフ単位の1時間の上限。Maps の従量課金対策)。 */
   scheduleForceRefreshStaff: RateLimitRule;
   /** 設定画面の「テスト通知を送る」(スタッフ単位の1時間の上限)。 */
@@ -74,6 +79,7 @@ export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   passwordResetConfirmIp: { name: 'password_reset_confirm_ip', limit: 50, windowMs: HOUR_MS },
   aiGenerateStaff: { name: 'ai_generate_staff', limit: 200, windowMs: DAY_MS },
   receiptOcrStaff: { name: 'receipt_ocr_staff', limit: 300, windowMs: DAY_MS },
+  receiptUploadStaff: { name: 'receipt_upload_staff', limit: 60, windowMs: HOUR_MS },
   scheduleForceRefreshStaff: { name: 'schedule_force_refresh_staff', limit: 30, windowMs: HOUR_MS },
   pushTestStaff: { name: 'push_test_staff', limit: 10, windowMs: HOUR_MS },
   pushSubscribeStaff: { name: 'push_subscribe_staff', limit: 30, windowMs: HOUR_MS },

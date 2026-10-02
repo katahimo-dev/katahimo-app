@@ -16,7 +16,7 @@ import { DEMO_AI_QUOTA_MESSAGE, DEMO_REFUSED_MESSAGE } from './http/demoRestrict
  */
 const demoSlug = `demo-it-${randomBytes(4).toString('hex')}`;
 const otherSlug = `plain-it-${randomBytes(4).toString('hex')}`;
-const env = loadEnv({
+const baseEnv = {
   ...process.env,
   NODE_ENV: 'test',
   SCHEDULE_PROVIDER: 'noop',
@@ -25,7 +25,11 @@ const env = loadEnv({
   SECRET_BOX_LOCAL_KEY: process.env.SECRET_BOX_LOCAL_KEY ?? 'a'.repeat(64),
   GEMINI_API_KEY: '',
   DEMO_TENANT_SLUG: demoSlug,
-});
+  DEMO_PUBLIC_LOGIN: '',
+  DEMO_DATA_RETENTION_DAYS: '',
+  DEMO_LOG_RETENTION_MONTHS: '',
+};
+const env = loadEnv(baseEnv);
 const appDb = createDatabase(env.DATABASE_URL, { max: 4 });
 const ownerDb = createDatabase(process.env.MIGRATION_DATABASE_URL ?? '', { max: 1, onnotice: () => {} });
 // Gemini API キーの保存の前の確認は実際の Gemini につながない(常に使えるキーとして扱う)
@@ -231,5 +235,67 @@ describe('公開デモ: ログインと AI の回数', () => {
 
     const again = await cookieOf(demoSlug, coordinator.email, DEMO_PASSWORD);
     expect((await generate(again)).status).not.toBe(429);
+  });
+});
+
+describe('公開デモ: 表示の設定(GET /api/demo/config)とログイン中のスタッフの demoTenant', () => {
+  const configOf = async (target: ReturnType<typeof createApp>) => {
+    const res = await target.request('/api/demo/config');
+    expect(res.status).toBe(200);
+    return res.json();
+  };
+  const appWith = (overrides: Record<string, string>) => {
+    const variant = loadEnv({ ...baseEnv, ...overrides });
+    return createApp({ env: variant, container: createContainer(variant, appDb) });
+  };
+
+  it('ログインなしで読める。本番の環境に置くデモ(DEMO_PUBLIC_LOGIN なし)ではデモ用アカウント・パスワードを返さない', async () => {
+    expect(await configOf(app)).toEqual({
+      enabled: true,
+      tenantSlug: demoSlug,
+      publicLogin: false,
+      accounts: [],
+      password: null,
+      dataRetentionDays: 30,
+      logRetentionMonths: 3,
+      aiUsesPerSession: DEMO_AI_USES_PER_SESSION,
+    });
+  });
+
+  it('デモ専用の環境(DEMO_PUBLIC_LOGIN=true)ではデモ用アカウントとパスワード、保存期間の設定を返す', async () => {
+    const config = await configOf(
+      appWith({ DEMO_PUBLIC_LOGIN: 'true', DEMO_DATA_RETENTION_DAYS: '7', DEMO_LOG_RETENTION_MONTHS: '6' }),
+    );
+    expect(config).toEqual({
+      enabled: true,
+      tenantSlug: demoSlug,
+      publicLogin: true,
+      accounts: DEMO_ACCOUNTS.map(({ role, label, email }) => ({ role, label, email })),
+      password: DEMO_PASSWORD,
+      dataRetentionDays: 7,
+      logRetentionMonths: 6,
+      aiUsesPerSession: DEMO_AI_USES_PER_SESSION,
+    });
+  });
+
+  it('DEMO_TENANT_SLUG が無ければ enabled: false だけ', async () => {
+    expect(await configOf(appWith({ DEMO_TENANT_SLUG: '' }))).toEqual({ enabled: false });
+  });
+
+  it('ログイン・/api/auth/me の staff.demoTenant はデモ用テナントだけ true', async () => {
+    const demoLogin = await loginAs(demoSlug, admin.email, DEMO_PASSWORD);
+    expect(((await demoLogin.json()) as { staff: { demoTenant: boolean } }).staff.demoTenant).toBe(true);
+    const demoCookie = (demoLogin.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    const me = await app.request('/api/auth/me', { headers: { Cookie: demoCookie } });
+    expect(await me.json()).toMatchObject({ staff: { demoTenant: true } });
+
+    const plainLogin = await loginAs(otherSlug, `admin-${otherSlug}@example.com`, OTHER_PASSWORD);
+    expect(await plainLogin.json()).toMatchObject({ staff: { demoTenant: false } });
+    const plainMe = await app.request('/api/auth/me', { headers: { Cookie: otherAdminCookie } });
+    expect(await plainMe.json()).toMatchObject({ staff: { demoTenant: false } });
+    // デモの設定の無い環境では、同じテナントでも false
+    const noDemo = appWith({ DEMO_TENANT_SLUG: '' });
+    const noDemoMe = await noDemo.request('/api/auth/me', { headers: { Cookie: demoCookie } });
+    expect(await noDemoMe.json()).toMatchObject({ staff: { demoTenant: false } });
   });
 });

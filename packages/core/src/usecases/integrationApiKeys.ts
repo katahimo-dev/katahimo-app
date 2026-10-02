@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { invalid, newId, notFound } from '../domain';
+import { invalid, newId, notFound, rateLimitIpSubject } from '../domain';
 import { CUSTOMER_SOURCES, type CustomerSource } from '../domain/model';
 import type { AppLogPort } from '../ports/appLog';
 import type { IntegrationApiKeyRecord } from '../ports/integrations';
@@ -191,7 +191,8 @@ export async function authenticateIntegrationApiKey(
   meta: RequestMeta = {},
 ): Promise<IntegrationAuthResult> {
   const now = currentTime(deps);
-  const ip = meta.ip ?? null;
+  // IPv6 は /64 ごとに数える(rateLimitIpSubject。ログには元のアドレスを残す)
+  const ip = meta.ip ? rateLimitIpSubject(meta.ip) : null;
   const rule = deps.rateLimits.integrationAuthFailureIp;
   // 先に1回分の枠を取る(同時に送られた多数の誤ったキーでも、確かめるのは上限の回数まで)
   const byIp = ip ? await deps.rateLimiter.consume(rule, ip, now) : null;

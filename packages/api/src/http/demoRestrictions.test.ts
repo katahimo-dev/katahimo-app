@@ -1,5 +1,6 @@
+import type { TenantDirectoryPort, TenantRecord } from '@katahimo/core/ports';
 import { describe, expect, it } from 'vitest';
-import { DEMO_RESTRICTION_RULES, matchDemoRestriction } from './demoRestrictions';
+import { DEMO_RESTRICTION_RULES, DemoTenant, matchDemoRestriction } from './demoRestrictions';
 
 describe('matchDemoRestriction', () => {
   it('断る操作を名前と :id つきで返す', () => {
@@ -23,5 +24,43 @@ describe('matchDemoRestriction', () => {
   it('規則の名前は重ならない', () => {
     const names = DEMO_RESTRICTION_RULES.map((r) => `${r.method} ${r.name}`);
     expect(new Set(names).size).toBe(names.length);
+  });
+});
+
+describe('DemoTenant.isDemoTenant', () => {
+  it('テナントの ID ごとの判定を覚え、一定時間で覚え直す(作り直しで前のテナントの slug が変わるため)', async () => {
+    const tenant: TenantRecord = {
+      id: 't1',
+      slug: 'public-demo',
+      name: 'デモ',
+      status: 'active',
+      timezone: 'Asia/Tokyo',
+      businessType: 'babysitting',
+    };
+    let lookups = 0;
+    const tenants = {
+      findById: async (id: string) => {
+        lookups++;
+        return id === tenant.id ? { ...tenant } : null;
+      },
+    } as unknown as TenantDirectoryPort;
+    let now = 0;
+    const demo = new DemoTenant(
+      { slug: 'public-demo', publicLogin: false, dataRetentionDays: 30, logRetentionMonths: 3 },
+      tenants,
+      () => now,
+    );
+    expect(await demo.isDemoTenant('t1')).toBe(true);
+    expect(await demo.isDemoTenant('t1')).toBe(true);
+    expect(lookups).toBe(1);
+    // 見つからない ID は覚えない
+    expect(await demo.isDemoTenant('gone')).toBe(false);
+    expect(await demo.isDemoTenant('gone')).toBe(false);
+    expect(lookups).toBe(3);
+    // 作り直しで日付付きの slug に変わった後、覚え直すとデモではない
+    tenant.slug = 'public-demo-20261001';
+    now += 10 * 60 * 1000;
+    expect(await demo.isDemoTenant('t1')).toBe(false);
+    expect(lookups).toBe(4);
   });
 });

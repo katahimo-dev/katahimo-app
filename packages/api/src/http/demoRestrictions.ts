@@ -131,31 +131,54 @@ export function matchDemoRestriction(
   return null;
 }
 
+/** 公開デモの設定(API の環境変数 DEMO_*。GET /api/demo/config が返す)。 */
+export interface DemoSettings {
+  /** DEMO_TENANT_SLUG。 */
+  slug: string;
+  /** DEMO_PUBLIC_LOGIN(ログイン画面にデモ用アカウントとパスワードを出すか)。 */
+  publicLogin: boolean;
+  /** DEMO_DATA_RETENTION_DAYS。 */
+  dataRetentionDays: number;
+  /** DEMO_LOG_RETENTION_MONTHS。 */
+  logRetentionMonths: number;
+}
+
+/** テナントの ID → デモ用テナントかの判定を覚えておく時間。 */
+const DEMO_TENANT_CACHE_TTL_MS = 10 * 60 * 1000;
+
 /**
  * デモ用テナントの判定。slug は環境変数、テナントの ID は毎晩の作り直しで変わるため、ID → デモかどうかを
- * プロセス内に覚えておく(ID は作り直しのたびに新しくなるので、覚えた結果が古くなることはない)。
+ * プロセス内に覚えておく(要求のたびに DB を引かない)。作り直しでは前のテナントの slug を日付付きに変えて
+ * 停止(suspended)で残すため、覚えた結果は古くなりうる(前のテナントを「デモ」と覚えたまま)。前のテナントの
+ * セッションは消え、停止中のテナントのログイン・セッションは通らないので害は無いが、運用担当者が再開した等に
+ * 備えて一定時間で覚え直す。
  */
 export class DemoTenant {
-  private readonly known = new Map<string, boolean>();
+  private readonly known = new Map<string, { value: boolean; until: number }>();
+  readonly slug: string;
 
   constructor(
-    readonly slug: string,
+    readonly settings: DemoSettings,
     private readonly tenants: TenantDirectoryPort,
-  ) {}
+    private readonly now: () => number = Date.now,
+  ) {
+    this.slug = settings.slug;
+  }
 
   isDemoSlug(slug: unknown): boolean {
     return typeof slug === 'string' && slug.trim().toLowerCase() === this.slug;
   }
 
   async isDemoTenant(tenantId: string): Promise<boolean> {
+    const now = this.now();
     const cached = this.known.get(tenantId);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined && cached.until > now) return cached.value;
     const tenant = await this.tenants.findById(tenantId);
-    // 見つからない ID(作り直しで消えたテナントの古い Cookie 等)は覚えない
+    // 見つからない ID(消去したテナントの古い Cookie 等)は覚えない
     if (!tenant) return false;
     const result = tenant.slug === this.slug;
     if (this.known.size >= 1000) this.known.clear();
-    this.known.set(tenantId, result);
+    this.known.set(tenantId, { value: result, until: now + DEMO_TENANT_CACHE_TTL_MS });
     return result;
   }
 

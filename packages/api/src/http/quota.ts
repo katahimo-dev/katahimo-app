@@ -1,4 +1,5 @@
 import type { RateLimitRule } from '@katahimo/core/domain';
+import { rateLimitIpSubject } from '@katahimo/core/domain';
 import { consumeQuota } from '@katahimo/core/usecases';
 import type { Context } from 'hono';
 import type { Container } from '../container';
@@ -47,7 +48,8 @@ export async function enforceAiQuota(
     const bySession = await consumeQuota(container, DEMO_AI_SESSION_RULE, session.sessionId, context);
     if (!bySession.allowed) return rateLimited(c, bySession.retryAfterMs, DEMO_AI_QUOTA_MESSAGE);
     if (meta.ip) {
-      const byIp = await consumeQuota(container, DEMO_AI_IP_DAY_RULE, meta.ip, context);
+      // IPv6 は /64 ごとに数える(アドレスを替えながらの回避を防ぐ。ログには元のアドレスを残す)
+      const byIp = await consumeQuota(container, DEMO_AI_IP_DAY_RULE, rateLimitIpSubject(meta.ip), context);
       if (!byIp.allowed) return rateLimited(c, byIp.retryAfterMs, DEMO_AI_DAILY_QUOTA_MESSAGE);
     }
     const byTenant = await consumeQuota(container, DEMO_AI_TENANT_DAY_RULE, session.tenantId, context);

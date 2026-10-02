@@ -76,6 +76,32 @@ describe('loadEnv', () => {
     ).toMatchObject({ GAS_BRIDGE_TENANT: 'cutest', MIRROR_TO_GOOGLE_SHEETS: true });
   });
 
+  it('公開デモの設定: 既定値、DEMO_PUBLIC_LOGIN は DEMO_TENANT_SLUG が無いと起動できない、日数・月数の範囲', () => {
+    expect(loadEnv(development)).toMatchObject({
+      DEMO_PUBLIC_LOGIN: false,
+      DEMO_DATA_RETENTION_DAYS: 30,
+      DEMO_LOG_RETENTION_MONTHS: 3,
+    });
+    expect(() => loadEnv({ ...development, DEMO_PUBLIC_LOGIN: 'true' })).toThrow(/DEMO_PUBLIC_LOGIN/);
+    expect(
+      loadEnv({
+        ...development,
+        DEMO_TENANT_SLUG: 'public-demo',
+        DEMO_PUBLIC_LOGIN: 'true',
+        DEMO_DATA_RETENTION_DAYS: '7',
+        DEMO_LOG_RETENTION_MONTHS: '',
+      }),
+    ).toMatchObject({ DEMO_PUBLIC_LOGIN: true, DEMO_DATA_RETENTION_DAYS: 7, DEMO_LOG_RETENTION_MONTHS: 3 });
+    expect(loadEnv({ ...development, DEMO_PUBLIC_LOGIN: 'false' }).DEMO_PUBLIC_LOGIN).toBe(false);
+    expect(() => loadEnv({ ...development, DEMO_DATA_RETENTION_DAYS: '0' })).toThrow(
+      /DEMO_DATA_RETENTION_DAYS/,
+    );
+    expect(() => loadEnv({ ...development, DEMO_DATA_RETENTION_DAYS: '3651' })).toThrow();
+    expect(() => loadEnv({ ...development, DEMO_LOG_RETENTION_MONTHS: '121' })).toThrow(
+      /DEMO_LOG_RETENTION_MONTHS/,
+    );
+  });
+
   it('OUTBOX_DRAIN_JOB はジョブの完全な名前だけを受け付ける(開発では省略できる)', () => {
     expect(loadEnv(development).OUTBOX_DRAIN_JOB).toBeUndefined();
     expect(() => loadEnv({ ...production, OUTBOX_DRAIN_JOB: 'katahimo-outbox-drain' })).toThrow(
