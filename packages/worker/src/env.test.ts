@@ -37,7 +37,9 @@ describe('loadWorkerEnv', () => {
 
   it('操作ログを残す月数は12以上(DB の drop_app_log_partitions も12未満を断る)', () => {
     expect(loadWorkerEnv(production).APP_LOG_RETENTION_MONTHS).toBe(13);
-    expect(loadWorkerEnv({ ...production, APP_LOG_RETENTION_MONTHS: '12' }).APP_LOG_RETENTION_MONTHS).toBe(12);
+    expect(loadWorkerEnv({ ...production, APP_LOG_RETENTION_MONTHS: '12' }).APP_LOG_RETENTION_MONTHS).toBe(
+      12,
+    );
     expect(() => loadWorkerEnv({ ...production, APP_LOG_RETENTION_MONTHS: '11' })).toThrow(
       /APP_LOG_RETENTION_MONTHS/,
     );

@@ -23,6 +23,7 @@ import {
 import type {
   AccidentReportDraft,
   AccidentReportDraftError,
+  AiFailure,
   DailyReportDraft,
   ReceiptOcrResult,
   ReportAiPort,
@@ -80,11 +81,15 @@ export async function resolveReportAiPort(
   return deps.reportAiFactory.create({ apiKey });
 }
 
+/**
+ * AI の失敗を操作ログに残す。残すのは理由コード(と HTTP の状態)だけで、失敗の文・Gemini の応答の本文は残さない
+ * (文は利用者への応答にだけ返す)。実装が理由を返さなければ unknown。
+ */
 function logAiError(
   deps: ReportAiDeps,
   caller: ReportAiCaller,
   action: string,
-  error: string,
+  failure: AiFailure | undefined,
   extra: Record<string, unknown> = {},
 ) {
   return deps.appLog.write({
@@ -92,7 +97,11 @@ function logAiError(
     level: 'ERROR',
     action,
     actorStaffId: caller.staffId,
-    details: { ...extra, error: error.slice(0, 300) },
+    details: {
+      ...extra,
+      reason: failure?.reason ?? 'unknown',
+      ...(failure?.httpStatus !== undefined ? { httpStatus: failure.httpStatus } : {}),
+    },
     ...caller.meta,
   });
 }
@@ -235,7 +244,7 @@ export async function generateDailyReportDraft(
   const errorCode = dailyReportErrorCodeOf(raw);
   const fallback = model !== null && model !== firstModel;
   if (errorCode) {
-    await logAiError(deps, caller, 'ai.daily_report.generate_failed', raw.internal, {
+    await logAiError(deps, caller, 'ai.daily_report.generate_failed', raw.failure, {
       customerId: input.customerId,
       model,
       fallback,
@@ -307,8 +316,8 @@ export async function generateDailyReportDraft(
   };
 }
 
-function withoutDiagnostics(draft: DailyReportDraft): Omit<DailyReportDraft, 'diagnostics'> {
-  const { diagnostics: _diagnostics, ...rest } = draft;
+function withoutDiagnostics(draft: DailyReportDraft): Omit<DailyReportDraft, 'diagnostics' | 'failure'> {
+  const { diagnostics: _diagnostics, failure: _failure, ...rest } = draft;
   return rest;
 }
 
@@ -420,7 +429,7 @@ export async function generateAccidentReportDraft(
   const fallback = model !== null && model !== firstModel;
   if ('error' in result) {
     const retryable = model !== null && result.retryable === true;
-    await logAiError(deps, caller, 'ai.accident_report.generate_failed', result.error, {
+    await logAiError(deps, caller, 'ai.accident_report.generate_failed', result.failure, {
       model,
       fallback,
       retryable,
@@ -456,7 +465,7 @@ export async function extractReceiptAmount(
   const models: (string | null)[] = chain.length > 0 ? chain : [null];
   let last: ReceiptOcrResult = { amount: '', storeName: '', receiptDate: '' };
   for (const [attempt, model] of models.entries()) {
-    const { retryable, ...result } = await reportAi.extractReceiptAmount({
+    const { retryable, failure, ...result } = await reportAi.extractReceiptAmount({
       base64Image,
       ...(model !== null ? { model } : {}),
     });
@@ -475,7 +484,7 @@ export async function extractReceiptAmount(
       return result;
     }
     const canRetry = model !== null && retryable === true;
-    await logAiError(deps, caller, 'ai.receipt_ocr.failed', result.error, {
+    await logAiError(deps, caller, 'ai.receipt_ocr.failed', failure, {
       model,
       attempt: attempt + 1,
       retryable: canRetry,

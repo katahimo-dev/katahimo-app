@@ -53,6 +53,24 @@ export interface DailyReportDiagnostics {
   shapeIssues: string[];
 }
 
+/**
+ * AI の呼び出しの失敗の理由コード(操作ログに残す。失敗の文・外部サービスの応答の本文は操作ログに残さない)。
+ * api_key_missing: キーが無い / timeout: 時間切れ / network_error: つながらない / empty_response: 応答に文が無い /
+ * invalid_response: 応答を読めない / http_error: HTTP のエラー(httpStatus に状態)。
+ */
+export type AiFailureReason =
+  | 'api_key_missing'
+  | 'timeout'
+  | 'network_error'
+  | 'empty_response'
+  | 'invalid_response'
+  | 'http_error';
+
+export interface AiFailure {
+  reason: AiFailureReason;
+  httpStatus?: number;
+}
+
 export interface DailyReportDraft {
   warnings: string[];
   internal: string;
@@ -67,6 +85,8 @@ export interface DailyReportDraft {
    * 混雑・上限・モデルが無い等は true)。成功時は undefined。
    */
   retryable?: boolean;
+  /** 失敗の理由コード(実装が分かるときだけ。usecase が操作ログに残し、画面には返さない)。 */
+  failure?: AiFailure;
   /** 応答のトークン数・形の検証(実装が分かるときだけ。DailyReportDiagnostics)。 */
   diagnostics?: DailyReportDiagnostics;
 }
@@ -93,6 +113,8 @@ export interface AccidentReportDraftError {
   error: string;
   /** DailyReportDraft.retryable と同じ(別のモデルで試し直す意味があるか)。 */
   retryable?: boolean;
+  /** DailyReportDraft.failure と同じ。 */
+  failure?: AiFailure;
 }
 
 export interface ExtractReceiptAmountInput {
@@ -115,6 +137,8 @@ export interface ReceiptOcrResult {
   error?: string;
   /** 失敗したとき、別のモデルで試し直す意味があるか(usecase の中だけで使い、画面には返さない)。 */
   retryable?: boolean;
+  /** DailyReportDraft.failure と同じ(usecase の中だけで使い、画面には返さない)。 */
+  failure?: AiFailure;
 }
 
 export interface ReportAiPort {

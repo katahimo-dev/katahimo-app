@@ -357,6 +357,10 @@ describe('翌日の予定のお知らせ(夜間ジョブ)', () => {
     expect(summary).toMatchObject({ queued: 1, failed: 1 });
     expect(summary.tenants[0]?.failures).toEqual([{ staffId: hanako.staffId, error: expect.any(String) }]);
     expect(ctx.appLog.byAction('push.route_notice.staff_failed')).toHaveLength(1);
+    // 操作ログには例外の種類・理由コードだけ(予定の読み込みの失敗の文は残さない)
+    const details = ctx.appLog.byAction('push.route_notice.staff_failed')[0]?.details;
+    expect(details).toMatchObject({ date: '2026-09-27', errorClass: expect.any(String) });
+    expect(JSON.stringify(details)).not.toContain('カレンダーを読み込めませんでした');
 
     ctx.schedule.clearError('佐藤 花子', '2026-09-27');
     expect(await runRouteNoticeJob(ctx.deps)).toMatchObject({ queued: 1, alreadyQueued: 1, failed: 0 });

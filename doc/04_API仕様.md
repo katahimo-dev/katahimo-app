@@ -30,7 +30,7 @@
 | 値 | `<テナントID>.<生トークン>`。DB は生トークンの SHA-256 だけを持つ(`sessions.token_hash`) |
 | 期限 | 無操作7日(`SESSION_IDLE_TTL_MS`)。残りが6日を切った要求で7日に延ばし Cookie も更新。ログインから30日(`SESSION_ABSOLUTE_TTL_MS`)を超えない |
 | 毎回の確認 | セッション(失効・期限)→ テナントが `active` → スタッフの存在 → 退職日(テナントの時刻帯の業務日)。退職済みならそのスタッフの全セッションを失効 |
-| ミドルウェア | `requireSession(container, deniedAction?)`(未ログイン 401。`deniedAction` があれば WARN `<action>.access_denied`)、`requireAdmin(container, action)`(未ログイン 401・管理者以外 403、どちらも WARN)、`requireCoordinator(container, action)`(同じくコーディネーター・管理者以外 403) |
+| ミドルウェア | `requireSession(container, deniedAction?)`(未ログイン 401。`deniedAction` があれば WARN `<action>.access_denied`。未ログインの拒否の WARN は送信元IPごとに10分に5件まで(06 10章))、`requireAdmin(container, action)`(未ログイン 401・管理者以外 403、どちらも WARN)、`requireCoordinator(container, action)`(同じくコーディネーター・管理者以外 403) |
 | 「この端末」の印 | 本番 `__Host-katahimo_device`、開発 `katahimo_device`。`HttpOnly`・`SameSite=Lax`・`Path=/`・本番は `Secure`、期限180日。ログインの成功のたびに発行し直し(パスワードの変更・再設定の成功でもその端末の分を作り直す)、ログアウトでは消さない。値は `v1.<テナントID>.<スタッフID>.<発行時刻(秒)>.<乱数>.<HMAC>`(個人情報なし。[06](06_セキュリティ設計.md) 2.4)。アカウント単位のログインのロックを本人の端末から避けるためだけに使う(セッションではない) |
 | 対象スタッフ | `targetStaffIdOf(c, staffId)`: 一般スタッフは常に本人、コーディネーター・管理者は指定があればそのスタッフ(usecase でも確かめる) |
 

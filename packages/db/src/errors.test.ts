@@ -12,8 +12,14 @@ describe('mapDatabaseError', () => {
   it('締めた月・確定済みの記録は locked、EXCLUDE・ログインID・AIプロンプトの版・日報AIのマスターのキーの重複は conflict', () => {
     expect(mapDatabaseError(pgError('KH001'))).toMatchObject({ code: 'locked', reason: 'period_locked' });
     expect(mapDatabaseError(pgError('KH002'))).toMatchObject({ code: 'locked', reason: 'record_locked' });
-    expect(mapDatabaseError(pgError('KH003'))).toMatchObject({ code: 'conflict', reason: 'already_cancelled' });
-    expect(mapDatabaseError(pgError('KH004'))).toMatchObject({ code: 'conflict', reason: 'record_not_draft' });
+    expect(mapDatabaseError(pgError('KH003'))).toMatchObject({
+      code: 'conflict',
+      reason: 'already_cancelled',
+    });
+    expect(mapDatabaseError(pgError('KH004'))).toMatchObject({
+      code: 'conflict',
+      reason: 'record_not_draft',
+    });
     expect(
       mapDatabaseError(pgError('23P01', 'reservation_assignments_tenant_id_staff_id_period_excl')),
     ).toMatchObject({ code: 'conflict' });

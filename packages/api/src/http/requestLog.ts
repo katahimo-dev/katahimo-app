@@ -64,6 +64,21 @@ export function requestLogger(options: { projectId?: string | undefined } = {}):
  */
 export const onApiError: ErrorHandler = (error, c) => {
   if (isDomainError(error)) {
+    if (error.cause !== undefined) {
+      // 外部サービスの失敗を一般的な文言の DomainError にしたもの: 元の例外の文はここ(プロセスのログ)にだけ出す
+      // (操作ログには例外の種類・理由コードだけ。core/domain/errors/errorLogDetails.ts)
+      const cause = error.cause;
+      writeStructuredLog({
+        severity: 'WARNING',
+        message: '外部サービスの失敗を利用者に一般的な文言で返しました',
+        requestId: requestIdOf(c),
+        method: c.req.method,
+        path: c.req.path,
+        code: error.code,
+        reason: error.reason,
+        cause: cause instanceof Error ? { name: cause.name, message: cause.message } : String(cause),
+      });
+    }
     return apiError(c, DOMAIN_ERROR_STATUS[error.code], error.code, error.message, error.fields);
   }
   if (error instanceof HTTPException) {

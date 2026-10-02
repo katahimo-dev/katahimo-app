@@ -51,6 +51,12 @@ export interface AuthenticateSessionOptions {
    * ログはこのときだけ記録する(全 API で毎回書くとログが溢れるため)。
    */
   isInitialLoad?: boolean;
+  /**
+   * 失敗のログ(WARN `auth.session.auto_login_failed`)を書くかを決める(API が送信元IPごとに間引く。認証の無い要求は
+   * 誰でも送れるため)。null を返せば書かない。書くときの suppressed(前に書かなかった件数)は details に残す。
+   * 省けば毎回書く。
+   */
+  failureLogGate?: () => { suppressed: number } | null;
   meta?: RequestMeta;
 }
 
@@ -123,24 +129,27 @@ export async function authenticateSession(
     : { ok: false, reason: 'malformed', tenantId: null };
 
   if (options.isInitialLoad) {
-    await deps.appLog.write(
-      result.ok
-        ? {
-            tenantId: result.session.tenantId,
-            level: 'INFO',
-            action: 'auth.session.auto_login',
-            actorStaffId: result.session.staffId,
-            ...options.meta,
-          }
-        : {
-            tenantId: result.tenantId ?? null,
-            level: 'WARN',
-            action: 'auth.session.auto_login_failed',
-            actorStaffId: result.staffId ?? null,
-            details: { reason: result.reason },
-            ...options.meta,
-          },
-    );
+    if (result.ok) {
+      await deps.appLog.write({
+        tenantId: result.session.tenantId,
+        level: 'INFO',
+        action: 'auth.session.auto_login',
+        actorStaffId: result.session.staffId,
+        ...options.meta,
+      });
+    } else {
+      const gate = options.failureLogGate ? options.failureLogGate() : { suppressed: 0 };
+      if (gate) {
+        await deps.appLog.write({
+          tenantId: result.tenantId ?? null,
+          level: 'WARN',
+          action: 'auth.session.auto_login_failed',
+          actorStaffId: result.staffId ?? null,
+          details: { reason: result.reason, ...(gate.suppressed > 0 ? { suppressed: gate.suppressed } : {}) },
+          ...options.meta,
+        });
+      }
+    }
   }
   return result.ok ? { ok: true, session: result.session } : { ok: false, reason: result.reason };
 }

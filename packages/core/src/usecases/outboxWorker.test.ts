@@ -64,6 +64,9 @@ describe('outbox ワーカー', () => {
     expect(await processNextOutboxMessage(ctx.deps)).toBe('failed');
     expect(ctx.data().outbox[0]?.status).toBe('dead');
     expect(ctx.appLog.byAction('outbox.message_failed')[0]).toMatchObject({ level: 'ERROR' });
+    // 操作ログには例外の種類だけ(文は outbox の last_error にだけ残す)
+    expect(ctx.appLog.byAction('outbox.message_failed')[0]?.details).not.toHaveProperty('error');
+    expect(ctx.appLog.byAction('outbox.message_failed')[0]?.details).toHaveProperty('errorClass');
   });
 
   it('リースの切れた processing は別のワーカーが取り直す', async () => {

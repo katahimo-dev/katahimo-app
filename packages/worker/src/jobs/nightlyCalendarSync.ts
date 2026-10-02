@@ -39,6 +39,8 @@ export async function runNightlyCalendarSyncJob(
         failed: t.failed,
         changedStaffCount: t.changedStaffCount,
         error: t.error,
+        // 失敗の文はここ(プロセスのログ)にだけ出す。操作ログは例外の種類・理由コードだけ
+        failures: t.failures,
       })),
     },
   );

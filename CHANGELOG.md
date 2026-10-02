@@ -132,6 +132,12 @@
   - 日報の本文の変更履歴(`care_record_revisions`)を書くのはトリガー(所有者の権限で動く SECURITY DEFINER に変えた)だけにし、アプリの
     INSERT の権限を外した(アプリの DB ユーザーで偽の履歴を書けない)。提出した記録を下書きに戻す更新も断る(`KH004`)
     (`doc/03_データベース設計.md` 4・5・6章、`doc/06_セキュリティ設計.md` 3・10章)。
+- 操作ログ(`app_logs`)を溢れさせられないようにし、例外の文を入れないようにした:
+  - ログインしていない要求の拒否の WARN(`<action>.access_denied` の `invalid_session`・`auth.session.auto_login_failed`)を、送信元IP
+    (IPv6 は /64)ごとに10分に5件までにした(API のインスタンスごと。応答の 401 は変わらない。間引いた件数は次の1件の `details.suppressed`)。
+  - ジョブ・外部サービスの失敗の操作ログ(夜間のカレンダー反映・保守・翌日の予定のお知らせ・free/busy の同期・outbox・予定の読み込み・
+    カレンダーから反映・AI の生成と読み取り)に例外の文を入れず、例外の種類と理由コード(`errorClass`・`errorCode`・`httpStatus`、AI は
+    `reason`)だけにした。文はジョブの出力・API の要求のログ(Cloud Logging)にだけ出す(`doc/06_セキュリティ設計.md` 10章)。
 
 ## [Ver. 1.3.0] - 2026-10-01
 

@@ -237,7 +237,13 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
   });
 
   it('指定したモデルで呼び、失敗はモデル名つきで残す。Flash / Flash-Lite 系以外は 400(AI を呼ばない)', async () => {
-    ai = fakeAi({ warnings: ['API Error'], internal: '混み合っています', customer: '', retryable: true });
+    ai = fakeAi({
+      warnings: ['API Error'],
+      internal: '混み合っています',
+      customer: '',
+      retryable: true,
+      failure: { reason: 'http_error', httpStatus: 503 },
+    });
     deps = { ...deps, reportAi: ai.port, reportAiFactory: { create: () => ai.port } };
     const failed = await generateDailyReportDraft(deps, staff, {
       text: 'メモ',
@@ -251,10 +257,14 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
       model: 'gemini-2.0-flash',
       errorCode: 'api_error',
     });
-    expect(ctx.appLog.byAction('ai.daily_report.generate_failed')[0]?.details).toMatchObject({
+    // 操作ログには理由コードと HTTP の状態だけ(失敗の文は残さない)。画面への応答に failure は返さない
+    expect(ctx.appLog.byAction('ai.daily_report.generate_failed')[0]?.details).toEqual({
+      customerId,
       model: 'gemini-2.0-flash',
       fallback: true,
       retryable: true,
+      reason: 'http_error',
+      httpStatus: 503,
     });
 
     await expect(
@@ -357,9 +367,9 @@ describe('保育日報の AI 生成(日報AIの3軸と生成の記録)', () => {
       model: 'gemini-2.5-flash',
     });
     expect(second).toMatchObject({ model: 'gemini-2.5-flash', retryable: false });
-    expect(ctx.appLog.byAction('ai.accident_report.generate_failed').map((e) => e.details)).toMatchObject([
-      { model: 'gemini-flash-latest', fallback: false, retryable: true },
-      { model: 'gemini-2.5-flash', fallback: true, retryable: false },
+    expect(ctx.appLog.byAction('ai.accident_report.generate_failed').map((e) => e.details)).toEqual([
+      { model: 'gemini-flash-latest', fallback: false, retryable: true, reason: 'unknown' },
+      { model: 'gemini-2.5-flash', fallback: true, retryable: false, reason: 'unknown' },
     ]);
     await expect(
       generateAccidentReportDraft(deps, staff, { text: 'ころんだ', model: 'gemini-2.5-pro' }),
@@ -477,6 +487,7 @@ describe('領収書の読み取り(Flash-Lite 系をサーバーの中で順に�
       model: 'gemini-flash-lite-latest',
       retryable: false,
     });
+    expect(JSON.stringify(ctx.appLog.byAction('ai.receipt_ocr.failed')[0]?.details)).not.toContain('APIキー');
   });
 
   it('API キーが無ければモデルを指定せずに1回だけ呼ぶ', async () => {

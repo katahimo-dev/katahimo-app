@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import type {
   AccidentReportDraft,
   AccidentReportDraftError,
+  AiFailure,
+  AiFailureReason,
   DailyReportDraft,
   ExtractReceiptAmountInput,
   GenerateAccidentReportInput,
@@ -29,7 +31,7 @@ const OCR_TIMEOUT_MS = 30_000;
 
 type GeminiCallResult =
   | { ok: true; value: unknown; usage?: ReportAiTokenUsage }
-  | { ok: false; error: string; httpCode?: number; rawError?: string };
+  | { ok: false; error: string; reason: AiFailureReason; httpCode?: number; rawError?: string };
 
 /** 値の中の全ての文字列に含まれる `\n`(エスケープされた改行)を実際の改行に戻す。GAS版callGeminiのunescapeNewlinesと同じ。 */
 function unescapeNewlines(value: unknown): unknown {
@@ -93,9 +95,17 @@ async function callGemini(
     responseText = await response.text();
   } catch (e) {
     if (e instanceof Error && e.name === 'TimeoutError') {
-      return { ok: false, error: 'Gemini APIの応答に時間がかかりすぎたため、打ち切りました。' };
+      return {
+        ok: false,
+        error: 'Gemini APIの応答に時間がかかりすぎたため、打ち切りました。',
+        reason: 'timeout',
+      };
     }
-    return { ok: false, error: `System Error: ${e instanceof Error ? e.message : String(e)}` };
+    return {
+      ok: false,
+      error: `System Error: ${e instanceof Error ? e.message : String(e)}`,
+      reason: 'network_error',
+    };
   }
 
   if (httpCode === 200) {
@@ -103,12 +113,12 @@ async function callGemini(
       const json = JSON.parse(responseText);
       const candidates = json.candidates;
       if (!Array.isArray(candidates) || candidates.length === 0) {
-        return { ok: false, error: 'No candidates returned' };
+        return { ok: false, error: 'No candidates returned', reason: 'empty_response' };
       }
       const responseParts: Array<{ thought?: boolean; text?: string }> = candidates[0]?.content?.parts ?? [];
       const textPart = responseParts.find((p) => !p.thought) ?? responseParts[0];
       if (!textPart?.text) {
-        return { ok: false, error: 'No text part found in response' };
+        return { ok: false, error: 'No text part found in response', reason: 'empty_response' };
       }
       const cleanText = textPart.text
         .replace(/```json/g, '')
@@ -118,54 +128,37 @@ async function callGemini(
       const usage = usageOf(json);
       return { ok: true, value: unescapeNewlines(parsed), ...(usage ? { usage } : {}) };
     } catch (_parseError) {
-      return { ok: false, error: 'レスポンス解析エラー(サーバー側の問題の可能性があります)' };
+      return {
+        ok: false,
+        error: 'レスポンス解析エラー(サーバー側の問題の可能性があります)',
+        reason: 'invalid_response',
+      };
     }
   }
 
   const rawError = responseText.slice(0, 500);
+  return { ok: false, error: httpErrorMessage(httpCode), reason: 'http_error', httpCode, rawError };
+}
+
+/** HTTP の状態ごとの日本語の文(GAS版 callGemini と同じ)。 */
+function httpErrorMessage(httpCode: number): string {
   switch (true) {
     case httpCode === 400:
-      return { ok: false, error: 'リクエストが不正です(APIキーを確認してください)', httpCode, rawError };
+      return 'リクエストが不正です(APIキーを確認してください)';
     case httpCode === 401:
-      return { ok: false, error: 'APIキーが無効です(設定を確認してください)', httpCode, rawError };
+      return 'APIキーが無効です(設定を確認してください)';
     case httpCode === 403:
-      return {
-        ok: false,
-        error: 'API呼び出しが許可されていません(QuotaまたはAPI有効化を確認してください)',
-        httpCode,
-        rawError,
-      };
+      return 'API呼び出しが許可されていません(QuotaまたはAPI有効化を確認してください)';
     case httpCode === 429:
-      return {
-        ok: false,
-        error: 'APIのレート制限に達しました。数分〜数時間待ってから再度お試しください。',
-        httpCode,
-        rawError,
-      };
+      return 'APIのレート制限に達しました。数分〜数時間待ってから再度お試しください。';
     case httpCode === 500:
-      return {
-        ok: false,
-        error: 'Gemini API側で一時的なエラーが発生しました。数分〜数時間待ってから再度お試しください。',
-        httpCode,
-        rawError,
-      };
+      return 'Gemini API側で一時的なエラーが発生しました。数分〜数時間待ってから再度お試しください。';
     case httpCode === 503:
-      return {
-        ok: false,
-        error:
-          'Gemini APIサービスが混み合っており、一時的に利用できません。数分〜数時間待ってから再度お試しください。',
-        httpCode,
-        rawError,
-      };
+      return 'Gemini APIサービスが混み合っており、一時的に利用できません。数分〜数時間待ってから再度お試しください。';
     case httpCode >= 500:
-      return {
-        ok: false,
-        error: `Gemini APIサーバーエラー(${httpCode})が発生しました。数分〜数時間待ってから再度お試しください。`,
-        httpCode,
-        rawError,
-      };
+      return `Gemini APIサーバーエラー(${httpCode})が発生しました。数分〜数時間待ってから再度お試しください。`;
     default:
-      return { ok: false, error: `API呼び出しエラー(${httpCode})`, httpCode, rawError };
+      return `API呼び出しエラー(${httpCode})`;
   }
 }
 
@@ -234,6 +227,11 @@ function toDailyDraft(value: unknown): DailyReportDraft {
  * 別のモデルで試し直す意味がある失敗か。API キーの誤り(401・403、400 の API_KEY_INVALID)はどのモデルでも
  * 同じなので false。混雑・上限(429・5xx)、モデルが無い(404)、通信・応答の解析の失敗は true。
  */
+/** 失敗の理由コード(操作ログ用。文・応答の本文は入れない)。 */
+function failureOf(result: Extract<GeminiCallResult, { ok: false }>): AiFailure {
+  return { reason: result.reason, ...(result.httpCode !== undefined ? { httpStatus: result.httpCode } : {}) };
+}
+
 function isRetryableFailure(result: Extract<GeminiCallResult, { ok: false }>): boolean {
   if (result.httpCode === 401 || result.httpCode === 403) return false;
   if (result.httpCode === 400 && result.rawError?.includes('API_KEY_INVALID')) return false;
@@ -308,6 +306,7 @@ export class GeminiAiPort implements ReportAiPort {
         internal: detail,
         customer: '',
         retryable: isRetryableFailure(result),
+        failure: failureOf(result),
       };
     }
     const diagnostics = {
@@ -353,7 +352,9 @@ export class GeminiAiPort implements ReportAiPort {
       input.model || DEFAULT_MODEL_REPORT,
     );
 
-    if (!result.ok) return { error: result.error, retryable: isRetryableFailure(result) };
+    if (!result.ok) {
+      return { error: result.error, retryable: isRetryableFailure(result), failure: failureOf(result) };
+    }
     return result.value as AccidentReportDraft;
   }
 
@@ -389,6 +390,7 @@ export class GeminiAiPort implements ReportAiPort {
         receiptDate: '',
         error: result.error,
         retryable: isRetryableFailure(result),
+        failure: failureOf(result),
       };
     }
     return result.value as ReceiptOcrResult;
@@ -400,14 +402,25 @@ export class NoopReportAiPort implements ReportAiPort {
   readonly hasApiKey = false;
 
   async generateDailyReport(): Promise<DailyReportDraft> {
-    return { warnings: ['API Key Missing'], internal: 'Error: API Key not set', customer: '' };
+    return {
+      warnings: ['API Key Missing'],
+      internal: 'Error: API Key not set',
+      customer: '',
+      failure: { reason: 'api_key_missing' },
+    };
   }
 
   async generateAccidentReport(): Promise<AccidentReportDraftError> {
-    return { error: 'API Key Missing' };
+    return { error: 'API Key Missing', failure: { reason: 'api_key_missing' } };
   }
 
   async extractReceiptAmount(): Promise<ReceiptOcrResult> {
-    return { amount: '', storeName: '', receiptDate: '', error: 'API Key Missing' };
+    return {
+      amount: '',
+      storeName: '',
+      receiptDate: '',
+      error: 'API Key Missing',
+      failure: { reason: 'api_key_missing' },
+    };
   }
 }

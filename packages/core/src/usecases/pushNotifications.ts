@@ -3,6 +3,8 @@ import {
   buildRouteNotice,
   buildTestNotice,
   DomainError,
+  errorLogDetails,
+  errorMessageOf,
   newId,
   outboxDedupeKey,
   PermanentOutboxError,
@@ -366,16 +368,17 @@ export async function enqueueRouteNoticesForTenant(
     failures: [],
     interrupted: false,
   };
-  const fail = async (staffId: string, error: string) => {
+  // 文はジョブの出力(プロセスのログ)にだけ。操作ログは理由コード・例外の種類だけ
+  const fail = async (staffId: string, message: string, logDetails: Record<string, unknown>) => {
     summary.failed++;
-    summary.failures.push({ staffId, error });
+    summary.failures.push({ staffId, error: message });
     await deps.appLog.write({
       tenantId: tenant.id,
       level: 'ERROR',
       action: 'push.route_notice.staff_failed',
       actorType: 'system',
       targetStaffId: staffId,
-      details: { date, error: error.slice(0, 300) },
+      details: { date, ...logDetails },
     });
   };
   for (const staff of targets) {
@@ -392,7 +395,9 @@ export async function enqueueRouteNoticesForTenant(
         strict: true,
       });
       if (!schedule.success) {
-        await fail(staff.id, schedule.message ?? '予定を読めませんでした');
+        await fail(staff.id, schedule.message ?? '予定を読めませんでした', {
+          reason: 'schedule_unavailable',
+        });
         continue;
       }
       const appointments = schedule.appointments ?? [];
@@ -416,7 +421,7 @@ export async function enqueueRouteNoticesForTenant(
       if (inserted) summary.queued++;
       else summary.alreadyQueued++;
     } catch (error) {
-      await fail(staff.id, error instanceof Error ? error.message : String(error));
+      await fail(staff.id, errorMessageOf(error), { ...errorLogDetails(error) });
     }
   }
   await deps.appLog.write({
@@ -469,13 +474,13 @@ export async function runRouteNoticeJob(
     try {
       summaries.push(await enqueueRouteNoticesForTenant(deps, tenant, date, options.shouldStop));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessageOf(error);
       await deps.appLog.write({
         tenantId: tenant.id,
         level: 'ERROR',
         action: 'push.route_notice.tenant_failed',
         actorType: 'system',
-        details: { date, error: message.slice(0, 300) },
+        details: { date, ...errorLogDetails(error) },
       });
       summaries.push({
         tenantId: tenant.id,
