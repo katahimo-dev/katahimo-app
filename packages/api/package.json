@@ -12,6 +12,7 @@
     "start": "tsx src/server.ts",
     "build": "tsup",
     "seed": "tsx src/scripts/seed.ts",
+    "demo:reset": "tsx src/scripts/demoReset.ts",
     "tenant:create": "tsx src/scripts/createTenant.ts",
     "tenant:calendars": "tsx src/scripts/tenantCalendars.ts",
     "tenant:customer-source": "tsx src/scripts/tenantCustomerSource.ts",

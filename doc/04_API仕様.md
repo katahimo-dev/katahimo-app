@@ -63,6 +63,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | 5 | `/api/*` | CSRF: 状態を変える要求(POST/PUT/PATCH/DELETE)は `Sec-Fetch-Site` が `same-origin` / `none` 以外なら 403。`Sec-Fetch-Site` が無ければ `Origin` のホストが `Host` と違えば 403。どちらも無い要求(ブラウザ以外)は通す |
 | 6 | `/api/*` | 本体のある状態変更の要求は `Content-Type: application/json` だけ(415) |
 | 7 | `/api/*` | 本体の上限: 既定 256KB、`POST /api/receipts` 14MB、`POST /api/receipts/ocr` 3MB、`POST /api/integrations/customers` 2MB、`POST /api/admin/report-ai/import` 3MB、`POST /api/admin/staff/import` 3MB(413) |
+| 8 | `/api/*` | 公開デモ(`DEMO_TENANT_SLUG` を設定したときだけ): デモ用テナントの断る操作を 403(1.6) |
 
 ### 1.5 回数制限
 
@@ -93,6 +94,35 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 一致した回は数えない(アカウントは数え直し、IP は先に取った1回分を返す)。
 `integration_auth_failure_ip` も同じく API キーを確かめる前に1回分を取り、成功した回は返す。ロック中の要求は `rate_limit.exceeded` も
 `integration.auth_failed` も残さず(失敗の続く連携先で操作ログが溢れないように)、ロックの始まりに1回だけ WARN `integration.auth_locked` を残す。
+
+### 1.6 公開デモ用テナント(`DEMO_TENANT_SLUG`)
+
+訪問者みんなで1つのテナントを使う公開デモのための制限(`api/src/http/demoRestrictions.ts`)。`DEMO_TENANT_SLUG` を設定したときだけ、
+その slug のテナントにだけ掛かる(普通のテナントは変わらない)。データは毎晩 `pnpm demo:reset` で作り直す(07 3.9)ため、入力・編集・
+閲覧・スタッフの追加・プロンプトの編集は普通に使える。断るのは、1人の操作で他の訪問者のデモを壊すものと、外への送信だけ:
+
+| 断る操作 | 理由 |
+| --- | --- |
+| `POST /api/auth/change-password`、`POST /api/auth/password-reset/request`・`/confirm`(本文の `tenantSlug` がデモ用テナント) | 共有のアカウントでログインできなくなる・メールが外に出る |
+| `PATCH`・`DELETE /api/admin/staff/:id`(デモ用アカウント `DEMO_ACCOUNTS` だけ。他のスタッフは編集できる)、`POST /api/admin/staff/:id/password-guide`、`POST /api/admin/staff/import` | 同上 |
+| `POST /api/admin/customers/import` | 顧客を丸ごと入れ替える |
+| `POST /api/settings/admin/gchat-webhooks` | 訪問者の入れた送り先へ外部送信が起きる |
+| `GET /api/admin/audit-logs`・`/audit-logs.csv` | 操作ログに他の訪問者の送信元IP・ブラウザが残る(共有の管理者アカウントで見られる) |
+
+- Gemini の API キー(`POST /api/settings/admin/gemini-key`)は断らない。運用担当者がデモ用の管理者で保存すれば、デモでも実際に AI で書ける
+  (回数は下の上限。保存済みのキーは伏せ字でしか返さない。`demo:reset` が新しいテナントへ封をし直して引き継ぐ。07 3.9)。
+  共有の管理者アカウントなので、訪問者も上書きできる(そのときは保存し直す)。
+- 応答は 403 `{ code: 'forbidden', message: 'デモ環境ではこの操作はできません。' }`、WARN `demo.action_refused`(`details.rule` に規則名)。
+- テナントはセッション Cookie の先頭(テナント ID)か本文の `tenantSlug` で決める(断るかどうかの判定だけ。認証は各ルートが行う)。
+- ログイン: デモ用テナントはアカウント単位のロック(`login_failure_account`)をしない(わざと間違え続けて全員を締め出させない)。
+  送信元IP単位(`login_failure_ip`)は残す。
+- AI(`POST /api/reports/daily/generate`・`/accident/generate`・`POST /api/receipts/ocr`)は1回のログイン(セッション)につき合計
+  `DEMO_AI_USES_PER_SESSION`(10)回まで(規則 `demo_ai_session`、キーはセッションID)。超えると 429「デモ環境では、AIを使えるのは
+  1回のログインにつき10回までです。」。ログインし直す・スタッフを足すと増やせるため、天井として送信元IPごとに1日30回
+  (`demo_ai_ip_day`)とデモ用テナント全体で1日300回(`demo_ai_tenant_day`)も数える(超えると 429「デモ環境の本日のAIの利用回数の上限に
+  達しました。…」)。狭い枠から数え、超えた回は広い枠を使わない。スタッフ単位の1日の上限(`ai_generate_staff`・`receipt_ocr_staff`)も掛かる。
+- パスの ID は大文字・小文字をそろえて比べる(UUID は DB では大文字・小文字を区別しないため、大文字で書いてデモ用アカウントの守りを
+  すり抜けさせない。`routes/adminStaff.ts` の自分自身の降格・退職・削除の判定も同じ)。
 
 ## 2. エンドポイント一覧
 
@@ -209,9 +239,6 @@ INFO `report.<daily|accident>.saved`(他人名義なら `targetStaffId`)。Googl
 ### 2.9 管理者 `/api/admin`
 
 (`/api/admin` の下でも、顧客CSVの取込だけはコーディネーターも使える。下の表の行を見る)
-
-パスのスタッフ ID(`:id`)は小文字にそろえて比べる(UUID は DB では大文字・小文字を区別しないため、大文字で書いて自分自身の降格・
-退職・削除の判定をすり抜けさせない。`routes/adminStaff.ts`)。
 
 | メソッド・パス | 契約(要求 / 応答) | 応答・エラー・ログ |
 | --- | --- | --- |

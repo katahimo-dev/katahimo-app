@@ -36,8 +36,8 @@ const NO_PLACE: Place = { address: '', latLng: null };
 
 /**
  * DB の予約(reservations とスタッフの確定した割当 reservation_assignments)を「今日/明日の予定」として返す
- * SchedulePort(SCHEDULE_PROVIDER=database)。Google カレンダーを用意しない環境のためのもの。予約は今後のマッチング
- * (管理者の割当)のアプリが入れる(いまはテストだけが入れる)。
+ * SchedulePort(SCHEDULE_PROVIDER=database)。Google カレンダーを用意しない公開デモ(`pnpm demo:reset` が今日・明日の
+ * 予約を入れる)や、Google の設定が無い環境のためのもの。
  *
  * - 予定はすべて顧客の訪問(CUSTOMER APPOINTMENT)。顧客の住所・緯度経度は予定のマスタ(ScheduleDirectoryPort)から引く。
  * - 区間の距離・所要時間は地図APIを呼ばずに緯度経度から見積もる(domain/schedule/estimatedLeg.ts。目安の値)。

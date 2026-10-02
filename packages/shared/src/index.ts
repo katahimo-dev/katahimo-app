@@ -23,5 +23,6 @@ export * from './contracts/staffAdmin';
 export * from './contracts/uiConfig';
 export * from './defaults/aiPrompts';
 export * from './defaults/assessments';
+export * from './defaults/demo';
 export * from './defaults/passwordPolicy';
 export * from './geo/latLng';

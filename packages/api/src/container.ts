@@ -46,6 +46,7 @@ import {
 import { sql } from 'drizzle-orm';
 import { argon2PasswordHasher } from './authAdapters';
 import type { Env } from './env';
+import { DemoTenant } from './http/demoRestrictions';
 import { writeStructuredLog } from './http/requestLog';
 import { deriveSecret } from './secrets';
 
@@ -93,6 +94,8 @@ export interface Container {
     /** セッション Cookie の Secure 属性・HSTS に使う。 */
     isProduction: boolean;
   };
+  /** 公開デモ用テナント(DEMO_TENANT_SLUG)の判定。null ならデモの制限は無い(http/demoRestrictions.ts)。 */
+  demo: DemoTenant | null;
 }
 
 /** 環境変数 RATE_LIMIT_* で回数だけを差し替えた規則一式。 */
@@ -186,5 +189,6 @@ export function createContainer(env: Env, db: Database): Container {
       await db.execute(sql`SELECT 1`);
     },
     config: { isProduction: env.NODE_ENV === 'production' },
+    demo: env.DEMO_TENANT_SLUG ? new DemoTenant(env.DEMO_TENANT_SLUG, tenants) : null,
   };
 }

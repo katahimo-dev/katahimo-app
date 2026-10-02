@@ -49,7 +49,8 @@ export interface RateLimitPolicy {
    */
   staffImportApplyStaff: RateLimitRule;
   /**
-   * Gemini API キーの保存(管理者単位の1時間の上限)。保存ごとに Gemini へ確かめの問い合わせをするため。
+   * Gemini API キーの保存(管理者単位の1時間の上限)。保存ごとに Gemini へ確かめの問い合わせをするため
+   * (公開デモでは誰でも管理者でログインできる)。
    */
   geminiKeySaveStaff: RateLimitRule;
   /**

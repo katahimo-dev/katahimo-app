@@ -36,7 +36,7 @@ export interface ScheduleProviderEnv extends Omit<GasBridgeEnv, 'SCHEDULE_PROVID
  * 1. GOOGLE_MAPS_API_KEY と GOOGLE_APPLICATION_CREDENTIALS が両方あれば google
  * 2. GAS_BRIDGE_URL・GAS_BRIDGE_SECRET・GAS_BRIDGE_TENANT が揃っていれば gas_bridge(そのテナントだけ予定を返す)
  * 3. どちらも無ければ noop(常に予定なし)
- * database(DB の予約を予定にする)は自動では選ばない(明示したときだけ)。
+ * database(DB の予約を予定にする。公開デモ用)は自動では選ばない(明示したときだけ)。
  * Cloud Run(Workload Identity)では GOOGLE_APPLICATION_CREDENTIALS を使わないため、
  * SCHEDULE_PROVIDER=google を明示すること。
  */

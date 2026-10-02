@@ -1,4 +1,5 @@
 import { isAdminRole } from '@katahimo/shared';
+import { isDemoMode } from '../../lib/demo';
 import { confirmNative } from '../../ui/confirm';
 import { FadeModal, ModalHeader } from '../../ui/modal';
 import { showToast } from '../../ui/toast';
@@ -45,29 +46,32 @@ export function SettingsModal({ open, onClose, onOpenChangePassword }: SettingsM
 
           <NotificationSettingsSection open={open} />
 
-          <div className="border-t pt-4">
-            <button
-              type="button"
-              onClick={onOpenChangePassword}
-              className="w-full min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl flex items-center justify-center gap-2"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
+          {/* 公開デモではパスワードを変えられない(API が断る。共有のアカウントのため) */}
+          {isDemoMode() ? null : (
+            <div className="border-t pt-4">
+              <button
+                type="button"
+                onClick={onOpenChangePassword}
+                className="w-full min-h-12 py-3 bg-gray-200 text-gray-800 text-base font-bold rounded-xl flex items-center justify-center gap-2"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                />
-              </svg>
-              パスワード変更
-            </button>
-          </div>
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                  />
+                </svg>
+                パスワード変更
+              </button>
+            </div>
+          )}
 
           {isAdminRole(user.role) ? (
             <p className="border-t pt-4 text-sm text-gray-600">
