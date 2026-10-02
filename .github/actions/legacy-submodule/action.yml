@@ -5,7 +5,7 @@ description: >-
 
 inputs:
   token:
-    description: サブモジュールのリポジトリを読めるトークン(secrets.SUBMODULE_TOKEN)。空なら取得しない
+    description: サブモジュールのリポジトリを読めるトークン(Environment legacy-submodule の secrets.SUBMODULE_TOKEN。PR のジョブには渡さない。doc/07 9.2)。空なら取得しない
     required: false
     default: ''
 

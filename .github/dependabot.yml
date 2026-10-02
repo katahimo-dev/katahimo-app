@@ -43,13 +43,17 @@ updates:
       day: monday
       time: '09:00'
       timezone: Asia/Tokyo
+    # 公開直後のイメージは取り込まない
+    cooldown:
+      default-days: 7
     ignore:
       - dependency-name: node
         update-types: [version-update:semver-major]
     commit-message:
       prefix: deps
 
-  # .github/workflows と .github/actions(複合アクション)で使うアクション
+  # .github/workflows と .github/actions(複合アクション)で使うアクション。コミット SHA で固定している
+  # (`uses: owner/action@<SHA> # vX.Y.Z`)ため、Dependabot が SHA とコメントの版を一緒に上げる
   - package-ecosystem: github-actions
     directories:
       - /
@@ -59,6 +63,9 @@ updates:
       day: monday
       time: '09:00'
       timezone: Asia/Tokyo
+    # 公開直後の版は取り込まない(タグの付け替え・乗っ取りの公開から取り下げまでの時間を避ける)
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ['*']

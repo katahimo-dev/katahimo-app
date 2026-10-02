@@ -1,9 +1,11 @@
 # CI: lint / 型検査 / マイグレーション(差分チェック含む)/ テスト / ビルド、と 実際のAPI・DBでの通し確認(e2e)。
 # ドキュメント(*.md・doc/ の下)だけの変更では check・e2e を省き、資料のリンク・図の検査(docs)だけを流す(changes ジョブ)。
 # 必要な設定(doc/07_インフラ・運用.md 9章):
-#   secrets.SUBMODULE_TOKEN … katahimo-dev/gas-childcare-visit-app を読めるトークン(fine-grained PAT の
-#                             Contents: Read-only 等)。未設定でも CI は通り、GAS版との一致テスト(gasParity)だけが
-#                             スキップされる(e2e ジョブはこのサブモジュールを使わない)。
+#   Environment legacy-submodule の secret SUBMODULE_TOKEN … katahimo-dev/gas-childcare-visit-app だけを読める fine-grained PAT
+#                             (Contents: Read-only・期限つき)。Environment のブランチは main だけに絞る。リポジトリの
+#                             secret には置かない(PR のワークフローから読めてしまう)。
+#                             GAS版との一致テスト(gasParity)は、このトークンを使う parity ジョブだけが main への push で流す。
+#                             PR の check ジョブにはトークンを渡さず、gasParity はスキップされる(e2e ジョブはこのサブモジュールを使わない)。
 name: CI
 
 on:
@@ -42,7 +44,7 @@ jobs:
       code: ${{ steps.diff.outputs.code }}
     steps:
       # ファイル名を比べるだけなので履歴はコミットと木だけを取る(ブロブは要らない)
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -80,12 +82,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
       # scripts/checkDocLinks.mjs は Node の標準モジュールだけを使う(依存のインストールは要らない)
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
 
@@ -116,14 +118,17 @@ jobs:
           --health-retries 20
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
-      - id: legacy
-        uses: ./.github/actions/legacy-submodule
-        with:
-          token: ${{ secrets.SUBMODULE_TOKEN }}
+      # GAS版のサブモジュール(非公開)は取得しない: このジョブはリポジトリへの書き込みの権限が無い人のブランチ・依存の
+      # コードも動かし、PR のワークフロー自体も PR で書き換えられるため、トークンを渡さない。gasParity は parity ジョブが
+      # main への push で流す(手元では submodule update --init のあと pnpm test)
+      - name: GAS版との一致テストについて
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          echo "::notice title=GAS版との一致テスト(gasParity)::PR ではスキップします(サブモジュールのトークンを PR に渡さないため)。main へのマージ後に parity ジョブが流します。手元では submodule update --init のあと pnpm test で確かめてください。"
 
       - uses: ./.github/actions/setup
 
@@ -153,6 +158,40 @@ jobs:
       - name: ビルド
         run: pnpm build
 
+  # GAS版との一致テスト(gasParity: 勤怠の計算・ルートの検索・日報AIのプロンプトをGAS版のソース自体を node:vm で動かして比べる)。
+  # GAS版(非公開リポジトリ)を読むトークン SUBMODULE_TOKEN は Environment legacy-submodule(ブランチは main だけ。doc/07 9.2)の
+  # secret に置き、このジョブだけが受け取る。PR の実行(ref が refs/pull/…)は Environment の制限で受け取れないため、このジョブは
+  # PR では動かさず、main への push と手で実行(main から)のときだけ流す。トークンが無い・取得できないときは警告を出して
+  # 失敗にはしない(GAS版を取得できないテストはスキップされる)。
+  parity:
+    name: GAS版との一致テスト
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: legacy-submodule
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - id: legacy
+        uses: ./.github/actions/legacy-submodule
+        with:
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+
+      - uses: ./.github/actions/setup
+
+      - name: gasParity
+        if: ${{ steps.legacy.outputs.available == 'true' }}
+        run: pnpm vitest run --project unit gasParity
+
+      - name: GAS版を取得できなかったため未実行
+        if: ${{ steps.legacy.outputs.available != 'true' }}
+        run: |
+          echo "::warning title=gasParity 未実行::GAS版のソースを取得できなかったため一致テストを実行していません(SUBMODULE_TOKEN の設定・期限を確認: doc/07_インフラ・運用.md 9.2)。"
+
   e2e:
     name: 通し確認(e2e)
     needs: check
@@ -179,7 +218,7 @@ jobs:
       API_PORT: '8080'
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
@@ -190,7 +229,7 @@ jobs:
         name: Playwright の版
         run: echo "version=$(node -p "require('./tools/e2e/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v5
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         id: browsers
         with:
           path: ~/.cache/ms-playwright
@@ -206,7 +245,7 @@ jobs:
 
       # Google Fonts のキャッシュ(src/fontCache.ts)。手順によって取得するサブセットが増えるため、
       # 毎回新しいキーで保存し、直近のものから復元する
-      - uses: actions/cache@v5
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: tools/e2e/.cache/fonts
           key: e2e-fonts-${{ github.run_id }}
@@ -240,7 +279,7 @@ jobs:
             echo "::endgroup::"
           done
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: e2e-out

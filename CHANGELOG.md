@@ -12,6 +12,12 @@
 
 ### 変更
 
+- CI のセキュリティの強化(`doc/07_インフラ・運用.md` 2.0・9章)。
+  - GAS版のサブモジュールを読むトークン `SUBMODULE_TOKEN` を、PR の `check` ジョブに渡さないようにした。書き込みの権限がある人が PR のブランチでワークフローを書き換えて secret を外へ出せたため。GAS版との一致テスト(gasParity)は、トークンを Environment `legacy-submodule`(ブランチは main だけ)に置いてmain への push で流す `parity` ジョブ(「GAS版との一致テスト」)に移した。PR では gasParity がスキップされる(手元で `pnpm test` を流す)。`release-tag.yml` は `parity` の成功も確かめてからタグを付ける。トークンは対象リポジトリだけ・Contents の読み取りだけ・期限つきの fine-grained PAT にする。
+  - GitHub Actions をすべてコミット SHA で固定し(`@<SHA> # vX.Y.Z`)、Dependabot の github-actions と Docker に公開から7日待つ `cooldown` を足した。
+  - `infra/docker-compose.yml` の PostgreSQL を `127.0.0.1:5433` だけに公開するようにした(LAN から届かない)。
+- インフラ(`infra/gcp`): Cloud SQL に `connector_enforcement = "REQUIRED"` を足し、Auth Proxy・コネクタ以外の直接の接続を断る。Secret Manager・Cloud KMS・Cloud Storage のデータアクセス監査ログ(DATA_READ / DATA_WRITE)を、既定で有効にする変数 `data_access_audit_logs` を足した(いずれも反映は運用担当者の `terraform apply`。`doc/07_インフラ・運用.md` 2.0)。
+- お客様向けの説明資料(`doc/partner`)を現状に合わせた: パスワード再設定のコードを6桁から8桁に、ログインのロックを「いつも使う端末は他の人の試行で締め出されない」に、本番の環境を「作成済み・切替前に会社と夜間処理を設定」に直し、スライドと PDF を作り直した。
 - CI: ドキュメント(`*.md`・`doc/` の下)だけを変えた PR・push では「lint・型検査・テスト・ビルド」と e2e を省き、資料のリンク・図の検査
   (`docs`、1分以内)だけを流す(`changes` ジョブ。条件で省いたジョブは必須のチェックでは成功の扱いのため、ブランチ保護で止まらない)。
   資料のリンク・図の検査はコードの変更でも毎回流す。changes ジョブが失敗したときは省かずに全部流す。`release-tag.yml` は、CI が

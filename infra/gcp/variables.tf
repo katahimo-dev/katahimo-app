@@ -245,3 +245,10 @@ variable "release_approvers" {
     error_message = "release_approvers は \"user:<メールアドレス>\" の形で人だけを挙げてください。"
   }
 }
+
+# ── 監査ログ(iam.tf。doc/07_インフラ・運用.md 6章) ─────────────────
+variable "data_access_audit_logs" {
+  description = "Secret Manager・Cloud KMS・Cloud Storage のデータアクセス監査ログ(DATA_READ / DATA_WRITE。シークレットの値の読み取り、鍵の encrypt / decrypt、領収書の画像・ビルドのオブジェクトの読み書きが「誰が・いつ」で残る)を有効にするか。ログの量に応じて Cloud Logging の課金が増える(月 50 GiB までは無料枠。この規模ではわずか)ため、切れるようにしてある"
+  type        = bool
+  default     = true
+}
