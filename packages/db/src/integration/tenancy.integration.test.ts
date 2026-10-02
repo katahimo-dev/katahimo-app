@@ -324,6 +324,47 @@ describe('月の締め(attendance_periods)', () => {
     await uow.run(a, async (r) => insertVisit(r, (await day(r, staffId)).day.id, 1));
   });
 
+  it('アプリは締めた行を別の月・別のスタッフに付け替えられず、締めの日時・締めた人も書き換えられない', async () => {
+    const a = await createTenant();
+    const { staffId, otherId } = await uow.run(a, async (r) => ({
+      staffId: await createStaff(r),
+      otherId: await createStaff(r),
+    }));
+    await uow.run(a, (r) => r.attendance.lockPeriod(staffId, '2026-09', staffId, new Date()));
+    // 付け替え(締めたまま月・スタッフを変える)は列の権限で断る(42501)
+    const rekeys = [
+      sql`update attendance_periods set year_month = '2026-08' where staff_id = ${staffId}`,
+      sql`update attendance_periods set staff_id = ${otherId} where staff_id = ${staffId}`,
+      sql`update attendance_periods set created_at = now() where staff_id = ${staffId}`,
+    ];
+    for (const statement of rekeys) {
+      expect(await sqlState(withTenant(app, a, (tx) => tx.execute(statement)))).toBe('42501');
+    }
+    // 書ける列(締めの列)でも、締めた行の締めの日時・締めた人の書き換えはトリガーが断る(KH001)
+    const rewrites = [
+      sql`update attendance_periods set locked_at = now() - interval '1 day' where staff_id = ${staffId}`,
+      sql`update attendance_periods set locked_by = ${otherId} where staff_id = ${staffId}`,
+    ];
+    for (const statement of rewrites) {
+      expect(await sqlState(withTenant(app, a, (tx) => tx.execute(statement)))).toBe('KH001');
+    }
+    const rows = (await withTenant(app, a, (tx) =>
+      tx.execute(sql`select staff_id, year_month, status, locked_by from attendance_periods`),
+    )) as unknown as { staff_id: string; year_month: string; status: string; locked_by: string }[];
+    expect(rows).toEqual([
+      { staff_id: staffId, year_month: '2026-09', status: 'locked', locked_by: staffId },
+    ]);
+    // 締めた月の勤怠は書けないまま
+    await expect(
+      uow.run(a, async (r) => insertVisit(r, (await day(r, staffId)).day.id, 1)),
+    ).rejects.toMatchObject({ code: 'locked', reason: 'period_locked' });
+    // 所有者(運用)は付け替えられる(トリガーの例外は所有者だけ)
+    await withTenant(owner, a, (tx) =>
+      tx.execute(sql`update attendance_periods set year_month = '2026-08' where staff_id = ${staffId}`),
+    );
+    await uow.run(a, async (r) => insertVisit(r, (await day(r, staffId)).day.id, 1));
+  });
+
   it('締めは、同じ月の勤怠を書いているトランザクションの終わりを待つ(書き込みと締めが食い違わない)', async () => {
     const a = await createTenant();
     const staffId = await uow.run(a, (r) => createStaff(r));

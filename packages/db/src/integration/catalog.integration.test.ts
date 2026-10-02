@@ -197,7 +197,7 @@ describe('スキーマの約束事(カタログ)', () => {
     }
   });
 
-  it('アプリ・ワーカーは月の締めを削除できない(解除・削除は所有者の関数だけ)', async () => {
+  it('アプリ・ワーカーは月の締めを削除・付け替えできない(解除・削除は所有者の関数だけ)', async () => {
     const has = async (role: string, privilege: string) =>
       (
         await rows<{ ok: boolean }>(
@@ -207,6 +207,19 @@ describe('スキーマの約束事(カタログ)', () => {
     expect(await has('katahimo_app', 'DELETE')).toBe(false);
     expect(await has('katahimo_worker', 'DELETE')).toBe(false);
     expect(await has('katahimo_worker', 'UPDATE')).toBe(false);
+    // アプリが UPDATE できるのは締めの列だけ(締めた行を別の月・別のスタッフに付け替えられない)
+    expect(await has('katahimo_app', 'UPDATE')).toBe(false);
+    const updatable = await rows<{ column: string }>(sql`
+      select a.attname as column from pg_attribute a
+      where a.attrelid = 'public.attendance_periods'::regclass and a.attnum > 0 and not a.attisdropped
+        and has_column_privilege('katahimo_app', a.attrelid, a.attnum, 'UPDATE')
+      order by a.attname`);
+    expect(updatable.map((c) => c.column)).toEqual(['locked_at', 'locked_by', 'status']);
+    // 締めの守りのトリガー関数は search_path を固定する
+    const [guard] = await rows<{ config: string[] | null }>(
+      sql`select proconfig as config from pg_proc where oid = 'public.guard_attendance_period()'::regprocedure`,
+    );
+    expect(guard?.config).toEqual(['search_path=pg_catalog, public']);
   });
 
   it('アプリ・ワーカーの接続には文・ロック待ち・放置されたトランザクションの上限がある(infra の初期化SQL)', async () => {
