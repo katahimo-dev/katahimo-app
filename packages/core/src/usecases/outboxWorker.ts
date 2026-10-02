@@ -4,6 +4,7 @@ import {
   DEFAULT_RETRY_POLICY,
   decideOnFailure,
   errorLogDetails,
+  errorMessageOf,
   PermanentOutboxError,
   parseCareRecordBody,
   projectDay,
@@ -288,7 +289,8 @@ export async function processNextOutboxMessage(deps: OutboxWorkerDeps): Promise<
     await HANDLERS[message.topic](deps, message);
     return (await deps.queue.complete(message, currentTime(deps))) ? 'done' : leaseLost();
   } catch (e) {
-    const error = e instanceof Error ? e.message : String(e);
+    // DB の失敗の文(SQL・params)を last_error に残さない
+    const error = errorMessageOf(e);
     const at = currentTime(deps);
     const policy = { ...DEFAULT_RETRY_POLICY, ...deps.retryPolicy, maxAttempts: message.maxAttempts };
     const decision =

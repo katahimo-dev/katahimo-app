@@ -1,7 +1,7 @@
 import { deflateRawSync } from 'node:zlib';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { readXlsxSheets } from './xlsxSheets';
+import { readXlsxSheets, withXlsxReadSlot } from './xlsxSheets';
 import { inspectZip, XLSX_ZIP_LIMITS } from './xlsxZipGuard';
 
 interface TestEntry {
@@ -76,16 +76,19 @@ describe('xlsx の展開爆弾の確かめ(inspectZip)', () => {
   });
 
   it('小さな本体で大きく膨らむファイル(圧縮率の高い 0 の並び)は断る', () => {
-    const bomb = buildZip([{ name: 'xl/worksheets/sheet1.xml', data: Buffer.alloc(9 * MIB) }]);
+    const bomb = buildZip([{ name: 'xl/worksheets/sheet1.xml', data: Buffer.alloc(4 * MIB) }]);
     expect(bomb.length).toBeLessThan(100 * 1024);
     expect(inspectZip(bomb)).toEqual({ ok: false, reason: 'ratio_too_high' });
-    // 圧縮率の上限を外しても、1つのファイル・合計の上限で止まる
+    // 圧縮率の上限を外しても、1つのファイル(5MB)・合計(8MB)の上限で止まる
     const loose = { ...XLSX_ZIP_LIMITS, maxCompressionRatio: 10_000 };
-    expect(inspectZip(buildZip([{ name: 'a.xml', data: Buffer.alloc(11 * MIB) }]), loose)).toEqual({
+    expect(inspectZip(buildZip([{ name: 'a.xml', data: Buffer.alloc(5 * MIB) }]), loose)).toMatchObject({
+      ok: true,
+    });
+    expect(inspectZip(buildZip([{ name: 'a.xml', data: Buffer.alloc(5 * MIB + 1) }]), loose)).toEqual({
       ok: false,
       reason: 'entry_too_large',
     });
-    const many = Array.from({ length: 4 }, (_, i) => ({ name: `a${i}.xml`, data: Buffer.alloc(9 * MIB) }));
+    const many = Array.from({ length: 3 }, (_, i) => ({ name: `a${i}.xml`, data: Buffer.alloc(3 * MIB) }));
     expect(inspectZip(buildZip(many), loose)).toEqual({ ok: false, reason: 'total_too_large' });
   });
 
@@ -120,10 +123,46 @@ describe('xlsx の展開爆弾の確かめ(inspectZip)', () => {
   it('readXlsxSheets は exceljs で読む前に 400 で断る(大きすぎる = xlsx_too_large、偽り = invalid_xlsx)', async () => {
     const limits = { maxSheets: 5, maxRows: 1000, maxColumns: 5 };
     await expect(
-      readXlsxSheets(buildZip([{ name: 'a.xml', data: Buffer.alloc(9 * MIB) }]), limits),
-    ).rejects.toMatchObject({ code: 'validation_failed', reason: 'xlsx_too_large' });
+      readXlsxSheets(buildZip([{ name: 'a.xml', data: Buffer.alloc(6 * MIB) }]), limits),
+    ).rejects.toMatchObject({
+      code: 'validation_failed',
+      reason: 'xlsx_too_large',
+      message: 'Excel(.xlsx)のファイルの中身が大きすぎます(展開して合計8MB・中の1つのファイル5MBまで)',
+    });
+    const tiny = (name: string): TestEntry => ({ name, data: Buffer.from('x') });
+    await expect(
+      readXlsxSheets(buildZip(Array.from({ length: 201 }, (_, i) => tiny(`f${i}`))), limits),
+    ).rejects.toMatchObject({
+      reason: 'xlsx_too_large',
+      message: 'Excel(.xlsx)のファイルの中のファイルが多すぎます(200個まで)',
+    });
     await expect(
       readXlsxSheets(buildZip([{ name: 'a.xml', data: Buffer.alloc(5 * MIB), declaredSize: 10 }]), limits),
     ).rejects.toMatchObject({ code: 'validation_failed', reason: 'invalid_xlsx' });
+  });
+});
+
+describe('withXlsxReadSlot', () => {
+  it('このインスタンスで同時に1つだけ読み、読んでいる間の2つ目は読まずに断る(終われば次を読める)', async () => {
+    let release: () => void = () => {};
+    const first = withXlsxReadSlot(
+      () =>
+        new Promise<string>((resolve) => {
+          release = () => resolve('first');
+        }),
+    );
+    let secondRan = false;
+    const second = await withXlsxReadSlot(async () => {
+      secondRan = true;
+      return 'second';
+    });
+    expect(second).toEqual({ ok: false });
+    expect(secondRan).toBe(false);
+    release();
+    expect(await first).toEqual({ ok: true, value: 'first' });
+    expect(await withXlsxReadSlot(async () => 'third')).toEqual({ ok: true, value: 'third' });
+    // 読む処理が失敗しても枠は空く
+    await expect(withXlsxReadSlot(() => Promise.reject(new Error('boom')))).rejects.toThrow('boom');
+    expect(await withXlsxReadSlot(async () => 'fourth')).toEqual({ ok: true, value: 'fourth' });
   });
 });

@@ -4,7 +4,7 @@ import { inflateRawSync } from 'node:zlib';
  * xlsx(zip)を exceljs(JSZip)に渡す前に、展開した後の大きさを確かめる(展開爆弾の対策)。
  *
  * JSZip は zip の全てのファイルを展開してから中身を読むため、exceljs の読み込みの後のシート・行の上限では、
- * 小さな本体(上限 3MB)が何GBにも膨らむファイルを止められない。そこで先に zip の目次(End of Central Directory と
+ * 小さなファイル(上限 2MB。shared の STAFF_IMPORT_MAX_BYTES・REPORT_AI_IMPORT_MAX_BYTES)が何GBにも膨らむファイルを止められない。そこで先に zip の目次(End of Central Directory と
  * Central Directory)を読み、ファイルの数・展開後の大きさ・圧縮率の上限を確かめる。
  *
  * 目次の「展開後の大きさ」は書き換えられる(JSZip は目次の値を信じずに最後まで展開する)ため、目次の値だけでは足りない。
@@ -27,11 +27,21 @@ export interface ZipGuardLimits {
 
 const MIB = 1024 * 1024;
 
-/** 管理画面の xlsx の取込の上限(スタッフ・日報AIの調整。ふつうのファイルは数十件・数百KB)。 */
+/**
+ * 管理画面の xlsx の取込の上限(スタッフ・日報AIの調整。ふつうのファイルは数十件・数百KB)。
+ *
+ * exceljs は展開した XML の数十倍のメモリを使う(展開して 30MB の XML で 230〜570MB)。API は 1 インスタンス 1Gi で
+ * 同時に 80 要求を受けるため、展開の上限は本当のファイルに合わせて小さくし、読むのも1インスタンスで1つずつにする
+ * (xlsxSheets.ts の withXlsxReadSlot)。書き出したファイルの展開後の大きさ(2026-10 に測った値):
+ * - スタッフ 2000 行(シートの行の上限)・ふつうの値: ファイル 148KB、展開して合計 1.6MB(最大のファイル 0.97MB)
+ * - スタッフ 2000 行・全ての列を上限の長さまで(重ならない漢字): ファイル 1.5MB、展開して合計 4.5MB(最大 3.4MB)。ピークの RSS は +50MB 程度
+ * - 日報AIの調整のマスター 2000 行・長い文(重ならない漢字。ファイルは 2.8MB で上限を超える): 展開して合計 8.2MB(最大 7.0MB)。
+ *   2MB のファイルに収まる量(約1400行)なら合計 6MB 程度。本当のマスターは百行ほど・数百KB
+ */
 export const XLSX_ZIP_LIMITS: ZipGuardLimits = {
   maxEntries: 200,
-  maxEntryBytes: 10 * MIB,
-  maxTotalBytes: 30 * MIB,
+  maxEntryBytes: 5 * MIB,
+  maxTotalBytes: 8 * MIB,
   maxCompressionRatio: 200,
   ratioCheckMinBytes: 1 * MIB,
 };

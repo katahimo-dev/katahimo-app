@@ -2,8 +2,15 @@ import { parseStaffSheet, staffToSheet, UNREADABLE_CELL } from '@katahimo/core/d
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { buildStaffWorkbook, readStaffWorkbook } from './staffWorkbook';
+import { inspectZip } from './xlsxZipGuard';
 
 const STAFF_ID = '0190a000-0000-7000-8000-000000000002';
+
+/** 重ならない漢字の文字(圧縮の効きにくい、いちばん大きくなる中身)。 */
+const kanji = (length: number, seed: number) =>
+  Array.from({ length }, (_, i) => String.fromCharCode(0x4e00 + ((seed * 7919 + i * 104729) % 20000))).join(
+    '',
+  );
 
 describe('スタッフの xlsx', () => {
   it('書き出した xlsx を読むと同じ値に戻り、電話・退職日の列は文字の書式', async () => {
@@ -91,4 +98,31 @@ describe('スタッフの xlsx', () => {
       { row: 3, message: expect.stringContaining('「自宅住所」の列のセルを読めません') },
     ]);
   });
+
+  it('シートの行の上限(見出しを含めて2000行)まで全ての列を上限の長さにして書き出したファイルも、展開の上限の内で読める', async () => {
+    const staff = Array.from({ length: 1999 }, (_, i) => ({
+      id: `0190a000-0000-7000-8000-${String(i).padStart(12, '0')}`,
+      name: kanji(100, i),
+      kana: kanji(100, i + 1),
+      email: `${'a'.repeat(60)}${i}@${'b'.repeat(60)}.example.com`,
+      altEmail: `${'c'.repeat(60)}${i}@example.com`,
+      phone: `090-${String(i).padStart(4, '0')}-${'1'.repeat(20)}`,
+      role: 'staff' as const,
+      retiredOn: '2026-10-31',
+      homeAddress: kanji(300, i + 2),
+      travelMode: 'car' as const,
+      gender: 'female' as const,
+      scheduleCalendarId: `${'d'.repeat(100)}${i}@group.calendar.google.com`,
+    }));
+    const sheet = staffToSheet(staff);
+    const body = await buildStaffWorkbook(sheet);
+    // 取込のファイルの上限(2MB)の内で、展開しても上限(合計8MB・1つ5MB)に余裕がある(測った値は約1.5MB → 4.5MB)
+    expect(body.length).toBeLessThan(2 * 1024 * 1024);
+    const inspected = inspectZip(body);
+    expect(inspected).toMatchObject({ ok: true });
+    expect(inspected.ok && inspected.totalBytes).toBeLessThan(6 * 1024 * 1024);
+    const [read] = await readStaffWorkbook(body);
+    expect(read?.rows).toHaveLength(2000);
+    expect(read?.rows[1999]).toEqual(sheet.rows[1998]);
+  }, 60_000);
 });

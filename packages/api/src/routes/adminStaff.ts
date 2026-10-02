@@ -21,6 +21,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { Container } from '../container';
 import { buildStaffWorkbook, readStaffWorkbook } from '../export/staffWorkbook';
+import { withXlsxReadSlot, XLSX_READ_BUSY_MESSAGE, XLSX_READ_BUSY_RETRY_MS } from '../export/xlsxSheets';
 import { xlsxResponse } from '../http/download';
 import { enforceStaffQuota } from '../http/quota';
 import { apiError, jsonOk, parseJsonBody, rateLimited } from '../http/responses';
@@ -78,7 +79,10 @@ export function createAdminStaffRoutes(container: Container) {
       );
       if (applyLimited) return applyLimited;
     }
-    const sheets = await readStaffWorkbook(Buffer.from(body.data.fileBase64, 'base64'));
+    // exceljs で読むのはこのインスタンスで1つずつ(メモリを使うため。xlsxSheets.ts の withXlsxReadSlot)
+    const read = await withXlsxReadSlot(() => readStaffWorkbook(Buffer.from(body.data.fileBase64, 'base64')));
+    if (!read.ok) return rateLimited(c, XLSX_READ_BUSY_RETRY_MS, XLSX_READ_BUSY_MESSAGE);
+    const sheets = read.value;
     const result = await importStaffSheet(container, actorOf(c), {
       sheets,
       dryRun: body.data.dryRun,

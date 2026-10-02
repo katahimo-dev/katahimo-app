@@ -212,14 +212,23 @@ export const generateAccidentReportResponseSchema = z.object({
   retryable: z.boolean(),
 });
 
+/**
+ * 「訪問終わりました」の時刻('HH:mm' か空文字)。前の版の画面(端末にキャッシュされた PWA)は、時刻を選んでいないとき
+ * 時・分の空欄をつないだ ':' を送るため、1リリースの間だけ ':' を空文字として受け付ける(次のリリースで外す)。
+ */
+const visitCompleteTimeSchema = z.preprocess(
+  (value) => (value === ':' ? '' : value),
+  z.union([timeOfDaySchema, z.literal('')]),
+);
+
 /** POST /api/reports/visit-complete(「訪問終わりました」の通知だけを送る。GAS版 sendVisitCompleteNotification) */
 export const visitCompleteRequestSchema = z.object({
   staffId: idSchema.optional(),
   customerId: idSchema,
   visitDate: businessDateSchema,
   /** 'HH:mm'(時刻を選んでいなければ空文字)。通知の本文に入れるため形を決める。 */
-  startTime: z.union([timeOfDaySchema, z.literal('')]),
-  endTime: z.union([timeOfDaySchema, z.literal('')]),
+  startTime: visitCompleteTimeSchema,
+  endTime: visitCompleteTimeSchema,
 });
 export type VisitCompleteRequest = z.infer<typeof visitCompleteRequestSchema>;
 export const visitCompleteResponseSchema = z.object({ success: z.literal(true) });

@@ -12,6 +12,13 @@ import { AI_PROMPT_KEYS, findAiPromptDefinition } from '@katahimo/shared';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { buildReportAiWorkbook, readReportAiWorkbook } from './reportAiWorkbook';
+import { inspectZip } from './xlsxZipGuard';
+
+/** 重ならない漢字の文字(圧縮の効きにくい、いちばん大きくなる中身)。 */
+const kanji = (length: number, seed: number) =>
+  Array.from({ length }, (_, i) => String.fromCharCode(0x4e00 + ((seed * 7919 + i * 104729) % 20000))).join(
+    '',
+  );
 
 /** 架空の中身のマスターを、お客様の xlsx と同じ形(注記の結合セル・書式つきの文字・式のセル)の xlsx にする。 */
 async function syntheticWorkbook(): Promise<Buffer> {
@@ -62,6 +69,33 @@ describe('日報AIの調整の xlsx', () => {
     expect(again.phrases).toEqual(parsed.phrases);
     expect(again.stanceRules).toEqual(parsed.stanceRules);
   });
+
+  it('長い文のキーワードを千行足して書き出したファイルも、展開の上限の内で読んで同じ中身に戻る', async () => {
+    const parsed = parseReportAiWorkbook(syntheticMasterSheets());
+    const base = parsed.keywords[0] as (typeof parsed.keywords)[number];
+    const keywords = [
+      ...parsed.keywords,
+      ...Array.from({ length: 1000 }, (_, i) => ({
+        ...base,
+        code: `X${i}`,
+        keyword: kanji(20, i),
+        subConcept: kanji(60, i + 1),
+        parentExplanation: kanji(300, i + 2),
+        phraseExamples: kanji(600, i + 3),
+        usageScene: kanji(150, i + 4),
+        ngExample: kanji(150, i + 5),
+      })),
+    ];
+    const body = await buildReportAiWorkbook(reportAiMastersToSheets({ ...parsed, keywords }));
+    // 取込のファイルの上限(2MB)の内で、展開しても上限(合計8MB・1つ5MB)の内(測った値は約1.4MB → 4MB)
+    expect(body.length).toBeLessThan(2 * 1024 * 1024);
+    expect(inspectZip(body)).toMatchObject({ ok: true });
+    const again = parseReportAiWorkbook(await readReportAiWorkbook(body));
+    expect(again.errors).toEqual([]);
+    // 並び順(sortOrder)は取込の行の順から決まるため比べない
+    const unordered = (list: typeof keywords) => list.map((k) => ({ ...k, sortOrder: 0 }));
+    expect(unordered(again.keywords)).toEqual(unordered(keywords));
+  }, 60_000);
 
   it('xlsx でないファイルは 400', async () => {
     await expect(readReportAiWorkbook(Buffer.from('not a workbook'))).rejects.toMatchObject({

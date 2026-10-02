@@ -1,4 +1,5 @@
-import { DomainError } from '@katahimo/core/domain';
+import { DomainError, errorMessageOf, errorStackOf } from '@katahimo/core/domain';
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { describe, expect, it } from 'vitest';
 import { mapDatabaseError } from './errors';
 
@@ -49,5 +50,28 @@ describe('mapDatabaseError', () => {
     expect(mapDatabaseError(reportPkey)).toBe(reportPkey);
     const plain = new Error('x');
     expect(mapDatabaseError(plain)).toBe(plain);
+  });
+});
+
+describe('drizzle の DrizzleQueryError の文(プロセスのログ)', () => {
+  it('errorMessageOf・errorStackOf は params(入力の値)と SQL を出さず、cause の SQLSTATE と文にする', () => {
+    const cause = Object.assign(
+      new Error('duplicate key value violates unique constraint "staff_login_email_key"'),
+      {
+        code: '23505',
+      },
+    );
+    const error = new DrizzleQueryError(
+      'insert into "staff_login_emails" ("email") values ($1)',
+      ['hanako@example.com'],
+      cause,
+    );
+    // drizzle の文そのものには params が入る(この形を前提にしている)
+    expect(error.message).toContain('\nparams: hanako@example.com');
+    for (const text of [errorMessageOf(error), errorStackOf(error) ?? '']) {
+      expect(text).not.toContain('hanako@example.com');
+      expect(text).not.toContain('insert into');
+      expect(text).toContain('23505');
+    }
   });
 });

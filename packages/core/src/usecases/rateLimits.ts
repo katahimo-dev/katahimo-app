@@ -84,7 +84,7 @@ export interface RateLimitPolicy {
    */
   staffImportApplyStaff: RateLimitRule;
   /**
-   * スタッフの xlsx の取込(確かめる dryRun・反映の両方。管理者単位の1時間の上限)。1回ごとに最大 3MB の本体を
+   * スタッフの xlsx の取込(確かめる dryRun・反映の両方。管理者単位の1時間の上限)。1回ごとに最大 2MB の xlsx を
    * 展開して読むため、送り続けで CPU・メモリを使い切らせない(反映は staffImportApplyStaff でも数える)。
    */
   staffXlsxImportStaff: RateLimitRule;

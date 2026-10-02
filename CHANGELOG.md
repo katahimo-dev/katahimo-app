@@ -12,11 +12,6 @@
 
 ### 変更
 
-- CI のセキュリティの強化(`doc/07_インフラ・運用.md` 2.0・9章)。
-  - GAS版のサブモジュールを読むトークン `SUBMODULE_TOKEN` を、PR の `check` ジョブに渡さないようにした。書き込みの権限がある人が PR のブランチでワークフローを書き換えて secret を外へ出せたため。GAS版との一致テスト(gasParity)は、トークンを Environment `legacy-submodule`(ブランチは main だけ)に置いてmain への push で流す `parity` ジョブ(「GAS版との一致テスト」)に移した。PR では gasParity がスキップされる(手元で `pnpm test` を流す)。`release-tag.yml` は `parity` の成功も確かめてからタグを付ける。トークンは対象リポジトリだけ・Contents の読み取りだけ・期限つきの fine-grained PAT にする。
-  - GitHub Actions をすべてコミット SHA で固定し(`@<SHA> # vX.Y.Z`)、Dependabot の github-actions と Docker に公開から7日待つ `cooldown` を足した。
-  - `infra/docker-compose.yml` の PostgreSQL を `127.0.0.1:5433` だけに公開するようにした(LAN から届かない)。
-- インフラ(`infra/gcp`): Cloud SQL に `connector_enforcement = "REQUIRED"` を足し、Auth Proxy・コネクタ以外の直接の接続を断る。Secret Manager・Cloud KMS・Cloud Storage のデータアクセス監査ログ(DATA_READ / DATA_WRITE)を、既定で有効にする変数 `data_access_audit_logs` を足した(いずれも反映は運用担当者の `terraform apply`。`doc/07_インフラ・運用.md` 2.0)。
 - お客様向けの説明資料(`doc/partner`)を現状に合わせた: パスワード再設定のコードを6桁から8桁に、ログインのロックを「いつも使う端末は他の人の試行で締め出されない」に、本番の環境を「作成済み・切替前に会社と夜間処理を設定」に直し、スライドと PDF を作り直した。
 - CI: ドキュメント(`*.md`・`doc/` の下)だけを変えた PR・push では「lint・型検査・テスト・ビルド」と e2e を省き、資料のリンク・図の検査
   (`docs`、1分以内)だけを流す(`changes` ジョブ。条件で省いたジョブは必須のチェックでは成功の扱いのため、ブランチ保護で止まらない)。
@@ -26,6 +21,14 @@
 
 ### 運用
 
+- **このリリースの CI・インフラの強化を入れるときの運用担当者の手順(この順に)**:
+  1. **PR をマージする前に**、GitHub の Settings → Environments で Environment `legacy-submodule` を作り、Deployment branches を
+     `main` だけに絞る(`ci.yml` がこの Environment を使う前に作る。無いと制限の無い Environment が自動で作られる)。
+  2. `SUBMODULE_TOKEN` をその Environment の secret に移す。トークンは `katahimo-dev/gas-childcare-visit-app` だけ・Contents の読み取りだけ・
+     期限つきの fine-grained PAT に作り直す。移したら**リポジトリの Actions secret の `SUBMODULE_TOKEN` は削除する**(残すと PR の実行にも渡る)。
+     期限が切れると `parity` ジョブが失敗して main の CI が赤になり `release-tag` も止まるため、期限の前に作り直して差し替える。
+  3. マージの後に `infra/gcp` で `terraform apply` を流し、Cloud SQL の `connector_enforcement = "REQUIRED"` とデータアクセス監査ログ
+     (`data_access_audit_logs`)を反映する(`doc/07_インフラ・運用.md` 2.0・9.2)。
 - 公開デモを、訪問者の入力を一定期間残す形にし、デモかどうかを web のビルドではなく API の設定で決めるようにした
   (本番とデモで同じイメージ・同じビルドを使う)。
   - 設定は `GET /api/demo/config`(ログイン不要・DB を読まない・操作ログに残さない)が返す。`DEMO_TENANT_SLUG` が無ければ `{ enabled: false }`、
@@ -46,6 +49,11 @@
 
 ### セキュリティ
 
+- CI のセキュリティの強化(`doc/07_インフラ・運用.md` 2.0・9章)。
+  - GAS版のサブモジュールを読むトークン `SUBMODULE_TOKEN` を、PR の `check` ジョブに渡さないようにした。書き込みの権限がある人が PR のブランチでワークフローを書き換えて secret を外へ出せたため。GAS版との一致テスト(gasParity)は、トークンを Environment `legacy-submodule`(ブランチは main だけ)に置いてmain への push で流す `parity` ジョブ(「GAS版との一致テスト」)に移した。PR では gasParity がスキップされる(手元で `pnpm test` を流す)。`parity` は main からの手での実行でも流し(ほかのブランチからは流さない)、トークンが無い・期限切れ・取得できないときは何も流さずに成功とはせず失敗にする(設定の誤り。トークンを更新するまで main の CI が赤になり、`release-tag` も止まる)。`release-tag.yml` は `parity` の成功も確かめてからタグを付ける。トークンは対象リポジトリだけ・Contents の読み取りだけ・期限つきの fine-grained PAT にする。
+  - GitHub Actions をすべてコミット SHA で固定し(`@<SHA> # vX.Y.Z`)、Dependabot の github-actions と Docker に公開から7日待つ `cooldown` を足した。
+  - `infra/docker-compose.yml` の PostgreSQL を `127.0.0.1:5433` だけに公開するようにした(LAN から届かない)。
+- インフラ(`infra/gcp`): Cloud SQL に `connector_enforcement = "REQUIRED"` を足し、Auth Proxy・コネクタ以外の直接の接続を断る。Secret Manager・Cloud KMS・Cloud Storage のデータアクセス監査ログ(DATA_READ / DATA_WRITE)を、既定で有効にする変数 `data_access_audit_logs` を足した(いずれも反映は運用担当者の `terraform apply`。`doc/07_インフラ・運用.md` 2.0)。
 - リリースの経路を強めた(タグを付けられる人は、DB のオーナーで動くマイグレーションを含めて本番に任意のコードを出せるため)。
   Cloud Build のトリガー `katahimo-release` は承認必須に戻し、承認できる人を Terraform の `release_approvers` で名前で挙げる(承認者は
   タグのコミット・マイグレーション・ビルドの手順の差分を読んでから承認する。マイグレーションは canary の確認より前に本番の DB に当たる)。
@@ -124,10 +132,14 @@
   `esbuild` の2件。`drizzle-kit`・`tsup` の更新を待つ)。
 - 管理画面の xlsx の取込(スタッフ・日報AIの調整)で、展開すると何GBにも膨らむ zip(展開爆弾)を exceljs で読む前に断るようにした
   (exceljs が使う JSZip は全てのファイルを展開してから読むため、シート・行の上限では止まらなかった)。zip の目次を先に読み、
-  ファイル200個・1つ10MB・合計30MB(展開後)・圧縮率200倍(1MB を超えるファイル)まで、暗号化・ZIP64 は断る。目次の展開後の大きさは
-  偽れるため、目次の大きさを上限に実際に展開して確かめる。超えたら 400 `xlsx_too_large`。あわせて取込の回数を、確かめる(`dryRun`)・
-  反映の両方で管理者ごとに1時間30回までにした(規則 `staff_xlsx_import_staff`・`report_ai_xlsx_import_staff`。スタッフの反映は
-  今までの `staff_import_apply_staff` でも数える)(`doc/04_API仕様.md` 1.4・1.5、`doc/06_セキュリティ設計.md` 6章)。
+  ファイル200個・1つ5MB・合計8MB(展開後)・圧縮率200倍(1MB を超えるファイル)まで、暗号化・ZIP64 は断る。目次の展開後の大きさは
+  偽れるため、目次の大きさを上限に実際に展開して確かめる。超えたら 400 `xlsx_too_large`。exceljs は展開した XML の数十倍のメモリを使う
+  (展開して30MB で 230〜570MB)ため、上限は本当のファイル(書き出したスタッフ2000行で展開して1.6MB、全ての列を上限の長さにして4.5MB)に
+  合わせ、exceljs で読むのも API の1インスタンスで1つずつにした(重なった取込は 429「ほかの Excel の取込を読んでいます。…」)。
+  あわせて取込の回数を、確かめる(`dryRun`)・反映の両方で管理者ごとに1時間30回までにした(規則 `staff_xlsx_import_staff`・
+  `report_ai_xlsx_import_staff`。スタッフの反映は今までの `staff_import_apply_staff` でも数える)。公開デモでは日報AIの調整の xlsx の取込も
+  スタッフの取込と同じく断る(403。画面のボタンは残し、ログイン直後の注釈の「デモではできない操作」に足した)
+  (`doc/04_API仕様.md` 1.4〜1.6、`doc/06_セキュリティ設計.md` 4.3・6章)。
 - DB の守りを足した(マイグレーション `0004_defense_in_depth`。今のアプリ・前の版のアプリがしない操作だけを断るため、適用の順は問わない):
   - 操作ログ(`app_logs`)を12か月より短い保存期間で消せないようにした(`platform.drop_app_log_partitions` が12未満を断り、
     `ensure_app_log_partitions` は24か月より先を作らない。ワーカーの `APP_LOG_RETENTION_MONTHS` も12以上でないと起動しない)。
@@ -149,6 +161,7 @@
     DB の 22003 も 400 にする)。金額の文字は20文字・店名は200文字・事務局へのひとことは2000文字まで(画面の欄も同じ上限)。
   - 「訪問終わりました」(`POST /api/reports/visit-complete`)の時刻を `HH:mm` か空だけにし(自由な文字を Google Chat の文に差し込めた)、
     スタッフごとに1時間60回まで(`visit_complete_staff`)・送ったら INFO `report.visit_complete.notified` を残すようにした。
+    端末にキャッシュされた前の版の画面は時刻を選んでいないとき `":"` を送るため、このリリースの間だけ `":"` を空として受け付ける(次のリリースで外す)。
   - Google Chat の通知(日報・事故報告・訪問完了・領収書の登録と取消・PSI の知らせ)で、名前・本文・店名などの `&` `<` `>` を文字参照にした
     (`<users/all>` の全員へのメンションや偽のリンクを差し込めた)。
   - 通知の購読(`POST /api/push/subscriptions`)で、別のスタッフの購読(同じ endpoint)を付け替えるのは鍵(`p256dh`・`auth`)が同じときだけにした

@@ -223,15 +223,15 @@ function toDailyDraft(value: unknown): DailyReportDraft {
   return draft;
 }
 
-/**
- * 別のモデルで試し直す意味がある失敗か。API キーの誤り(401・403、400 の API_KEY_INVALID)はどのモデルでも
- * 同じなので false。混雑・上限(429・5xx)、モデルが無い(404)、通信・応答の解析の失敗は true。
- */
 /** 失敗の理由コード(操作ログ用。文・応答の本文は入れない)。 */
 function failureOf(result: Extract<GeminiCallResult, { ok: false }>): AiFailure {
   return { reason: result.reason, ...(result.httpCode !== undefined ? { httpStatus: result.httpCode } : {}) };
 }
 
+/**
+ * 別のモデルで試し直す意味がある失敗か。API キーの誤り(401・403、400 の API_KEY_INVALID)はどのモデルでも
+ * 同じなので false。混雑・上限(429・5xx)、モデルが無い(404)、通信・応答の解析の失敗は true。
+ */
 function isRetryableFailure(result: Extract<GeminiCallResult, { ok: false }>): boolean {
   if (result.httpCode === 401 || result.httpCode === 403) return false;
   if (result.httpCode === 400 && result.rawError?.includes('API_KEY_INVALID')) return false;

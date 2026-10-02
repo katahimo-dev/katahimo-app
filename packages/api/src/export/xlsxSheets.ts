@@ -55,25 +55,61 @@ export function cellValue(cell: ExcelJS.Cell): ImportCell {
 const INVALID_XLSX_MESSAGE = 'Excel(.xlsx)のファイルを読めませんでした';
 const INVALID_XLSX_FIELDS = { file: 'xlsx のファイルを選んでください' };
 
+const toMib = (bytes: number) => bytes / (1024 * 1024);
+
 /**
- * exceljs に渡す前に zip の目次と展開後の大きさを確かめる(xlsxZipGuard.ts)。展開すると大きすぎるファイルは
- * 400 `xlsx_too_large`、zip として読めない・暗号化・ZIP64・目次と中身の合わないファイルは 400 `invalid_xlsx`。
+ * exceljs に渡す前に zip の目次と展開後の大きさを確かめる(xlsxZipGuard.ts)。中のファイルが多すぎる・展開すると大きすぎる
+ * ファイルは 400 `xlsx_too_large`、zip として読めない・暗号化・ZIP64・目次と中身の合わないファイルは 400 `invalid_xlsx`。
  */
 function assertSafeXlsxZip(body: Buffer): void {
   const result = inspectZip(body, XLSX_ZIP_LIMITS);
   if (result.ok) return;
   switch (result.reason) {
     case 'too_many_entries':
+      throw invalid(
+        `Excel(.xlsx)のファイルの中のファイルが多すぎます(${XLSX_ZIP_LIMITS.maxEntries}個まで)`,
+        { file: '取り込む表だけのファイルにしてください' },
+        'xlsx_too_large',
+      );
     case 'entry_too_large':
     case 'total_too_large':
     case 'ratio_too_high':
       throw invalid(
-        `Excel(.xlsx)のファイルの中身が大きすぎます(展開して${XLSX_ZIP_LIMITS.maxTotalBytes / (1024 * 1024)}MBまで)`,
+        `Excel(.xlsx)のファイルの中身が大きすぎます(展開して合計${toMib(XLSX_ZIP_LIMITS.maxTotalBytes)}MB・中の1つのファイル${toMib(XLSX_ZIP_LIMITS.maxEntryBytes)}MBまで)`,
         { file: '取り込む表だけのファイルにしてください' },
         'xlsx_too_large',
       );
     default:
       throw invalid(INVALID_XLSX_MESSAGE, INVALID_XLSX_FIELDS, 'invalid_xlsx');
+  }
+}
+
+/**
+ * xlsx を読む(exceljs で展開する)のを同時にいくつまでにするか(このインスタンスの中)。exceljs は展開した XML の
+ * 数十倍のメモリを使うため、取込(スタッフ・日報AIの調整)が重なって API のメモリを使い切らないよう1つずつにする
+ * (全員分の出勤簿の書き出しと同じ考え方)。
+ */
+const MAX_CONCURRENT_XLSX_READS = 1;
+let xlsxReadsInFlight = 0;
+
+/** 読んでいる間に来た取込への 429 の文言と、Retry-After。 */
+export const XLSX_READ_BUSY_MESSAGE =
+  'ほかの Excel の取込を読んでいます。少し待ってからもう一度お試しください。';
+export const XLSX_READ_BUSY_RETRY_MS = 10_000;
+
+/**
+ * xlsx を読む処理を、このインスタンスで同時に MAX_CONCURRENT_XLSX_READS 個までにして動かす。
+ * 枠が埋まっていれば読まずに `{ ok: false }`(呼ぶ側が 429 + Retry-After にする)。
+ */
+export async function withXlsxReadSlot<T>(
+  read: () => Promise<T>,
+): Promise<{ ok: true; value: T } | { ok: false }> {
+  if (xlsxReadsInFlight >= MAX_CONCURRENT_XLSX_READS) return { ok: false };
+  xlsxReadsInFlight++;
+  try {
+    return { ok: true, value: await read() };
+  } finally {
+    xlsxReadsInFlight--;
   }
 }
 

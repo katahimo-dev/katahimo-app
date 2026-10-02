@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isDomainError } from '@katahimo/core/domain';
+import { errorMessageOf, errorStackOf, isDomainError } from '@katahimo/core/domain';
 import type { Context, ErrorHandler, MiddlewareHandler } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { apiError, DOMAIN_ERROR_STATUS } from './responses';
@@ -76,7 +76,10 @@ export const onApiError: ErrorHandler = (error, c) => {
         path: c.req.path,
         code: error.code,
         reason: error.reason,
-        cause: cause instanceof Error ? { name: cause.name, message: cause.message } : String(cause),
+        cause:
+          cause instanceof Error
+            ? { name: cause.name, message: errorMessageOf(cause) }
+            : errorMessageOf(cause),
       });
     }
     return apiError(c, DOMAIN_ERROR_STATUS[error.code], error.code, error.message, error.fields);
@@ -99,8 +102,8 @@ export const onApiError: ErrorHandler = (error, c) => {
     path: c.req.path,
     error:
       error instanceof Error
-        ? { name: error.name, message: error.message, stack: error.stack }
-        : String(error),
+        ? { name: error.name, message: errorMessageOf(error), stack: errorStackOf(error) }
+        : errorMessageOf(error),
   });
   return apiError(
     c,

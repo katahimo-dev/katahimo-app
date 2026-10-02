@@ -1,7 +1,8 @@
 name: GAS版サブモジュールの取得
 description: >-
   legacy/gas-childcare-visit-app(非公開リポジトリ katahimo-dev/gas-childcare-visit-app)を取得する。
-  取得できない場合も失敗にはせず警告を出し、available=false を返す(GAS版との一致テストはスキップされる)。
+  取得できない場合はこのステップでは失敗にせず警告を出し、available=false を返す(失敗にするかは呼ぶ側が決める。
+  CI の parity ジョブは available が true でなければ失敗にする)。
 
 inputs:
   token:

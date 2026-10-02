@@ -4,7 +4,9 @@
 #   Environment legacy-submodule の secret SUBMODULE_TOKEN … katahimo-dev/gas-childcare-visit-app だけを読める fine-grained PAT
 #                             (Contents: Read-only・期限つき)。Environment のブランチは main だけに絞る。リポジトリの
 #                             secret には置かない(PR のワークフローから読めてしまう)。
-#                             GAS版との一致テスト(gasParity)は、このトークンを使う parity ジョブだけが main への push で流す。
+#                             GAS版との一致テスト(gasParity)は、このトークンを使う parity ジョブだけが main への push・main からの
+#                             手での実行で流す。そのときトークンが無い・期限切れなら parity ジョブは失敗する(main の CI が赤になり、
+#                             release-tag も止まる。トークンを更新して流し直す)。
 #                             PR の check ジョブにはトークンを渡さず、gasParity はスキップされる(e2e ジョブはこのサブモジュールを使わない)。
 name: CI
 
@@ -161,12 +163,13 @@ jobs:
   # GAS版との一致テスト(gasParity: 勤怠の計算・ルートの検索・日報AIのプロンプトをGAS版のソース自体を node:vm で動かして比べる)。
   # GAS版(非公開リポジトリ)を読むトークン SUBMODULE_TOKEN は Environment legacy-submodule(ブランチは main だけ。doc/07 9.2)の
   # secret に置き、このジョブだけが受け取る。PR の実行(ref が refs/pull/…)は Environment の制限で受け取れないため、このジョブは
-  # PR では動かさず、main への push と手で実行(main から)のときだけ流す。トークンが無い・取得できないときは警告を出して
-  # 失敗にはしない(GAS版を取得できないテストはスキップされる)。
+  # PR では動かさず、main への push と main からの手での実行のときだけ流す(ほかのブランチからの手での実行も Environment が
+  # 断るため、流さない)。ここで流すときにトークンが無い・期限切れ・取得できないのは設定の誤りなので、何も試さずに成功とは
+  # せず失敗にする(main の CI が赤になり、release-tag も止まる。トークンを更新して流し直す。doc/07 9.2)。
   parity:
     name: GAS版との一致テスト
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: legacy-submodule
@@ -187,10 +190,11 @@ jobs:
         if: ${{ steps.legacy.outputs.available == 'true' }}
         run: pnpm vitest run --project unit gasParity
 
-      - name: GAS版を取得できなかったため未実行
+      - name: GAS版を取得できなかったため失敗
         if: ${{ steps.legacy.outputs.available != 'true' }}
         run: |
-          echo "::warning title=gasParity 未実行::GAS版のソースを取得できなかったため一致テストを実行していません(SUBMODULE_TOKEN の設定・期限を確認: doc/07_インフラ・運用.md 9.2)。"
+          echo "::error title=gasParity 未実行::GAS版のソースを取得できなかったため一致テストを実行できません。Environment legacy-submodule の SUBMODULE_TOKEN の設定・期限を確かめて更新し、流し直してください(doc/07_インフラ・運用.md 9.2)。"
+          exit 1
 
   e2e:
     name: 通し確認(e2e)
