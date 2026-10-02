@@ -24,4 +24,14 @@ describe('loadWorkerEnv', () => {
         .CUSTOMER_CSV_LOCAL_DIR,
     ).toBe('/tmp/csv');
   });
+
+  it('SMTP の STARTTLS は既定で必須。false は本番以外だけ', () => {
+    expect(loadWorkerEnv(production).SMTP_REQUIRE_TLS).toBe(true);
+    expect(loadWorkerEnv({ ...production, SMTP_REQUIRE_TLS: '' }).SMTP_REQUIRE_TLS).toBe(true);
+    expect(() => loadWorkerEnv({ ...production, SMTP_REQUIRE_TLS: 'false' })).toThrow(/SMTP_REQUIRE_TLS/);
+    expect(() => loadWorkerEnv({ ...production, SMTP_REQUIRE_TLS: 'no' })).toThrow(/SMTP_REQUIRE_TLS/);
+    expect(
+      loadWorkerEnv({ ...production, NODE_ENV: 'development', SMTP_REQUIRE_TLS: 'false' }).SMTP_REQUIRE_TLS,
+    ).toBe(false);
+  });
 });
