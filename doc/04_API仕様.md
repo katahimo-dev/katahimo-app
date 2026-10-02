@@ -31,6 +31,7 @@
 | 期限 | 無操作7日(`SESSION_IDLE_TTL_MS`)。残りが6日を切った要求で7日に延ばし Cookie も更新。ログインから30日(`SESSION_ABSOLUTE_TTL_MS`)を超えない |
 | 毎回の確認 | セッション(失効・期限)→ テナントが `active` → スタッフの存在 → 退職日(テナントの時刻帯の業務日)。退職済みならそのスタッフの全セッションを失効 |
 | ミドルウェア | `requireSession(container, deniedAction?)`(未ログイン 401。`deniedAction` があれば WARN `<action>.access_denied`)、`requireAdmin(container, action)`(未ログイン 401・管理者以外 403、どちらも WARN)、`requireCoordinator(container, action)`(同じくコーディネーター・管理者以外 403) |
+| 「この端末」の印 | 本番 `__Host-katahimo_device`、開発 `katahimo_device`。`HttpOnly`・`SameSite=Lax`・`Path=/`・本番は `Secure`、期限180日。ログインの成功のたびに発行し直し、ログアウトでは消さない。値は `v1.<テナントID>.<スタッフID>.<発行時刻(秒)>.<乱数>.<HMAC>`(個人情報なし。[06](06_セキュリティ設計.md) 2.4)。アカウント単位のログインのロックを本人の端末から避けるためだけに使う(セッションではない) |
 | 対象スタッフ | `targetStaffIdOf(c, staffId)`: 一般スタッフは常に本人、コーディネーター・管理者は指定があればそのスタッフ(usecase でも確かめる) |
 
 ### 1.3 エラー
@@ -73,7 +74,8 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 
 | 規則(name) | キー | 既定 | 超えたとき | 回数の環境変数 |
 | --- | --- | --- | --- | --- |
-| `login_failure_account` | テナントslug + 正規化したログインID(無いアカウントも数える) | 15分に10回 → 15分ロック | 429(正しいパスワードでも) | `RATE_LIMIT_LOGIN_FAILURES_PER_ACCOUNT` |
+| `login_failure_account` | テナントslug + 正規化したログインID(無いアカウントも数える) | 15分に10回 → 15分ロック | 429(正しいパスワードでも。ただし正しい「この端末」の印のある要求は数えず、断らない) | `RATE_LIMIT_LOGIN_FAILURES_PER_ACCOUNT` |
+| `login_failure_device` | テナント + スタッフ + 端末(「この端末」の印が正しい要求だけ。`login_failure_account` の代わりに数える) | 15分に10回 → 15分ロック | 429(その端末だけ) | — |
 | `login_failure_ip` | 送信元IP | 15分に50回 → 15分ロック | 429 | `RATE_LIMIT_LOGIN_FAILURES_PER_IP` |
 | `password_reset_request_account` | アカウント(分かればテナント + スタッフ = 主・サブのメールで同じ枠、分からなければテナントslug + ログインID。管理者のパスワード設定の案内も同じ枠) | 1時間に5回 | 何もせず同じ応答(既存のコードに触れない)。案内は 429 | `RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT` |
 | `password_reset_request_account_day` | `password_reset_request_account` と同じ | 1日10回 | 同上 | `RATE_LIMIT_PASSWORD_RESET_REQUESTS_PER_ACCOUNT_DAY` |
@@ -97,8 +99,10 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 1時間・1日の枠を数える(1時間の上限を超えた回は1日の分に数えない)。アカウントが無い・退職者・停止中のテナントでも入力のログインIDで
 同じ回数だけ数えるため、上限に達するまでの回数からアカウントの有無は分からない。
 
-ログインの2つの規則は照合(argon2)の**前に**1回分の枠を取る(同時の大量の試行でも照合まで進むのは上限の回数まで)。
-一致した回は数えない(アカウントは数え直し、IP は先に取った1回分を返す)。
+ログインの規則は照合(argon2)の**前に**1回分の枠を取る(同時の大量の試行でも照合まで進むのは上限の回数まで)。まず送信元IPで数え、
+ロック中ならアカウントの枠には触れずに 429(1つのIPから送り続けてもアカウントの枠は減らない)。次にテナント・アカウントを探し、
+「この端末」の印(Cookie)がそのアカウントの正しい印なら `login_failure_device`、それ以外は `login_failure_account` で数える。
+一致した回は数えない(使った枠は数え直し、IP は先に取った1回分を返す)。印での成功ではアカウント単位の枠は戻さない。
 `integration_auth_failure_ip` も同じく API キーを確かめる前に1回分を取り、成功した回は返す。ロック中の要求は `rate_limit.exceeded` も
 `integration.auth_failed` も残さず(失敗の続く連携先で操作ログが溢れないように)、ロックの始まりに1回だけ WARN `integration.auth_locked` を残す。
 
@@ -158,9 +162,9 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 
 | メソッド・パス | 権限 | 契約(要求 / 応答) | 応答・エラー | 主なログ |
 | --- | --- | --- | --- | --- |
-| `POST /login` | 誰でも | `loginRequestSchema`(`tenantSlug`・`email`(サブメールも可)・`password`)/ `sessionUserResponseSchema` | `{ staff: { staffId, tenantId, name, email, role, demoTenant } }` + Cookie(`demoTenant` = 公開デモ用テナントへのログインか。1.6)。401「メールアドレスまたはパスワードが違います」/「ログイン権限のないユーザーです」(退職)/「ご利用の法人は現在利用を停止しています。…」、429(ロック中) | INFO `auth.login.succeeded`、SECURITY `auth.login.failed`・`.lockout_started`・`.locked` |
+| `POST /login` | 誰でも | `loginRequestSchema`(`tenantSlug`・`email`(サブメールも可)・`password`)/ `sessionUserResponseSchema` | `{ staff: { staffId, tenantId, name, email, role, demoTenant } }` + セッションの Cookie と「この端末」の印の Cookie(1.2。要求に正しい印があれば、アカウント単位のロック中でも通す)(`demoTenant` = 公開デモ用テナントへのログインか。1.6)。401「メールアドレスまたはパスワードが違います」/「ログイン権限のないユーザーです」(退職)/「ご利用の法人は現在利用を停止しています。…」、429(ロック中) | INFO `auth.login.succeeded`、SECURITY `auth.login.failed`・`.lockout_started`・`.locked`(`scope` = `ip` / `account` / `device`。印を送った要求は `details.device` = `trusted` / `invalid`) |
 | `GET /me` | 誰でも(Cookie) | — / `sessionUserResponseSchema` | `{ staff: { …, demoTenant } }`(`/login` と同じ形)。401「未ログインです」 | INFO `auth.session.auto_login` / WARN `.auto_login_failed` |
-| `POST /logout` | 誰でも | — / `okResponseSchema` | `{ ok: true }`。セッションを失効し Cookie を消す | INFO `auth.logout` |
+| `POST /logout` | 誰でも | — / `okResponseSchema` | `{ ok: true }`。セッションを失効しセッションの Cookie を消す(「この端末」の印の Cookie は残す) | INFO `auth.logout` |
 | `POST /change-password` | ログイン | `changePasswordRequestSchema`(`currentPassword`・`newPassword` 8〜128文字)/ `changePasswordResponseSchema` | 400「現在のパスワードが正しくありません」・長さの規則。操作中以外のセッションを失効 | SECURITY `auth.password_change.succeeded` / `.failed` |
 | `POST /password-reset/request` | 誰でも | `passwordResetRequestSchema`(`tenantSlug`・`email`)/ `passwordResetRequestResponseSchema` | 常に `{ ok: true, message }`。IP の上限だけ 429 | SECURITY `auth.password_reset.requested`、WARN `.request_rejected` |
 | `POST /password-reset/confirm` | 誰でも | `passwordResetConfirmSchema`(`tenantSlug`・`email`・`code` 8桁の数字(移行のあいだだけ6桁も受け付ける。`PASSWORD_RESET_CODE_PATTERN`)・`newPassword`)/ `passwordResetConfirmResponseSchema` | 400「無効な認証コードです」/「認証コードの有効期限が切れています」/入力回数の上限、429 | SECURITY `auth.password_reset.completed`、WARN `.failed` |

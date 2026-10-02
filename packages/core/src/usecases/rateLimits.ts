@@ -14,6 +14,11 @@ const DAY_MS = 24 * HOUR_MS;
 export interface RateLimitPolicy {
   /** ログイン失敗(テナントslug+ログインID単位)。上限で一時ロック。 */
   loginFailureAccount: RateLimitRule;
+  /**
+   * ログイン失敗(この端末として覚えたアカウント × 端末単位。usecases/auth/deviceTrust.ts)。端末の印(Cookie)が
+   * 正しい要求はアカウント単位のロックの代わりにこれで数える(第三者の失敗で本人の端末まで締め出されない)。
+   */
+  loginFailureDevice: RateLimitRule;
   /** ログイン失敗(送信元IP単位)。複数アカウントへの総当たり(パスワードスプレー)対策。 */
   loginFailureIp: RateLimitRule;
   /**
@@ -75,6 +80,12 @@ export interface RateLimitPolicy {
 export const DEFAULT_RATE_LIMIT_POLICY: RateLimitPolicy = {
   loginFailureAccount: {
     name: 'login_failure_account',
+    limit: 10,
+    windowMs: 15 * MINUTE_MS,
+    lockMs: 15 * MINUTE_MS,
+  },
+  loginFailureDevice: {
+    name: 'login_failure_device',
     limit: 10,
     windowMs: 15 * MINUTE_MS,
     lockMs: 15 * MINUTE_MS,

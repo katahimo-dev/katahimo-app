@@ -31,10 +31,15 @@ export interface AuthDeps extends StaffRegistrationDeps, Clock {
   legacyAuthSalt?: string | undefined;
 }
 
-/** ログイン。失敗回数によるアカウント・送信元IP単位の一時ロックを伴う。 */
+/** ログイン。失敗回数によるアカウント・端末・送信元IP単位の一時ロックを伴う。 */
 export interface LoginDeps extends AuthDeps {
   rateLimiter: RateLimiterPort;
   rateLimits: RateLimitPolicy;
+  /**
+   * 「この端末」の印(deviceTrust.ts)の HMAC の鍵(SESSION_SECRET から HKDF で導出した専用の鍵
+   * `katahimo/device-trust/v1`)。SESSION_SECRET を替えると発行済みの印は全て使えなくなる。
+   */
+  deviceTrustSecret: string;
 }
 
 export interface PasswordResetDeps extends LoginDeps {

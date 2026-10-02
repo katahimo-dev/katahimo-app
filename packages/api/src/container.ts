@@ -67,6 +67,8 @@ export interface Container {
   notifier: NotifierPort;
   /** 再設定コードの HMAC 鍵(SESSION_SECRET から HKDF で導出した専用の鍵)。 */
   resetCodeSecret: string;
+  /** 「この端末」の印(ログインのロックの回避)の HMAC 鍵(SESSION_SECRET から HKDF で導出した専用の鍵)。 */
+  deviceTrustSecret: string;
   /** ログイン・パスワード再設定・AI生成等の回数制限(rate_limit_buckets、インスタンス間で共有)。 */
   rateLimiter: RateLimiterPort;
   rateLimits: RateLimitPolicy;
@@ -173,6 +175,7 @@ export function createContainer(env: Env, db: Database): Container {
       },
     }),
     resetCodeSecret: deriveSecret(env.SESSION_SECRET, 'katahimo/password-reset-code/v1'),
+    deviceTrustSecret: deriveSecret(env.SESSION_SECRET, 'katahimo/device-trust/v1'),
     rateLimiter: new DrizzleRateLimiter(db, deriveSecret(env.SESSION_SECRET, 'katahimo/rate-limit-key/v1')),
     rateLimits: rateLimitPolicyOf(env),
     reportAi: env.GEMINI_API_KEY ? new GeminiAiPort({ apiKey: env.GEMINI_API_KEY }) : new NoopReportAiPort(),

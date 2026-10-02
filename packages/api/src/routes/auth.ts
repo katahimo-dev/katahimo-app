@@ -27,8 +27,10 @@ import type { SessionEnv } from '../session';
 import {
   clearSessionCookie,
   getAuthenticatedSession,
+  readDeviceCookie,
   readSessionCookie,
   requireSession,
+  setDeviceCookie,
   setSessionCookie,
 } from '../session';
 
@@ -73,7 +75,11 @@ export function createAuthRoutes(container: Container) {
     const deps = container.demo?.isDemoSlug(body.data.tenantSlug)
       ? { ...container, rateLimits: container.demo.loginRateLimits(container.rateLimits) }
       : container;
-    const result = await login(deps, { ...body.data, meta: requestMeta(c) });
+    const result = await login(deps, {
+      ...body.data,
+      deviceToken: readDeviceCookie(c, container),
+      meta: requestMeta(c),
+    });
     if (!result.ok) {
       if (result.reason === 'locked') return rateLimited(c, result.retryAfterMs, LOGIN_LOCKED_MESSAGE);
       const message =
@@ -85,7 +91,9 @@ export function createAuthRoutes(container: Container) {
       return apiError(c, 401, 'unauthenticated', message);
     }
 
+    // セッションの Cookie を先に置く(Set-Cookie の順。テストは最初の Cookie をセッションとして読む)
     setSessionCookie(c, container, result.sessionCookieValue, result.expiresAt);
+    setDeviceCookie(c, container, result.deviceToken.value, result.deviceToken.expiresAt);
     const staff = await toSessionUser(container, {
       staffId: result.staff.id,
       tenantId: result.staff.tenantId,
@@ -103,7 +111,10 @@ export function createAuthRoutes(container: Container) {
     return jsonOk(c, sessionUserResponseSchema, { staff: await toSessionUser(container, session) });
   });
 
-  /** ログアウト。Cookie を消すだけでなく、サーバー側のセッションも失効させる。 */
+  /**
+   * ログアウト。Cookie を消すだけでなく、サーバー側のセッションも失効させる。「この端末」の印の Cookie は残す
+   * (端末を表すもので、次のログインでアカウントのロックを避けるため)。
+   */
   app.post('/logout', async (c) => {
     const cookieValue = readSessionCookie(c, container);
     if (cookieValue) await logout(container, cookieValue, requestMeta(c));

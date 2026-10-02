@@ -46,6 +46,29 @@ export function readSessionCookie(c: Context, container: Container): string | un
 }
 
 /**
+ * 「この端末」の印の Cookie の名前(core の usecases/auth/deviceTrust.ts)。セッション Cookie と同じく本番は `__Host-` 接頭辞付き
+ * (`__Host-katahimo_device`)。ログインに成功するたびに発行し直し(期限180日)、ログアウトでは消さない(端末を表すもので、
+ * セッションを表すものではない)。パスワードの変更・再設定・退職日の設定で、サーバーが受け付けなくなる。
+ */
+export const DEVICE_COOKIE_NAME = 'katahimo_device';
+
+export function setDeviceCookie(c: Context, container: Container, value: string, expires: Date): void {
+  setCookie(c, DEVICE_COOKIE_NAME, value, {
+    httpOnly: true,
+    secure: container.config.isProduction,
+    sameSite: 'Lax',
+    path: '/',
+    expires,
+    maxAge: Math.max(0, Math.floor((expires.getTime() - Date.now()) / 1000)),
+    ...cookiePrefix(container),
+  });
+}
+
+export function readDeviceCookie(c: Context, container: Container): string | undefined {
+  return getCookie(c, DEVICE_COOKIE_NAME, container.config.isProduction ? 'host' : undefined);
+}
+
+/**
  * リクエストのCookieからログイン中ユーザーを解決する唯一の入口。
  *
  * CLAUDE.mdのセキュリティパターン(クライアント指定のスタッフ名/テナントIDを一切信用しない)
