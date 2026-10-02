@@ -9,9 +9,9 @@
     "e2e": "NODE_USE_ENV_PROXY=1 NODE_NO_WARNINGS=1 tsx src/e2e.ts"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
+    "@types/node": "^22.20.4",
     "playwright-core": "1.56.1",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.15",
     "vite": "^7.3.6"
   }
 }

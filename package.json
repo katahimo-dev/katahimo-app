@@ -43,10 +43,10 @@
     "e2e": "pnpm --filter @katahimo/e2e e2e"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.10",
-    "@types/node": "^22.10.0",
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "^22.20.4",
     "dotenv": "^16.6.1",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.2",
     "vitest": "^5.0.1"
   }
