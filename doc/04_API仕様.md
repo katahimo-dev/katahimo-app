@@ -63,7 +63,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | 5 | `/api/*` | CSRF: 状態を変える要求(POST/PUT/PATCH/DELETE)は `Sec-Fetch-Site` が `same-origin` / `none` 以外なら 403。`Sec-Fetch-Site` が無ければ `Origin` のホストが `Host` と違えば 403。どちらも無い要求(ブラウザ以外)は通す |
 | 6 | `/api/*` | 本体のある状態変更の要求は `Content-Type: application/json` だけ(415) |
 | 7 | `/api/*` | 本体の上限: 既定 256KB、`POST /api/receipts` 14MB、`POST /api/receipts/ocr` 3MB、`POST /api/integrations/customers` 2MB、`POST /api/admin/report-ai/import` 3MB、`POST /api/admin/staff/import` 3MB(413) |
-| 8 | `/api/*` | 公開デモ(`DEMO_TENANT_SLUG` を設定したときだけ): デモ用テナントの断る操作を 403(1.6) |
+| 8 | `/api/*` | 公開デモ(`DEMO_TENANT_SLUG` を設定したときだけ): デモ用テナントの断る操作を 403(1.6。`GET /api/demo/config` は掛からない) |
 
 ### 1.5 回数制限
 
@@ -80,6 +80,7 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 | `password_reset_confirm_account` / `_ip` | アカウント / IP | 1時間に20回 / 50回 | 429 | — |
 | `ai_generate_staff` | テナント + スタッフ | 1日200回 | 429 | `RATE_LIMIT_AI_GENERATE_PER_STAFF_DAY` |
 | `receipt_ocr_staff` | テナント + スタッフ | 1日300回 | 429 | `RATE_LIMIT_RECEIPT_OCR_PER_STAFF_DAY` |
+| `receipt_upload_staff` | テナント + スタッフ | 1時間60回(領収書の登録 `POST /api/receipts`。画像の枚数ではなく要求の回数。1回で最大6枚・14MB の本文を受け、画像を保存先に書くため) | 429「領収書の登録の回数が上限に達しました。しばらく待ってから再度お試しください。」(`Retry-After` つき) | `RATE_LIMIT_RECEIPT_UPLOAD_PER_STAFF_HOUR` |
 | `schedule_force_refresh_staff` | テナント + スタッフ | 1時間30回 | 429 | `RATE_LIMIT_SCHEDULE_REFRESH_PER_STAFF_HOUR` |
 | `push_test_staff` | テナント + スタッフ | 1時間10回 | 429 | — |
 | `push_subscribe_staff` | テナント + スタッフ | 1時間30回 | 429 | — |
@@ -95,11 +96,17 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 `integration_auth_failure_ip` も同じく API キーを確かめる前に1回分を取り、成功した回は返す。ロック中の要求は `rate_limit.exceeded` も
 `integration.auth_failed` も残さず(失敗の続く連携先で操作ログが溢れないように)、ロックの始まりに1回だけ WARN `integration.auth_locked` を残す。
 
+送信元IPで数える規則(`login_failure_ip`・`password_reset_request_ip`・`password_reset_confirm_ip`・`integration_auth_failure_ip`、公開デモの AI の
+`demo_ai_ip_day`)は、IP をそのままではなく `rateLimitIpSubject`(`core/domain/rateLimit/ipSubject.ts`)で決めた送信元で数える。IPv6 は利用者1人(1回線)に
+/64 がまとめて割り当てられるのが普通で、アドレスを替えながら上限を避けられるため、先頭64ビットの範囲を RFC 5952 の書き方で(`2001:db8:1:2::/64`。省略形・大文字・
+ゾーンID・角かっこの違いは同じ送信元)1つに数える。IPv4 射影の IPv6(`::ffff:192.0.2.1`)は IPv4 と同じ送信元、IPv4・読めない値はそのまま。
+操作ログ・セッションの記録には元のアドレスを残す。
+
 ### 1.6 公開デモ用テナント(`DEMO_TENANT_SLUG`)
 
 訪問者みんなで1つのテナントを使う公開デモのための制限(`api/src/http/demoRestrictions.ts`)。`DEMO_TENANT_SLUG` を設定したときだけ、
-その slug のテナントにだけ掛かる(普通のテナントは変わらない)。データは毎晩 `pnpm demo:reset` で作り直す(07 3.9)ため、入力・編集・
-閲覧・スタッフの追加・プロンプトの編集は普通に使える。断るのは、1人の操作で他の訪問者のデモを壊すものと、外への送信だけ:
+その slug のテナントにだけ掛かる(普通のテナントは変わらない)。データは毎晩 `pnpm demo:reset` で作り直し、前日のデモは日付付きの slug で停止して
+一定期間残す(07 3.9)ため、入力・編集・閲覧・スタッフの追加・プロンプトの編集は普通に使える。断るのは、1人の操作で他の訪問者のデモを壊すものと、外への送信だけ:
 
 | 断る操作 | 理由 |
 | --- | --- |
@@ -113,6 +120,11 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
   (回数は下の上限。保存済みのキーは伏せ字でしか返さない。`demo:reset` が新しいテナントへ封をし直して引き継ぐ。07 3.9)。
   共有の管理者アカウントなので、訪問者も上書きできる(そのときは保存し直す)。
 - 応答は 403 `{ code: 'forbidden', message: 'デモ環境ではこの操作はできません。' }`、WARN `demo.action_refused`(`details.rule` に規則名)。
+- デモかどうかを画面に伝えるのは web のビルドの設定ではなく API(本番とデモで同じビルドを使う): ログイン前は `GET /api/demo/config`(2.12)、ログイン後は
+  `POST /api/auth/login`・`GET /api/auth/me` の `staff.demoTenant`(そのテナントが `DEMO_TENANT_SLUG` の slug か。テナントの ID ごとの判定をプロセス内に10分覚える)。
+  画面が隠すのは、ここで断る操作のうちパスワードの変更と顧客CSVの取込のボタン(06 4.3)。
+- 前日のデモは `demo:reset` が slug を `<slug>-YYYYMMDD` に変えて停止(`suspended`)で残す。停止中のテナントはログイン(「ご利用の法人は現在利用を停止しています。…」)も
+  既存のセッション Cookie も通らない(1.2 の「テナントが `active`」)。
 - テナントはセッション Cookie の先頭(テナント ID)か本文の `tenantSlug` で決める(断るかどうかの判定だけ。認証は各ルートが行う)。
 - ログイン: デモ用テナントはアカウント単位のロック(`login_failure_account`)をしない(わざと間違え続けて全員を締め出させない)。
   送信元IP単位(`login_failure_ip`)は残す。
@@ -140,8 +152,8 @@ usecase は `DomainError(code, message, fields?, reason?)` を投げ、`app.onEr
 
 | メソッド・パス | 権限 | 契約(要求 / 応答) | 応答・エラー | 主なログ |
 | --- | --- | --- | --- | --- |
-| `POST /login` | 誰でも | `loginRequestSchema`(`tenantSlug`・`email`(サブメールも可)・`password`)/ `sessionUserResponseSchema` | `{ staff: { staffId, tenantId, name, email, role } }` + Cookie。401「メールアドレスまたはパスワードが違います」/「ログイン権限のないユーザーです」(退職)/「ご利用の法人は現在利用を停止しています。…」、429(ロック中) | INFO `auth.login.succeeded`、SECURITY `auth.login.failed`・`.lockout_started`・`.locked` |
-| `GET /me` | 誰でも(Cookie) | — / `sessionUserResponseSchema` | 401「未ログインです」 | INFO `auth.session.auto_login` / WARN `.auto_login_failed` |
+| `POST /login` | 誰でも | `loginRequestSchema`(`tenantSlug`・`email`(サブメールも可)・`password`)/ `sessionUserResponseSchema` | `{ staff: { staffId, tenantId, name, email, role, demoTenant } }` + Cookie(`demoTenant` = 公開デモ用テナントへのログインか。1.6)。401「メールアドレスまたはパスワードが違います」/「ログイン権限のないユーザーです」(退職)/「ご利用の法人は現在利用を停止しています。…」、429(ロック中) | INFO `auth.login.succeeded`、SECURITY `auth.login.failed`・`.lockout_started`・`.locked` |
+| `GET /me` | 誰でも(Cookie) | — / `sessionUserResponseSchema` | `{ staff: { …, demoTenant } }`(`/login` と同じ形)。401「未ログインです」 | INFO `auth.session.auto_login` / WARN `.auto_login_failed` |
 | `POST /logout` | 誰でも | — / `okResponseSchema` | `{ ok: true }`。セッションを失効し Cookie を消す | INFO `auth.logout` |
 | `POST /change-password` | ログイン | `changePasswordRequestSchema`(`currentPassword`・`newPassword` 8〜128文字)/ `changePasswordResponseSchema` | 400「現在のパスワードが正しくありません」・長さの規則。操作中以外のセッションを失効 | SECURITY `auth.password_change.succeeded` / `.failed` |
 | `POST /password-reset/request` | 誰でも | `passwordResetRequestSchema`(`tenantSlug`・`email`)/ `passwordResetRequestResponseSchema` | 常に `{ ok: true, message }`。IP の上限だけ 429 | SECURITY `auth.password_reset.requested`、WARN `.request_rejected` |
@@ -292,6 +304,15 @@ RESERVA 等の外部システムからの受け口(05 11章)。認証は `Author
 | メソッド・パス | 契約(要求 / 応答) | 応答・エラー・ログ |
 | --- | --- | --- |
 | `POST /customers` | `integrationCustomersRequestSchema`(`mode`(`upsert` だけ。既定)・`customers`(1〜500件): `externalId`・`familyName`・`givenName?`・`displayName?`(null・空は「姓 名」)・`familyNameKana?`・`givenNameKana?`・`email?`・`phone?`・`memo?`・`benefitMemberId?`・`evacuationSite?`・`home?`(`addressLine`・`prefecture?`・`city?`(省けば住所から取り出す)・`parkingArea?`・`parkingDetail?`・`lat?`・`lng?`(両方か無し))・`secondary?`(`home` と同じ + `validFrom?`・`validTo?`(両端を含む `YYYY-MM-DD`))・`emergencyContact?`(`relation?`・`phone?`)・`recipients?`(20人まで: `name`・`birthDate?`・`needs?`・`allergy?`)・`attributes?`(英小文字のキー → 値、30項目まで)・`externalRegisteredAt?`・`externalUpdatedAt?`(ISO 8601、時差つき))/ `integrationCustomersResponseSchema` | 200 `{ importRunId, counts: { created, updated, unchanged, skipped }, results: [{ externalId, outcome, issues }], dataVersion }`(`results` は送った順)。**省いた項目は今の値のまま、null は空にする**(部分的な送信でよい。新しい顧客では省いた項目は空、表示名は「姓 名」。`displayName` を省いて姓・名を変えたときは、今の表示名が今の姓名から作った「姓 名」の形なら新しい姓名で作り直し、取込元が別に付けた表示名は今のまま)。`home`・`secondary`・`emergencyContact` はまとまりごと、`attributes` はオブジェクトごと、`recipients` は配列ごと(渡せば全員を置き換え、配列に無い子どもはアーカイブ。`[]` で全員を外す)に置き換える(顧客CSVの1行は今の全ての値で、空の列は空にする。05 11章)。キーの取込元 × `externalId` で突き合わせ、作成・更新だけを行う(**削除・アーカイブはしない**)。全件を1トランザクションで適用し `import_runs`(`source = external_api`)を残す。同じテナントの取込(この API の同時の送信・顧客CSVの取込)とはテナントごとのロックで1つずつ適用する(待ってから適用する。同じ新しい顧客IDを同時に送っても顧客は1人)。他の取込が5秒(アプリのロールの `lock_timeout`)より長くロックを持っていれば 409 `conflict`「別の顧客の取込が実行中です。しばらくしてから送り直してください。」(何も書かない。WARN `integration.customers.ingest_failed`、`error: conflict:customer_import_in_progress`)。同じ `externalId` が2回・存在しない日付・住所2の期間の逆転・緯度だけ等は 400(何も書かない)。回数制限 `integration_customers_key`。INFO `integration.customers.ingested`(`skipped`・`issues` があれば WARN)。それ以外の理由で適用に失敗したら何も残さず 500 と ERROR `integration.customers.ingest_failed` |
+
+### 2.12 公開デモの設定 `/api/demo`(`routes/demo.ts`)
+
+| メソッド・パス | 権限 | 応答 | 備考 |
+| --- | --- | --- | --- |
+| `GET /api/demo/config` | 誰でも(ログイン不要) | `demoConfigResponseSchema` | 環境変数 `DEMO_*` から作った値をそのまま返す(DB を読まない・操作ログに残さない・`Cache-Control: no-store`)。`DEMO_TENANT_SLUG` が無ければ `{ enabled: false }`。あれば `{ enabled: true, tenantSlug, publicLogin, accounts: [{ role, label, email }], password, dataRetentionDays, logRetentionMonths, aiUsesPerSession }`。`publicLogin`(`DEMO_PUBLIC_LOGIN`)が false のときは `accounts` は `[]`、`password` は `null`(本番の環境に暫定でデモ用テナントを置くとき、本番の利用者にデモ用アカウントを見せない)。`dataRetentionDays`(`DEMO_DATA_RETENTION_DAYS`、既定30)・`logRetentionMonths`(`DEMO_LOG_RETENTION_MONTHS`、既定3)・`aiUsesPerSession`(10)は画面の案内に入れる値 |
+
+web はログイン画面で、`enabled` かつ(`publicLogin` またはデモ用テナントの法人IDが入っている)なら注意書きを、`publicLogin` かつデモ用テナントの法人IDなら
+デモ用アカウントのボタンを出し、`publicLogin` なら会社IDの既定をデモ用テナントにする(02 3章)。読めなかったときはデモではない扱い。
 
 ## 3. 本番での Web 画面の配信
 
