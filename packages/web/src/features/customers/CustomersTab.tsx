@@ -80,8 +80,9 @@ export function CustomersTab() {
         🧾 お客様に関係ない領収書を登録
       </button>
 
-      {/* 新しいお客様が見つからないとき、定期の取込(10分ごと)を待たずに取り込む(コーディネーター・管理者だけ) */}
-      {canActForOthers(user.role) ? <CustomerCsvImportButton /> : null}
+      {/* 新しいお客様が見つからないとき、定期の取込(10分ごと)を待たずに取り込む(コーディネーター・管理者だけ。
+          公開デモは API が断るため出さない) */}
+      {canActForOthers(user.role) && !user.demoTenant ? <CustomerCsvImportButton /> : null}
 
       <div id="customerList" className="space-y-3">
         {!data ? (

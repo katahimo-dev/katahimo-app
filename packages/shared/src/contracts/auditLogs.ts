@@ -117,6 +117,7 @@ export const AUDIT_LOG_CATEGORIES = [
   { prefix: 'outbox.', label: '外部への送信' },
   { prefix: 'maintenance.', label: '保守' },
   { prefix: 'rate_limit.', label: '回数の上限' },
+  { prefix: 'demo.', label: '公開デモ' },
 ] as const;
 
 /** 操作コード → 表示名(無いものは操作コードのまま出す)。 */
@@ -274,6 +275,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'integration.auth_failed': '外部連携のAPIキーの認証の失敗',
   'integration.auth_locked': '外部連携のAPIキーの認証の失敗が続いたため一時的に断り始めた',
   'rate_limit.exceeded': '回数の上限を超えた',
+  'demo.action_refused': '公開デモでは使えない操作を断った',
 };
 
 const ACCESS_DENIED_SUFFIX = '.access_denied';

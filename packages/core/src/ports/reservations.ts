@@ -1,11 +1,12 @@
 /**
  * 予約(reservations)とスタッフの割当(reservation_assignments)のリポジトリ。
  *
- * 表はマッチング拡張(doc/10_マッチング拡張設計.md)のもの。いまは SCHEDULE_PROVIDER=database の予定の取得がスタッフの
- * 確定した訪問を読む(listConfirmedVisitsForStaffOnDate)ことにだけ使う(予約の登録(create)はテストだけが使う)。管理者の割当のアプリを作るときは、この port に予約の登録・割当の提案・確定・取消を足していく。
+ * 表はマッチング拡張(doc/10_マッチング拡張設計.md)のもの。いまは公開デモの `pnpm demo:reset` が今日・明日の予定を
+ * 入れ(create)、SCHEDULE_PROVIDER=database の予定の取得がスタッフの確定した訪問を読む(listConfirmedVisitsForStaffOnDate)
+ * ことにだけ使う。管理者の割当のアプリを作るときは、この port に予約の登録・割当の提案・確定・取消を足していく。
  */
 
-/** 予約1件と、その割当の登録。ID はアプリが採番する(UUIDv7)。 */
+/** 予約1件と、その割当の登録(公開デモの予定)。ID はアプリが採番する(UUIDv7)。 */
 export interface ReservationCreateInput {
   id: string;
   /** customers.id */

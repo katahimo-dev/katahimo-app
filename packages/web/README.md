@@ -117,6 +117,13 @@ src/
   選び(明日なら「🌙 明日」)、`AppShell` の `useScheduleLinkNavigation` が URL から取り除く。開いている画面で通知を押したときは
   Service Worker(`public/push-sw.js`)のメッセージを受けて表示するスタッフを本人に戻し、予定タブに切り替え、`openScheduleLink` で日付を知らせる
   (`features/schedule/scheduleLink.ts`)。
+- **公開デモ**: デモかどうかはビルドの設定ではなく API で決める(本番とデモで同じビルド)。ログイン画面は `GET /api/demo/config`
+  (`features/auth/demo/useDemoConfig.ts`、キー `queryKeys.demoConfig`。失敗はデモではない扱い)で注意書き・デモ用アカウント・既定の法人IDを
+  出し分け、ログイン後はセッションの `user.demoTenant` で注釈(`DemoTermsProvider`。ログインの画面からログインした直後だけ出す)・
+  「デモ環境」の帯(`DemoBanner`。押すと注釈を開き直す)・メモ欄の注意を出し、API が断る操作(パスワード変更・顧客CSVの取込)のボタンを隠す。
+  文言は `lib/demo.ts` にまとめ、保存の日数・月数・AI の回数は API の値を入れる(日数・月数が null = 本番の環境に暫定で置いたデモ用テナント・
+  設定を読めなかったときは期間を書かず、日数が無ければ「毎晩作り直します」とも書かない)。ログイン画面の注意書きと「パスワードを忘れたとき」を
+  隠すのは、入る法人IDがデモ用テナントのときだけ。ログイン直後の注釈には「同意しない（ログアウト）」(`useSession().logout`)を置く。
 - **Service Worker**: vite-plugin-pwa の generateSW が作る `sw.js`(事前キャッシュ・新しい版のお知らせ)が、`workbox.importScripts` で
   `public/push-sw.js`(通知の表示と通知を押したときの処理)を読む。テストは `src/test/pushServiceWorker.test.ts`(`node:vm` で動かす)。
 
@@ -226,6 +233,7 @@ GAS版の `GAS_AUTH_TOKEN` / `GAS_STAFF_SESSION_V3` / `GAS_STAFF_ADMIN` は使�
 | `z-[110]` | パスワード変更、今月のまとめ、まとめて取り込む |
 | `z-[115]` | カレンダーとの見比べ、領収書の一覧 |
 | `z-[120]` | 予定の修正、領収書の画像・領収書の取消の確かめ(一覧の上に重ねる) |
+| `z-[125]` | 公開デモの注釈(ログイン直後・「デモ環境」の帯から) |
 | `z-[130]` | お知らせ(トースト) |
 
 ## GAS版と意図的に変えているところ

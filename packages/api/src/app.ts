@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Container } from './container';
 import type { Env } from './env';
 import { trustedProxyHops } from './env';
+import { demoRestrictions } from './http/demoRestrictions';
 import { onApiError, requestLogger, writeStructuredLog } from './http/requestLog';
 import { clientIpMiddleware } from './http/requestMeta';
 import {
@@ -20,6 +21,7 @@ import { createAttendanceRoutes } from './routes/attendance';
 import { createAuthRoutes } from './routes/auth';
 import { createCustomerRoutes } from './routes/customers';
 import { createDataVersionRoutes } from './routes/dataVersion';
+import { createDemoRoutes } from './routes/demo';
 import { createIntegrationRoutes } from './routes/integrations';
 import { createPushRoutes } from './routes/push';
 import { createReceiptRoutes } from './routes/receipts';
@@ -47,6 +49,8 @@ export function createApp(deps: AppDeps) {
   app.use('/api/*', csrfProtection());
   app.use('/api/*', requireJsonBody());
   app.use('/api/*', apiBodyLimits());
+  // 公開デモ用テナント(DEMO_TENANT_SLUG)だけ: 他の訪問者を妨げる操作・外部への送信を断る
+  app.use('/api/*', demoRestrictions(container));
 
   /** Cloud Run のヘルスチェック用。DBに触らない軽量な生存確認。 */
   app.get('/api/health', (c) => c.json({ status: 'ok' }));
@@ -83,6 +87,8 @@ export function createApp(deps: AppDeps) {
   app.route('/api/admin/report-ai', createAdminReportAiRoutes(container));
   app.route('/api/admin', createAdminAuditLogRoutes(container));
   app.route('/api/ui-config', createUiConfigRoutes(container));
+  // 公開デモの表示の設定(ログイン不要。DEMO_TENANT_SLUG が無ければ enabled: false)
+  app.route('/api/demo', createDemoRoutes(container));
   app.route('/api/push', createPushRoutes(container));
   // 外部システム連携(API キーで認証。Cookie のセッションは使わない)
   app.route('/api/integrations', createIntegrationRoutes(container));

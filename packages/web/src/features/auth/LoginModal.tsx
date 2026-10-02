@@ -1,4 +1,5 @@
 import type { useVisibilityToggle } from '../../ui/useVisibilityToggle';
+import { DemoAccountPicker, type DemoAccountsView } from './DemoAccountPicker';
 
 export interface LoginFormValues {
   tenantSlug: string;
@@ -16,6 +17,15 @@ interface LoginModalProps {
   passwordVisibility: ReturnType<typeof useVisibilityToggle>;
   onSubmit: () => void;
   onForgotPassword: () => void;
+  /**
+   * 「パスワードを忘れたとき」を出さない(入る法人IDが公開デモ用テナントのとき。デモでは使えない)。
+   * 決めるのは LoginScreen(法人IDがデモ用テナントかだけで決め、デモ専用の環境かどうかでは変えない)。
+   */
+  hideForgotPassword?: boolean;
+  /** 公開デモの注意書き(1要素 = 1行。lib/demo.ts)。null でなければログインボタンの上に出す。 */
+  demoNotice?: string[] | null;
+  /** デモ用アカウントの一覧(デモ専用の環境だけ)。押すとメールアドレスとパスワードを入れる。 */
+  demoAccounts?: DemoAccountsView | null;
 }
 
 /**
@@ -31,6 +41,9 @@ export function LoginModal({
   passwordVisibility,
   onSubmit,
   onForgotPassword,
+  hideForgotPassword = false,
+  demoNotice = null,
+  demoAccounts = null,
 }: LoginModalProps) {
   return (
     <div className="fixed inset-0 bg-gray-900 z-50 flex items-center justify-center p-4">
@@ -46,6 +59,12 @@ export function LoginModal({
           <h2 className="text-2xl font-bold text-gray-800">ログイン</h2>
           <p className="text-sm text-gray-500 mt-1">スタッフ情報を入力してください</p>
         </div>
+        {demoAccounts ? (
+          <DemoAccountPicker
+            view={demoAccounts}
+            onPick={(account, password) => onChange({ ...values, email: account.email, password })}
+          />
+        ) : null}
         <div className="space-y-4">
           {showTenantField ? (
             <div>
@@ -107,18 +126,32 @@ export function LoginModal({
         <div className="text-red-600 text-base text-center min-h-[1.25rem]" role="alert">
           {error}
         </div>
-        <div className="text-center">
-          <button
-            type="button"
-            onClick={onForgotPassword}
-            className="w-full min-h-11 py-3 rounded-xl bg-gray-200 text-gray-800 text-base font-bold"
+        {hideForgotPassword ? null : (
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={onForgotPassword}
+              className="w-full min-h-11 py-3 rounded-xl bg-gray-200 text-gray-800 text-base font-bold"
+            >
+              パスワードを忘れたときはこちら
+            </button>
+          </div>
+        )}
+        {demoNotice ? (
+          <div
+            id="loginDemoNotice"
+            role="note"
+            className="rounded-xl border border-amber-300 bg-amber-50 p-3 space-y-1 text-sm text-amber-900"
           >
-            パスワードを忘れたときはこちら
-          </button>
-        </div>
+            {demoNotice.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </div>
+        ) : null}
         <button
           type="submit"
           disabled={submitting}
+          aria-describedby={demoNotice ? 'loginDemoNotice' : undefined}
           className="w-full min-h-12 py-3 bg-blue-600 text-white text-base font-bold rounded-xl shadow-lg transform transition-transform active:scale-95"
         >
           {submitting ? '確認中...' : 'ログイン'}

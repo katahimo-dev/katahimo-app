@@ -7,6 +7,7 @@ import {
   newId,
   normalizeEmailForIndex,
   outboxDedupeKey,
+  rateLimitIpSubject,
   resolvePasswordResetAddress,
   zonedBusinessDate,
 } from '../../domain';
@@ -153,7 +154,8 @@ async function consumeResetLimits(
   input: { tenantSlug: string; email: string; meta?: RequestMeta },
   now: Date,
 ): Promise<{ limited: false } | { limited: true; scope: 'ip' | 'account'; retryAfterMs: number }> {
-  const ip = input.meta?.ip;
+  // IPv6 は /64 ごとに数える(rateLimitIpSubject)
+  const ip = input.meta?.ip ? rateLimitIpSubject(input.meta.ip) : null;
   if (ip) {
     const byIp = await deps.rateLimiter.consume(rules.ip, ip, now);
     if (!byIp.allowed) return { limited: true, scope: 'ip', retryAfterMs: byIp.retryAfterMs };

@@ -26,7 +26,7 @@ import { type Context, Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import type { Container } from '../container';
 import { csvLine, writeCsvStream } from '../http/csv';
-import { enforceStaffQuota } from '../http/quota';
+import { enforceAiQuota, enforceStaffQuota } from '../http/quota';
 import { requestIdOf } from '../http/requestLog';
 import { apiError, jsonOk, parseJsonBody, parseQuery } from '../http/responses';
 import type { SessionEnv } from '../session';
@@ -158,7 +158,7 @@ export function createReceiptRoutes(container: Container) {
     if (!decodeReceiptImage(body.data.image, RECEIPT_IMAGE_MAX_BYTES).ok) {
       return apiError(c, 400, 'validation_failed', INVALID_IMAGE_MESSAGE);
     }
-    const limited = await enforceStaffQuota(
+    const limited = await enforceAiQuota(
       c,
       container,
       container.rateLimits.receiptOcrStaff,
@@ -171,9 +171,17 @@ export function createReceiptRoutes(container: Container) {
 
   /**
    * 領収書画像を登録する(GAS版 uploadReceiptsOnly。日報画面からの送信と「お客様の指定なし」の単独の画面の両方)。
-   * 重複・名義・画像の検証は usecase が行う。
+   * 重複・名義・画像の検証は usecase が行う。回数の上限は本文を読む前に数える(大きな本文を読んで検証するのも
+   * 重いため、形の正しくない本文も1回に数える)。
    */
   app.post('/', requireSession(container, 'receipt.upload'), async (c) => {
+    const limited = await enforceStaffQuota(
+      c,
+      container,
+      container.rateLimits.receiptUploadStaff,
+      '領収書の登録の回数が上限に達しました。しばらく待ってから再度お試しください。',
+    );
+    if (limited) return limited;
     const body = await parseJsonBody(c, uploadReceiptsRequestSchema);
     if (!body.ok) return body.response;
     const { data } = body;

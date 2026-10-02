@@ -6,6 +6,7 @@ import { queryKeys } from '../../api/queryKeys';
 import { NETWORK_ERROR_MESSAGE } from '../../lib/messages';
 import { clearDeviceCaches } from '../../lib/storage';
 import { ErrorState } from '../../ui/StatusViews';
+import { DemoTermsProvider } from './demo';
 import { LoginScreen } from './LoginScreen';
 import { SessionProvider, sessionHint, useSessionQuery } from './session';
 
@@ -19,6 +20,7 @@ export const SESSION_EXPIRED_MESSAGE = 'しばらく使っていなかったの�
  *   (GAS版はページを開いた時点でログインダイアログが表示されており、確認できたら閉じる)。
  * - 「ログインしていない」と決めるのは、サーバーが 401 を返したときだけ。電波が悪いなどで確かめられなかった
  *   ときは、ログイン画面ではなく「もう一度読み込む」を出す(セッションは生きているかもしれないため)。
+ * - 公開デモのテナント(`user.demoTenant`)では注釈(DemoTermsProvider)を置き、ログインの画面からログインした直後に出す。
  * - 以前ログインしていたのにセッションが無効だった場合、または使っている途中で401が返った場合は
  *   「しばらく使っていなかったので、もう一度ログインしてください」を出す。
  */
@@ -26,6 +28,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const session = useSessionQuery();
   const [expiredMessage, setExpiredMessage] = useState('');
+  // 公開デモ: ログインの画面からログインした直後だけ注釈を出す(ページの読み込み直しでは出さない)
+  const [demoTermsOnMount, setDemoTermsOnMount] = useState(false);
 
   // 起動時: 以前ログインしていた印があるのにセッションが無い(401) = 期限切れ
   const user = session.data ?? null;
@@ -51,6 +55,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const onLoggedIn = (staff: SessionUser) => {
     sessionHint.mark();
     setExpiredMessage('');
+    setDemoTermsOnMount(staff.demoTenant);
     queryClient.setQueryData(queryKeys.session, staff);
   };
 
@@ -61,7 +66,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
     // key: 案内の文言が変わったらログイン画面を作り直して反映する
     return <LoginScreen key={expiredMessage} initialError={expiredMessage} onLoggedIn={onLoggedIn} />;
   }
-  return <SessionProvider user={user}>{children}</SessionProvider>;
+  return (
+    <SessionProvider user={user}>
+      {user.demoTenant ? (
+        <DemoTermsProvider showOnMount={demoTermsOnMount}>{children}</DemoTermsProvider>
+      ) : (
+        children
+      )}
+    </SessionProvider>
+  );
 }
 
 /** ログインしているか確かめられなかった(通信の失敗など)。ログイン画面と同じ暗い背景に出す。 */

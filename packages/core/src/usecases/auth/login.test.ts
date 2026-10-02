@@ -184,6 +184,22 @@ describe('login', () => {
     expect((await fromIp('hanako@example.com', 'correct-horse', '198.51.100.10')).ok).toBe(true);
   });
 
+  it('IPv6 は /64 ごとに数える(同じ /64 のアドレスを替えても回避できない。ログには元のアドレスを残す)', async () => {
+    const limit = DEFAULT_RATE_LIMIT_POLICY.loginFailureIp.limit;
+    const fromIp = (email: string, password: string, ip: string) =>
+      login(ctx.deps, { tenantSlug: 'test-tenant', email, password, meta: { ip } });
+    for (let i = 0; i < limit; i++) {
+      await fromIp(`user${i}@example.com`, 'guess', `2001:db8:1:2::${(i + 1).toString(16)}`);
+    }
+    expect(await fromIp('hanako@example.com', 'correct-horse', '2001:db8:1:2:ffff::1')).toMatchObject({
+      ok: false,
+      reason: 'locked',
+    });
+    expect(ctx.appLog.byAction('auth.login.locked')[0]).toMatchObject({ ip: '2001:db8:1:2:ffff::1' });
+    // 別の /64 は断らない
+    expect((await fromIp('hanako@example.com', 'correct-horse', '2001:db8:1:3::1')).ok).toBe(true);
+  });
+
   it('停止中(suspended)のテナントは、パスワードが正しくてもログインできない', async () => {
     ctx.setTenantStatus('suspended');
     expect(await loginAs('hanako@example.com')).toEqual({ ok: false, reason: 'tenant_suspended' });

@@ -365,3 +365,51 @@ describe('API: 領収書の会社負担・取消', () => {
     expect(summary.receipts).toMatchObject({ total: 1600, companyPaid: 600, customerBillable: 1000 });
   });
 });
+
+describe('API: 領収書の登録の回数の上限', () => {
+  it('スタッフ単位の1時間の上限(receipt_upload_staff)を超えたら 429(形の正しくない本文も数える。他のスタッフは登録できる)', async () => {
+    const limitedEnv = loadEnv({
+      ...process.env,
+      NODE_ENV: 'test',
+      SCHEDULE_PROVIDER: 'noop',
+      MIRROR_TO_GOOGLE_SHEETS: 'false',
+      STORAGE_PROVIDER: 'local',
+      LOCAL_RECEIPT_STORAGE_DIR: storageDir,
+      SESSION_SECRET: env.SESSION_SECRET,
+      SECRET_BOX_LOCAL_KEY: process.env.SECRET_BOX_LOCAL_KEY ?? 'a'.repeat(64),
+      RATE_LIMIT_RECEIPT_UPLOAD_PER_STAFF_HOUR: '2',
+    });
+    const limitedContainer = createContainer(limitedEnv, appDb);
+    expect(limitedContainer.rateLimits.receiptUploadStaff).toMatchObject({
+      name: 'receipt_upload_staff',
+      limit: 2,
+    });
+    const limitedApp = createApp({ env: limitedEnv, container: limitedContainer });
+    const fresh = await createTenant();
+    const send = (who: Member, amount: string) =>
+      limitedApp.request('/api/receipts', {
+        method: 'POST',
+        headers: { Cookie: who.cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerNameText: '未登録 さん',
+          images: [{ data: JPEG, amount, storeName: 'コンビニ', receiptDate: '2026/09/10 12:00' }],
+        }),
+      });
+    expect((await send(fresh.staff, '100')).status).toBe(200);
+    // 本文を読む前に数えるので、検証で断られた(400)回も1回に数える
+    const invalid = await limitedApp.request('/api/receipts', {
+      method: 'POST',
+      headers: { Cookie: fresh.staff.cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: 'not-an-array' }),
+    });
+    expect(invalid.status).toBe(400);
+    const over = await send(fresh.staff, '300');
+    expect(over.status).toBe(429);
+    expect(await over.json()).toEqual({
+      code: 'rate_limited',
+      message: '領収書の登録の回数が上限に達しました。しばらく待ってから再度お試しください。',
+    });
+    expect(over.headers.get('retry-after')).not.toBeNull();
+    expect((await send(fresh.other, '400')).status).toBe(200);
+  });
+});

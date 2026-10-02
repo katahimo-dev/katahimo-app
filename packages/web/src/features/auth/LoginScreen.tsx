@@ -2,9 +2,11 @@ import type { SessionUser } from '@katahimo/shared';
 import { useMemo, useState } from 'react';
 import { authApi } from '../../api/auth';
 import { userMessageOf } from '../../api/client';
-import { rememberTenantSlug, resolveTenantFromBrowser } from '../../lib/tenant';
+import { demoLoginNoticeLines, demoTermsValuesOf } from '../../lib/demo';
+import { normalizeTenantSlug, rememberTenantSlug, resolveTenantFromBrowser } from '../../lib/tenant';
 import { alertNative } from '../../ui/confirm';
 import { useVisibilityToggle } from '../../ui/useVisibilityToggle';
+import { useDemoConfig } from './demo/useDemoConfig';
 import { type LoginFormValues, LoginModal } from './LoginModal';
 import { ResetRequestModal } from './ResetRequestModal';
 import { ResetVerifyModal } from './ResetVerifyModal';
@@ -23,8 +25,14 @@ interface LoginScreenProps {
  * 入力した値はGAS版(DOMが残る)と同じく、ダイアログを行き来しても残る。
  */
 export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps) {
-  const resolvedTenant = useMemo(() => resolveTenantFromBrowser(), []);
-  const showTenantField = resolvedTenant === null;
+  const browserTenant = useMemo(() => resolveTenantFromBrowser(), []);
+  const { config: demo, pending: demoPending } = useDemoConfig();
+  // デモ専用の環境(publicLogin)で法人IDが決まらなければ、デモ用テナントを既定にする(法人ID欄を出さない)。
+  // ビルドの既定値・?t=・最後にログインできた法人IDのほうを先に使う(lib/tenant.ts の順番のあと)。
+  const resolvedSlug =
+    browserTenant?.slug ?? (demo.enabled && demo.publicLogin ? normalizeTenantSlug(demo.tenantSlug) : null);
+  // デモの設定を読んでいる間は法人ID欄を出さない(読めるとデモ用テナントに決まることがあり、欄がちらつくため)
+  const showTenantField = resolvedSlug === null && !demoPending;
 
   const [step, setStep] = useState<Step>('login');
   const [login, setLogin] = useState<LoginFormValues>({ tenantSlug: '', email: '', password: '' });
@@ -42,7 +50,19 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
   const [resetVerifyError, setResetVerifyError] = useState('');
   const [completingReset, setCompletingReset] = useState(false);
 
-  const tenantSlug = resolvedTenant?.slug ?? login.tenantSlug.trim();
+  const tenantSlug = resolvedSlug ?? login.tenantSlug.trim();
+
+  // 公開デモ: ログインの前に、入力した内容・接続情報を保存することを知らせる(ログインでも IPアドレス等を記録するため)。
+  // 入る法人ID(既定・?t=・最後にログインした法人ID・入力)がデモ用テナントのときだけ出す(デモ専用の環境でも、
+  // ほかの法人に入るときは出さない。「パスワードを忘れたとき」もデモ用テナントのときだけ隠す)。
+  const demoSlug = demo.enabled ? normalizeTenantSlug(demo.tenantSlug) : null;
+  const demoSlugEntered = demoSlug !== null && normalizeTenantSlug(tenantSlug) === demoSlug;
+  const demoNotice = demo.enabled && demoSlugEntered ? demoLoginNoticeLines(demoTermsValuesOf(demo)) : null;
+  // デモ用アカウントはデモ専用の環境で、デモ用テナントに入るときだけ出す(ほかの法人IDでは使えないため)
+  const demoAccounts =
+    demo.enabled && demo.publicLogin && demoSlugEntered && demo.password !== null && demo.accounts.length > 0
+      ? { accounts: demo.accounts, password: demo.password }
+      : null;
 
   const doLogin = async () => {
     if (!login.email || !login.password || !tenantSlug) {
@@ -156,6 +176,9 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
       passwordVisibility={passwordVisibility}
       onSubmit={doLogin}
       onForgotPassword={() => setStep('resetRequest')}
+      hideForgotPassword={demoSlugEntered}
+      demoNotice={demoNotice}
+      demoAccounts={demoAccounts}
     />
   );
 }
