@@ -51,6 +51,10 @@ resource "google_project_iam_member" "deployer" {
   for_each = toset([
     "roles/run.developer",     # サービスのデプロイ・ジョブの更新と実行
     "roles/logging.logWriter", # ビルドログ(options.logging: CLOUD_LOGGING_ONLY)
+    # cloudbuild.yaml の verify-source が、動いているビルドの承認の状態(gcloud builds describe の approval.state)を読む
+    # (cloudbuild.builds.get。上の2つには含まれない)。読むだけで、ビルドの作成・承認・トリガーの編集はできない。
+    # doc/07_インフラ・運用.md 4.1
+    "roles/cloudbuild.builds.viewer",
   ])
   project = var.project_id
   role    = each.value
@@ -81,4 +85,26 @@ resource "google_storage_bucket_iam_member" "deployer_read_source" {
   bucket = google_storage_bucket.build_staging.name
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.deployer.email}"
+}
+
+# ── リリース(Cloud Build のトリガー katahimo-release。doc/07_インフラ・運用.md 4.1) ──────────
+# cloudbuild.yaml の最初のステップ verify-source が GitHub のタグと main を読むためのトークン(第 2 世代の接続の
+# accessReadToken)を出す権限。接続はコンソールで作るため(doc/07 4.1)、作った後に cloudbuild_github_connection を設定する。
+# 読めるのはこの接続にリンクしたリポジトリだけ(GitHub App は katahimo-app だけに入れる)。
+resource "google_cloudbuildv2_connection_iam_member" "deployer_read_token" {
+  count    = var.cloudbuild_github_connection == "" ? 0 : 1
+  project  = var.project_id
+  location = var.region
+  name     = var.cloudbuild_github_connection
+  role     = "roles/cloudbuild.readTokenAccessor"
+  member   = "serviceAccount:${google_service_account.deployer.email}"
+}
+
+# トリガーの承認(承認必須。doc/07 4.1)ができる人。名前を挙げた運用担当者だけにする(グループ・SA を足さない)。
+# プロジェクトのオーナー(基本ロール)もこの権限を含むため、オーナーも同じく絞っておく。
+resource "google_project_iam_member" "release_approvers" {
+  for_each = toset(var.release_approvers)
+  project  = var.project_id
+  role     = "roles/cloudbuild.builds.approver"
+  member   = each.value
 }

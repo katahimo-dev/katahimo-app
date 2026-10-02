@@ -46,3 +46,8 @@ optional_secrets = ["smtp-pass", "google-maps-api-key", "gemini-api-key", "legac
 alert_emails       = ["ops@example.com"]
 billing_account_id = ""
 budget_amount      = 10000
+
+# リリース(doc/07_インフラ・運用.md 4.1)。GitHub 接続を作った後に接続の名前を入れる(verify-source の読み取りトークンの権限)。
+# トリガーの承認ができる人は名前で挙げる(承認する人はタグとマイグレーションの差分を見てから承認する)
+cloudbuild_github_connection = "github1"
+release_approvers            = ["user:ops@example.com"]

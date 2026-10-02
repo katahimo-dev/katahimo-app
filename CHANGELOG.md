@@ -40,6 +40,22 @@
 
 ### セキュリティ
 
+- リリースの経路を強めた(タグを付けられる人は、DB のオーナーで動くマイグレーションを含めて本番に任意のコードを出せるため)。
+  Cloud Build のトリガー `katahimo-release` は承認必須に戻し、承認できる人を Terraform の `release_approvers` で名前で挙げる(承認者は
+  タグのコミット・マイグレーション・ビルドの手順の差分を読んでから承認する。マイグレーションは canary の確認より前に本番の DB に当たる)。
+  `cloudbuild.yaml` の最初のステップ `verify-source`(`scripts/verifyReleaseSource.sh`)が、このビルドの承認の状態が `APPROVED` であること
+  (承認が外れたトリガーのビルドを止める。Terraform で katahimo-deployer に `roles/cloudbuild.builds.viewer` を足した)、読む先
+  `_SOURCE_GIT_URL` がトリガーのリポジトリ(`REPO_FULL_NAME`)であること、タグがビルドのコミットを指し(注釈つきタグは `COMMIT_SHA` が
+  指す先のコミットとタグのオブジェクトのどちらでも通す)タグの指す先のコミットが main に含まれることを GitHub から確かめ、だめならビルド・
+  マイグレーションの前に止まる(読み取りのトークンは GitHub 接続の `accessReadToken`。Terraform の `cloudbuild_github_connection` で
+  katahimo-deployer に権限を付ける)。手元からの `gcloud builds submit` は `_ALLOW_UNVERIFIED_SOURCE=true` を明示する。`release-tag.yml` は
+  main からだけ動き、タグのルールセット `release-tags`(例外は App と管理者だけ)が有効で `refs/tags/v*` の作成・更新・削除を止めて
+  いることを確かめてから、リリース用の GitHub App のトークン(秘密鍵は main だけの Environment `release`)でタグを push する。
+  **次のリリースの前に** GitHub(App・Environment・ルールセット。Environment はシークレットを置く前・初回の実行の前に main だけに絞って
+  作る)と GCP(承認・`release_approvers`・`cloudbuild_github_connection`・deployer の `roles/cloudbuild.builds.viewer` の `terraform apply`)の
+  設定が要る。設定するまで `release-tag.yml` はルールセットの確認かトークンの取得で止まり、トリガーのビルドは `verify-source` で止まる
+  (`doc/07_インフラ・運用.md` 4.1・9.2、
+  `doc/06_セキュリティ設計.md` 12章)。
 - 送信元IPごとの回数制限(`login_failure_ip`・`password_reset_request_ip`・`password_reset_confirm_ip`・`integration_auth_failure_ip`、公開デモの AI の
   IP ごとの上限)で、IPv6 は /64 の範囲を1つの送信元として数える(アドレスを替えながら上限を避けられないように)。IPv4 射影の IPv6 は IPv4 と同じ
   送信元。操作ログ・セッションには元のアドレスを残す(`doc/04_API仕様.md` 1.5)。

@@ -227,3 +227,21 @@ variable "budget_currency_code" {
   type        = string
   default     = "JPY"
 }
+
+# ── リリース(iam.tf。doc/07_インフラ・運用.md 4.1) ─────────────────
+variable "cloudbuild_github_connection" {
+  description = "Cloud Build の第 2 世代の GitHub 接続の名前(本番は github1)。katahimo-deployer にその接続の読み取りトークン(roles/cloudbuild.readTokenAccessor)を付け、cloudbuild.yaml の verify-source がタグ・main を確かめられるようにする。空なら付けない(接続を作る前)。cloudbuild.yaml の _SOURCE_REPOSITORY と揃える"
+  type        = string
+  default     = ""
+}
+
+variable "release_approvers" {
+  description = "トリガー katahimo-release のビルドを承認できる運用担当者(roles/cloudbuild.builds.approver)。\"user:<メールアドレス>\" の形で人を名前で挙げる"
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for m in var.release_approvers : can(regex("^user:[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", m))])
+    error_message = "release_approvers は \"user:<メールアドレス>\" の形で人だけを挙げてください。"
+  }
+}
