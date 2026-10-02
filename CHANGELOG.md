@@ -104,6 +104,9 @@
   STARTTLS の案内を消されると、再設定コード・SMTP の認証情報が平文で流れた)。ワーカーの環境変数 `SMTP_REQUIRE_TLS`(既定 true)を
   追加。false にできるのは TLS の無い開発用の SMTP だけで、本番ではワーカーが起動しない(`doc/05_バッチ・外部連携.md` 2章、
   `doc/06_セキュリティ設計.md` 7章)。
+- 依存の脆弱性の修正: `nodemailer` を 10 系(^10.0.13。アドレスの解析・SMTP の応答の扱いの修正、`requireTLS` の扱いの修正を含む。
+  Node.js 20 以上が必要で、型は本体に同梱されたため `@types/nodemailer` を外した)、`hono` を ^4.13.7(4.13.12)に上げ、
+  `exceljs` 経由の `brace-expansion` を `pnpm-workspace.yaml` の overrides で 2.1.7 以上に固定した(`pnpm audit --prod` の指摘 0 件)。
 
 ## [Ver. 1.3.0] - 2026-10-01
 

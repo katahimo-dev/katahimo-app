@@ -24,3 +24,5 @@ overrides:
   'qs@<6.16.0': ^6.16.0
   # GHSA: uuid v3/v5/v6 のバッファ境界チェック不足(gaxios 経由。v4 しか使わないが修正版に揃える)
   'uuid@<11.1.1': ^11.1.1
+  # GHSA: brace-expansion の ReDoS・無限ループ(exceljs → archiver → readdir-glob → minimatch 経由)
+  'brace-expansion@>=2.0.0 <2.1.7': ^2.1.7
