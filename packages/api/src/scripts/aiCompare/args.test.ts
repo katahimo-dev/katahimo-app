@@ -88,4 +88,15 @@ describe('pnpm ai:compare の引数', () => {
     expect(checkAiCompareTenant('review', undefined)).toContain('設定されていません');
     expect(checkAiCompareTenant('review', ' , ')).toContain('設定されていません');
   });
+
+  it('末尾の * は前方一致(3文字以上の接頭辞だけ。広すぎる・途中の * は断る)', () => {
+    expect(checkAiCompareTenant('public-demo-20261002', 'public-demo-*')).toBeNull();
+    expect(checkAiCompareTenant('public-demo-20261002-2', 'x, public-demo-*')).toBeNull();
+    expect(checkAiCompareTenant('public-demo', 'public-demo-*')).toContain('AI_COMPARE_TENANTS に無い');
+    expect(checkAiCompareTenant('customer-a', 'public-demo-*')).toContain('AI_COMPARE_TENANTS に無い');
+    expect(checkAiCompareTenant('customer-a', '*')).toContain('AI_COMPARE_TENANTS に無い');
+    expect(checkAiCompareTenant('customer-a', 'cu*')).toContain('AI_COMPARE_TENANTS に無い');
+    expect(checkAiCompareTenant('customer-a', 'cus*tomer')).toContain('AI_COMPARE_TENANTS に無い');
+    expect(checkAiCompareTenant('customer-a', 'Cus*')).toContain('AI_COMPARE_TENANTS に無い');
+  });
 });

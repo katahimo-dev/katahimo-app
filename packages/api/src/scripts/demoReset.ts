@@ -9,7 +9,7 @@ import {
   normalizeEmailForIndex,
   zonedBusinessDate,
 } from '@katahimo/core/domain';
-import type { StoredFileRow } from '@katahimo/core/ports';
+import type { ReportAiRowMeta, StoredFileRow } from '@katahimo/core/ports';
 import { provisionTenant, readTenantSecrets, usableSecretValue } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase, withTenant } from '@katahimo/db';
 import {
@@ -291,29 +291,69 @@ async function readKeptGeminiApiKey(container: Container, tenantId: string): Pro
   return usableSecretValue(secret);
 }
 
-/** 引き継ぐ AI プロンプトの上書き(管理画面で編集したものだけ。既定値のままのキーは行が無い)。 */
-async function readKeptAiPrompts(container: Container, tenantId: string) {
-  const rows = await container.uow.run(tenantId, (r) => r.aiPrompts.listAll());
-  return rows.flatMap((p) => {
-    const definition = findAiPromptDefinition(p.key);
-    return definition && p.body ? [{ key: p.key, kind: definition.kind, body: p.body }] : [];
+/**
+ * 引き継ぐ AI の調整(管理画面で編集した AI プロンプトの上書き + 「日報AIの調整」のマスター(キーワード・年齢帯・
+ * 表現・見ていた人スタンス・教育思考★・PSI)。マスターはアーカイブしていない行だけ。行の ID・版・更新者は新しい
+ * テナントで付け直す)。
+ */
+async function readKeptAiTuning(container: Container, tenantId: string) {
+  return container.uow.run(tenantId, async (r) => {
+    const rows = await r.aiPrompts.listAll();
+    const prompts = rows.flatMap((p) => {
+      const definition = findAiPromptDefinition(p.key);
+      return definition && p.body ? [{ key: p.key, kind: definition.kind, body: p.body }] : [];
+    });
+    const strip = <T extends ReportAiRowMeta>({ id: _id, rowVersion: _v, updatedAt: _u, ...value }: T) =>
+      value;
+    const masters = await r.reportAi.listRecords();
+    return {
+      prompts,
+      keywords: masters.keywords.map(strip),
+      ageBands: masters.ageBands.map(strip),
+      phrases: masters.phrases.map(strip),
+      stanceRules: masters.stanceRules.map(strip),
+      educationLevels: masters.educationLevels.map(strip),
+      psiLevels: masters.psiLevels.map(strip),
+    };
   });
 }
 
-/** 引き継いだ AI プロンプトを新しいテナントへ保存する(更新者はデモの管理者アカウント)。 */
-async function restoreKeptAiPrompts(
+type KeptAiTuning = Awaited<ReturnType<typeof readKeptAiTuning>>;
+
+function keptAiTuningCount(kept: KeptAiTuning): number {
+  return (
+    kept.prompts.length +
+    kept.keywords.length +
+    kept.ageBands.length +
+    kept.phrases.length +
+    kept.stanceRules.length +
+    kept.educationLevels.length +
+    kept.psiLevels.length
+  );
+}
+
+/** 引き継いだ AI の調整を新しいテナントへ保存する(更新者はデモの管理者アカウント。1つのトランザクション)。 */
+async function restoreKeptAiTuning(
   container: Container,
   tenantId: string,
-  prompts: Awaited<ReturnType<typeof readKeptAiPrompts>>,
+  kept: KeptAiTuning,
 ): Promise<void> {
   const adminAccount = DEMO_ACCOUNTS.find((a) => a.role === 'admin');
   if (!adminAccount) throw new Error('DEMO_ACCOUNTS に admin 役割がありません');
   await container.uow.run(tenantId, async (r) => {
     const admin = await r.staff.findByLoginEmail(normalizeEmailForIndex(adminAccount.email));
     if (!admin) throw new Error('デモの管理者アカウントが見つかりません');
-    for (const p of prompts) {
+    for (const p of kept.prompts) {
       await r.aiPrompts.save({ key: p.key, kind: p.kind, body: p.body, updatedBy: admin.id });
     }
+    for (const v of kept.keywords) await r.reportAi.insertRow('keywords', newId(), v, admin.id);
+    for (const v of kept.ageBands) await r.reportAi.insertRow('ageBands', newId(), v, admin.id);
+    for (const v of kept.phrases) await r.reportAi.insertRow('phrases', newId(), v, admin.id);
+    for (const v of kept.stanceRules) await r.reportAi.insertRow('stanceRules', newId(), v, admin.id);
+    for (const v of kept.educationLevels) {
+      await r.reportAi.upsertLevel('educationLevels', newId(), v, admin.id);
+    }
+    for (const v of kept.psiLevels) await r.reportAi.upsertLevel('psiLevels', newId(), v, admin.id);
   });
 }
 
@@ -351,11 +391,11 @@ export async function resetDemoTenant(
   // 管理画面で保存した Gemini の API キーも引き継ぐ(封はテナントの ID に結び付くので、開いて新しいテナントで封をし直す。
   // 本物のテナントの秘密値を開かないよう、名前を確かめた後、残す・消す前に読む)
   const keptGeminiApiKey = existing ? await readKeptGeminiApiKey(container, existing.id) : '';
-  // 管理画面で編集した AI プロンプトも引き継ぐ(作成途中のテナントの分は引き継がない)
-  const keptAiPrompts =
+  // 管理画面で編集した AI プロンプトと「日報AIの調整」のマスターも引き継ぐ(作成途中のテナントの分は引き継がない)
+  const keptAiTuning =
     existing && !DISCARDED_STATUSES.has(existing.status)
-      ? await readKeptAiPrompts(container, existing.id)
-      : [];
+      ? await readKeptAiTuning(container, existing.id)
+      : null;
 
   let archived: DemoResetResult['archived'] = null;
   let discardedIncomplete = false;
@@ -395,9 +435,11 @@ export async function resetDemoTenant(
   }
 
   const summary = await seedDemoTenant(container, tenant, now);
-  if (keptAiPrompts.length > 0) {
-    await restoreKeptAiPrompts(container, tenant.id, keptAiPrompts);
-    console.log(`[demo:reset] AI プロンプトを引き継ぎました(${keptAiPrompts.length}件)`);
+  if (keptAiTuning && keptAiTuningCount(keptAiTuning) > 0) {
+    await restoreKeptAiTuning(container, tenant.id, keptAiTuning);
+    console.log(
+      `[demo:reset] AI プロンプト(${keptAiTuning.prompts.length}件)と日報AIの調整のマスター(キーワード ${keptAiTuning.keywords.length}件ほか)を引き継ぎました`,
+    );
   }
   await setTenantStatus(ownerDb, tenant.id, 'active');
 
