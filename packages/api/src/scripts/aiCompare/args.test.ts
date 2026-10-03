@@ -94,6 +94,9 @@ describe('pnpm ai:compare の引数', () => {
     expect(checkAiCompareTenant('public-demo-20261002-2', 'x, public-demo-*')).toBeNull();
     expect(checkAiCompareTenant('public-demo', 'public-demo-*')).toContain('AI_COMPARE_TENANTS に無い');
     expect(checkAiCompareTenant('customer-a', 'public-demo-*')).toContain('AI_COMPARE_TENANTS に無い');
+    expect(checkAiCompareTenant('public-demonstration', 'public-demo*')).toContain(
+      'AI_COMPARE_TENANTS に無い',
+    );
     expect(checkAiCompareTenant('customer-a', '*')).toContain('AI_COMPARE_TENANTS に無い');
     expect(checkAiCompareTenant('customer-a', 'cu*')).toContain('AI_COMPARE_TENANTS に無い');
     expect(checkAiCompareTenant('customer-a', 'cus*tomer')).toContain('AI_COMPARE_TENANTS に無い');

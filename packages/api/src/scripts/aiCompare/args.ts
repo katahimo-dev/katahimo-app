@@ -170,14 +170,14 @@ function matchesAllowedTenant(entry: string, slug: string): boolean {
   const prefix = entry.slice(0, -1);
   return (
     prefix.length >= MIN_WILDCARD_PREFIX_LENGTH &&
-    /^[a-z0-9][a-z0-9-]*$/.test(prefix) &&
+    /^[a-z0-9][a-z0-9-]*-$/.test(prefix) &&
     slug.startsWith(prefix)
   );
 }
 
 /**
  * 比べてよいテナントか(AI_COMPARE_TENANTS に書いた slug だけ。末尾の `*` で前方一致も書ける: `public-demo-*` は
- * 毎晩の作り直しが残した `public-demo-YYYYMMDD` を全て含む。接頭辞は3文字以上の英小文字・数字・`-` だけで、`*` だけ・
+ * 毎晩の作り直しが残した `public-demo-YYYYMMDD` を全て含む。接頭辞は3文字以上の英小文字・数字・`-` だけで `-` で終わること(`public-demo*` が別のテナント `public-demonstration` に当たらないように)、`*` だけ・
  * 途中の `*` は無効)。本物のお客様のテナントの記録を読まないための確かめで、未設定なら全て断る。
  * 断るときは日本語の理由、よければ null。
  */
