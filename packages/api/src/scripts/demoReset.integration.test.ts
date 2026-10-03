@@ -14,7 +14,7 @@ import {
   DrizzleTenantProvisioning,
 } from '@katahimo/db/repositories';
 import { DatabaseSchedulePort } from '@katahimo/integrations';
-import { DEMO_ACCOUNTS, DEMO_PASSWORD } from '@katahimo/shared';
+import { AI_PROMPT_DEFINITIONS, DEMO_ACCOUNTS, DEMO_PASSWORD } from '@katahimo/shared';
 import { sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createContainer } from '../container';
@@ -187,6 +187,22 @@ describe('resetDemoTenant(実DB)', () => {
     const geminiKey = 'AIza-demo-reset-carry-over';
     const sealed = await container.secretBox.seal(first.tenantId, 'gemini_api_key', geminiKey);
     await container.uow.run(first.tenantId, (r) => r.secrets.put('gemini_api_key', sealed, null));
+    // 管理画面で編集した AI プロンプトも引き継ぐ
+    const promptDefinition = AI_PROMPT_DEFINITIONS[0];
+    if (!promptDefinition) throw new Error('AI_PROMPT_DEFINITIONS が空です');
+    const promptBody = `${promptDefinition.defaultBody}\n(デモの引き継ぎテスト)`;
+    const firstAdmin = await container.uow.run(first.tenantId, (r) =>
+      r.staff.findByLoginEmail(normalizeEmailForIndex(demoAdmin.email)),
+    );
+    if (!firstAdmin) throw new Error('1回目のデモの管理者が見つかりません');
+    await container.uow.run(first.tenantId, (r) =>
+      r.aiPrompts.save({
+        key: promptDefinition.key,
+        kind: promptDefinition.kind,
+        body: promptBody,
+        updatedBy: firstAdmin.id,
+      }),
+    );
 
     // 訪問者のログインと通知の購読(作り直しで消える)
     const firstLogin = await loginDemoAdmin(slug);
@@ -251,6 +267,10 @@ describe('resetDemoTenant(実DB)', () => {
     expect(await readTenantSecret(container, second.tenantId, 'gemini_api_key')).toBe(geminiKey);
     expect(await calendars.get(third.tenantId)).toEqual(settings);
     expect(await readTenantSecret(container, third.tenantId, 'gemini_api_key')).toBe(geminiKey);
+    for (const id of [second.tenantId, third.tenantId]) {
+      const kept = await container.uow.run(id, (r) => r.aiPrompts.findByKey(promptDefinition.key));
+      expect(kept?.body).toBe(promptBody);
+    }
   }, 240_000);
 
   it('demo:reset が作ったものでないテナント(名前が違う)は残しも消しもしない', async () => {

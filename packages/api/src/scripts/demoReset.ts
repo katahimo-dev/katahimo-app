@@ -2,7 +2,13 @@ import { loadDotenv } from '../loadDotenv';
 
 loadDotenv();
 
-import { addDays, isValidBusinessDate, newId, zonedBusinessDate } from '@katahimo/core/domain';
+import {
+  addDays,
+  isValidBusinessDate,
+  newId,
+  normalizeEmailForIndex,
+  zonedBusinessDate,
+} from '@katahimo/core/domain';
 import type { StoredFileRow } from '@katahimo/core/ports';
 import { provisionTenant, readTenantSecrets, usableSecretValue } from '@katahimo/core/usecases';
 import { closeDatabase, createDatabase, withTenant } from '@katahimo/db';
@@ -11,6 +17,7 @@ import {
   DrizzleTenantDirectory,
   DrizzleTenantProvisioning,
 } from '@katahimo/db/repositories';
+import { DEMO_ACCOUNTS, findAiPromptDefinition } from '@katahimo/shared';
 import { sql } from 'drizzle-orm';
 import type { Container } from '../container';
 import { createContainer } from '../container';
@@ -284,6 +291,32 @@ async function readKeptGeminiApiKey(container: Container, tenantId: string): Pro
   return usableSecretValue(secret);
 }
 
+/** 引き継ぐ AI プロンプトの上書き(管理画面で編集したものだけ。既定値のままのキーは行が無い)。 */
+async function readKeptAiPrompts(container: Container, tenantId: string) {
+  const rows = await container.uow.run(tenantId, (r) => r.aiPrompts.listAll());
+  return rows.flatMap((p) => {
+    const definition = findAiPromptDefinition(p.key);
+    return definition && p.body ? [{ key: p.key, kind: definition.kind, body: p.body }] : [];
+  });
+}
+
+/** 引き継いだ AI プロンプトを新しいテナントへ保存する(更新者はデモの管理者アカウント)。 */
+async function restoreKeptAiPrompts(
+  container: Container,
+  tenantId: string,
+  prompts: Awaited<ReturnType<typeof readKeptAiPrompts>>,
+): Promise<void> {
+  const adminAccount = DEMO_ACCOUNTS.find((a) => a.role === 'admin');
+  if (!adminAccount) throw new Error('DEMO_ACCOUNTS に admin 役割がありません');
+  await container.uow.run(tenantId, async (r) => {
+    const admin = await r.staff.findByLoginEmail(normalizeEmailForIndex(adminAccount.email));
+    if (!admin) throw new Error('デモの管理者アカウントが見つかりません');
+    for (const p of prompts) {
+      await r.aiPrompts.save({ key: p.key, kind: p.kind, body: p.body, updatedBy: admin.id });
+    }
+  });
+}
+
 /**
  * 公開デモ用テナントを作り直す(呼び出し側 = CLI(main)と結合テストの両方から使う本体。slug の安全確認
  * (DEMO_TENANT_SLUG との一致・"demo" の拒否)は呼び出し側の責務)。
@@ -318,6 +351,11 @@ export async function resetDemoTenant(
   // 管理画面で保存した Gemini の API キーも引き継ぐ(封はテナントの ID に結び付くので、開いて新しいテナントで封をし直す。
   // 本物のテナントの秘密値を開かないよう、名前を確かめた後、残す・消す前に読む)
   const keptGeminiApiKey = existing ? await readKeptGeminiApiKey(container, existing.id) : '';
+  // 管理画面で編集した AI プロンプトも引き継ぐ(作成途中のテナントの分は引き継がない)
+  const keptAiPrompts =
+    existing && !DISCARDED_STATUSES.has(existing.status)
+      ? await readKeptAiPrompts(container, existing.id)
+      : [];
 
   let archived: DemoResetResult['archived'] = null;
   let discardedIncomplete = false;
@@ -357,6 +395,10 @@ export async function resetDemoTenant(
   }
 
   const summary = await seedDemoTenant(container, tenant, now);
+  if (keptAiPrompts.length > 0) {
+    await restoreKeptAiPrompts(container, tenant.id, keptAiPrompts);
+    console.log(`[demo:reset] AI プロンプトを引き継ぎました(${keptAiPrompts.length}件)`);
+  }
   await setTenantStatus(ownerDb, tenant.id, 'active');
 
   // 古いデモを消せなくても、新しいデモは使える状態で終える(ジョブを失敗にすると、もう一度流したときに今作った
