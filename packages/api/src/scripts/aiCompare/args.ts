@@ -161,17 +161,33 @@ export function parseAiCompareArgs(argv: readonly string[] = process.argv): Pars
   };
 }
 
+/** 末尾の `*` で前方一致を書くときの、`*` の前(接頭辞)の最小の長さ(`a*` のような広すぎる指定を断る)。 */
+const MIN_WILDCARD_PREFIX_LENGTH = 3;
+
+/** AI_COMPARE_TENANTS の1つの書き方(完全一致の slug か、`<接頭辞>*` の前方一致)に slug が合うか。書き方が正しくなければ false。 */
+function matchesAllowedTenant(entry: string, slug: string): boolean {
+  if (!entry.endsWith('*')) return entry === slug;
+  const prefix = entry.slice(0, -1);
+  return (
+    prefix.length >= MIN_WILDCARD_PREFIX_LENGTH &&
+    /^[a-z0-9][a-z0-9-]*-$/.test(prefix) &&
+    slug.startsWith(prefix)
+  );
+}
+
 /**
- * 比べてよいテナントか(AI_COMPARE_TENANTS に書いた slug だけ)。本物のお客様のテナントの記録を読まないための
- * 確かめで、未設定なら全て断る。断るときは日本語の理由、よければ null。
+ * 比べてよいテナントか(AI_COMPARE_TENANTS に書いた slug だけ。末尾の `*` で前方一致も書ける: `public-demo-*` は
+ * 毎晩の作り直しが残した `public-demo-YYYYMMDD` を全て含む。接頭辞は3文字以上の英小文字・数字・`-` だけで `-` で終わること(`public-demo*` が別のテナント `public-demonstration` に当たらないように)、`*` だけ・
+ * 途中の `*` は無効)。本物のお客様のテナントの記録を読まないための確かめで、未設定なら全て断る。
+ * 断るときは日本語の理由、よければ null。
  */
 export function checkAiCompareTenant(slug: string, allowList: string | undefined): string | null {
   const allowed = (allowList ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s !== '');
-  if (allowed.includes(slug)) return null;
+  if (allowed.some((entry) => matchesAllowedTenant(entry, slug))) return null;
   return allowed.length === 0
-    ? 'AI_COMPARE_TENANTS が設定されていません。比べてよいテナント(審査用の架空のデータのテナント)の slug をカンマ区切りで設定してください'
+    ? 'AI_COMPARE_TENANTS が設定されていません。比べてよいテナント(審査用の架空のデータのテナント)の slug をカンマ区切りで設定してください(末尾の * で前方一致も書けます)'
     : `テナント ${slug} は AI_COMPARE_TENANTS に無いため比べられません(本物のお客様のテナントの記録は読みません)`;
 }
