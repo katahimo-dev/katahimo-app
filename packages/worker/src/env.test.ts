@@ -14,6 +14,21 @@ const production = {
 };
 
 describe('loadWorkerEnv', () => {
+  it('公開デモ専用のワーカーは SMTP 未設定でも起動し、通常本番は拒否する', () => {
+    const withoutSmtp = { ...production, SMTP_HOST: '' };
+    expect(() => loadWorkerEnv(withoutSmtp)).toThrow(/SMTP_HOST/);
+    expect(() => loadWorkerEnv({ ...withoutSmtp, DEMO_TENANT_SLUG: 'public-demo' })).toThrow(/SMTP_HOST/);
+    expect(() => loadWorkerEnv({ ...withoutSmtp, DEMO_PUBLIC_LOGIN: 'true' })).toThrow(/DEMO_TENANT_SLUG/);
+    const demo = {
+      ...withoutSmtp,
+      DEMO_TENANT_SLUG: 'public-demo',
+      DEMO_PUBLIC_LOGIN: 'true',
+    };
+    expect(loadWorkerEnv(demo).DEMO_PUBLIC_LOGIN).toBe(true);
+    expect(() => loadWorkerEnv({ ...demo, SMTP_REQUIRE_TLS: 'false' })).toThrow(/SMTP_REQUIRE_TLS/);
+    expect(() => loadWorkerEnv({ ...demo, DEMO_PUBLIC_LOGIN: 'false' })).toThrow(/SMTP_HOST/);
+  });
+
   it('ローカル開発用の顧客CSVのフォルダ(CUSTOMER_CSV_LOCAL_DIR)は本番では起動前に落とす', () => {
     expect(() => loadWorkerEnv(production)).not.toThrow();
     expect(() => loadWorkerEnv({ ...production, CUSTOMER_CSV_LOCAL_DIR: '/tmp/csv' })).toThrow(
