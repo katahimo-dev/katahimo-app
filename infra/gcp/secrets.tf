@@ -8,16 +8,16 @@
 locals {
   secrets = {
     # 名前 = 読めるサービスアカウント
-    "database-url"           = ["api", "ops"]     # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
-    "worker-database-url"    = ["worker"]         # postgres://katahimo_worker:...@/katahimo?host=/cloudsql/<接続名>
-    "migration-database-url" = ["migrate", "ops"] # postgres://katahimo_migrator:...@/katahimo?host=/cloudsql/<接続名>
-    "session-secret"         = ["api", "ops"]
-    "legacy-auth-salt"       = ["api", "ops"] # GAS版の AUTH_SALT(移行期のみ)
-    "smtp-pass"              = ["worker"]     # パスワード再設定メールはワーカーが送る
-    "gemini-api-key"         = ["api", "ops"]
-    "google-maps-api-key"    = ["api", "worker", "ops"]
-    "gas-bridge-secret"      = ["api", "worker", "ops"]
-    "vapid-private-key"      = ["worker"] # Web Push の VAPID の秘密鍵(送信はワーカー。公開鍵は var.web_push)
+    "database-url"           = concat(["api", "ops"], var.demo_mode ? ["demo-reset"] : [])     # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
+    "worker-database-url"    = ["worker"]                                                      # postgres://katahimo_worker:...@/katahimo?host=/cloudsql/<接続名>
+    "migration-database-url" = concat(["migrate", "ops"], var.demo_mode ? ["demo-reset"] : []) # postgres://katahimo_migrator:...@/katahimo?host=/cloudsql/<接続名>
+    "session-secret"         = concat(["api", "ops"], var.demo_mode ? ["demo-reset"] : [])
+    "legacy-auth-salt"       = var.demo_mode ? [] : ["api", "ops"] # GAS版の AUTH_SALT(移行期のみ)
+    "smtp-pass"              = var.demo_mode ? [] : ["worker"]     # パスワード再設定メールはワーカーが送る
+    "gemini-api-key"         = var.demo_mode ? [] : ["api", "ops"]
+    "google-maps-api-key"    = var.demo_mode ? [] : ["api", "worker", "ops"]
+    "gas-bridge-secret"      = var.demo_mode ? [] : ["api", "worker", "ops"]
+    "vapid-private-key"      = var.demo_mode ? [] : ["worker"] # Web Push の VAPID の秘密鍵(送信はワーカー。公開鍵は var.web_push)
   }
 
   secret_accessors = merge([
@@ -26,12 +26,16 @@ locals {
     }
   ]...)
 
-  runtime_service_accounts = {
-    api     = google_service_account.api.email
-    worker  = google_service_account.worker.email
-    migrate = google_service_account.migrate.email
-    ops     = google_service_account.ops.email
-  }
+  runtime_service_accounts = merge(
+    {
+      api     = google_service_account.api.email
+      worker  = google_service_account.worker.email
+      migrate = google_service_account.migrate.email
+      ops     = google_service_account.ops.email
+    },
+    # demo_mode のときだけ(作り直しの Job のサービスアカウント)
+    { for sa in google_service_account.demo_reset : "demo-reset" => sa.email },
+  )
 }
 
 resource "google_secret_manager_secret" "app" {

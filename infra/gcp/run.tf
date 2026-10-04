@@ -22,30 +22,35 @@ locals {
     NODE_ENV                = "production"
     STORAGE_PROVIDER        = "gcs"
     GCS_BUCKET              = google_storage_bucket.receipts.name
-    SCHEDULE_PROVIDER       = var.schedule_provider
-    GAS_BRIDGE_URL          = var.gas_bridge_url
-    GAS_BRIDGE_TENANT       = var.gas_bridge_tenant
-    MIRROR_TO_GOOGLE_SHEETS = tostring(var.mirror_to_google_sheets)
-    VAPID_PUBLIC_KEY        = var.web_push.public_key
+    SCHEDULE_PROVIDER       = var.demo_mode ? "database" : var.schedule_provider
+    GAS_BRIDGE_URL          = var.demo_mode ? "" : var.gas_bridge_url
+    GAS_BRIDGE_TENANT       = var.demo_mode ? "" : var.gas_bridge_tenant
+    MIRROR_TO_GOOGLE_SHEETS = tostring(var.demo_mode ? false : var.mirror_to_google_sheets)
+    VAPID_PUBLIC_KEY        = var.demo_mode ? "" : var.web_push.public_key
   } : k => v if v != "" })
 
   api_env = merge(local.common_env, { for k, v in {
-    DB_POOL_MAX         = tostring(var.api_db_pool_max)
-    OUTBOX_DRAIN_JOB    = local.outbox_drain_job_id
-    SECRET_BOX_PROVIDER = "gcp"
-    SECRET_BOX_KMS_KEY  = google_kms_crypto_key.tenant_secrets.id
+    DB_POOL_MAX               = tostring(var.api_db_pool_max)
+    OUTBOX_DRAIN_JOB          = local.outbox_drain_job_id
+    SECRET_BOX_PROVIDER       = "gcp"
+    SECRET_BOX_KMS_KEY        = google_kms_crypto_key.tenant_secrets.id
+    DEMO_TENANT_SLUG          = var.demo_mode ? var.demo_tenant_slug : ""
+    DEMO_PUBLIC_LOGIN         = var.demo_mode ? "true" : ""
+    DEMO_DATA_RETENTION_DAYS  = var.demo_mode ? tostring(var.demo_data_retention_days) : ""
+    DEMO_LOG_RETENTION_MONTHS = var.demo_mode ? tostring(var.demo_log_retention_months) : ""
   } : k => v if v != "" })
 
   # パスワード再設定メール・Web Push・ミラーは outbox 経由でジョブ(outbox-drain・バッチのジョブの最後)が送る
   # (API は応答時間からアカウントの有無が分からないよう、再設定メールを自分では送らない)
   worker_env = merge(local.common_env, { for k, v in {
-    DB_POOL_MAX    = "3"
-    SMTP_HOST      = var.smtp.host
-    SMTP_PORT      = tostring(var.smtp.port)
-    SMTP_USER      = var.smtp.user
-    SMTP_FROM      = var.smtp.from
-    VAPID_SUBJECT  = var.web_push.subject
-    APP_PUBLIC_URL = var.app_public_url
+    DB_POOL_MAX              = "3"
+    SMTP_HOST                = var.demo_mode ? "" : var.smtp.host
+    SMTP_PORT                = var.demo_mode ? "" : tostring(var.smtp.port)
+    SMTP_USER                = var.demo_mode ? "" : var.smtp.user
+    SMTP_FROM                = var.demo_mode ? "" : var.smtp.from
+    VAPID_SUBJECT            = var.demo_mode ? "" : var.web_push.subject
+    APP_PUBLIC_URL           = var.demo_mode ? "" : var.app_public_url
+    APP_LOG_RETENTION_MONTHS = var.demo_mode ? tostring(var.demo_log_retention_months) : ""
   } : k => v if v != "" })
 
   # 環境変数名 = シークレット名(secrets.tf)。optional のものは var.optional_secrets にあるときだけ渡す。
@@ -59,7 +64,7 @@ locals {
       GEMINI_API_KEY      = "gemini-api-key"
       LEGACY_AUTH_SALT    = "legacy-auth-salt"
       GAS_BRIDGE_SECRET   = "gas-bridge-secret"
-    } : k => v if contains(var.optional_secrets, v) },
+    } : k => v if contains(var.optional_secrets, v) && !(var.demo_mode && contains(["google-maps-api-key", "gemini-api-key", "legacy-auth-salt", "gas-bridge-secret"], v)) },
   )
   worker_secret_env = merge(
     # ワーカーは専用の DB ユーザー(katahimo_worker。outbox をテナント横断で取るポリシーがある)
@@ -69,7 +74,7 @@ locals {
       GOOGLE_MAPS_API_KEY = "google-maps-api-key"
       GAS_BRIDGE_SECRET   = "gas-bridge-secret"
       VAPID_PRIVATE_KEY   = "vapid-private-key"
-    } : k => v if contains(var.optional_secrets, v) },
+    } : k => v if contains(var.optional_secrets, v) && !(var.demo_mode && contains(["smtp-pass", "google-maps-api-key", "gas-bridge-secret", "vapid-private-key"], v)) },
   )
 
   # Cloud Run Jobs(同じ worker イメージの別コマンド)。schedule は JST(Cloud Scheduler の time_zone)。
@@ -153,7 +158,7 @@ locals {
       timeout             = "1800s"
       memory              = "1Gi"
       schedule            = "0 4 * * *"
-      pause_until_cutover = true
+      pause_until_cutover = !var.demo_mode
     }
     # 将来のマッチング用(doc/10_マッチング拡張設計.md)。既定では定期実行しない
     sync-busy-blocks = {
@@ -448,6 +453,114 @@ resource "google_cloud_run_v2_job" "jobs" {
     google_secret_manager_secret_iam_member.accessor,
     google_project_iam_member.cloudsql_client,
     # プライベート IP が付いてから PRIVATE でつなぐ設定にする
+    google_sql_database_instance.main,
+  ]
+}
+
+# 公開デモの毎晩の作り直し(api のイメージの dist/demo-reset.js。doc/07 3.9)。demo_mode のときだけ。
+# イメージは初回だけ var.image_tag で、以後は cloudbuild.yaml(_TRAFFIC=latest)・cloudbuild.promote.yaml が API と同じタグに
+# 差し替える(ビルドのたびに push される latest のままだと、利用者に向ける前の版で作り直しが動くため)
+resource "google_cloud_run_v2_job" "demo_reset" {
+  count               = var.deploy_workloads && var.demo_mode ? 1 : 0
+  name                = "katahimo-demo-reset"
+  location            = var.region
+  deletion_protection = false
+
+  template {
+    task_count  = 1
+    parallelism = 1
+
+    template {
+      service_account = google_service_account.demo_reset[0].email
+      max_retries     = 1
+      timeout         = "1800s"
+
+      vpc_access {
+        network_interfaces {
+          network    = google_compute_network.main.id
+          subnetwork = google_compute_subnetwork.run.id
+        }
+        egress = "PRIVATE_RANGES_ONLY"
+      }
+
+      containers {
+        image   = local.api_image
+        command = ["node"]
+        args    = ["dist/demo-reset.js", var.demo_tenant_slug]
+
+        env {
+          name  = "NODE_ENV"
+          value = "production"
+        }
+        dynamic "env" {
+          for_each = local.db_env
+          content {
+            name  = env.key
+            value = env.value
+          }
+        }
+        env {
+          name  = "DEMO_TENANT_SLUG"
+          value = var.demo_tenant_slug
+        }
+        env {
+          name  = "OUTBOX_DRAIN_JOB"
+          value = local.outbox_drain_job_id
+        }
+        env {
+          name  = "DEMO_DATA_RETENTION_DAYS"
+          value = tostring(var.demo_data_retention_days)
+        }
+        env {
+          name  = "STORAGE_PROVIDER"
+          value = "gcs"
+        }
+        env {
+          name  = "GCS_BUCKET"
+          value = google_storage_bucket.receipts.name
+        }
+        env {
+          name  = "SCHEDULE_PROVIDER"
+          value = "database"
+        }
+        env {
+          name  = "SECRET_BOX_PROVIDER"
+          value = "gcp"
+        }
+        env {
+          name  = "SECRET_BOX_KMS_KEY"
+          value = google_kms_crypto_key.tenant_secrets.id
+        }
+
+        dynamic "env" {
+          for_each = {
+            DATABASE_URL           = "database-url"
+            MIGRATION_DATABASE_URL = "migration-database-url"
+            SESSION_SECRET         = "session-secret"
+          }
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.app[env.value].secret_id
+                version = "latest"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image, client, client_version]
+  }
+
+  depends_on = [
+    google_project_iam_member.demo_reset_cloudsql_client,
+    google_secret_manager_secret_iam_member.accessor,
+    google_kms_crypto_key_iam_member.tenant_secrets_demo_reset,
+    google_storage_bucket_iam_member.receipts_demo_reset,
     google_sql_database_instance.main,
   ]
 }

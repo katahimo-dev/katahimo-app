@@ -13,7 +13,7 @@ resource "google_cloud_scheduler_job" "jobs" {
   region    = var.region
   schedule  = each.value.schedule
   time_zone = "Asia/Tokyo"
-  paused    = each.value.pause_until_cutover && var.scheduler_paused
+  paused    = var.demo_mode ? each.key != "maintenance" : each.value.pause_until_cutover && var.scheduler_paused
   # jobs.run は実行の開始を受け付けた時点で応答する(ジョブの完了は待たない)
   attempt_deadline = "60s"
 
@@ -60,4 +60,40 @@ resource "google_cloud_run_v2_job_iam_member" "ops_outbox_drain" {
   location = var.region
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.ops.email}"
+}
+
+resource "google_cloud_run_v2_job_iam_member" "demo_reset_scheduler_invoker" {
+  count    = var.deploy_workloads && var.demo_mode ? 1 : 0
+  name     = google_cloud_run_v2_job.demo_reset[0].name
+  location = var.region
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.scheduler.email}"
+}
+
+resource "google_cloud_scheduler_job" "demo_reset" {
+  count       = var.deploy_workloads && var.demo_mode ? 1 : 0
+  name        = "katahimo-demo-reset"
+  region      = var.region
+  schedule    = "30 3 * * *"
+  time_zone   = "Asia/Tokyo"
+  paused      = false
+  description = "公開デモ tenant の毎晩の再作成と保存期限切れデータの削除"
+
+  attempt_deadline = "60s"
+
+  retry_config {
+    retry_count = 1
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "https://run.googleapis.com/v2/${google_cloud_run_v2_job.demo_reset[0].id}:run"
+
+    oauth_token {
+      service_account_email = google_service_account.scheduler.email
+      scope                 = "https://www.googleapis.com/auth/cloud-platform"
+    }
+  }
+
+  depends_on = [google_project_service.enabled]
 }
