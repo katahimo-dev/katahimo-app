@@ -25,12 +25,15 @@ locals {
     }
   ]...)
 
-  runtime_service_accounts = {
-    api        = google_service_account.api.email
-    worker     = google_service_account.worker.email
-    migrate    = google_service_account.migrate.email
-    demo-reset = google_service_account.demo_reset.email
-  }
+  runtime_service_accounts = merge(
+    {
+      api     = google_service_account.api.email
+      worker  = google_service_account.worker.email
+      migrate = google_service_account.migrate.email
+    },
+    # demo_mode のときだけ(作り直しの Job のサービスアカウント)
+    { for sa in google_service_account.demo_reset : "demo-reset" => sa.email },
+  )
 }
 
 resource "google_secret_manager_secret" "app" {

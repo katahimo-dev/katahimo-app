@@ -350,6 +350,9 @@ resource "google_cloud_run_v2_job" "jobs" {
   depends_on = [google_secret_manager_secret_iam_member.accessor, google_project_iam_member.cloudsql_client]
 }
 
+# 公開デモの毎晩の作り直し(api のイメージの dist/demo-reset.js。doc/07 3.9)。demo_mode のときだけ。
+# イメージは初回だけ var.image_tag で、以後は cloudbuild.yaml(_TRAFFIC=latest)・cloudbuild.promote.yaml が API と同じタグに
+# 差し替える(ビルドのたびに push される latest のままだと、利用者に向ける前の版で作り直しが動くため)
 resource "google_cloud_run_v2_job" "demo_reset" {
   count               = var.deploy_workloads && var.demo_mode ? 1 : 0
   name                = "katahimo-demo-reset"
@@ -361,7 +364,7 @@ resource "google_cloud_run_v2_job" "demo_reset" {
     parallelism = 1
 
     template {
-      service_account = google_service_account.demo_reset.email
+      service_account = google_service_account.demo_reset[0].email
       max_retries     = 1
       timeout         = "1800s"
 
@@ -437,6 +440,10 @@ resource "google_cloud_run_v2_job" "demo_reset" {
         }
       }
     }
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image, client, client_version]
   }
 
   depends_on = [

@@ -76,7 +76,7 @@ resource "google_storage_bucket_iam_member" "receipts_demo_reset" {
   count  = var.demo_mode ? 1 : 0
   bucket = google_storage_bucket.receipts.name
   role   = "roles/storage.objectUser"
-  member = "serviceAccount:${google_service_account.demo_reset.email}"
+  member = "serviceAccount:${google_service_account.demo_reset[0].email}"
 }
 
 # ── gcloud builds submit のソース置き場 ─────────────────────────
