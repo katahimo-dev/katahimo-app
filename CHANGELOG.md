@@ -41,7 +41,7 @@
      いま最新のリビジョンのイメージ(1 の新しいイメージ)に新しい設定を載せて作られるが、利用者はまだ前のリビジョンに向いている。
      **apply から次の 3 までの間は、前のリビジョン(Cloud SQL 接続のソケット)が DB に届かず API が使えない**ため、利用者に知らせ、続けて 3 に進む。
   3. すぐに `cloudbuild.promote.yaml`(`--substitutions=_TAG=<ビルドのコミットの短いSHA>`)で利用者を最新のリビジョンに切り替える。`katahimo-ops` のイメージもここで `api:<tag>` になる
-     (ジョブが無いと最後の `gcloud run jobs update katahimo-ops` が失敗する。Terraform が先に作っておく必要があるのはこのため)。
+     (2 で Terraform が作ったジョブも、ここで API と同じ版になる。ジョブが無い環境では飛ばす)。
   4. 確かめる: `/api/health/db`、`katahimo-outbox-drain` の見回りの成功、`gcloud run jobs execute katahimo-ops --region=asia-northeast1 --wait`(スクリプトの一覧が出る)、
      夜間ジョブの次の実行。戻すときは `sql_public_ip = true` にして `terraform apply` し(パブリック IP が戻り、前のリビジョンはソケットでつながる)、`doc/07_インフラ・運用.md` 8.2 に従う。
      プライベート IP だけで動くことを確かめたら `sql_public_ip` は false のまま(既定)。
