@@ -331,7 +331,8 @@ resource "google_cloud_run_v2_job" "ops" {
         }
 
         dynamic "env" {
-          for_each = local.api_env
+          # 接続は2本まで(Cloud SQL の max_connections が小さいため。スクリプトは所有者とアプリの2つの接続を使う)
+          for_each = merge(local.api_env, { DB_POOL_MAX = "2" })
           content {
             name  = env.key
             value = env.value
