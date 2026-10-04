@@ -40,7 +40,7 @@ resource "google_storage_bucket" "receipts" {
 
   # 誤削除からの復旧用(削除・上書きされたオブジェクトを30日保持)
   versioning {
-    enabled = true
+    enabled = !var.demo_mode
   }
   lifecycle_rule {
     condition {
@@ -70,6 +70,13 @@ resource "google_storage_bucket_iam_member" "receipts_worker" {
   bucket = google_storage_bucket.receipts.name
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.worker.email}"
+}
+
+resource "google_storage_bucket_iam_member" "receipts_demo_reset" {
+  count  = var.demo_mode ? 1 : 0
+  bucket = google_storage_bucket.receipts.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.demo_reset[0].email}"
 }
 
 # ── gcloud builds submit のソース置き場 ─────────────────────────

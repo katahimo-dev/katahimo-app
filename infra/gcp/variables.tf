@@ -19,6 +19,45 @@ variable "deploy_workloads" {
   default     = false
 }
 
+variable "demo_mode" {
+  description = "この GCP 環境を公開デモ専用として構成する(本番データ・本番 secrets と共有しない)"
+  type        = bool
+  default     = false
+}
+
+variable "demo_tenant_slug" {
+  description = "公開デモの tenant slug。demo:reset がこの tenant だけを作り直す"
+  type        = string
+  default     = "public-demo"
+
+  validation {
+    condition     = length(var.demo_tenant_slug) <= 50 && var.demo_tenant_slug != "demo" && can(regex("^[a-z0-9]+(-[a-z0-9]+)*$", var.demo_tenant_slug))
+    error_message = "demo_tenant_slug は demo 以外の小文字英数字・ハイフンで50文字以内にしてください。"
+  }
+}
+
+variable "demo_data_retention_days" {
+  description = "公開デモの入力データを残す日数(1〜3650)"
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.demo_data_retention_days >= 1 && var.demo_data_retention_days <= 3650 && var.demo_data_retention_days == floor(var.demo_data_retention_days)
+    error_message = "demo_data_retention_days は1〜3650の整数にしてください。"
+  }
+}
+
+variable "demo_log_retention_months" {
+  description = "公開デモで案内・保存する操作ログの月数(12〜120)"
+  type        = number
+  default     = 12
+
+  validation {
+    condition     = var.demo_log_retention_months >= 12 && var.demo_log_retention_months <= 120 && var.demo_log_retention_months == floor(var.demo_log_retention_months)
+    error_message = "demo_log_retention_months は12〜120の整数にしてください。"
+  }
+}
+
 variable "image_tag" {
   description = "初回作成時に使うイメージのタグ。以後のイメージ更新は cloudbuild.yaml が行う(Terraform は image の差分を無視する)"
   type        = string

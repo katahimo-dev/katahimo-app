@@ -166,4 +166,8 @@ steps:
         for job in outbox-drain route-notice nightly-calendar-sync csv-import maintenance sync-busy-blocks; do
           gcloud run jobs update "katahimo-$${job}" --region=${_REGION} --image=${_REGISTRY}/worker:${_TAG}
         done
-    waitFor: [migrate]
+        # 公開デモの作り直し(infra/gcp の demo_mode のときだけある。api のイメージ)
+        if gcloud run jobs list --region=${_REGION} --filter='metadata.name=katahimo-demo-reset' --format='value(metadata.name)' | grep -q .; then
+          gcloud run jobs update katahimo-demo-reset --region=${_REGION} --image=${_REGISTRY}/api:${_TAG}
+        fi
+    waitFor: [push-api, migrate]

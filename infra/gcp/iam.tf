@@ -29,6 +29,13 @@ resource "google_service_account" "scheduler" {
   display_name = "katahimo Cloud Scheduler(ジョブの起動だけ)"
 }
 
+# 公開デモの毎晩の作り直し(run.tf の katahimo-demo-reset)。demo_mode のときだけ作る
+resource "google_service_account" "demo_reset" {
+  count        = var.demo_mode ? 1 : 0
+  account_id   = "katahimo-demo-reset"
+  display_name = "katahimo 公開デモ tenant reset"
+}
+
 resource "google_service_account" "deployer" {
   account_id   = "katahimo-deployer"
   display_name = "katahimo Cloud Build(イメージのビルド・デプロイ)"
@@ -44,6 +51,13 @@ resource "google_project_iam_member" "cloudsql_client" {
   project = var.project_id
   role    = "roles/cloudsql.client"
   member  = "serviceAccount:${each.value}"
+}
+
+resource "google_project_iam_member" "demo_reset_cloudsql_client" {
+  count   = var.demo_mode ? 1 : 0
+  project = var.project_id
+  role    = "roles/cloudsql.client"
+  member  = "serviceAccount:${google_service_account.demo_reset[0].email}"
 }
 
 # ── デプロイ用(cloudbuild.yaml の serviceAccount) ─────────────────
@@ -63,11 +77,15 @@ resource "google_project_iam_member" "deployer" {
 
 # デプロイ時に実行SAを Cloud Run に割り当てるための権限(actAs)。対象のSAに限定する。
 resource "google_service_account_iam_member" "deployer_act_as" {
-  for_each = {
-    api     = google_service_account.api.name
-    worker  = google_service_account.worker.name
-    migrate = google_service_account.migrate.name
-  }
+  for_each = merge(
+    {
+      api     = google_service_account.api.name
+      worker  = google_service_account.worker.name
+      migrate = google_service_account.migrate.name
+    },
+    # demo_mode: リリースで katahimo-demo-reset のイメージも差し替える(cloudbuild.yaml・cloudbuild.promote.yaml)
+    { for sa in google_service_account.demo_reset : "demo-reset" => sa.name },
+  )
   service_account_id = each.value
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.deployer.email}"
