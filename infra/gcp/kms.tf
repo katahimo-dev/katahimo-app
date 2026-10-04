@@ -98,3 +98,10 @@ resource "google_kms_crypto_key_iam_member" "tenant_secrets_api" {
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
   member        = "serviceAccount:${google_service_account.api.email}"
 }
+
+resource "google_kms_crypto_key_iam_member" "tenant_secrets_demo_reset" {
+  count         = var.demo_mode ? 1 : 0
+  crypto_key_id = google_kms_crypto_key.tenant_secrets.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${google_service_account.demo_reset.email}"
+}

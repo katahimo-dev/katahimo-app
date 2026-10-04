@@ -7,16 +7,16 @@
 locals {
   secrets = {
     # 名前 = 読めるサービスアカウント
-    "database-url"           = ["api"]     # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
-    "worker-database-url"    = ["worker"]  # postgres://katahimo_worker:...@/katahimo?host=/cloudsql/<接続名>
-    "migration-database-url" = ["migrate"] # postgres://katahimo_migrator:...@/katahimo?host=/cloudsql/<接続名>
-    "session-secret"         = ["api"]
-    "legacy-auth-salt"       = ["api"]    # GAS版の AUTH_SALT(移行期のみ)
-    "smtp-pass"              = ["worker"] # パスワード再設定メールはワーカーが送る
-    "gemini-api-key"         = ["api"]
-    "google-maps-api-key"    = ["api", "worker"]
-    "gas-bridge-secret"      = ["api", "worker"]
-    "vapid-private-key"      = ["worker"] # Web Push の VAPID の秘密鍵(送信はワーカー。公開鍵は var.web_push)
+    "database-url"           = var.demo_mode ? ["api", "demo-reset"] : ["api"]         # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
+    "worker-database-url"    = ["worker"]                                              # postgres://katahimo_worker:...@/katahimo?host=/cloudsql/<接続名>
+    "migration-database-url" = var.demo_mode ? ["migrate", "demo-reset"] : ["migrate"] # postgres://katahimo_migrator:...@/katahimo?host=/cloudsql/<接続名>
+    "session-secret"         = var.demo_mode ? ["api", "demo-reset"] : ["api"]
+    "legacy-auth-salt"       = var.demo_mode ? [] : ["api"]    # GAS版の AUTH_SALT(移行期のみ)
+    "smtp-pass"              = var.demo_mode ? [] : ["worker"] # パスワード再設定メールはワーカーが送る
+    "gemini-api-key"         = var.demo_mode ? [] : ["api"]
+    "google-maps-api-key"    = var.demo_mode ? [] : ["api", "worker"]
+    "gas-bridge-secret"      = var.demo_mode ? [] : ["api", "worker"]
+    "vapid-private-key"      = var.demo_mode ? [] : ["worker"] # Web Push の VAPID の秘密鍵(送信はワーカー。公開鍵は var.web_push)
   }
 
   secret_accessors = merge([
@@ -26,9 +26,10 @@ locals {
   ]...)
 
   runtime_service_accounts = {
-    api     = google_service_account.api.email
-    worker  = google_service_account.worker.email
-    migrate = google_service_account.migrate.email
+    api        = google_service_account.api.email
+    worker     = google_service_account.worker.email
+    migrate    = google_service_account.migrate.email
+    demo-reset = google_service_account.demo_reset.email
   }
 }
 

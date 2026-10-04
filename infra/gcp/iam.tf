@@ -29,6 +29,11 @@ resource "google_service_account" "scheduler" {
   display_name = "katahimo Cloud Scheduler(ジョブの起動だけ)"
 }
 
+resource "google_service_account" "demo_reset" {
+  account_id   = "katahimo-demo-reset"
+  display_name = "katahimo 公開デモ tenant reset"
+}
+
 resource "google_service_account" "deployer" {
   account_id   = "katahimo-deployer"
   display_name = "katahimo Cloud Build(イメージのビルド・デプロイ)"
@@ -44,6 +49,13 @@ resource "google_project_iam_member" "cloudsql_client" {
   project = var.project_id
   role    = "roles/cloudsql.client"
   member  = "serviceAccount:${each.value}"
+}
+
+resource "google_project_iam_member" "demo_reset_cloudsql_client" {
+  count   = var.demo_mode ? 1 : 0
+  project = var.project_id
+  role    = "roles/cloudsql.client"
+  member  = "serviceAccount:${google_service_account.demo_reset.email}"
 }
 
 # ── デプロイ用(cloudbuild.yaml の serviceAccount) ─────────────────
