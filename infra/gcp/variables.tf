@@ -55,6 +55,24 @@ variable "sql_deletion_protection" {
 }
 
 # ── アプリの設定(秘密でないもの) ───────────────────────────────
+variable "sql_public_ip" {
+  description = "true で Cloud SQL にパブリック IP も付ける(既定 false = プライベート IP だけ)。新しいインスタンスの最初のロール作成(infra/cloudsql/01_bootstrap.sql を手元の psql + cloud-sql-proxy で流す)や障害の調査で一時的に使い、終わったら false に戻す。付けても承認済みネットワークは無く、Auth Proxy / コネクタ以外の接続は断る(connector_enforcement)。doc/07_インフラ・運用.md 2.1"
+  type        = bool
+  default     = false
+}
+
+variable "vpc_run_subnet_cidr" {
+  description = "Cloud Run(API・ジョブ)の Direct VPC egress が IP を取るサブネット(network.tf)。変えるとサブネットの作り直し"
+  type        = string
+  default     = "10.10.0.0/24"
+}
+
+variable "vpc_private_services_cidr" {
+  description = "Cloud SQL のプライベート IP を取る範囲(プライベート サービス アクセス。/24 以上。network.tf)。変えるとピアリングの作り直し"
+  type        = string
+  default     = "10.20.0.0/20"
+}
+
 variable "schedule_provider" {
   description = "SCHEDULE_PROVIDER(google / gas_bridge / database / noop)。doc/05_バッチ・外部連携.md"
   type        = string

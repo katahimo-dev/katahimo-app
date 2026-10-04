@@ -1,20 +1,24 @@
-# Cloud Run(サービス: api、ジョブ: migrate / outbox-drain / 夜間バッチ)。
+# Cloud Run(サービス: api、ジョブ: migrate / outbox-drain / 夜間バッチ / ops)。
+# DB へは Direct VPC egress(network.tf)+ Cloud SQL の言語コネクタでプライベート IP につなぐ(CLOUD_SQL_IP_TYPE=PRIVATE。
+# 接続の URL は従来どおり `?host=/cloudsql/<接続名>` で、コネクタが接続名として読む。packages/db/src/connection.ts)。
 # イメージの更新は cloudbuild.yaml(gcloud run deploy / jobs update)が行うため、Terraform は image の
 # 差分を無視する。env やリソース量の変更は Terraform で行う。
 
 locals {
-  registry      = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.images.repository_id}"
-  api_image     = "${local.registry}/api:${var.image_tag}"
-  worker_image  = "${local.registry}/worker:${var.image_tag}"
-  sql_conn_name = google_sql_database_instance.main.connection_name
+  registry     = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.images.repository_id}"
+  api_image    = "${local.registry}/api:${var.image_tag}"
+  worker_image = "${local.registry}/worker:${var.image_tag}"
 
   # outbox を処理するジョブ。API が outbox に積んだ操作のコミットの後に jobs.run で起動を頼む(OUTBOX_DRAIN_JOB)
   outbox_drain_job_name = "katahimo-outbox-drain"
   outbox_drain_job_id   = "projects/${var.project_id}/locations/${var.region}/jobs/${local.outbox_drain_job_name}"
 
+  # DB の接続(全てのサービス・ジョブ。packages/db/src/connection.ts の CLOUD_SQL_IP_TYPE)
+  db_env = { CLOUD_SQL_IP_TYPE = "PRIVATE" }
+
   # API・ワーカー・夜間ジョブ共通(packages/api/src/env.ts / packages/worker/src/env.ts)。空の値は渡さない。
   # MIRROR_TO_GOOGLE_SHEETS・GAS_BRIDGE_* は API(積む)とワーカー(送る)で同じ値にする(packages/integrations の sharedEnvShape)。
-  common_env = { for k, v in {
+  common_env = merge(local.db_env, { for k, v in {
     NODE_ENV                = "production"
     STORAGE_PROVIDER        = "gcs"
     GCS_BUCKET              = google_storage_bucket.receipts.name
@@ -23,7 +27,7 @@ locals {
     GAS_BRIDGE_TENANT       = var.gas_bridge_tenant
     MIRROR_TO_GOOGLE_SHEETS = tostring(var.mirror_to_google_sheets)
     VAPID_PUBLIC_KEY        = var.web_push.public_key
-  } : k => v if v != "" }
+  } : k => v if v != "" })
 
   api_env = merge(local.common_env, { for k, v in {
     DB_POOL_MAX         = tostring(var.api_db_pool_max)
@@ -74,7 +78,7 @@ locals {
     migrate = {
       args                = ["db/dist/migrate.js"]
       service_account     = google_service_account.migrate.email
-      env                 = { NODE_ENV = "production", DB_POOL_MAX = "1" }
+      env                 = merge(local.db_env, { NODE_ENV = "production", DB_POOL_MAX = "1" })
       secret_env          = { MIGRATION_DATABASE_URL = "migration-database-url" }
       max_retries         = 0
       timeout             = "600s"
@@ -184,11 +188,12 @@ resource "google_cloud_run_v2_service" "api" {
       max_instance_count = var.api_max_instances
     }
 
-    volumes {
-      name = "cloudsql"
-      cloud_sql_instance {
-        instances = [local.sql_conn_name]
+    vpc_access {
+      network_interfaces {
+        network    = google_compute_network.main.id
+        subnetwork = google_compute_subnetwork.run.id
       }
+      egress = "PRIVATE_RANGES_ONLY"
     }
 
     containers {
@@ -227,11 +232,6 @@ resource "google_cloud_run_v2_service" "api" {
         }
       }
 
-      volume_mounts {
-        name       = "cloudsql"
-        mount_path = "/cloudsql"
-      }
-
       startup_probe {
         http_get {
           path = "/api/health"
@@ -254,7 +254,12 @@ resource "google_cloud_run_v2_service" "api" {
     ignore_changes = [template[0].containers[0].image, client, client_version, traffic]
   }
 
-  depends_on = [google_secret_manager_secret_iam_member.accessor, google_project_iam_member.cloudsql_client]
+  depends_on = [
+    google_secret_manager_secret_iam_member.accessor,
+    google_project_iam_member.cloudsql_client,
+    # プライベート IP が付いてから PRIVATE でつなぐ設定にする
+    google_sql_database_instance.main,
+  ]
 }
 
 # アプリ自身が認証(セッションCookie)するため、Cloud Run の IAM 認証は掛けない
@@ -264,6 +269,105 @@ resource "google_cloud_run_v2_service_iam_member" "api_public" {
   location = var.region
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# ── 運用スクリプト(ops) ───────────────────────────────────────
+# DB がプライベート IP だけになり、手元(Cloud Shell・作業者の端末)から cloud-sql-proxy でつなげないため、運用スクリプト
+# (pnpm tenant:* / import:* / ai:compare)は api のイメージのこのジョブで、実行ごとにスクリプトと引数を上書きして流す:
+#   gcloud run jobs execute katahimo-ops --region=asia-northeast1 --wait \
+#     --args=dist/ops/tenant-create.js,<slug>,<名前>,<管理者のメール>
+# 入力のファイル(CSV 等)と出力(ai:compare の HTML)は ops バケット(storage.tf)を /ops に載せて受け渡す
+# (gsutil cp で置き、引数に /ops/<ファイル名> を渡す。7日で消える)。doc/07_インフラ・運用.md 3.6。
+# 環境は API と同じ(本番の起動時の確認を通すため)+ 所有者の接続(MIGRATION_DATABASE_URL。テナントの作成・設定)。
+locals {
+  ops_secret_env = merge(local.api_secret_env, { MIGRATION_DATABASE_URL = "migration-database-url" })
+}
+
+resource "google_cloud_run_v2_job" "ops" {
+  count               = var.deploy_workloads ? 1 : 0
+  name                = "katahimo-ops"
+  location            = var.region
+  deletion_protection = false
+
+  template {
+    task_count  = 1
+    parallelism = 1
+
+    template {
+      service_account       = google_service_account.ops.email
+      execution_environment = "EXECUTION_ENVIRONMENT_GEN2" # Cloud Storage のボリューム(/ops)に要る
+      max_retries           = 0                            # 運用の操作は流し直さない(結果を見てから人が決める)
+      timeout               = "3600s"
+
+      vpc_access {
+        network_interfaces {
+          network    = google_compute_network.main.id
+          subnetwork = google_compute_subnetwork.run.id
+        }
+        egress = "PRIVATE_RANGES_ONLY"
+      }
+
+      volumes {
+        name = "ops"
+        gcs {
+          bucket    = google_storage_bucket.ops.name
+          read_only = false
+          # イメージは node ユーザー(uid/gid 1000。Dockerfile の USER node)で動くため、その持ち物として見せる
+          mount_options = ["uid=1000", "gid=1000"]
+        }
+      }
+
+      containers {
+        image   = local.api_image
+        command = ["node"]
+        # 引数を付けずに流すと、使えるスクリプトの一覧を出して終わる
+        args = ["dist/ops/help.js"]
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "1Gi"
+          }
+        }
+
+        dynamic "env" {
+          for_each = local.api_env
+          content {
+            name  = env.key
+            value = env.value
+          }
+        }
+        dynamic "env" {
+          for_each = local.ops_secret_env
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.app[env.value].secret_id
+                version = "latest"
+              }
+            }
+          }
+        }
+
+        volume_mounts {
+          name       = "ops"
+          mount_path = "/ops"
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image, client, client_version]
+  }
+
+  depends_on = [
+    google_secret_manager_secret_iam_member.accessor,
+    google_project_iam_member.cloudsql_client,
+    # プライベート IP が付いてから PRIVATE でつなぐ設定にする
+    google_sql_database_instance.main,
+  ]
 }
 
 # ── ジョブ ──────────────────────────────────────────────────
@@ -283,11 +387,12 @@ resource "google_cloud_run_v2_job" "jobs" {
       max_retries     = local.jobs[each.key].max_retries
       timeout         = local.jobs[each.key].timeout
 
-      volumes {
-        name = "cloudsql"
-        cloud_sql_instance {
-          instances = [local.sql_conn_name]
+      vpc_access {
+        network_interfaces {
+          network    = google_compute_network.main.id
+          subnetwork = google_compute_subnetwork.run.id
         }
+        egress = "PRIVATE_RANGES_ONLY"
       }
 
       containers {
@@ -321,10 +426,6 @@ resource "google_cloud_run_v2_job" "jobs" {
           }
         }
 
-        volume_mounts {
-          name       = "cloudsql"
-          mount_path = "/cloudsql"
-        }
       }
     }
   }
@@ -342,5 +443,10 @@ resource "google_cloud_run_v2_job" "jobs" {
     }
   }
 
-  depends_on = [google_secret_manager_secret_iam_member.accessor, google_project_iam_member.cloudsql_client]
+  depends_on = [
+    google_secret_manager_secret_iam_member.accessor,
+    google_project_iam_member.cloudsql_client,
+    # プライベート IP が付いてから PRIVATE でつなぐ設定にする
+    google_sql_database_instance.main,
+  ]
 }

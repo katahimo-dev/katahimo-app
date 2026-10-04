@@ -6,13 +6,15 @@ locals {
     "cloudbuild.googleapis.com",
     "cloudkms.googleapis.com",
     "cloudscheduler.googleapis.com",
+    "compute.googleapis.com", # VPC・サブネット(network.tf。Cloud Run の Direct VPC egress)
     "iam.googleapis.com",
     "iamcredentials.googleapis.com", # GCS 署名付きURL(signBlob)
     "logging.googleapis.com",        # ログに基づく指標(monitoring.tf)
     "monitoring.googleapis.com",     # アラート・外形監視(monitoring.tf)
     "run.googleapis.com",            # API が outbox-drain の起動を頼む(jobs.run)のもこの API
     "secretmanager.googleapis.com",
-    "sqladmin.googleapis.com", # Cloud Run の Cloud SQL 接続(Auth Proxy)が使う
+    "servicenetworking.googleapis.com", # Cloud SQL のプライベート IP(プライベート サービス アクセス。network.tf)
+    "sqladmin.googleapis.com",          # Cloud SQL の言語コネクタ・cloud-sql-proxy が接続先と証明書を取る
     "storage.googleapis.com",
     # アプリが直接呼ぶ Google API(実行サービスアカウントの ADC で認証する)
     "calendar-json.googleapis.com",

@@ -46,4 +46,6 @@ steps:
         for job in outbox-drain route-notice nightly-calendar-sync csv-import maintenance sync-busy-blocks; do
           gcloud run jobs update "katahimo-$${job}" --region=${_REGION} --image=${_REGISTRY}/worker:${_TAG}
         done
+        # 運用スクリプトのジョブは api のイメージ(dist/ops/*。infra/gcp/run.tf)
+        gcloud run jobs update katahimo-ops --region=${_REGION} --image=${_REGISTRY}/api:${_TAG}
     waitFor: [promote-api]

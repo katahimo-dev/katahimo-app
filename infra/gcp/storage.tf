@@ -66,6 +66,13 @@ resource "google_storage_bucket_iam_member" "receipts_api" {
   member = "serviceAccount:${google_service_account.api.email}"
 }
 
+# 運用スクリプト(ops)は GAS版からの領収書の取込(import:legacy-receipts)で画像を書く
+resource "google_storage_bucket_iam_member" "receipts_ops" {
+  bucket = google_storage_bucket.receipts.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.ops.email}"
+}
+
 resource "google_storage_bucket_iam_member" "receipts_worker" {
   bucket = google_storage_bucket.receipts.name
   role   = "roles/storage.objectViewer"
@@ -88,4 +95,36 @@ resource "google_storage_bucket" "build_staging" {
       type = "Delete"
     }
   }
+}
+
+# ── 運用スクリプト(ops ジョブ)の入出力の受け渡し ─────────────────
+# 顧客・スタッフの CSV(個人情報)や ai:compare の HTML を置くため、領収書と同じ鍵(CMEK)で暗号化し、7日で消す。
+# ops ジョブが /ops に載せる(run.tf)。運用担当者は gsutil / gcloud storage で置く・取る(doc/07_インフラ・運用.md 3.6)。
+resource "google_storage_bucket" "ops" {
+  name                        = "${var.project_id}-katahimo-ops"
+  location                    = var.region
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = true
+
+  encryption {
+    default_kms_key_name = google_kms_crypto_key.storage.id
+  }
+
+  lifecycle_rule {
+    condition {
+      age = 7
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  depends_on = [time_sleep.cmek_iam_propagation]
+}
+
+resource "google_storage_bucket_iam_member" "ops_job" {
+  bucket = google_storage_bucket.ops.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.ops.email}"
 }

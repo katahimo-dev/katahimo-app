@@ -1,8 +1,8 @@
 # Cloud SQL for PostgreSQL。
-# - 接続は Cloud Run の Cloud SQL 接続(Auth Proxy、Unix ソケット /cloudsql/<接続名>)だけ。パブリックIPは
-#   持つが承認済みネットワークを登録せず、connector_enforcement = REQUIRED で Auth Proxy / コネクタ以外の
-#   直接の接続は断る(運用の手順はどれも cloud-sql-proxy 経由。doc/07_インフラ・運用.md 3.2・3.6)
-#   (プライベートIPにすると VPC とサーバーレスVPCアクセス等が別途必要になる。doc/07_インフラ・運用.md 2.1)。
+# - プライベート IP だけ(VPC。network.tf)。パブリック IP は持たない(var.sql_public_ip で一時的に付けられる)。
+#   接続は Cloud Run(API・ジョブ)から Direct VPC egress + Cloud SQL の言語コネクタ(CLOUD_SQL_IP_TYPE=PRIVATE)だけで、
+#   connector_enforcement = REQUIRED で Auth Proxy / コネクタ以外の直接の接続は断る(VPC の中からでもパスワードだけでは
+#   つなげない)。手元からの運用は ops ジョブ(run.tf)で行う(doc/07_インフラ・運用.md 2.1・3.6)。
 # - DB・ロールは Terraform では作らない(infra/cloudsql/*.sql。google_sql_user で作ると
 #   cloudsqlsuperuser のメンバーになってしまい、パスワードも state に残るため)。
 #   組み込みの postgres ユーザーのパスワードは gcloud sql users set-password で設定する。
@@ -28,7 +28,8 @@ resource "google_sql_database_instance" "main" {
     deletion_protection_enabled = var.sql_deletion_protection
 
     ip_configuration {
-      ipv4_enabled = true
+      ipv4_enabled    = var.sql_public_ip
+      private_network = google_compute_network.main.id
       # 直接の TCP 接続には TLS を必須にする(Auth Proxy 経由の接続はプロキシが暗号化する)
       ssl_mode = "ENCRYPTED_ONLY"
     }
@@ -67,5 +68,9 @@ resource "google_sql_database_instance" "main" {
   }
 
   # Cloud SQL のサービスエージェントが鍵を使えるようになってから作る(権限の反映を待つ)
-  depends_on = [google_project_service.enabled, time_sleep.cmek_iam_propagation]
+  depends_on = [
+    google_project_service.enabled,
+    time_sleep.cmek_iam_propagation,
+    google_service_networking_connection.private_services,
+  ]
 }

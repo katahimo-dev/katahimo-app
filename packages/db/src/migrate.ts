@@ -5,7 +5,7 @@ loadDotenv();
 import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
-import { createDatabase } from './client';
+import { closeDatabase, createDatabase } from './client';
 
 /**
  * マイグレーションを流す(pnpm db:migrate / Cloud Run Job migrate)。接続は MIGRATION_DATABASE_URL
@@ -38,5 +38,6 @@ try {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 } finally {
-  await db.$client.end();
+  // プールと Cloud SQL のコネクタ(CLOUD_SQL_IP_TYPE のとき)を閉じる(コネクタのタイマーが残るとジョブが終わらない)
+  await closeDatabase(db, 30);
 }

@@ -52,3 +52,12 @@ resource "google_cloud_run_v2_job_iam_member" "api_outbox_drain" {
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.api.email}"
 }
+
+# 運用スクリプト(ops)もテナントの作成等で outbox に積むため、同じく outbox-drain の実行を頼める
+resource "google_cloud_run_v2_job_iam_member" "ops_outbox_drain" {
+  count    = var.deploy_workloads ? 1 : 0
+  name     = google_cloud_run_v2_job.jobs["outbox-drain"].name
+  location = var.region
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.ops.email}"
+}

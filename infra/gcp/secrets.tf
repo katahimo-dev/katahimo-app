@@ -4,18 +4,19 @@
 #
 # テナントの秘密値の封(SecretBox)は Secret Manager ではなく Cloud KMS の tenant-secrets(kms.tf)を使う。
 # DB の接続はロールごとに別の secret(API = katahimo_app、ワーカー = katahimo_worker、migrate = katahimo_migrator)。
+# ops(運用スクリプト)は API と同じ値 + 所有者の接続(テナントの作成・設定は MIGRATION_DATABASE_URL で行う)。
 locals {
   secrets = {
     # 名前 = 読めるサービスアカウント
-    "database-url"           = ["api"]     # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
-    "worker-database-url"    = ["worker"]  # postgres://katahimo_worker:...@/katahimo?host=/cloudsql/<接続名>
-    "migration-database-url" = ["migrate"] # postgres://katahimo_migrator:...@/katahimo?host=/cloudsql/<接続名>
-    "session-secret"         = ["api"]
-    "legacy-auth-salt"       = ["api"]    # GAS版の AUTH_SALT(移行期のみ)
-    "smtp-pass"              = ["worker"] # パスワード再設定メールはワーカーが送る
-    "gemini-api-key"         = ["api"]
-    "google-maps-api-key"    = ["api", "worker"]
-    "gas-bridge-secret"      = ["api", "worker"]
+    "database-url"           = ["api", "ops"]     # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
+    "worker-database-url"    = ["worker"]         # postgres://katahimo_worker:...@/katahimo?host=/cloudsql/<接続名>
+    "migration-database-url" = ["migrate", "ops"] # postgres://katahimo_migrator:...@/katahimo?host=/cloudsql/<接続名>
+    "session-secret"         = ["api", "ops"]
+    "legacy-auth-salt"       = ["api", "ops"] # GAS版の AUTH_SALT(移行期のみ)
+    "smtp-pass"              = ["worker"]     # パスワード再設定メールはワーカーが送る
+    "gemini-api-key"         = ["api", "ops"]
+    "google-maps-api-key"    = ["api", "worker", "ops"]
+    "gas-bridge-secret"      = ["api", "worker", "ops"]
     "vapid-private-key"      = ["worker"] # Web Push の VAPID の秘密鍵(送信はワーカー。公開鍵は var.web_push)
   }
 
@@ -29,6 +30,7 @@ locals {
     api     = google_service_account.api.email
     worker  = google_service_account.worker.email
     migrate = google_service_account.migrate.email
+    ops     = google_service_account.ops.email
   }
 }
 

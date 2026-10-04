@@ -8,7 +8,11 @@ import { open } from 'node:fs/promises';
 export async function writePrivateFile(path: string, content: string): Promise<void> {
   const handle = await open(path, 'w', 0o600);
   try {
-    await handle.chmod(0o600);
+    await handle.chmod(0o600).catch((error: NodeJS.ErrnoException) => {
+      // 権限の概念が無いファイルシステム(運用スクリプトのジョブの /ops = Cloud Storage のバケット。読めるのは
+      // バケットの IAM で決まる)は権限を変えられない。それ以外の失敗はこれまでどおり止める
+      if (error.code !== 'ENOTSUP' && error.code !== 'ENOSYS') throw error;
+    });
     await handle.writeFile(content, 'utf8');
   } finally {
     await handle.close();
