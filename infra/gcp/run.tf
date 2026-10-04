@@ -44,6 +44,8 @@ locals {
   # (API は応答時間からアカウントの有無が分からないよう、再設定メールを自分では送らない)
   worker_env = merge(local.common_env, { for k, v in {
     DB_POOL_MAX              = "3"
+    DEMO_TENANT_SLUG         = var.demo_mode ? var.demo_tenant_slug : ""
+    DEMO_PUBLIC_LOGIN        = var.demo_mode ? "true" : ""
     SMTP_HOST                = var.demo_mode ? "" : var.smtp.host
     SMTP_PORT                = var.demo_mode ? "" : tostring(var.smtp.port)
     SMTP_USER                = var.demo_mode ? "" : var.smtp.user

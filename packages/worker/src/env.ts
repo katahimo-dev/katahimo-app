@@ -19,6 +19,17 @@ const envSchema = z.object({
   // API の DATABASE_URL(katahimo_app)とは別のユーザー・パスワード(Secret Manager の別の secret)。
   WORKER_DATABASE_URL: z.string().min(1, 'WORKER_DATABASE_URL が必要です(katahimo_worker の接続)'),
 
+  DEMO_TENANT_SLUG: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]{1,62}$/)
+      .optional(),
+  ),
+  DEMO_PUBLIC_LOGIN: z
+    .preprocess(emptyToUndefined, z.enum(['true', 'false', '1', '0']).optional())
+    .transform((value) => value === 'true' || value === '1'),
+
   // パスワード再設定メール(outbox の mail.password_reset)の送信。未設定の開発環境では内容を標準出力に出す。
   SMTP_HOST: z.preprocess(emptyToUndefined, z.string().optional()),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
@@ -77,7 +88,10 @@ export type WorkerEnv = z.infer<typeof envSchema>;
 
 function checkCombinations(env: WorkerEnv): string[] {
   const problems = [...sharedEnvProblems(env), ...vapidEnvProblems(env)];
-  if (env.NODE_ENV === 'production' && !env.SMTP_HOST) {
+  if (env.DEMO_PUBLIC_LOGIN && !env.DEMO_TENANT_SLUG) {
+    problems.push('  - DEMO_PUBLIC_LOGIN: 公開デモには DEMO_TENANT_SLUG が必要です');
+  }
+  if (env.NODE_ENV === 'production' && !env.SMTP_HOST && !env.DEMO_PUBLIC_LOGIN) {
     problems.push('  - SMTP_HOST: 本番ではパスワード再設定メールの送信にSMTP設定が必要です');
   }
   if (env.NODE_ENV === 'production' && !env.SMTP_REQUIRE_TLS) {
