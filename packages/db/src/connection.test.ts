@@ -64,4 +64,46 @@ describe('buildPostgresConnection', () => {
       /DB_POOL_MAX/,
     );
   });
+
+  it('CLOUD_SQL_IP_TYPE があれば /cloudsql の URL をソケットにせずコネクタの接続先にする', () => {
+    const url =
+      'postgres://katahimo_app:p%40ss@/katahimo?host=/cloudsql/my-proj:asia-northeast1:katahimo-db&application_name=api';
+    const {
+      url: resolved,
+      options,
+      cloudSql,
+    } = buildPostgresConnection(url, { CLOUD_SQL_IP_TYPE: 'PRIVATE' });
+    expect(cloudSql).toEqual({
+      instanceConnectionName: 'my-proj:asia-northeast1:katahimo-db',
+      ipType: 'PRIVATE',
+    });
+    expect(options.path).toBeUndefined();
+    // TLS はコネクタが張るので postgres.js は SSL を要求しない
+    expect(options.ssl).toBe(false);
+    const parsed = postgres(resolved, options).options;
+    expect(parsed.database).toBe('katahimo');
+    expect(parsed.user).toBe('katahimo_app');
+    expect(parsed.pass).toBe('p@ss');
+    expect(parsed.connection).toMatchObject({ application_name: 'api' });
+    // 未設定・空ならこれまでどおり Unix ソケット
+    expect(buildPostgresConnection(url, { CLOUD_SQL_IP_TYPE: '' }).cloudSql).toBeUndefined();
+  });
+
+  it('CLOUD_SQL_IP_TYPE の誤り(知らない値・/cloudsql でない URL・接続名の形)は起動時に落とす', () => {
+    const socketUrl = 'postgres://u:p@/db?host=/cloudsql/my-proj:asia-northeast1:katahimo-db';
+    expect(() => buildPostgresConnection(socketUrl, { CLOUD_SQL_IP_TYPE: 'private' })).toThrow(
+      /CLOUD_SQL_IP_TYPE/,
+    );
+    expect(() =>
+      buildPostgresConnection('postgres://u:p@localhost/db', { CLOUD_SQL_IP_TYPE: 'PRIVATE' }),
+    ).toThrow(/host=\/cloudsql/);
+    expect(() =>
+      buildPostgresConnection('postgres://u:p@/db?host=/tmp', { CLOUD_SQL_IP_TYPE: 'PRIVATE' }),
+    ).toThrow(/host=\/cloudsql/);
+    expect(() =>
+      buildPostgresConnection('postgres://u:p@/db?host=/cloudsql/katahimo-db', {
+        CLOUD_SQL_IP_TYPE: 'PRIVATE',
+      }),
+    ).toThrow(/接続名/);
+  });
 });

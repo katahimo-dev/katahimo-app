@@ -4,9 +4,8 @@
 #   - 各スタッフのカレンダー(とテナントの共有カレンダー。pnpm tenant:calendars)を katahimo-api / katahimo-worker の
 #     メールアドレスに「予定の表示(すべての予定の詳細)」で共有する
 #   - 顧客CSVの Drive フォルダ(テナントごと。pnpm tenant:customer-source)を同じ2つに「閲覧者」で共有する
-#   - GAS版からの移行の取込(pnpm import:legacy-reports / import:legacy-receipts)をサービスアカウントで流す場合は、GAS版の
-#     スプレッドシート2つと領収書の画像のフォルダを katahimo-api に「閲覧者」で共有する(領収書の画像を書く GCS の権限を
-#     持つのは api だけ。運用担当者が一時的に成り代わる。doc/09_移行計画.md 2.4)
+#   - GAS版からの移行の取込(import:legacy-reports / import:legacy-receipts。ops ジョブで流す)は、GAS版の
+#     スプレッドシート2つと領収書の画像のフォルダを katahimo-ops に「閲覧者」で共有する(doc/09_移行計画.md 2.4)
 # (ドメイン全体の委任 GOOGLE_CALENDAR_IMPERSONATE は SA キーが必要になるため使わない。doc/07_インフラ・運用.md 3.4)
 
 resource "google_service_account" "api" {
@@ -22,6 +21,11 @@ resource "google_service_account" "worker" {
 resource "google_service_account" "migrate" {
   account_id   = "katahimo-migrate"
   display_name = "katahimo マイグレーション(Cloud Run Job)"
+}
+
+resource "google_service_account" "ops" {
+  account_id   = "katahimo-ops"
+  display_name = "katahimo 運用スクリプト(Cloud Run Job katahimo-ops)"
 }
 
 resource "google_service_account" "scheduler" {
@@ -41,12 +45,13 @@ resource "google_service_account" "deployer" {
   display_name = "katahimo Cloud Build(イメージのビルド・デプロイ)"
 }
 
-# Cloud SQL への接続(Cloud Run の Cloud SQL 接続が使う)。DB 内の権限は DB ロール側で分けている。
+# Cloud SQL への接続(Cloud SQL の言語コネクタが接続先と証明書を取る)。DB 内の権限は DB ロール側で分けている。
 resource "google_project_iam_member" "cloudsql_client" {
   for_each = {
     api     = google_service_account.api.email
     worker  = google_service_account.worker.email
     migrate = google_service_account.migrate.email
+    ops     = google_service_account.ops.email
   }
   project = var.project_id
   role    = "roles/cloudsql.client"
@@ -82,6 +87,7 @@ resource "google_service_account_iam_member" "deployer_act_as" {
       api     = google_service_account.api.name
       worker  = google_service_account.worker.name
       migrate = google_service_account.migrate.name
+      ops     = google_service_account.ops.name
     },
     # demo_mode: リリースで katahimo-demo-reset のイメージも差し替える(cloudbuild.yaml・cloudbuild.promote.yaml)
     { for sa in google_service_account.demo_reset : "demo-reset" => sa.name },

@@ -4,18 +4,19 @@
 #
 # テナントの秘密値の封(SecretBox)は Secret Manager ではなく Cloud KMS の tenant-secrets(kms.tf)を使う。
 # DB の接続はロールごとに別の secret(API = katahimo_app、ワーカー = katahimo_worker、migrate = katahimo_migrator)。
+# ops(運用スクリプト)は API と同じ値 + 所有者の接続(テナントの作成・設定は MIGRATION_DATABASE_URL で行う)。
 locals {
   secrets = {
     # 名前 = 読めるサービスアカウント
-    "database-url"           = var.demo_mode ? ["api", "demo-reset"] : ["api"]         # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
-    "worker-database-url"    = ["worker"]                                              # postgres://katahimo_worker:...@/katahimo?host=/cloudsql/<接続名>
-    "migration-database-url" = var.demo_mode ? ["migrate", "demo-reset"] : ["migrate"] # postgres://katahimo_migrator:...@/katahimo?host=/cloudsql/<接続名>
-    "session-secret"         = var.demo_mode ? ["api", "demo-reset"] : ["api"]
-    "legacy-auth-salt"       = var.demo_mode ? [] : ["api"]    # GAS版の AUTH_SALT(移行期のみ)
-    "smtp-pass"              = var.demo_mode ? [] : ["worker"] # パスワード再設定メールはワーカーが送る
-    "gemini-api-key"         = var.demo_mode ? [] : ["api"]
-    "google-maps-api-key"    = var.demo_mode ? [] : ["api", "worker"]
-    "gas-bridge-secret"      = var.demo_mode ? [] : ["api", "worker"]
+    "database-url"           = concat(["api", "ops"], var.demo_mode ? ["demo-reset"] : [])     # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
+    "worker-database-url"    = ["worker"]                                                      # postgres://katahimo_worker:...@/katahimo?host=/cloudsql/<接続名>
+    "migration-database-url" = concat(["migrate", "ops"], var.demo_mode ? ["demo-reset"] : []) # postgres://katahimo_migrator:...@/katahimo?host=/cloudsql/<接続名>
+    "session-secret"         = concat(["api", "ops"], var.demo_mode ? ["demo-reset"] : [])
+    "legacy-auth-salt"       = var.demo_mode ? [] : ["api", "ops"] # GAS版の AUTH_SALT(移行期のみ)
+    "smtp-pass"              = var.demo_mode ? [] : ["worker"]     # パスワード再設定メールはワーカーが送る
+    "gemini-api-key"         = var.demo_mode ? [] : ["api", "ops"]
+    "google-maps-api-key"    = var.demo_mode ? [] : ["api", "worker", "ops"]
+    "gas-bridge-secret"      = var.demo_mode ? [] : ["api", "worker", "ops"]
     "vapid-private-key"      = var.demo_mode ? [] : ["worker"] # Web Push の VAPID の秘密鍵(送信はワーカー。公開鍵は var.web_push)
   }
 
@@ -30,6 +31,7 @@ locals {
       api     = google_service_account.api.email
       worker  = google_service_account.worker.email
       migrate = google_service_account.migrate.email
+      ops     = google_service_account.ops.email
     },
     # demo_mode のときだけ(作り直しの Job のサービスアカウント)
     { for sa in google_service_account.demo_reset : "demo-reset" => sa.email },

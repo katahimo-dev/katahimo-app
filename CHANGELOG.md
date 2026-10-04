@@ -6,6 +6,48 @@
 
 - 公開デモの毎晩の作り直し(`demo:reset`)で、管理画面で編集した AI プロンプトの上書きも新しいテナントへ引き継ぐ(Gemini の API キーと同じ)。「日報AIの調整」のマスター(キーワード・年齢帯・表現・見ていた人スタンス・教育思考★・PSI のアーカイブしていない行)も引き継ぐ。
 - `pnpm ai:compare` の `AI_COMPARE_TENANTS` に、末尾の `*` で前方一致を書けるようにした(例: `public-demo-*` で毎晩残るデモの過去分を全て比べられる。接頭辞は3文字以上で `-` で終わる)。
+- **Cloud SQL をプライベート IP だけにした**(`doc/07_インフラ・運用.md` 2.1・`doc/06_セキュリティ設計.md` 11章)。`infra/gcp/network.tf`(新規)で VPC
+  `katahimo-vpc`・サブネット `katahimo-run`(Cloud Run の Direct VPC egress 用)・プライベート サービス アクセスを作り、`sql.tf` はパブリック IP を外す
+  (`sql_public_ip` 既定 false。新しいインスタンスの最初のロール作成と障害の調査で一時的に true にする逃げ道。`ssl_mode = ENCRYPTED_ONLY`・
+  `connector_enforcement = REQUIRED` は維持)。Cloud Run(API と全ジョブ)は Cloud SQL 接続(Unix ソケット `/cloudsql`)をやめ、Direct VPC egress
+  (`PRIVATE_RANGES_ONLY`。Google の API・外部サービスへは直接出る)と、アプリ側の Cloud SQL 言語コネクタ(`@google-cloud/cloud-sql-connector`)で
+  つなぐ。環境変数 `CLOUD_SQL_IP_TYPE=PRIVATE`(`PRIVATE` / `PUBLIC` / `PSC`)を設定すると、従来の `?host=/cloudsql/<接続名>` の URL をコネクタの接続名として
+  読むため、Secret Manager の `DATABASE_URL` 等の値は変えない。コネクタは IAM(`roles/cloudsql.client`)で認可し、証明書を確かめた TLS でつなぐ
+  (未設定ならこれまでどおりソケット・TCP。ローカル開発・CI は変わらない)。手元の `psql` + `cloud-sql-proxy` は使えなくなった。
+- **運用スクリプトは Cloud Run Job `katahimo-ops` で流す**(`doc/07_インフラ・運用.md` 3.6)。手元から DB に届かなくなったため、`pnpm tenant:*` / `import:*` /
+  `ai:compare` は api のイメージの `dist/ops/<名前>.js`(`tenant-create`・`tenant-calendars`・`tenant-customer-source`・`tenant-api-keys`・`import-reserva`・
+  `import-staff-master`・`import-attendance`・`import-legacy-reports`・`import-legacy-receipts`・`ai-compare`)をこのジョブで実行する
+  (`gcloud run jobs execute katahimo-ops --region=asia-northeast1 --wait --args=dist/ops/tenant-create.js,<slug>,<名前>,<メール>`。引数なしは一覧を出す)。
+  入出力のファイルは新しい ops バケット(`<プロジェクト>-katahimo-ops`。CMEK `storage-cmek`・7日で消える。`terraform output ops_bucket`)を `/ops` に載せて受け渡す
+  (`ai:compare` は `--out /ops/<名前>.html` が必須)。専用のサービスアカウント `katahimo-ops` を作った(`cloudsql.client`・API と同じシークレット +
+  `migration-database-url`・KMS `tenant-secrets`・領収書バケットと ops バケットの `objectUser`・`katahimo-outbox-drain` の `run.invoker`)。GAS版からの移行の取込
+  (`import:legacy-*`)のスプレッドシート・Drive フォルダの共有先は `katahimo-api` ではなく `katahimo-ops` になり、サービスアカウントへの成り代わりは要らない
+  (`doc/09_移行計画.md` 2.4)。ジョブを実行できる人は事実上 DB の所有者の操作ができるため、付与は運用担当者に絞る。`cloudbuild.yaml`(`_TRAFFIC=latest`)・
+  `cloudbuild.promote.yaml` が `katahimo-ops` のイメージも `api:<tag>` に差し替える。
+
+### 運用
+
+- **Cloud SQL のプライベート IP 化を既存の本番に入れるときの運用担当者の手順(この順に)**。`infra/gcp/run.tf` の `image` は Cloud Build が管理し Terraform は
+  差分を無視する(`ignore_changes`)ため、**`terraform apply` の時点で動いているリビジョンのイメージが古い(コネクタを含まない)と、`CLOUD_SQL_IP_TYPE` を知らずに
+  `/cloudsql` のソケットを探して DB につなげない**。新しいイメージは `CLOUD_SQL_IP_TYPE` が未設定ならこれまでのソケットで動くので、**先にイメージを出し、
+  その後に apply** する(順序を逆にしない)。
+  1. この変更を含む版を、通常のリリース(`doc/07_インフラ・運用.md` 4.2。CHANGELOG の `[未リリース]` を `## [Ver. X.Y.Z]` にして各 `package.json` の version を揃える PR → main →
+     `release-tag.yml` でタグ → 承認)で出し、**canary までで止める**(`_TRAFFIC=canary`。まだ切り替えない)。ビルドが `katahimo-migrate` を流し、新しいイメージの canary の
+     リビジョンができる(設定はこれまでのまま・パブリック IP も残っているのでソケットでつながる)。canary の URL で `/api/health`・`/api/health/db`・ログインを確かめる。
+  2. 利用の少ない時間に、**`cloudbuild.promote.yaml` の前に** `terraform -chdir=infra/gcp plan` → `apply` を流す。`plan` に VPC・サブネット・プライベート サービス アクセス・
+     `google_service_networking_connection`・ops バケット・ops のサービスアカウント・`katahimo-ops` ジョブの作成と、Cloud SQL の `settings.ip_configuration`
+     (プライベート IP の追加とパブリック IP の削除)、API・各ジョブの Direct VPC egress・`CLOUD_SQL_IP_TYPE` の追加と `cloudsql` ボリュームの削除が出ることを確かめる
+     (Cloud SQL は数分の再起動がありうる。`katahimo-ops` は Terraform が作る時点では `api:latest`(1 で push した新しいイメージ)を指す)。API の新しいリビジョンは、
+     いま最新のリビジョンのイメージ(1 の新しいイメージ)に新しい設定を載せて作られるが、利用者はまだ前のリビジョンに向いている。
+     **apply から次の 3 までの間は、前のリビジョン(Cloud SQL 接続のソケット)が DB に届かず API が使えない**ため、利用者に知らせ、続けて 3 に進む。
+  3. すぐに `cloudbuild.promote.yaml`(`--substitutions=_TAG=<ビルドのコミットの短いSHA>`)で利用者を最新のリビジョンに切り替える。`katahimo-ops` のイメージもここで `api:<tag>` になる
+     (2 で Terraform が作ったジョブも、ここで API と同じ版になる。ジョブが無い環境では飛ばす)。
+  4. 確かめる: `/api/health/db`、`katahimo-outbox-drain` の見回りの成功、`gcloud run jobs execute katahimo-ops --region=asia-northeast1 --wait`(スクリプトの一覧が出る)、
+     夜間ジョブの次の実行。戻すときは `sql_public_ip = true` にして `terraform apply` し(パブリック IP が戻り、前のリビジョンはソケットでつながる)、`doc/07_インフラ・運用.md` 8.2 に従う。
+     プライベート IP だけで動くことを確かめたら `sql_public_ip` は false のまま(既定)。
+  - 既存の本番はパブリック IP 付きで作成済みでテナントも無いため、新しいインスタンスの手順(`doc/07_インフラ・運用.md` 3.2。`sql_public_ip = true` で最初のロール作成)は要らない。
+    今後テナントを作る・取り込む作業は `katahimo-ops` ジョブで行う(`doc/07_インフラ・運用.md` 3.6)。
+  - 費用: VPC・ピアリング・Direct VPC egress は追加料金なしの見込み(要確認。`doc/07_インフラ・運用.md` 10章)。停止中のパブリック IP の課金は無くなる。
 
 ## [Ver. 1.4.0] - 2026-10-02
 

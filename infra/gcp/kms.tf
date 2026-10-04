@@ -92,11 +92,18 @@ resource "time_sleep" "cmek_iam_propagation" {
   ]
 }
 
-# 秘密値の封と開封は API だけ(ワーカーは tenant_secrets を読まない)
+# 秘密値の封と開封は API と運用スクリプト(ops。テナントの Gemini のキーを使う ai:compare 等)だけ
+# (ワーカーは tenant_secrets を読まない)
 resource "google_kms_crypto_key_iam_member" "tenant_secrets_api" {
   crypto_key_id = google_kms_crypto_key.tenant_secrets.id
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
   member        = "serviceAccount:${google_service_account.api.email}"
+}
+
+resource "google_kms_crypto_key_iam_member" "tenant_secrets_ops" {
+  crypto_key_id = google_kms_crypto_key.tenant_secrets.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${google_service_account.ops.email}"
 }
 
 resource "google_kms_crypto_key_iam_member" "tenant_secrets_demo_reset" {
