@@ -12,7 +12,7 @@
   "dependencies": {
     "@katahimo/core": "workspace:*",
     "@katahimo/shared": "workspace:*",
-    "csv-parse": "7.0.2",
-    "iconv-lite": "^0.6.3"
+    "csv-parse": "7.0.3",
+    "iconv-lite": "^0.7.3"
   }
 }
