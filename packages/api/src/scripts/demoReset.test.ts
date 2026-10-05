@@ -3,10 +3,21 @@ import {
   DEMO_RESET_SLUG_MAX_LENGTH,
   demoArchiveDate,
   demoArchiveSlug,
+  demoResetPassword,
   demoResetTargetProblem,
   isExpiredDemoArchive,
   parseDemoArchiveSlug,
 } from './demoReset';
+
+describe('デモ再作成の非公開パスワード', () => {
+  it('本番では未設定を拒否し、指定された値だけを使う', () => {
+    expect(() => demoResetPassword({ NODE_ENV: 'production' })).toThrow(/DEMO_LOGIN_PASSWORD/);
+    expect(demoResetPassword({ NODE_ENV: 'production', DEMO_LOGIN_PASSWORD: 'private-test-password' })).toBe(
+      'private-test-password',
+    );
+    expect(() => demoResetPassword({ DEMO_LOGIN_PASSWORD: 'short' })).toThrow(/入力条件/);
+  });
+});
 
 describe('demo:reset の対象の確かめ', () => {
   it('DEMO_TENANT_SLUG と一致する slug だけ受け付ける', () => {

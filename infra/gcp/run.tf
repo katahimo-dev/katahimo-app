@@ -539,6 +539,7 @@ resource "google_cloud_run_v2_job" "demo_reset" {
             DATABASE_URL           = "database-url"
             MIGRATION_DATABASE_URL = "migration-database-url"
             SESSION_SECRET         = "session-secret"
+            DEMO_LOGIN_PASSWORD    = "demo-login-password"
           }
           content {
             name = env.key

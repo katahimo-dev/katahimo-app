@@ -60,11 +60,6 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
   const demoSlug = demo.enabled ? normalizeTenantSlug(demo.tenantSlug) : null;
   const demoSlugEntered = demoSlug !== null && normalizeTenantSlug(tenantSlug) === demoSlug;
   const demoNotice = demo.enabled && demoSlugEntered ? demoLoginNoticeLines(demoTermsValuesOf(demo)) : null;
-  // デモ用アカウントはデモ専用の環境で、デモ用テナントに入るときだけ出す(ほかの法人IDでは使えないため)
-  const demoAccounts =
-    demo.enabled && demo.publicLogin && demoSlugEntered && demo.password !== null && demo.accounts.length > 0
-      ? { accounts: demo.accounts, password: demo.password }
-      : null;
 
   const doLogin = async () => {
     if (!login.email || !login.password || !tenantSlug) {
@@ -187,7 +182,6 @@ export function LoginScreen({ initialError = '', onLoggedIn }: LoginScreenProps)
       onForgotPassword={() => setStep('resetRequest')}
       hideForgotPassword={demoSlugEntered}
       demoNotice={demoNotice}
-      demoAccounts={demoAccounts}
     />
   );
 }

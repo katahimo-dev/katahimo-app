@@ -49,7 +49,8 @@ const appDb = createDatabase(env.DATABASE_URL, { max: 4 });
 const ownerDb = createDatabase(process.env.MIGRATION_DATABASE_URL ?? '', { max: 1, onnotice: () => {} });
 const container = createContainer(env, appDb);
 
-const RETENTION = { dataRetentionDays: 30 };
+const PRIVATE_DEMO_PASSWORD = 'private-demo-integration-password';
+const RETENTION = { dataRetentionDays: 30, password: PRIVATE_DEMO_PASSWORD };
 const DAY_MS = 24 * 60 * 60 * 1000;
 const tenantDirectory = new DrizzleTenantDirectory(ownerDb);
 const provisioningDeps = { tenants: tenantDirectory, provisioning: new DrizzleTenantProvisioning(ownerDb) };
@@ -109,7 +110,7 @@ const loginDemoAdmin = (tenantSlug: string) =>
   login(container, {
     tenantSlug,
     email: demoAdmin.email,
-    password: DEMO_PASSWORD,
+    password: PRIVATE_DEMO_PASSWORD,
     meta: { ip: '203.0.113.5' },
   });
 
@@ -131,6 +132,9 @@ describe('resetDemoTenant(実DB)', () => {
     expect(first.summary.attendanceDayCount).toBeGreaterThan(0);
     expect(first.summary.receiptCount).toBeGreaterThan(0);
     expect(first.summary.generatedThrough).toBe(toJstDateIso(now));
+    await expect(
+      login(container, { tenantSlug: slug, email: demoAdmin.email, password: DEMO_PASSWORD }),
+    ).resolves.toMatchObject({ ok: false, reason: 'invalid_credentials' });
 
     // 当日ぶんの出勤簿が入っている(今週の予定タブが空にならない)ことを確かめる
     const staffAccount = DEMO_ACCOUNTS.find((a) => a.role === 'staff');

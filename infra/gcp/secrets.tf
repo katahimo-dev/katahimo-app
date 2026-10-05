@@ -6,7 +6,7 @@
 # DB の接続はロールごとに別の secret(API = katahimo_app、ワーカー = katahimo_worker、migrate = katahimo_migrator)。
 # ops(運用スクリプト)は API と同じ値 + 所有者の接続(テナントの作成・設定は MIGRATION_DATABASE_URL で行う)。
 locals {
-  secrets = {
+  secrets = merge({
     # 名前 = 読めるサービスアカウント
     "database-url"           = concat(["api", "ops"], var.demo_mode ? ["demo-reset"] : [])     # postgres://katahimo_app:...@/katahimo?host=/cloudsql/<接続名>
     "worker-database-url"    = ["worker"]                                                      # postgres://katahimo_worker:...@/katahimo?host=/cloudsql/<接続名>
@@ -18,7 +18,7 @@ locals {
     "google-maps-api-key"    = var.demo_mode ? [] : ["api", "worker", "ops"]
     "gas-bridge-secret"      = var.demo_mode ? [] : ["api", "worker", "ops"]
     "vapid-private-key"      = var.demo_mode ? [] : ["worker"] # Web Push の VAPID の秘密鍵(送信はワーカー。公開鍵は var.web_push)
-  }
+  }, var.demo_mode ? { "demo-login-password" = ["demo-reset"] } : {})
 
   secret_accessors = merge([
     for secret, accessors in local.secrets : {
