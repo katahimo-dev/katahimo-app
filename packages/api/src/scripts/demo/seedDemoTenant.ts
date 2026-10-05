@@ -149,6 +149,7 @@ export async function seedDemoTenant(
   container: Container,
   tenant: TenantRecord,
   now: Date,
+  password: string = DEMO_PASSWORD,
 ): Promise<DemoSeedSummary> {
   // ── スタッフ ──────────────────────────────────────────────
   const staffByRole = new Map<string, { id: string; role: Actor['role']; name: string }>();
@@ -165,7 +166,7 @@ export async function seedDemoTenant(
         name: account.name,
         email: account.email,
         role: account.role,
-        password: DEMO_PASSWORD,
+        password,
       });
       staff = { id: created.id, role: created.role, name: created.displayName };
     }

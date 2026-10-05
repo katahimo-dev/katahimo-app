@@ -276,7 +276,7 @@ describe('公開デモ: 表示の設定(GET /api/demo/config)とログイン中�
     });
   });
 
-  it('デモ専用の環境(DEMO_PUBLIC_LOGIN=true)ではデモ用アカウントとパスワード、保存期間の設定を返す', async () => {
+  it('デモ専用の環境でも認証情報は返さず、保存期間の設定だけを返す', async () => {
     const config = await configOf(
       appWith({ DEMO_PUBLIC_LOGIN: 'true', DEMO_DATA_RETENTION_DAYS: '7', DEMO_LOG_RETENTION_MONTHS: '24' }),
     );
@@ -284,8 +284,8 @@ describe('公開デモ: 表示の設定(GET /api/demo/config)とログイン中�
       enabled: true,
       tenantSlug: demoSlug,
       publicLogin: true,
-      accounts: DEMO_ACCOUNTS.map(({ role, label, email }) => ({ role, label, email })),
-      password: DEMO_PASSWORD,
+      accounts: [],
+      password: null,
       dataRetentionDays: 7,
       logRetentionMonths: 24,
       aiUsesPerSession: DEMO_AI_USES_PER_SESSION,

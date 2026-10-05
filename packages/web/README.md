@@ -118,8 +118,8 @@ src/
   Service Worker(`public/push-sw.js`)のメッセージを受けて表示するスタッフを本人に戻し、予定タブに切り替え、`openScheduleLink` で日付を知らせる
   (`features/schedule/scheduleLink.ts`)。
 - **公開デモ**: デモかどうかはビルドの設定ではなく API で決める(本番とデモで同じビルド)。ログイン画面は `GET /api/demo/config`
-  (`features/auth/demo/useDemoConfig.ts`、キー `queryKeys.demoConfig`。失敗はデモではない扱い)で注意書き・デモ用アカウント・既定の法人IDを
-  出し分け、ログイン後はセッションの `user.demoTenant` で注釈(`DemoTermsProvider`。ログインの画面からログインした直後だけ出す)・
+  (`features/auth/demo/useDemoConfig.ts`、キー `queryKeys.demoConfig`。失敗はデモではない扱い)で注意書き・既定の法人IDを
+  出し分ける。アカウント・パスワードの表示と自動入力はせず、対象者へ別途案内する。ログイン後はセッションの `user.demoTenant` で注釈(`DemoTermsProvider`。ログインの画面からログインした直後だけ出す)・
   「デモ環境」の帯(`DemoBanner`。押すと注釈を開き直す)・メモ欄の注意を出し、API が断る操作(パスワード変更・顧客CSVの取込)のボタンを隠す
   (管理タブのスタッフ・日報AIの調整の Excel の取込は隠さず、注釈の「デモではできない操作」(`DEMO_UNAVAILABLE_OPERATIONS`)に並べる。押せば API が 403)。
   文言は `lib/demo.ts` にまとめ、保存の日数・月数・AI の回数は API の値を入れる(日数・月数が null = 本番の環境に暫定で置いたデモ用テナント・
