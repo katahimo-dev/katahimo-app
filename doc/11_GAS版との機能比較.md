@@ -200,7 +200,7 @@
 | Google カレンダー | 実行アカウントの `CalendarApp` | Calendar API(サービスアカウントへの共有)。予定を書くことはどちらもしない | 変更(2章) |
 | 地図(ジオコーディング・経路) | Maps サービス | Geocoding API・Routes API(予算アラートつき) | 変更(2章) |
 | 秘密値(APIキー・Webhook・salt) | Script Properties | Secret Manager と、テナントの秘密値は Cloud KMS で封をして DB に | 改善 |
-| 保存データの暗号化 | Google の既定の暗号化 | Cloud SQL・バックアップ・領収書のバケットを、このアプリ専用の鍵(CMEK)で暗号化 | 改善 |
+| 保存データの暗号化 | Google の既定の暗号化 | Cloud SQL・バックアップ・領収書のバケットを Google 管理の鍵で暗号化(GAS 版と同水準)。テナントの秘密値は本番で Cloud KMS で封をする | 同等 |
 | バックアップ・戻し | シート・Drive の版の履歴 | 自動バックアップ14世代・過去7日の好きな時点に戻せる(07) | 改善 |
 | 切替の前の日報・事故報告・領収書 | 各シート・Drive にある | 運用担当者のコマンド(`pnpm import:legacy-reports` / `import:legacy-receipts`。本番は `katahimo-ops` ジョブで流す。07 3.6)が Sheets API・Drive API で読んで取り込む(読むだけ。何度流してもよく、本アプリからのミラーの行は読まない。05 12章) | 改善(切替の前の記録も報告一覧・これまでの記録・領収書の一覧で見られる) |
 | GAS版への書き写しの受け口 | — | GAS版の `Bridge.js`(Ver. 1.1.38 以降)。ミラーを続ける間は GAS版の Web App を公開したままにする。書き写すのは Bridge の持ち主のテナント(`GAS_BRIDGE_TENANT`)の記録だけ | 変更(09 2.2) |

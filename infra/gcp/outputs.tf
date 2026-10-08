@@ -18,11 +18,9 @@ output "build_staging_bucket" {
 }
 
 output "kms_keys" {
-  description = "Cloud KMS の鍵(CMEK: Cloud SQL・領収書バケット / SecretBox: SECRET_BOX_KMS_KEY)"
+  description = "Cloud KMS の鍵(SecretBox: SECRET_BOX_KMS_KEY)。demo_mode では作らない(null)"
   value = {
-    cloudsql_cmek  = google_kms_crypto_key.cloudsql.id
-    storage_cmek   = google_kms_crypto_key.storage.id
-    tenant_secrets = google_kms_crypto_key.tenant_secrets.id
+    tenant_secrets = one(google_kms_crypto_key.tenant_secrets[*].id)
   }
 }
 

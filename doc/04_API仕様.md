@@ -340,9 +340,10 @@ RESERVA 等の外部システムからの受け口(05 11章)。認証は `Author
 
 | メソッド・パス | 権限 | 応答 | 備考 |
 | --- | --- | --- | --- |
-| `GET /api/demo/config` | 誰でも(ログイン不要) | `demoConfigResponseSchema` | 環境変数 `DEMO_*` の表示設定だけを返す(DB を読まない・操作ログに残さない・`Cache-Control: no-store`)。`DEMO_TENANT_SLUG` が無ければ `{ enabled: false }`。あれば `{ enabled: true, tenantSlug, publicLogin, accounts: [], password: null, dataRetentionDays, logRetentionMonths, aiUsesPerSession }`。認証情報は環境にかかわらず返さない(`accounts` と `password` は旧クライアントとの互換用)。`publicLogin` はデモ専用環境の既定法人IDを決める。`dataRetentionDays`(`DEMO_DATA_RETENTION_DAYS`)・`logRetentionMonths`(`DEMO_LOG_RETENTION_MONTHS`)・`aiUsesPerSession`(10)は画面の案内に入れる値。日数・月数は null になりうる(null = 期間を約束しない): `publicLogin` が true なら未設定でも 30・12、false なら明示したときだけ返す。画面は日数が null なら「毎晩作り直します」も期間も書かない(02 3.1) |
+| `GET /api/demo/config` | 誰でも(ログイン不要) | `demoConfigResponseSchema` | 環境変数 `DEMO_*` から作った値をそのまま返す(DB を読まない・操作ログに残さない・`Cache-Control: no-store`)。`DEMO_TENANT_SLUG` が無ければ `{ enabled: false }`。あれば `{ enabled: true, tenantSlug, publicLogin, accounts: [{ role, label, email }], password: null, dataRetentionDays, logRetentionMonths, aiUsesPerSession }`。`publicLogin`(`DEMO_PUBLIC_LOGIN`)が false のときは `accounts` は `[]`、`password` は `null`(本番の環境に暫定でデモ用テナントを置くとき、本番の利用者にデモ用アカウントを見せない)。`dataRetentionDays`(`DEMO_DATA_RETENTION_DAYS`)・`logRetentionMonths`(`DEMO_LOG_RETENTION_MONTHS`)・`aiUsesPerSession`(10)は画面の案内に入れる値。日数・月数は null になりうる(null = 期間を約束しない): `publicLogin` が true なら未設定でも 30・12(操作ログは12か月より短く消せないため)、false(本番の環境に暫定で置いたデモ用テナント。作り直しのジョブが無く、操作ログは本番の保存期間に従う)なら明示して設定したときだけ数を返し、未設定は null。画面は日数が null なら「毎晩作り直します」も期間も書かない(02 3.1) |
 
-web はログイン画面で、デモ用テナントの法人IDが入っているなら注意書きを出し、`publicLogin` なら会社IDの既定をデモ用テナントにする(02 3章)。認証情報の表示・自動入力はしない。読めなかったときはデモではない扱い。
+web はログイン画面で、`enabled` かつ(`publicLogin` またはデモ用テナントの法人IDが入っている)なら注意書きを、`publicLogin` かつデモ用テナントの法人IDなら
+デモ用アカウントのボタンを出し、`publicLogin` なら会社IDの既定をデモ用テナントにする(02 3章)。読めなかったときはデモではない扱い。
 
 ## 3. 本番での Web 画面の配信
 

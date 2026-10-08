@@ -71,5 +71,8 @@ describe('createSecretBox / secretBoxEnvProblems', () => {
       secretBoxEnvProblems({ SECRET_BOX_PROVIDER: 'local', SECRET_BOX_LOCAL_KEY: localKey }, true).join(),
     ).toMatch(/SECRET_BOX_PROVIDER/);
     expect(secretBoxEnvProblems({ SECRET_BOX_PROVIDER: 'gcp' }, true).join()).toMatch(/SECRET_BOX_KMS_KEY/);
+    expect(
+      secretBoxEnvProblems({ SECRET_BOX_PROVIDER: 'local', SECRET_BOX_LOCAL_KEY: localKey }, true, true),
+    ).toEqual([]);
   });
 });

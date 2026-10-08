@@ -137,7 +137,7 @@ resource "google_project_iam_member" "release_approvers" {
 # 管理アクティビティログ(鍵・シークレット・権限の変更)は何もしなくても残る。ここでは「中身を読んだ・書いた」も残す
 # (漏えいの疑いがあるときの追跡用。DB の中身は Cloud SQL のデータアクセスログには出ないため、アプリの操作ログ app_logs で追う)。
 #   secretmanager … シークレットの値の読み取り(AccessSecretVersion)・登録
-#   cloudkms      … 鍵の使用(encrypt / decrypt。テナントのシークレットの封、CMEK のサービスエージェントの利用)
+#   cloudkms      … 鍵の使用(encrypt / decrypt。テナントのシークレットの封)
 #   storage       … 領収書バケット・ビルド用バケットのオブジェクトの読み書き
 # Cloud SQL(ADMIN_READ 等)・Cloud Run の読み取りは量のわりに得るものが少ないため入れない。
 resource "google_project_iam_audit_config" "data_access" {

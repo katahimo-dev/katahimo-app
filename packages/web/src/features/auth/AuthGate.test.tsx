@@ -117,7 +117,7 @@ describe('AuthGate: 公開デモの注釈', () => {
       enabled: true,
       tenantSlug: 'public-demo',
       publicLogin: true,
-      accounts: [],
+      accounts: [{ role: 'admin', label: '管理者', email: 'admin@demo.example.com' }],
       password: null,
       dataRetentionDays: 30,
       logRetentionMonths: 24,
@@ -129,13 +129,8 @@ describe('AuthGate: 公開デモの注釈', () => {
     me.mockRejectedValue(unauthenticated());
     vi.mocked(authApi.login).mockResolvedValue({ staff: DEMO_USER });
     renderGate();
-    await screen.findByRole('note');
-    fireEvent.change(screen.getByLabelText('メールアドレス'), {
-      target: { value: 'admin@demo.example.com' },
-    });
-    fireEvent.change(screen.getByLabelText('パスワード'), {
-      target: { value: 'private-test-password' },
-    });
+    fireEvent.click(await screen.findByRole('button', { name: '管理者' }));
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'typed-pass' } });
     fireEvent.click(screen.getByRole('button', { name: 'ログイン' }));
     return screen.findByRole('dialog', { name: 'デモ環境をお使いになる前に' });
   }
@@ -238,13 +233,8 @@ describe('AuthGate: 公開デモの注釈', () => {
     me.mockRejectedValue(unauthenticated());
     vi.mocked(authApi.login).mockResolvedValue({ staff: TEST_USER });
     renderGate();
-    await screen.findByRole('note');
-    fireEvent.change(screen.getByLabelText('メールアドレス'), {
-      target: { value: 'admin@demo.example.com' },
-    });
-    fireEvent.change(screen.getByLabelText('パスワード'), {
-      target: { value: 'private-test-password' },
-    });
+    fireEvent.click(await screen.findByRole('button', { name: '管理者' }));
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'typed-pass' } });
     fireEvent.click(screen.getByRole('button', { name: 'ログイン' }));
     await screen.findByText('アプリ本体');
     expect(screen.queryByRole('dialog')).toBeNull();

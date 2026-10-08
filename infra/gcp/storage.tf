@@ -33,11 +33,6 @@ resource "google_storage_bucket" "receipts" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
 
-  # 保存時の暗号化はこのアプリ専用の鍵(CMEK。kms.tf)。バケットの既定の鍵にして、全てのオブジェクトに使う
-  encryption {
-    default_kms_key_name = google_kms_crypto_key.storage.id
-  }
-
   # 誤削除からの復旧用(削除・上書きされたオブジェクトを30日保持)
   versioning {
     enabled = !var.demo_mode
@@ -54,9 +49,6 @@ resource "google_storage_bucket" "receipts" {
   lifecycle {
     prevent_destroy = true
   }
-
-  # GCS のサービスエージェントが鍵を使えるようになってから作る(権限の反映を待つ)
-  depends_on = [time_sleep.cmek_iam_propagation]
 }
 
 # API は保存・取得・削除、ワーカーは GAS 版 Drive へのミラー用に取得だけ
@@ -105,7 +97,7 @@ resource "google_storage_bucket" "build_staging" {
 }
 
 # ── 運用スクリプト(ops ジョブ)の入出力の受け渡し ─────────────────
-# 顧客・スタッフの CSV(個人情報)や ai:compare の HTML を置くため、領収書と同じ鍵(CMEK)で暗号化し、7日で消す。
+# 顧客・スタッフの CSV(個人情報)や ai:compare の HTML を置くため、7日で消す(保存時の暗号化は Google 管理の鍵)。
 # ops ジョブが /ops に載せる(run.tf)。運用担当者は gsutil / gcloud storage で置く・取る(doc/07_インフラ・運用.md 3.6)。
 resource "google_storage_bucket" "ops" {
   name                        = "${var.project_id}-katahimo-ops"
@@ -113,10 +105,6 @@ resource "google_storage_bucket" "ops" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
   force_destroy               = true
-
-  encryption {
-    default_kms_key_name = google_kms_crypto_key.storage.id
-  }
 
   lifecycle_rule {
     condition {
@@ -126,8 +114,6 @@ resource "google_storage_bucket" "ops" {
       type = "Delete"
     }
   }
-
-  depends_on = [time_sleep.cmek_iam_propagation]
 }
 
 resource "google_storage_bucket_iam_member" "ops_job" {

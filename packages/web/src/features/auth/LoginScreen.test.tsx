@@ -113,7 +113,11 @@ const DEMO_CONFIG = {
   enabled: true,
   tenantSlug: 'public-demo',
   publicLogin: true,
-  accounts: [],
+  accounts: [
+    { role: 'admin', label: '管理者', email: 'admin@demo.example.com' },
+    { role: 'coordinator', label: 'コーディネーター', email: 'coordinator@demo.example.com' },
+    { role: 'staff', label: 'スタッフ', email: 'staff@demo.example.com' },
+  ],
   password: null,
   dataRetentionDays: 30,
   logRetentionMonths: 24,
@@ -143,7 +147,7 @@ describe('ログイン画面: 公開デモ(GET /api/demo/config)', () => {
     expect(screen.queryByRole('note')).toBeNull();
   });
 
-  it('デモ専用の環境でも認証情報を表示・自動入力せず、手入力でログインする', async () => {
+  it('デモ専用の環境(publicLogin): デモ用テナントを既定にし、注意書きとデモ用アカウントを出す。押すとそのアカウントでログインする', async () => {
     vi.mocked(demoApi.config).mockResolvedValue(DEMO_CONFIG);
     vi.mocked(authApi.login).mockResolvedValue({
       staff: {
@@ -156,29 +160,24 @@ describe('ログイン画面: 公開デモ(GET /api/demo/config)', () => {
       },
     });
     renderLogin();
-    const note = await screen.findByRole('note');
-    expect(screen.queryByRole('button', { name: 'コーディネーター' })).toBeNull();
-    expect(screen.queryByText(/デモ用アカウント\(パスワード:/)).toBeNull();
-    expect(screen.getByLabelText<HTMLInputElement>('メールアドレス').value).toBe('');
-    expect(screen.getByLabelText<HTMLInputElement>('パスワード').value).toBe('');
+    const picker = await screen.findByRole('button', { name: 'コーディネーター' });
+    expect(screen.getByText('デモ用アカウント')).toBeTruthy();
+    const note = screen.getByRole('note');
     expect(note.textContent).toContain('これは公開デモです');
     expect(note.textContent).toContain(NOTICE_TEXT);
     expect(note.textContent).toContain('実在の人物の名前・連絡先は入力しないでください');
     expect(screen.queryByLabelText('法人ID')).toBeNull();
     expect(screen.queryByRole('button', { name: 'パスワードを忘れたときはこちら' })).toBeNull();
 
-    fireEvent.change(screen.getByLabelText('メールアドレス'), {
-      target: { value: 'coordinator@demo.example.com' },
-    });
-    fireEvent.change(screen.getByLabelText('パスワード'), {
-      target: { value: 'private-test-password' },
-    });
+    fireEvent.click(picker);
+    expect(screen.getByLabelText<HTMLInputElement>('パスワード').value).toBe('');
+    fireEvent.change(screen.getByLabelText('パスワード'), { target: { value: 'typed-pass' } });
     fireEvent.click(screen.getByRole('button', { name: 'ログイン' }));
     await waitFor(() =>
       expect(authApi.login).toHaveBeenCalledWith({
         tenantSlug: 'public-demo',
         email: 'coordinator@demo.example.com',
-        password: 'private-test-password',
+        password: 'typed-pass',
       }),
     );
   });

@@ -149,7 +149,7 @@ export function trustedProxyHops(env: Pick<Env, 'NODE_ENV' | 'TRUSTED_PROXY_HOPS
 }
 
 function checkCombinations(env: ParsedEnv): string[] {
-  const problems = [...sharedEnvProblems(env), ...secretBoxEnvProblems(env, env.NODE_ENV === 'production')];
+  const problems = [...sharedEnvProblems(env), ...secretBoxEnvProblems(env, env.NODE_ENV === 'production', env.DEMO_PUBLIC_LOGIN)];
   if (
     env.NODE_ENV === 'production' &&
     (env.SESSION_SECRET.length < 32 || env.SESSION_SECRET === 'change-me-in-production')

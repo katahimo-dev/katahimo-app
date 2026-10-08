@@ -45,6 +45,19 @@ describe('loadEnv', () => {
     );
   });
 
+  it('デモ専用の環境(DEMO_PUBLIC_LOGIN=true)は本番でも秘密値のローカル鍵を使える', () => {
+    const demo = {
+      ...production,
+      SECRET_BOX_PROVIDER: 'local',
+      SECRET_BOX_KMS_KEY: '',
+      SECRET_BOX_LOCAL_KEY: hex('b'),
+      DEMO_TENANT_SLUG: 'public-demo',
+      DEMO_PUBLIC_LOGIN: 'true',
+    };
+    expect(loadEnv(demo)).toMatchObject({ SECRET_BOX_PROVIDER: 'local' });
+    expect(() => loadEnv({ ...demo, DEMO_PUBLIC_LOGIN: '' })).toThrow(/SECRET_BOX_PROVIDER/);
+  });
+
   it('本番で足りない・開発用のままの設定をまとめて起動前に落とす', () => {
     const missing = ['SECRET_BOX_PROVIDER', 'STORAGE_PROVIDER', 'SCHEDULE_PROVIDER', 'OUTBOX_DRAIN_JOB'];
     const source = Object.fromEntries(

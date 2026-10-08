@@ -17,7 +17,7 @@ import {
   DrizzleTenantDirectory,
   DrizzleTenantProvisioning,
 } from '@katahimo/db/repositories';
-import { DEMO_ACCOUNTS, DEMO_PASSWORD, findAiPromptDefinition, newPasswordSchema } from '@katahimo/shared';
+import { DEMO_ACCOUNTS, findAiPromptDefinition } from '@katahimo/shared';
 import { sql } from 'drizzle-orm';
 import type { Container } from '../container';
 import { createContainer } from '../container';
@@ -38,21 +38,6 @@ export const DEMO_RESET_SLUG_MAX_LENGTH = TENANT_SLUG_MAX_LENGTH - '-YYYYMMDD'.l
 export interface DemoResetOptions {
   /** 残した過去のデモ用テナントを消すまでの日数(DEMO_DATA_RETENTION_DAYS。未設定なら 30)。 */
   dataRetentionDays: number;
-  password?: string;
-}
-
-export function demoResetPassword(source: NodeJS.ProcessEnv): string {
-  const password = source.DEMO_LOGIN_PASSWORD;
-  if (!password) {
-    if (source.NODE_ENV === 'production') {
-      throw new Error('本番のデモ再作成には DEMO_LOGIN_PASSWORD が必要です');
-    }
-    return DEMO_PASSWORD;
-  }
-  if (!newPasswordSchema.safeParse(password).success) {
-    throw new Error('DEMO_LOGIN_PASSWORD がパスワードの入力条件を満たしていません');
-  }
-  return password;
 }
 
 export interface DemoResetResult {
@@ -449,7 +434,7 @@ export async function resetDemoTenant(
     console.log('[demo:reset] Gemini の API キーを引き継ぎました');
   }
 
-  const summary = await seedDemoTenant(container, tenant, now, options.password);
+  const summary = await seedDemoTenant(container, tenant, now);
   if (keptAiTuning && keptAiTuningCount(keptAiTuning) > 0) {
     await restoreKeptAiTuning(container, tenant.id, keptAiTuning);
     console.log(
@@ -520,7 +505,6 @@ function printSummary(result: DemoResetResult) {
  */
 async function main() {
   const env = loadEnv();
-  const password = demoResetPassword(process.env);
   const [slug] = cliArgs();
   const problem = demoResetTargetProblem(slug, env.DEMO_TENANT_SLUG);
   if (problem || !slug) throw new Error(problem ?? '');
@@ -534,7 +518,6 @@ async function main() {
     const result = await resetDemoTenant(ownerDb, container, slug, {
       // 未設定なら 30 日(API の案内は本番の環境では期間を出さないが、作り直しのジョブは必ず期限で消す)
       dataRetentionDays: demoResetRetentionDays(env),
-      password,
     });
     printSummary(result);
   } finally {

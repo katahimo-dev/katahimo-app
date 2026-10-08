@@ -12,7 +12,7 @@ export type DemoAccountView = z.infer<typeof demoAccountViewSchema>;
 
 /**
  * GET /api/demo/config(ログイン不要)。公開デモの表示の設定。API の環境変数(`DEMO_TENANT_SLUG` 等)から作り、
- * web はビルドの設定ではなくこれを見て、ログイン画面の注意書き・既定の法人ID、ログイン直後の注釈、
+ * web はビルドの設定ではなくこれを見て、ログイン画面の注意書き・デモ用アカウント、ログイン直後の注釈、
  * 「デモ環境」の帯を出す(本番とデモで同じイメージを使うため)。デモの制限そのものは API が掛ける。
  */
 export const demoConfigResponseSchema = z.discriminatedUnion('enabled', [
@@ -22,13 +22,13 @@ export const demoConfigResponseSchema = z.discriminatedUnion('enabled', [
     /** デモ用テナントの slug。ログイン画面でこの会社IDが入っているときに注意書きを出す。 */
     tenantSlug: z.string(),
     /**
-     * デモ専用の環境か(`DEMO_PUBLIC_LOGIN=true`)。true ならログイン画面の既定の会社IDをデモ用テナントにする。
-     * 認証情報は表示しない。本番の環境に暫定でデモ用テナントを置くときは false。
+     * デモ専用の環境か(`DEMO_PUBLIC_LOGIN=true`)。true ならログイン画面の既定の会社IDをデモ用テナントにし、
+     * デモ用アカウントとパスワードを出す。本番の環境に暫定でデモ用テナントを置くときは false(本番の利用者に出さない)。
      */
     publicLogin: z.boolean(),
-    /** 旧クライアントとの互換用。認証情報は返さず常に空。 */
-    accounts: z.array(demoAccountViewSchema).max(0),
-    /** 旧クライアントとの互換用。常に null。 */
+    /** デモ用アカウント(publicLogin が false なら空)。 */
+    accounts: z.array(demoAccountViewSchema),
+    /** 常に null(パスワードは画面に出さず、使ってほしい人へ個別に伝える)。 */
     password: z.null(),
     /**
      * 訪問者の入力を保存する日数(`DEMO_DATA_RETENTION_DAYS`。作り直しのジョブが前日分を日付付きのテナントで残す期間)。

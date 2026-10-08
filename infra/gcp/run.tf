@@ -32,8 +32,8 @@ locals {
   api_env = merge(local.common_env, { for k, v in {
     DB_POOL_MAX               = tostring(var.api_db_pool_max)
     OUTBOX_DRAIN_JOB          = local.outbox_drain_job_id
-    SECRET_BOX_PROVIDER       = "gcp"
-    SECRET_BOX_KMS_KEY        = google_kms_crypto_key.tenant_secrets.id
+    SECRET_BOX_PROVIDER       = var.demo_mode ? "local" : "gcp"
+    SECRET_BOX_KMS_KEY        = var.demo_mode ? "" : google_kms_crypto_key.tenant_secrets[0].id
     DEMO_TENANT_SLUG          = var.demo_mode ? var.demo_tenant_slug : ""
     DEMO_PUBLIC_LOGIN         = var.demo_mode ? "true" : ""
     DEMO_DATA_RETENTION_DAYS  = var.demo_mode ? tostring(var.demo_data_retention_days) : ""
@@ -61,6 +61,8 @@ locals {
       DATABASE_URL   = "database-url"
       SESSION_SECRET = "session-secret"
     },
+    # デモ専用の環境(KMS を使わない)の秘密値の封の鍵
+    var.demo_mode ? { SECRET_BOX_LOCAL_KEY = "secret-box-local-key" } : {},
     { for k, v in {
       GOOGLE_MAPS_API_KEY = "google-maps-api-key"
       GEMINI_API_KEY      = "gemini-api-key"
@@ -506,6 +508,10 @@ resource "google_cloud_run_v2_job" "demo_reset" {
           value = var.demo_tenant_slug
         }
         env {
+          name  = "DEMO_PUBLIC_LOGIN"
+          value = "true"
+        }
+        env {
           name  = "OUTBOX_DRAIN_JOB"
           value = local.outbox_drain_job_id
         }
@@ -527,11 +533,7 @@ resource "google_cloud_run_v2_job" "demo_reset" {
         }
         env {
           name  = "SECRET_BOX_PROVIDER"
-          value = "gcp"
-        }
-        env {
-          name  = "SECRET_BOX_KMS_KEY"
-          value = google_kms_crypto_key.tenant_secrets.id
+          value = "local"
         }
 
         dynamic "env" {
@@ -539,7 +541,7 @@ resource "google_cloud_run_v2_job" "demo_reset" {
             DATABASE_URL           = "database-url"
             MIGRATION_DATABASE_URL = "migration-database-url"
             SESSION_SECRET         = "session-secret"
-            DEMO_LOGIN_PASSWORD    = "demo-login-password"
+            SECRET_BOX_LOCAL_KEY   = "secret-box-local-key"
           }
           content {
             name = env.key
@@ -562,7 +564,6 @@ resource "google_cloud_run_v2_job" "demo_reset" {
   depends_on = [
     google_project_iam_member.demo_reset_cloudsql_client,
     google_secret_manager_secret_iam_member.accessor,
-    google_kms_crypto_key_iam_member.tenant_secrets_demo_reset,
     google_storage_bucket_iam_member.receipts_demo_reset,
     google_sql_database_instance.main,
   ]

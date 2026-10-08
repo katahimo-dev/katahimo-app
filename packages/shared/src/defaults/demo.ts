@@ -2,10 +2,11 @@ import type { StaffRole } from '../contracts/roles';
 
 /**
  * 公開デモ(1つのデモ用テナントを訪問者みんなで使う)のログイン用アカウント。
- * - シード(`pnpm demo:reset`)がこの3人を作る。認証情報は画面・未ログインAPIへ公開せず、対象者へ別途案内する。
+ * - シード(`pnpm demo:reset`)がこの3人を作り、デモ専用の環境(API の `DEMO_PUBLIC_LOGIN=true`)では
+ *   GET /api/demo/config がこの一覧とパスワードを返して、ログイン画面に出す。
  * - API は、デモ用テナント(`DEMO_TENANT_SLUG`)では、この3人の変更・削除・パスワードの変更を断る
  *   (1人の操作で他の訪問者がログインできなくならないように。`packages/api/src/http/demoRestrictions.ts`)。
- * DEMO_PASSWORD は開発・テスト用。本番の再作成では Secret Manager の DEMO_LOGIN_PASSWORD を使う。
+ * パスワードは公開してよい値(デモのデータは架空のもので、毎晩作り直す)。本番のテナントでは使わない。
  */
 export interface DemoAccount {
   role: StaffRole;

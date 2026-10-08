@@ -2,7 +2,8 @@
 #   printf '%s' "$VALUE" | gcloud secrets versions add <名前> --data-file=-
 # で登録する(値を state に残さないため。doc/07_インフラ・運用.md 3.3)。
 #
-# テナントの秘密値の封(SecretBox)は Secret Manager ではなく Cloud KMS の tenant-secrets(kms.tf)を使う。
+# テナントの秘密値の封(SecretBox)は Cloud KMS の tenant-secrets(kms.tf)を使う。KMS を使わないデモ専用の環境(demo_mode)だけ
+# secret-box-local-key(下)を使う。
 # DB の接続はロールごとに別の secret(API = katahimo_app、ワーカー = katahimo_worker、migrate = katahimo_migrator)。
 # ops(運用スクリプト)は API と同じ値 + 所有者の接続(テナントの作成・設定は MIGRATION_DATABASE_URL で行う)。
 locals {
@@ -18,7 +19,10 @@ locals {
     "google-maps-api-key"    = var.demo_mode ? [] : ["api", "worker", "ops"]
     "gas-bridge-secret"      = var.demo_mode ? [] : ["api", "worker", "ops"]
     "vapid-private-key"      = var.demo_mode ? [] : ["worker"] # Web Push の VAPID の秘密鍵(送信はワーカー。公開鍵は var.web_push)
-  }, var.demo_mode ? { "demo-login-password" = ["demo-reset"] } : {})
+    }, var.demo_mode ? {
+    # デモ専用の環境の秘密値の封の鍵(SECRET_BOX_PROVIDER=local。64桁の16進数。openssl rand -hex 32)。本番は Cloud KMS(kms.tf)
+    "secret-box-local-key" = ["api", "ops", "demo-reset"]
+  } : {})
 
   secret_accessors = merge([
     for secret, accessors in local.secrets : {

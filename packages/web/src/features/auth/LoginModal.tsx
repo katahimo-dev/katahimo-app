@@ -1,4 +1,5 @@
 import type { useVisibilityToggle } from '../../ui/useVisibilityToggle';
+import { DemoAccountPicker, type DemoAccountsView } from './DemoAccountPicker';
 
 export interface LoginFormValues {
   tenantSlug: string;
@@ -23,6 +24,8 @@ interface LoginModalProps {
   hideForgotPassword?: boolean;
   /** 公開デモの注意書き(1要素 = 1行。lib/demo.ts)。null でなければログインボタンの上に出す。 */
   demoNotice?: string[] | null;
+  /** デモ用アカウントの一覧(デモ専用の環境だけ)。押すとメールアドレスだけを入れる。 */
+  demoAccounts?: DemoAccountsView | null;
 }
 
 /**
@@ -40,6 +43,7 @@ export function LoginModal({
   onForgotPassword,
   hideForgotPassword = false,
   demoNotice = null,
+  demoAccounts = null,
 }: LoginModalProps) {
   return (
     <div className="fixed inset-0 bg-gray-900 z-50 flex items-center justify-center p-4">
@@ -55,6 +59,12 @@ export function LoginModal({
           <h2 className="text-2xl font-bold text-gray-800">ログイン</h2>
           <p className="text-sm text-gray-500 mt-1">スタッフ情報を入力してください</p>
         </div>
+        {demoAccounts ? (
+          <DemoAccountPicker
+            view={demoAccounts}
+            onPick={(account) => onChange({ ...values, email: account.email })}
+          />
+        ) : null}
         <div className="space-y-4">
           {showTenantField ? (
             <div>
