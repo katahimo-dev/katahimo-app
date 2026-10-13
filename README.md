@@ -46,7 +46,7 @@ winget install --id Bitwarden.BWS --exact      # bws CLI(初回のみ)
 | `pnpm lint` / `typecheck` / `test` / `build` | なし(CI が同じコマンドで回るため包まない) |
 
 キーを足すときは Bitwarden の `katahimo` プロジェクトに追加し、`.env.example`・`infra/gcp/run.tf`(本番)・資料も直す。
-運用の全体像(トークンの発行・失効、他リポジトリとの関係)は `../SECRETS.md`。
+運用の全体像(トークンの発行・失効、他リポジトリとの関係)は非公開リポジトリ `ohru131/handbook` の `secrets/README.md`。
 
 ## 資料
 
