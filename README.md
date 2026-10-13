@@ -21,13 +21,32 @@ git clone --recurse-submodules https://github.com/katahimo-dev/katahimo-app.git 
 pnpm install
 psql -U postgres -h localhost -f infra/initdb/00_create_database.sql              # Docker なら docker compose -f infra/docker-compose.yml up -d(:5433)
 psql -U postgres -h localhost -d katahimo_dev -f infra/initdb/01_bootstrap.sql
-cp .env.example .env    # SECRET_BOX_LOCAL_KEY に64桁hexを入れる(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-pnpm db:migrate && pnpm db:seed
-pnpm --filter @katahimo/api dev      # :8080
-pnpm --filter @katahimo/web dev      # :5173 → http://localhost:5173/?t=demo(admin@example.com / admin1234)
+# 環境変数は Bitwarden Secrets Manager から入る(下の「環境変数」)。BWS_TOKEN_KATAHIMO を設定しておく
+pnpm bws pnpm db:migrate && pnpm bws pnpm db:seed
+pnpm dev     # API :8080 と 画面 :5173 → http://localhost:5173/?t=demo(admin@example.com / admin1234)
 ```
 
 確認: `pnpm lint && pnpm typecheck && pnpm test && pnpm build`。詳しい手順・コマンドの一覧は [doc/08_開発ガイド.md](doc/08_開発ガイド.md)。
+
+## 環境変数
+
+`.env` は使わない。[Bitwarden Secrets Manager](https://bitwarden.com/products/secrets-manager/) のプロジェクト
+`katahimo` に置き、実行時に `scripts/bws-env.mjs` が環境変数として注入する。値がディスクに残らない。
+
+```bash
+winget install --id Bitwarden.BWS --exact      # bws CLI(初回のみ)
+# ma-katahimo のアクセストークンを発行し、ユーザー環境変数に入れる(初回のみ。設定後はターミナルを開き直す)
+[Environment]::SetEnvironmentVariable("BWS_TOKEN_KATAHIMO", "<token>", "User")   # PowerShell
+```
+
+| コマンド | 注入 |
+| --- | --- |
+| `pnpm dev` | あり(内部で `dev:raw` を呼ぶ) |
+| `pnpm bws <コマンド>` | あり。包んでいないものはこれを前置(`pnpm bws pnpm db:migrate`) |
+| `pnpm lint` / `typecheck` / `test` / `build` | なし(CI が同じコマンドで回るため包まない) |
+
+キーを足すときは Bitwarden の `katahimo` プロジェクトに追加し、`.env.example`・`infra/gcp/run.tf`(本番)・資料も直す。
+運用の全体像(トークンの発行・失効、他リポジトリとの関係)は `../SECRETS.md`。
 
 ## 資料
 
@@ -38,5 +57,5 @@ pnpm --filter @katahimo/web dev      # :5173 → http://localhost:5173/?t=demo(a
 ## 運用方針
 
 - 変更履歴は `CHANGELOG.md`(`## [Ver. x.y.z] - 日付`)。
-- APIキー・秘密鍵・トークン・パスワードはソースに書かない(ローカルは `.env`、本番は Secret Manager)。
+- APIキー・秘密鍵・トークン・パスワードはソースに書かない(ローカルは Bitwarden Secrets Manager、本番は Secret Manager)。
 - コードコメント・資料・README・CHANGELOG・コミットメッセージは日本語。
