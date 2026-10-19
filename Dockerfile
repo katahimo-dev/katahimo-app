@@ -20,7 +20,7 @@
 #
 # HEALTHCHECK も書かない: Cloud Run は Dockerfile の HEALTHCHECK を使わず、infra/gcp/run.tf の
 # startup_probe / liveness_probe(api の /api/health)で確認する。worker のジョブは終了コードで成否を返す。
-FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS base
+FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS base
 
 # ── pnpm の入ったビルド用ベース ──────────────────────────────────
 FROM base AS pnpm
