@@ -17,10 +17,10 @@ import { apiError } from './responses';
  * 「1人の操作で他の訪問者のデモを壊す」「外へ送る」ものだけにする:
  * - デモ用アカウント(`DEMO_ACCOUNTS`)のパスワードの変更・再設定、変更・削除(ログインできなくなる)
  * - スタッフの xlsx の取込・パスワード案内メール、顧客 CSV の取込(データを丸ごと入れ替える・メールを送る)
- * - 日報AIの調整の xlsx の取込(マスターをまとめて書き換える。xlsx を展開して読むのは API の1インスタンスで1つずつのため、
- *   訪問者が送り続けると他の訪問者の取込を待たせ、メモリも使う)
  * - Google Chat の通知先の保存(訪問者の入れた先へ外部送信が起きる)。Gemini の API キーは保存できる(デモでも実際に
  *   AI で書けるように。毎晩の作り直しでも引き継ぐ)
+ * 日報AIの調整の xlsx の取込は断らない(運用担当者がデモ用の管理者でお客様の日報キーワード表現マスターを入れ、毎晩の
+ * 作り直しで引き継ぐため。取込は突き合わせて足す・直すだけで行を消さない。回数は管理者ごとの `report_ai_xlsx_import_staff` で絞る)。
  * また、アカウント単位のログインのロックはしない(誰かがわざと間違え続けると全員がログインできなくなるため。
  * 送信元IP単位のロックは残す)。AI(日報・事故報告の生成、領収書の読み取り)は1回のログインで
  * `DEMO_AI_USES_PER_SESSION` 回まで。
@@ -81,12 +81,6 @@ export const DEMO_RESTRICTION_RULES: readonly DemoRestrictionRule[] = [
     tenant: 'body_slug',
   },
   { name: 'staff.xlsx_import', method: 'POST', path: /^\/api\/admin\/staff\/import$/, tenant: 'session' },
-  {
-    name: 'settings.report_ai.import',
-    method: 'POST',
-    path: /^\/api\/admin\/report-ai\/import$/,
-    tenant: 'session',
-  },
   {
     name: 'staff.admin.password_guide',
     method: 'POST',

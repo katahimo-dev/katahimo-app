@@ -17,14 +17,14 @@ export interface DemoAccount {
 }
 
 export const DEMO_ACCOUNTS: readonly DemoAccount[] = [
-  { role: 'admin', label: '管理者', email: 'admin@demo.example.com', name: '山田 花子' },
+  { role: 'admin', label: '管理者', email: 'admin@demo.example.com', name: '北条 政子' },
   {
     role: 'coordinator',
     label: 'コーディネーター',
     email: 'coordinator@demo.example.com',
-    name: '佐藤 美咲',
+    name: '伊能 忠敬',
   },
-  { role: 'staff', label: 'スタッフ', email: 'staff@demo.example.com', name: '鈴木 一郎' },
+  { role: 'staff', label: 'スタッフ', email: 'staff@demo.example.com', name: '松尾 芭蕉' },
 ];
 
 export const DEMO_PASSWORD = 'demo1234';

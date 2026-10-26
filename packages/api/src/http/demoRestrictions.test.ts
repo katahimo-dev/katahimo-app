@@ -12,9 +12,6 @@ describe('matchDemoRestriction', () => {
     });
     expect(matchDemoRestriction('POST', '/api/admin/staff/abc/password-guide')?.targetId).toBe('abc');
     expect(matchDemoRestriction('POST', '/api/admin/staff/import')?.rule.name).toBe('staff.xlsx_import');
-    expect(matchDemoRestriction('POST', '/api/admin/report-ai/import')?.rule.name).toBe(
-      'settings.report_ai.import',
-    );
   });
 
   it('デモでも使える操作は当たらない(入力・編集・閲覧、スタッフの追加、プロンプトの編集)', () => {
@@ -22,7 +19,8 @@ describe('matchDemoRestriction', () => {
     expect(matchDemoRestriction('POST', '/api/admin/staff')).toBeNull();
     expect(matchDemoRestriction('GET', '/api/admin/staff/abc')).toBeNull();
     expect(matchDemoRestriction('PUT', '/api/settings/admin/prompts')).toBeNull();
-    // 日報AIの調整は1行ずつの保存・書き出しは使える(断るのは xlsx の取込だけ)
+    // 日報AIの調整は xlsx の取込・書き出しも使える(マスターを入れて作り直しで引き継ぐため)
+    expect(matchDemoRestriction('POST', '/api/admin/report-ai/import')).toBeNull();
     expect(matchDemoRestriction('GET', '/api/admin/report-ai/export.xlsx')).toBeNull();
     expect(matchDemoRestriction('POST', '/api/auth/login')).toBeNull();
   });

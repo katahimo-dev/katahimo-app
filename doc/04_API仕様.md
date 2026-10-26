@@ -142,11 +142,13 @@ exceljs は展開した XML の数十倍のメモリを使い、展開して30MB
 | --- | --- |
 | `POST /api/auth/change-password`、`POST /api/auth/password-reset/request`・`/confirm`(本文の `tenantSlug` がデモ用テナント) | 共有のアカウントでログインできなくなる・メールが外に出る |
 | `PATCH`・`DELETE /api/admin/staff/:id`(デモ用アカウント `DEMO_ACCOUNTS` だけ。他のスタッフは編集できる)、`POST /api/admin/staff/:id/password-guide`、`POST /api/admin/staff/import` | 同上 |
-| `POST /api/admin/report-ai/import`(日報AIの調整の xlsx の取込。1行ずつの保存・書き出しは使える) | マスターをまとめて書き換える。xlsx を読むのは API の1インスタンスで1つずつのため、送り続けると他の訪問者の取込を待たせ、メモリも使う |
 | `POST /api/admin/customers/import` | 顧客を丸ごと入れ替える |
 | `POST /api/settings/admin/gchat-webhooks` | 訪問者の入れた送り先へ外部送信が起きる |
 | `GET /api/admin/audit-logs`・`/audit-logs.csv` | 操作ログに他の訪問者の送信元IP・ブラウザが残る(共有の管理者アカウントで見られる) |
 
+- 日報AIの調整の xlsx の取込(`POST /api/admin/report-ai/import`)は断らない。運用担当者がデモ用の管理者でお客様の日報キーワード表現マスターを
+  取り込めば、毎晩の作り直しで引き継ぐ(07 3.9)。取込は突き合わせて足す・直すだけで行を消さず、回数は管理者ごとの `report_ai_xlsx_import_staff`
+  (1時間30回。デモ用の管理者アカウントは訪問者みんなで共有なので全体の上限になる)で絞る
 - Gemini の API キー(`POST /api/settings/admin/gemini-key`)は断らない。運用担当者がデモ用の管理者で保存すれば、デモでも実際に AI で書ける
   (回数は下の上限。保存済みのキーは伏せ字でしか返さない。`demo:reset` が新しいテナントへ封をし直して引き継ぐ。AI プロンプトの上書き・日報AIの調整のマスターも引き継ぐ。07 3.9)。
   共有の管理者アカウントなので、訪問者も上書きできる(そのときは保存し直す)。

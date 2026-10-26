@@ -4,6 +4,7 @@
 
 ### 変更
 
+- 公開デモでも「日報AIの調整」の xlsx の取込を使えるようにした(今までは 403)。運用担当者がデモ用の管理者でお客様の日報キーワード表現マスターを一度取り込めば、毎晩の作り直し(`demo:reset`)が引き継ぐ。シードはマスターを入れない(お客様の実物の xlsx はリポジトリに入れない)ため、取り込むまでは空のまま。ログイン直後の注釈の「デモではできない操作」からも外した。
 - 暗号化の鍵を整理した。Cloud SQL・領収書バケットのディスク暗号化は Google 管理の鍵(既定)にし、CMEK(`cloudsql-cmek`・`storage-cmek`)を廃止。Cloud KMS は本番の `tenant-secrets`(テナントの秘密値の封)だけにし、デモ専用の環境(`demo_mode`)は KMS を使わず Secret Manager の `secret-box-local-key` で封する(本番でローカル鍵を許すのは `DEMO_PUBLIC_LOGIN=true` だけ)。既存のデモ環境は Cloud SQL の作り直しが要る(doc/07 3.8)。本番のデモ環境は 2026-10-08 に `katahimo-db-2` として作り直した(削除した名前は再利用できないため)。`katahimo-demo-reset` ジョブにも `DEMO_PUBLIC_LOGIN=true` を渡す(無いとローカル鍵が拒否されて起動しない)。
 - デモのログインを元に戻した。パスワードは固定の `demo1234`(スタッフと同じくハッシュで保存)で、ログイン画面のアカウントのボタンはメールアドレスだけを入れる(パスワードは自動入力も画面表示もしない。使ってほしい人へ個別に伝える)。Secret Manager の `demo-login-password` と `DEMO_LOGIN_PASSWORD` を廃止。
 
